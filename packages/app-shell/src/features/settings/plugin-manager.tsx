@@ -258,7 +258,10 @@ function InstalledPluginRow({
     useState<WorkflowImportReportInput | null>(null);
   const uninstallImpact = useWorkflowUninstallImpact(
     [plugin.id],
-    uninstallOpen && (plugin.kind === "mcp" || plugin.kind === "skill"),
+    uninstallOpen &&
+      (plugin.kind === "mcp" ||
+        plugin.kind === "skill" ||
+        plugin.kind === "workflow"),
   );
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));

@@ -40,11 +40,13 @@ import {
   createWorkflowMemory,
   workflowHandlers,
 } from "../../test/memory/workflows";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
 import {
   createWorkflowRunMemory,
   workflowRunHandlers,
 } from "../../test/memory/workflow-runs";
 import type { MockWorkflowRecord } from "../../test/memory/workflows";
+import { pluginKeys } from "../../state/data/plugins";
 import {
   createHookWrapper,
   createTestQueryClient,
@@ -115,9 +117,10 @@ function renderSidebar(
   state: FixtureState,
   chatStore?: ChatStore,
   client = createTestClient(createFixtureHandlers(state)),
+  queryClient = createTestQueryClient(),
 ) {
   const store = chatStore ?? createChatStore(client.session);
-  const Wrapper = createHookWrapper(client, createTestQueryClient(), store);
+  const Wrapper = createHookWrapper(client, queryClient, store);
   return {
     ...render(
       <Wrapper>
@@ -164,6 +167,7 @@ function mockPublishedWorkflow(
   id: string,
   name: string,
   version = "v1",
+  sourcePluginId: string | null = null,
 ): MockWorkflowRecord {
   return {
     workflow: {
@@ -192,6 +196,7 @@ function mockPublishedWorkflow(
         updatedAt: null,
       },
     ],
+    sourcePluginId,
   };
 }
 
@@ -1280,6 +1285,119 @@ describe("WorkspaceSidebar", () => {
 
     expect(screen.queryByRole("button", { name: /Review bot/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Deploy bot/ })).not.toBeNull();
+  });
+
+  it("marks workflows whose source plugin is uninstalled in the create-run menu without blocking runs, and clears on reinstall", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const pluginState = createPluginMemory();
+    pluginState.installedPlugins = [];
+    const state = workspaceWithOneSession();
+    state.workflows = [
+      mockPublishedWorkflow(
+        "wf-uninstalled",
+        "Deploy bot",
+        "v1",
+        "official/ora.deploy-pack",
+      ),
+      mockPublishedWorkflow("wf-local", "Local bot", "v2", null),
+    ];
+    const queryClient = createTestQueryClient();
+    const client = createTestClient({
+      ...createFixtureHandlers(state),
+      ...pluginHandlers(pluginState),
+    });
+    renderSidebar(state, undefined, client, queryClient);
+
+    await waitFor(() => expect(treeRow(PROJECT.name)).not.toBeNull());
+    await user.click(
+      await screen.findByRole("button", {
+        name: /在此项目中新建|Create in this project/,
+      }),
+    );
+    await user.hover(
+      await screen.findByRole("button", {
+        name: /运行工作流|Run workflow/,
+      }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: /运行工作流|Run workflow/,
+      }),
+    );
+
+    const deployButton = await screen.findByRole("button", {
+      name: /Deploy bot/,
+    });
+    const localButton = screen.getByRole("button", { name: /Local bot/ });
+    expect(
+      await within(deployButton).findByText(
+        /来源插件已卸载|Source plugin uninstalled/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(localButton).queryByText(
+        /来源插件已卸载|Source plugin uninstalled/,
+      ),
+    ).toBeNull();
+
+    // Clicking the marked workflow still opens the run creation dialog cleanly.
+    await user.click(deployButton);
+    expect(useUiStore.getState().dialog).toEqual({
+      kind: "runWorkflow",
+      projectId: PROJECT.id,
+      workspaceId: "workspace-p1",
+      workflowId: "wf-uninstalled",
+      workflowName: "Deploy bot",
+    });
+
+    // Reinstalling the same canonical plugin id clears the badge from the picker.
+    pluginState.installedPlugins.push({
+      id: "official/ora.deploy-pack",
+      namespace: "official",
+      name: "ora.deploy-pack",
+      displayName: "Deploy Pack",
+      version: "1.0.0",
+      description: "Deploy workflows",
+      homepage: null,
+      license: null,
+      kind: "workflow",
+      logo: null,
+      installationValidity: { validity: "valid" },
+      configuration: { state: "not_declared" },
+      runtime: "stopped",
+    });
+    await act(async () => {
+      await queryClient.invalidateQueries({
+        queryKey: pluginKeys.installedPlugins,
+      });
+    });
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /在此项目中新建|Create in this project/,
+      }),
+    );
+    await user.hover(
+      await screen.findByRole("button", {
+        name: /运行工作流|Run workflow/,
+      }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: /运行工作流|Run workflow/,
+      }),
+    );
+
+    const restoredButton = await screen.findByRole("button", {
+      name: /Deploy bot/,
+    });
+    await waitFor(() =>
+      expect(
+        within(restoredButton).queryByText(
+          /来源插件已卸载|Source plugin uninstalled/,
+        ),
+      ).toBeNull(),
+    );
   });
 
   it("renames a session from the context menu", async () => {

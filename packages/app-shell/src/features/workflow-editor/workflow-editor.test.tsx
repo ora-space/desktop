@@ -65,6 +65,8 @@ import { WorkflowEditor } from "./workflow-editor";
 import { WorkflowEditorList } from "./workflow-editor-list";
 import { useWorkflowEditorStore } from "./workflow-editor-store";
 import { AGENT_REF } from "../../test/agent-identity";
+import { pluginKeys } from "../../state/data/plugins";
+import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
 function createFixtureState() {
@@ -180,6 +182,7 @@ function renderEditor(
   state: FixtureState = createFixtureState(),
   configureHandlers?: (handlers: TestHandlers) => void,
   seedLibrary = true,
+  queryClient = createTestQueryClient(),
 ): RenderResult {
   if (seedLibrary) {
     seedDemoWorkflows(state);
@@ -299,7 +302,7 @@ function renderEditor(
   configureHandlers?.(clientHandlers);
   const Wrapper = createHookWrapper(
     client,
-    createTestQueryClient(),
+    queryClient,
     createChatStore(client.session),
   );
   return render(
@@ -2956,5 +2959,279 @@ describe("useDeleteWorkflow", () => {
     expect(
       document.querySelector("[data-workflow-node-count]"),
     ).toHaveAttribute("data-workflow-node-count", "4");
+  }, 20_000);
+
+  it("marks workflows whose marketplace source plugin is uninstalled without blocking editing, and clears after reinstall", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    const installedPlugin = {
+      id: "official/ora.active-wf",
+      namespace: "official",
+      name: "ora.active-wf",
+      displayName: "Active Workflow Pack",
+      version: "1.0.0",
+      description: "Active workflow plugin",
+      homepage: null,
+      license: null,
+      kind: "workflow" as const,
+      logo: null,
+      installationValidity: { validity: "valid" as const },
+      configuration: { state: "not_declared" as const },
+      runtime: "stopped" as const,
+    };
+    state.installedPlugins = [installedPlugin];
+    const startOnlyGraph = serializeWorkflowGraph({
+      nodes: [
+        {
+          id: "start",
+          type: "workflow",
+          deletable: false,
+          position: { x: 72, y: 286 },
+          data: {
+            kind: "start",
+            title: "来自已卸载插件的开始节点",
+            description: "",
+            input: "",
+            inputVariables: [],
+          },
+        },
+      ],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      annotations: [],
+      globalVariables: [],
+    });
+    const makeRecord = (
+      id: string,
+      name: string,
+      sourcePluginId: string | null,
+    ) => ({
+      workflow: {
+        id,
+        namespace: "local",
+        name,
+        publishedSnapshotId: null,
+        createdAt: 1n,
+        updatedAt: 1n,
+      },
+      draft: {
+        id: `snap-${id}`,
+        workflowId: id,
+        version: "draft",
+        graph: startOnlyGraph,
+        createdAt: 1n,
+        updatedAt: 1n,
+      },
+      published: [],
+      sourcePluginId,
+    });
+    state.workflows = [
+      makeRecord(
+        "wf-uninstalled",
+        "已卸载来源流程",
+        "official/ora.cdase-workflow",
+      ),
+      makeRecord("wf-other-ns", "跨源同名流程", "community/ora.active-wf"),
+      makeRecord("wf-installed", "在装来源流程", "official/ora.active-wf"),
+      makeRecord("wf-local", "本地自建流程", null),
+    ];
+    const queryClient = createTestQueryClient();
+    renderEditor(undefined, state, undefined, false, queryClient);
+
+    const uninstalledBtn = await screen.findByRole("button", {
+      name: /^已卸载来源流程/,
+    });
+    const otherNsBtn = screen.getByRole("button", { name: /^跨源同名流程/ });
+    const installedBtn = screen.getByRole("button", { name: /^在装来源流程/ });
+    const localBtn = screen.getByRole("button", { name: /^本地自建流程/ });
+
+    expect(
+      await within(uninstalledBtn).findByText("来源插件已卸载"),
+    ).toBeVisible();
+    expect(within(otherNsBtn).getByText("来源插件已卸载")).toBeVisible();
+    expect(within(installedBtn).queryByText("来源插件已卸载")).toBeNull();
+    expect(within(localBtn).queryByText("来源插件已卸载")).toBeNull();
+
+    // Selecting and editing the marked workflow remains fully enabled.
+    expect(uninstalledBtn).toBeEnabled();
+    await user.click(uninstalledBtn);
+    expect(
+      await screen.findByText("来自已卸载插件的开始节点"),
+    ).toBeInTheDocument();
+
+    // Reinstalling the exact canonical plugin id removes the badge for its workflows only.
+    state.installedPlugins.push({
+      ...installedPlugin,
+      id: "official/ora.cdase-workflow",
+      name: "ora.cdase-workflow",
+    });
+    await act(async () => {
+      await queryClient.invalidateQueries({
+        queryKey: pluginKeys.installedPlugins,
+      });
+    });
+
+    await waitFor(() =>
+      expect(within(uninstalledBtn).queryByText("来源插件已卸载")).toBeNull(),
+    );
+    expect(within(otherNsBtn).getByText("来源插件已卸载")).toBeVisible();
+  }, 20_000);
+
+  /** A minimal library record carrying a marketplace source, for the badge tests below. */
+  function makeSourcedRecord(
+    id: string,
+    name: string,
+    sourcePluginId: string | null,
+  ) {
+    const startOnlyGraph = serializeWorkflowGraph({
+      nodes: [
+        {
+          id: "start",
+          type: "workflow",
+          deletable: false,
+          position: { x: 72, y: 286 },
+          data: {
+            kind: "start",
+            title: `${name}的开始节点`,
+            description: "",
+            input: "",
+            inputVariables: [],
+          },
+        },
+      ],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      annotations: [],
+      globalVariables: [],
+    });
+    return {
+      workflow: {
+        id,
+        namespace: "local",
+        name,
+        publishedSnapshotId: null,
+        createdAt: 1n,
+        updatedAt: 1n,
+      },
+      draft: {
+        id: `snap-${id}`,
+        workflowId: id,
+        version: "draft",
+        graph: startOnlyGraph,
+        createdAt: 1n,
+        updatedAt: 1n,
+      },
+      published: [],
+      sourcePluginId,
+    };
+  }
+
+  it("keeps rename, export, and delete available on a marked workflow", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    state.installedPlugins = [];
+    state.workflows = [
+      makeSourcedRecord(
+        "wf-uninstalled",
+        "已卸载来源流程",
+        "official/ora.gone-wf",
+      ),
+    ];
+    renderEditor(undefined, state, undefined, false);
+
+    const markedBtn = await screen.findByRole("button", {
+      name: /^已卸载来源流程/,
+    });
+    expect(within(markedBtn).getByText("来源插件已卸载")).toBeVisible();
+
+    // Renaming a marked workflow works and the badge follows the renamed row.
+    openWorkflowActions("已卸载来源流程");
+    await user.click(screen.getByRole("menuitem", { name: "重命名" }));
+    const renameDialog = await screen.findByRole("alertdialog", {
+      name: "重命名“已卸载来源流程”",
+    });
+    const renameInput =
+      within(renameDialog).getByDisplayValue("已卸载来源流程");
+    await user.clear(renameInput);
+    await user.type(renameInput, "改名后的流程");
+    await user.click(
+      within(renameDialog).getByRole("button", { name: "重命名" }),
+    );
+    const renamedBtn = await screen.findByRole("button", {
+      name: /^改名后的流程/,
+    });
+    expect(within(renamedBtn).getByText("来源插件已卸载")).toBeVisible();
+
+    // Exporting a marked workflow still opens its export dialog.
+    openWorkflowActions("改名后的流程");
+    await user.click(screen.getByRole("menuitem", { name: "导出…" }));
+    const exportDialog = await screen.findByRole("dialog", {
+      name: "导出「改名后的流程」",
+    });
+    await user.click(
+      within(exportDialog).getByRole("button", { name: "取消" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // Deleting a marked workflow still goes through the usual confirmation.
+    openWorkflowActions("改名后的流程");
+    await user.click(screen.getByRole("menuitem", { name: "删除" }));
+    const deleteDialog = await screen.findByRole("alertdialog", {
+      name: "删除“改名后的流程”？",
+    });
+    await user.click(
+      within(deleteDialog).getByRole("button", { name: "删除" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /^改名后的流程/ }),
+      ).toBeNull(),
+    );
+  }, 20_000);
+
+  it("surfaces the badge after a real uninstall without any manual cache refresh", async () => {
+    const state = createFixtureState();
+    state.installedPlugins = [
+      {
+        id: "official/ora.gone-wf",
+        namespace: "official",
+        name: "ora.gone-wf",
+        displayName: "Gone Workflow Pack",
+        version: "1.0.0",
+        description: "Workflow plugin",
+        homepage: null,
+        license: null,
+        kind: "workflow",
+        logo: null,
+        installationValidity: { validity: "valid" },
+        configuration: { state: "not_declared" },
+        runtime: "stopped",
+      },
+    ];
+    state.workflows = [
+      makeSourcedRecord("wf-market", "市场导入流程", "official/ora.gone-wf"),
+    ];
+    const queryClient = createTestQueryClient();
+    renderEditor(undefined, state, undefined, false, queryClient);
+
+    // The source plugin is still installed, so the row carries no badge yet.
+    const row = await screen.findByRole("button", { name: /^市场导入流程/ });
+    expect(within(row).queryByText("来源插件已卸载")).toBeNull();
+
+    // A real uninstall settles through the plugin mutation's own invalidation, so the
+    // mounted library must pick up the missing source without any manual refresh.
+    const uninstallClient = createTestClient(createFixtureHandlers(state));
+    const { result } = renderHookWithClient(
+      () => usePluginMutations("official/ora.gone-wf"),
+      uninstallClient,
+      queryClient,
+    );
+    await act(async () => {
+      await result.current.uninstall.mutateAsync({
+        dataDisposition: "retain",
+      });
+    });
+
+    expect(await within(row).findByText("来源插件已卸载")).toBeVisible();
   }, 20_000);
 });
