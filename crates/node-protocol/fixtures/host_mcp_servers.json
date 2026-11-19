@@ -1302,6 +1302,11 @@
       "note": "null list",
       "accept": false,
       "host_mcp_servers_json": "null"
+    },
+    {
+      "note": "server entry as an array",
+      "accept": false,
+      "host_mcp_servers_json": "[[\"ora-test\",\"http://127.0.0.1:41234/mcp\",{}]]"
     }
   ]
 }

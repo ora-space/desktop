@@ -251,3 +251,21 @@ fn host_mcp_values_never_reach_diagnostics() {
     let error = received(duplicate.as_bytes()).unwrap_err();
     assert!(!format!("{error}").contains(marker));
 }
+
+/// Host servers are not plugin MCP: a session at the 16-binding cap still carries four of them.
+#[test]
+fn host_mcp_servers_do_not_count_against_the_plugin_cap() {
+    let mut wire = wire(Value::Array(
+        (0..MAX_HOST_MCP_SERVERS)
+            .map(|i| json!({"name": format!("ora-host-{i}"), "url": "https://example.com/mcp", "headers": {}}))
+            .collect(),
+    ));
+    wire["payload"]["spec"]["mcp"] = Value::Array(
+        (0..MAX_SESSION_MCP_SERVERS)
+            .map(|i| json!({"plugin_id": format!("official/acme.mcp-{i:02}"), "plugin_version": "1.2.0", "settings": {}}))
+            .collect(),
+    );
+    let message: ControllerToNodeMessage = serde_json::from_value(wire).unwrap();
+    let frame = encode_controller_frame(&message).unwrap();
+    assert_eq!(decode_controller_frame(&frame).unwrap(), message);
+}

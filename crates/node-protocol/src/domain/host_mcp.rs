@@ -40,12 +40,45 @@ const RESERVED_HEADERS: [&str; 14] = [
 
 /// One Controller-provided HTTP MCP server. There is no stdio form: the Node never runs a command
 /// a Controller names.
-#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Eq, PartialEq, Serialize)]
 pub struct HostMcpServer {
     pub name: String,
     pub url: String,
     pub headers: HostMcpHeaders,
+}
+
+impl<'de> Deserialize<'de> for HostMcpServer {
+    /// Accepts only a JSON object: a derived decoder would also read the fields from an array by
+    /// position, and D1 defines each entry as an object.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        /// The object fields, with Serde's duplicate, missing and unknown field checks.
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            name: String,
+            url: String,
+            headers: HostMcpHeaders,
+        }
+
+        /// Refuses every non-object shape before the fields are read.
+        struct ServerVisitor;
+
+        impl<'de> Visitor<'de> for ServerVisitor {
+            type Value = HostMcpServer;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a host MCP server object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                let Fields { name, url, headers } =
+                    Fields::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(HostMcpServer { name, url, headers })
+            }
+        }
+
+        deserializer.deserialize_map(ServerVisitor)
+    }
 }
 
 impl fmt::Debug for HostMcpServer {
