@@ -4959,3 +4959,124 @@ async fn reinstalling_the_package_does_not_import_the_documents_again() {
         "the reinstall adds no second copy"
     );
 }
+
+/// Marketplace workflow summaries expose the canonical `<namespace>/<identifier>` source id while
+/// keeping `local` ownership across uninstall and reinstall; local `.orax` imports stay untagged.
+#[tokio::test]
+async fn workflow_summary_tracks_marketplace_source_across_uninstall_and_reinstall() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+
+    // Local `.orax` imports are user data with no marketplace source record.
+    let local_archive = data_dir.path().join("local-wf.orax");
+    write_workflow_orax(
+        &local_archive,
+        "ora.local-only",
+        &[("2.0.0.json", SECOND_WORKFLOW_DOCUMENT)],
+    );
+    plugins
+        .import(ImportPluginRequest {
+            path: local_archive.to_string_lossy().into_owned(),
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .expect("import local workflow archive");
+
+    let (artifact, sha) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, artifact);
+    plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install marketplace workflow package");
+
+    let workflows = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock);
+    let after_install = workflows
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows after install");
+    let market_summary = after_install
+        .workflows
+        .iter()
+        .find(|wf| wf.name == "导入流程")
+        .expect("marketplace workflow present");
+    let local_summary = after_install
+        .workflows
+        .iter()
+        .find(|wf| wf.name == "发布流程")
+        .expect("local workflow present");
+    assert_eq!(market_summary.namespace, "local");
+    assert_eq!(market_summary.source_plugin_id.as_deref(), Some(PLUGIN_ID));
+    assert_eq!(local_summary.source_plugin_id, None);
+
+    // Uninstalling removes the plugin from `list_installed` while preserving the copy and source id.
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+            data_disposition: PluginDataDisposition::Retain,
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .expect("uninstall marketplace workflow package");
+    assert!(
+        !plugins
+            .list_installed(ListInstalledPluginsRequest {})
+            .expect("list installed plugins after uninstall")
+            .plugins
+            .iter()
+            .any(|plugin| plugin.id == PLUGIN_ID),
+        "uninstalled source plugin leaves the installed catalog"
+    );
+    let after_uninstall = workflows
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows after uninstall");
+    let surviving = after_uninstall
+        .workflows
+        .iter()
+        .find(|wf| wf.name == "导入流程")
+        .expect("copy survives uninstall");
+    assert_eq!(surviving.id, market_summary.id);
+    assert_eq!(surviving.source_plugin_id.as_deref(), Some(PLUGIN_ID));
+
+    // Reinstalling the same canonical plugin id restores presence without duplicating copies.
+    plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("reinstall marketplace workflow package");
+    assert!(
+        plugins
+            .list_installed(ListInstalledPluginsRequest {})
+            .expect("list installed plugins after reinstall")
+            .plugins
+            .iter()
+            .any(|plugin| plugin.id == PLUGIN_ID),
+        "reinstalled source plugin returns to the installed catalog"
+    );
+    let after_reinstall = workflows
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows after reinstall");
+    assert_eq!(after_reinstall.workflows.len(), 2);
+    let restored = after_reinstall
+        .workflows
+        .iter()
+        .find(|wf| wf.id == market_summary.id)
+        .expect("existing copy retained on reinstall");
+    assert_eq!(restored.source_plugin_id.as_deref(), Some(PLUGIN_ID));
+}

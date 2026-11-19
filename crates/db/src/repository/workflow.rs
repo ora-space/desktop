@@ -147,7 +147,12 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT w.id, w.namespace, w.name, ws.version, w.created_at, w.updated_at
+                    "SELECT w.id, w.namespace, w.name, ws.version, w.created_at, w.updated_at,
+                            (SELECT wdi.source_namespace || '/' || wdi.identifier
+                             FROM workflow_document_imports wdi
+                             WHERE wdi.workflow_id = w.id AND wdi.state = 'imported'
+                             ORDER BY wdi.recorded_at ASC
+                             LIMIT 1) AS source_plugin_id
                      FROM workflows w
                      LEFT JOIN workflow_snapshots ws
                        ON ws.id = w.published_snapshot_id AND ws.is_deleted = 0
@@ -162,6 +167,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                         namespace: Namespace::new(row.get::<_, String>("namespace")?)?,
                         name: row.get::<_, String>("name")?,
                         published_version: row.get::<_, Option<String>>("version")?,
+                        source_plugin_id: row.get::<_, Option<String>>("source_plugin_id")?,
                         created_at: row.get("created_at")?,
                         updated_at: row.get("updated_at")?,
                     });

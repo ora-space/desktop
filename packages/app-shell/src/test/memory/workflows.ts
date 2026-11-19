@@ -17,6 +17,8 @@ export interface MockWorkflowRecord {
   workflow: Workflow;
   draft: WorkflowSnapshot;
   published: WorkflowSnapshot[];
+  /** Canonical `<namespace>/<identifier>` marketplace plugin id, when imported from a plugin. */
+  sourcePluginId?: string | null;
 }
 
 /** Creates an independent workflows memory fixture. */
@@ -88,6 +90,7 @@ export function workflowHandlers(state: WorkflowMemoryState) {
             : (record.published.find(
                 (item) => item.id === record.workflow.publishedSnapshotId,
               )?.version ?? null),
+        sourcePluginId: record.sourcePluginId ?? null,
         createdAt: record.workflow.createdAt,
         updatedAt: record.workflow.updatedAt,
       })),
