@@ -10,6 +10,7 @@ import {
   createTestQueryClient,
   renderHookWithClient,
 } from "../../test/hook-harness";
+import { workflowKeys } from "../data/workflows";
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { useInstallPlugin } from "./use-install-plugin";
 
@@ -48,14 +49,25 @@ describe("useInstallPlugin", () => {
     });
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
     const client = createTestClient(clientHandlers);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(workflowKeys.library, []);
+    expect(queryClient.getQueryState(workflowKeys.library)?.isInvalidated).toBe(
+      false,
+    );
     const { result } = renderHookWithClient(
       () => useInstallPlugin("official/weather"),
       client,
+      queryClient,
     );
 
     act(() => result.current.mutate({}));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryState(workflowKeys.library)?.isInvalidated,
+      ).toBe(true),
+    );
     expect(
       state.installedPlugins.find((item) => item.id === "official/weather"),
     ).toMatchObject({

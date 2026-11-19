@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { invalidatePluginQueries } from "../data/plugins";
+import { invalidateWorkflowQueries } from "../data/workflows";
 
 /** What one install request carries beyond the plugin it names. */
 interface InstallPluginVariables {
@@ -28,7 +29,13 @@ export function useInstallPlugin(pluginId: string) {
   const activity = usePluginOperationStore(
     (state) => state.activities[pluginId],
   );
-  const invalidate = () => invalidatePluginQueries(queryClient);
+  // Marketplace installs (including Pack members) can import workflow documents, so refresh
+  // workflow queries even when the install fails mid-way (matches local archive import).
+  const invalidate = () =>
+    Promise.all([
+      invalidatePluginQueries(queryClient),
+      invalidateWorkflowQueries(queryClient),
+    ]);
 
   const mutation = useMutation({
     mutationFn: ({
