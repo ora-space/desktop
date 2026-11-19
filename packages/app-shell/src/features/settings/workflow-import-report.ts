@@ -52,6 +52,12 @@ export interface WorkflowImportReport {
   counts: WorkflowImportDependencyCounts;
 }
 
+/** The outcomes one import returned, plus the archive or plugin name to show for them. */
+export interface WorkflowImportReportInput {
+  fileName: string;
+  outcomes: readonly ImportedWorkflowOutcome[];
+}
+
 /**
  * Extracts the archive's own file name from the path the host reported.
  *
@@ -99,6 +105,18 @@ export function marketplaceReportOutcomes(
     }
   }
   return converted;
+}
+
+/**
+ * Builds the report dialog input for a marketplace install, upgrade, or retry response,
+ * or returns `null` when every document was skipped so callers keep a one-line toast.
+ */
+export function marketplaceWorkflowReportInput(
+  pluginId: string,
+  workflows: readonly MarketplaceWorkflowOutcome[],
+): WorkflowImportReportInput | null {
+  const outcomes = marketplaceReportOutcomes(workflows);
+  return outcomes.length === 0 ? null : { fileName: pluginId, outcomes };
 }
 
 /**

@@ -44,12 +44,16 @@ import { McpHealthRow } from "./mcp-health-row";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { PluginLogo } from "./plugin-logo";
 import { workflowDocumentSummary } from "./plugin-install-feedback";
-import { marketplaceReportOutcomes } from "./workflow-import-report";
+import { marketplaceWorkflowReportInput } from "./workflow-import-report";
 import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
 import {
   WorkflowImportReportDialog,
   type WorkflowImportReportInput,
 } from "./workflow-import-report-dialog";
+import type {
+  WorkflowDependency,
+  WorkflowDependencyFix,
+} from "../workflow-editor/workflow-transfer";
 import { useRetryWorkflowImport } from "../../state/hooks/use-retry-workflow-import";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
@@ -69,6 +73,7 @@ export function PluginManager({
   plugins,
   onBack,
   onConfigure,
+  onResolveDependency,
   availableById,
   onImport,
   importing,
@@ -78,6 +83,14 @@ export function PluginManager({
   plugins: InstalledPlugin[];
   onBack: () => void;
   onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
+  /**
+   * Resolves a reported workflow dependency inside the hosting settings pane, rather than queuing
+   * a Settings deep link that would only be read on a later mount.
+   */
+  onResolveDependency?: (
+    dependency: WorkflowDependency,
+    fix: WorkflowDependencyFix,
+  ) => void;
   availableById?: ReadonlyMap<string, AvailablePlugin>;
   onImport: () => void;
   importing: boolean;
@@ -188,6 +201,7 @@ export function PluginManager({
               key={plugin.id}
               plugin={plugin}
               onConfigure={onConfigure}
+              onResolveDependency={onResolveDependency}
               available={availableById?.get(plugin.id)}
               developerTools={developerTools}
             />
@@ -201,11 +215,15 @@ export function PluginManager({
 function InstalledPluginRow({
   plugin,
   onConfigure,
+  onResolveDependency,
   available,
   developerTools,
 }: {
   plugin: InstalledPlugin;
   onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
+  onResolveDependency:
+    | ((dependency: WorkflowDependency, fix: WorkflowDependencyFix) => void)
+    | undefined;
   available: AvailablePlugin | undefined;
   developerTools: boolean;
 }) {
@@ -253,10 +271,11 @@ function InstalledPluginRow({
     });
     // An upgrade that added documents gets the same readiness report an install gets, so a
     // package the user already owns is not the one entry that hides a missing reference.
-    const outcomes = marketplaceReportOutcomes(response.workflows);
-    if (outcomes.length > 0) {
-      setImportReport({ fileName: response.pluginId, outcomes });
-    }
+    const report = marketplaceWorkflowReportInput(
+      response.pluginId,
+      response.workflows,
+    );
+    if (report !== null) setImportReport(report);
   };
   const failUninstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.uninstallFailed"));
@@ -284,10 +303,11 @@ function InstalledPluginRow({
         description,
       });
     }
-    const outcomes = marketplaceReportOutcomes(response.workflows);
-    if (outcomes.length > 0) {
-      setImportReport({ fileName: response.pluginId, outcomes });
-    }
+    const report = marketplaceWorkflowReportInput(
+      response.pluginId,
+      response.workflows,
+    );
+    if (report !== null) setImportReport(report);
   };
   /**
    * Runs the update the user just authorized.
@@ -592,6 +612,14 @@ function InstalledPluginRow({
         <WorkflowImportReportDialog
           input={importReport}
           onClose={() => setImportReport(null)}
+          onResolve={
+            onResolveDependency === undefined
+              ? undefined
+              : (dependency, fix) => {
+                  setImportReport(null);
+                  onResolveDependency(dependency, fix);
+                }
+          }
         />
       )}
     </>

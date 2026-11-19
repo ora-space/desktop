@@ -1915,6 +1915,143 @@ it("reports workflow dependencies after installing from the detail page", async 
   );
 });
 
+/** Upgrading from the detail page reports newly delivered documents the same way an install does. */
+it("reports workflow dependencies after upgrading from the detail page", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.pluginReadmes.set("official/weather", "# Weather");
+  state.installedPlugins.push({ ...weatherInstalled(), version: "1.1.0" });
+  state.updatedWorkflows = [
+    {
+      state: "imported",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(await screen.findByRole("button", { name: "更新" }));
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+});
+
+/**
+ * Upgrading from the installed manager resolves missing dependencies inside the current pane,
+ * instead of queuing a Settings request that would only run on a future mount.
+ */
+it("resolves dependencies in-pane when upgrading from the plugin manager", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({ ...weatherInstalled(), version: "1.1.0" });
+  state.updatedWorkflows = [
+    {
+      state: "imported",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(await screen.findByRole("button", { name: "更新" }));
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+
+  await user.click(within(report).getByRole("button", { name: /去安装/ }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("textbox", { name: "搜索插件" })).toHaveValue(
+    "release-notes",
+  );
+  expect(useUiStore.getState().pluginSettingsRequest).toBeNull();
+});
+
+/** A marketplace card report opens the MCP configuration editor immediately when configuring. */
+it("opens the MCP configuration editor from a marketplace card report", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    id: "official/mcp-weather",
+    name: "mcp-weather",
+    displayName: "Weather MCP",
+    kind: "mcp",
+    configuration: { state: "available", completeness: "incomplete" },
+  });
+  state.pluginConfigurations.set("official/mcp-weather", {
+    pluginId: "official/mcp-weather",
+    schemaVersion: 1,
+    revision: 0n,
+    declarationFingerprint: "declaration-1",
+    settings: [
+      {
+        declaration: {
+          id: "endpoint",
+          title: "Endpoint",
+          description: "Service URL",
+          type: "string",
+          required: true,
+          order: 1n,
+          default: null,
+        },
+        storedValue: null,
+        effectiveValue: null,
+        redacted: false,
+        source: "absent",
+        valueErrorCode: null,
+      },
+    ],
+    summary: { state: "available", completeness: "incomplete" },
+  });
+  state.installedWorkflows = [
+    {
+      state: "imported",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ mcps: ["official/mcp-weather"] }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  const report = await screen.findByRole("dialog");
+  await user.click(within(report).getByRole("button", { name: /去配置/ }));
+
+  expect(await screen.findByLabelText(/Endpoint/)).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
 /**
  * Uninstalling a Skill plugin a workflow binds names that workflow and its nodes before the
  * removal goes through, instead of letting the run fail later (ora-space/circus#1270).

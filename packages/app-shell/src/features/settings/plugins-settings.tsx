@@ -76,7 +76,7 @@ import {
 } from "./workflow-import-report-dialog";
 import {
   importedArchiveName,
-  marketplaceReportOutcomes,
+  marketplaceWorkflowReportInput,
 } from "./workflow-import-report";
 
 /** The registry kind order shown in the marketplace, mirroring the contracts docs. */
@@ -284,12 +284,14 @@ export function PluginsSettings({
         setQuery(dependency.id);
         return;
       case "configureMcp":
+        setManaging(true);
         setConfigurationPlugin({
           id: dependency.id,
           displayName: dependency.label,
         });
         return;
       case "manageMcp":
+        setConfigurationPlugin(null);
         setManagerQuery(dependency.id);
         setManaging(true);
         return;
@@ -408,6 +410,7 @@ export function PluginsSettings({
               displayName: plugin.displayName,
             })
           }
+          onResolveDependency={resolveImportDependency}
         />
         {/* The report belongs to the manager step that started the import, so it is composed
             beside the list and closes with it rather than outliving the surface it came from. */}
@@ -743,9 +746,8 @@ function AvailablePluginCard({
     pluginId: string,
     workflows: readonly MarketplaceWorkflowOutcome[],
   ) => {
-    const outcomes = marketplaceReportOutcomes(workflows);
-    if (outcomes.length === 0) return;
-    onWorkflowReport({ fileName: pluginId, outcomes });
+    const report = marketplaceWorkflowReportInput(pluginId, workflows);
+    if (report !== null) onWorkflowReport(report);
   };
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));

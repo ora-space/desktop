@@ -52,7 +52,7 @@ import {
   WorkflowImportReportDialog,
   type WorkflowImportReportInput,
 } from "./workflow-import-report-dialog";
-import { marketplaceReportOutcomes } from "./workflow-import-report";
+import { marketplaceWorkflowReportInput } from "./workflow-import-report";
 import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
 import type {
   WorkflowDependency,
@@ -195,9 +195,8 @@ function PluginDetailAction({
     pluginId: string,
     workflows: readonly MarketplaceWorkflowOutcome[],
   ) => {
-    const outcomes = marketplaceReportOutcomes(workflows);
-    if (outcomes.length === 0) return;
-    setImportReport({ fileName: pluginId, outcomes });
+    const report = marketplaceWorkflowReportInput(pluginId, workflows);
+    if (report !== null) setImportReport(report);
   };
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
@@ -389,7 +388,10 @@ function PluginDetailAction({
         <WorkflowImportReportDialog
           input={importReport}
           onClose={() => setImportReport(null)}
-          onResolve={onResolveDependency}
+          onResolve={(dependency, fix) => {
+            setImportReport(null);
+            onResolveDependency(dependency, fix);
+          }}
         />
       )}
     </>

@@ -28,13 +28,10 @@ import { WorkflowTransferDependencies } from "../workflow-editor/workflow-transf
 import {
   buildWorkflowImportReport,
   type WorkflowImportReport,
+  type WorkflowImportReportInput,
 } from "./workflow-import-report";
 
-/** The outcomes one local `.orax` import returned, plus the archive name to show for them. */
-export interface WorkflowImportReportInput {
-  fileName: string;
-  outcomes: readonly ImportedWorkflowOutcome[];
-}
+export type { WorkflowImportReportInput };
 
 interface WorkflowImportReportDialogProps {
   input: WorkflowImportReportInput;
@@ -112,9 +109,9 @@ export function WorkflowImportReportDialog({
                 })}
               </h3>
               <ul className="divide-y divide-border">
-                {refused.map((outcome) => (
+                {refused.map((outcome, index) => (
                   <li
-                    key={outcome.sourceFile}
+                    key={`${outcome.sourceFile}:${index}`}
                     className="px-3 py-2 text-[12px]"
                   >
                     <p className="font-mono break-all">{outcome.sourceFile}</p>
