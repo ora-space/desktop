@@ -501,6 +501,24 @@ fn run_case(test: impl Future<Output = ()>) {
     });
 }
 
+/// Runs the production loop on the real clock for D6's captured-interval evidence: the renewal
+/// rule is only meaningful when the s1 frame gaps are replayed uncompressed, so these cases
+/// deliberately take tens of real seconds and carry a bounded guard instead of virtual time.
+fn run_case_real_time(test: impl Future<Output = ()>) {
+    ora_logging::initialize_test_clock();
+    ora_logging::with_trace_logging(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(Duration::from_secs(300), test)
+                    .await
+                    .expect("real-time policy test must settle within its guard");
+            });
+    });
+}
+
 /// Reads past ordinary setup/update traffic to assert a terminal production response.
 async fn completion(stream: &mut SessionEventStream<PromptSessionEvent>) -> StopReason {
     while let Some(event) = stream.recv().await {
@@ -1438,6 +1456,284 @@ fn routes_subagent_update_extensions_in_wire_order_through_process_generation() 
                 .unwrap(),
             ]
         );
+        fixture.shutdown().await;
+    });
+}
+
+/// Parses the capture's `HH:MM:SS.mmm` time of day into milliseconds; the s1 capture is one day.
+fn captured_millis(at: &str) -> u64 {
+    let time = at
+        .split('T')
+        .nth(1)
+        .expect("timestamp")
+        .trim_end_matches('Z');
+    let (hms, ms) = time.split_once('.').expect("millis");
+    let mut parts = hms
+        .split(':')
+        .map(|part| part.parse::<u64>().expect("clock part"));
+    let hours = parts.next().expect("hours");
+    let minutes = parts.next().expect("minutes");
+    let seconds = parts.next().expect("seconds");
+    (hours * 3600 + minutes * 60 + seconds) * 1000 + ms.parse::<u64>().expect("millis")
+}
+
+/// Loads the redacted real CodeAgent s1 capture (specs `20261118` D6 evidence): the update frames
+/// after `session/prompt` with their real offsets, plus the captured response offset. The first
+/// fixture line anchors the offsets at the captured prompt send; the fixture session is `sess-1`
+/// so the captured frames route verbatim.
+fn s1_real_replay() -> (Vec<(Duration, Value)>, Duration) {
+    let lines: Vec<Value> = include_str!("prompt_policy_tests/s1_complete.jsonl")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("fixture line"))
+        .collect();
+    let anchor = captured_millis(lines[0]["capturedAt"].as_str().expect("anchor"));
+    let mut updates = Vec::new();
+    let mut response_offset = None;
+    for line in &lines[1..] {
+        let offset = Duration::from_millis(
+            captured_millis(line["capturedAt"].as_str().expect("timestamp")) - anchor,
+        );
+        if line["frame"]["method"].is_string() {
+            updates.push((offset, line["frame"].clone()));
+        } else {
+            assert_eq!(line["frame"]["result"]["stopReason"], json!("end_turn"));
+            response_offset = Some(offset);
+        }
+    }
+    (updates, response_offset.expect("captured response"))
+}
+
+/// The captured s1 parent `Task` opening: `pending`, and no `in_progress` ever follows.
+fn s1_parent_open() -> SessionNotification {
+    serde_json::from_value(json!({
+        "sessionId": "sess-1",
+        "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call-1",
+            "title": "Task",
+            "kind": "think",
+            "status": "pending",
+            "rawInput": {},
+            "_meta": { "codeAgentCLI": { "toolName": "Agent" } },
+        },
+    }))
+    .unwrap()
+}
+
+/// One real-shape `_subagent/update` extension frame pointing at the s1 parent delegation.
+fn s1_subagent_frame(update: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "_subagent/update",
+        "params": {
+            "sessionId": "sess-1",
+            "taskId": "task-1",
+            "toolCallId": "call-1",
+            "agentType": "Explore",
+            "update": update,
+            "timestamp": 1795073462666_u64,
+        },
+    })
+}
+
+/// D6 evidence on the real clock: the captured s1 delegation keeps the parent `Task` pending for
+/// 62.66 s while child frames arrive at most 19.6 s apart; replayed uncompressed under the default
+/// `Timeout` policy, renewal must keep the turn alive until the provider answers.
+#[test]
+fn real_s1_intervals_never_cancel_the_parent_prompt_under_default_timeout() {
+    run_case_real_time(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("sess-1");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("sess-1"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+
+        let (updates, response_offset) = s1_real_replay();
+        let start = tokio::time::Instant::now();
+        for (offset, frame) in &updates {
+            tokio::time::sleep_until(start + *offset).await;
+            match frame["method"].as_str().expect("method") {
+                "session/update" => {
+                    let notification: SessionNotification =
+                        serde_json::from_value(frame["params"].clone()).expect("captured update");
+                    fixture
+                        .agent
+                        .send(AgentInput::Update(notification))
+                        .unwrap();
+                }
+                "_subagent/update" => {
+                    fixture
+                        .agent
+                        .send(AgentInput::RawFrame(frame.clone()))
+                        .unwrap();
+                }
+                other => panic!("unexpected replay method {other}"),
+            }
+        }
+        tokio::time::sleep_until(start + response_offset).await;
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "sess-1".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+
+        // The turn must complete without any retry marker, and the provider must never have
+        // been asked to cancel: under the pre-D6 rule the first window expired at 45 s.
+        let mut stop_reason = None;
+        while let Some(event) = stream.recv().await {
+            match event.expect("no timeout error") {
+                PromptSessionEvent::Retrying { .. } => {
+                    panic!("the real s1 timeline must not trigger an inactivity retry")
+                }
+                PromptSessionEvent::Completed {
+                    stop_reason: reason,
+                    ..
+                } => {
+                    stop_reason = Some(reason);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(stop_reason, Some(StopReason::EndTurn));
+        while let Ok(frame) = fixture.frames.try_recv() {
+            assert_ne!(frame["method"], json!("session/cancel"));
+        }
+        fixture.shutdown().await;
+    });
+}
+
+/// D6 renewal is not a pause: after the last child frame a full silent window still cancels and
+/// retries, so a stuck subagent cannot hold the parent prompt open indefinitely.
+#[test]
+fn a_silent_subagent_still_times_out_after_renewing_the_parent_window() {
+    run_case_real_time(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("sess-1");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("sess-1"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture
+            .agent
+            .send(AgentInput::Update(s1_parent_open()))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+
+        // One child frame 30 s into the first window rearms a full 45 s window.
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        fixture
+            .agent
+            .send(AgentInput::RawFrame(s1_subagent_frame(json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "still exploring" },
+            }))))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+
+        // The original 45 s deadline passes without a cancellation; the renewed one is still open.
+        tokio::time::sleep(Duration::from_secs(16)).await;
+        assert!(
+            fixture.frames.try_recv().is_err(),
+            "renewal must survive the original first-window deadline"
+        );
+
+        // No further frames arrive: the renewed window expires and the default policy retries.
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "sess-1".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        fixture.shutdown().await;
+    });
+}
+
+/// D6 stops at the delegation's provider completion: late child frames neither renew nor pause,
+/// while an open delegation's frames do renew (the first assertion fails without the rule).
+#[test]
+fn subagent_frames_stop_renewing_once_the_parent_delegation_completed() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("sess-1");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("sess-1"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture
+            .agent
+            .send(AgentInput::Update(s1_parent_open()))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        fixture
+            .agent
+            .send(AgentInput::RawFrame(s1_subagent_frame(json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "exploring" },
+            }))))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+        // Renewal moved the deadline past the original 45 s window.
+        tokio::time::advance(Duration::from_secs(40)).await;
+        assert!(fixture.frames.try_recv().is_err());
+
+        // The provider completes the delegation; the window rearms from that completion.
+        let completed: SessionNotification = serde_json::from_value(json!({
+            "sessionId": "sess-1",
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-1",
+                "status": "completed",
+                "content": [{ "type": "content", "content": { "type": "text", "text": "done" } }],
+            },
+        }))
+        .unwrap();
+        fixture.agent.send(AgentInput::Update(completed)).unwrap();
+        stream.recv().await.unwrap().unwrap();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        // A late child frame must not renew the closed delegation.
+        fixture
+            .agent
+            .send(AgentInput::RawFrame(s1_subagent_frame(json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "late" },
+            }))))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+        tokio::time::advance(Duration::from_secs(35)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "sess-1".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
         fixture.shutdown().await;
     });
 }

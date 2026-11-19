@@ -683,10 +683,12 @@ mod tests {
                         .expect("valid _subagent/update");
                     assert_eq!(translated.session_id.0.as_ref(), "sess-1");
                     liveness.observe(&translated.update);
+                    // D6: the parent `Task` stays pending, so every child frame rearms a full
+                    // parent window without pausing it.
                     assert_eq!(
                         liveness.deadline(),
-                        Some(deadline_after_parent_open),
-                        "subagent frames must not refresh parent deadline"
+                        Some(tokio::time::Instant::now() + WINDOWS[0]),
+                        "subagent frames must renew the open delegation's parent window"
                     );
                     records.extend(assembler.push_update(&translated.update));
                 }

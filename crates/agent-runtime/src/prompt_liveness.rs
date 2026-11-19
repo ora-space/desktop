@@ -164,6 +164,18 @@ impl PromptLiveness {
             _ => (&None, None),
         };
         let projection = Projection::of(meta.as_ref());
+        // D6: a CodeAgent subagent frame proves its open parent delegation moved, so it rearms
+        // the parent window without pausing it. Only a delegation still pending or in progress
+        // in this attempt qualifies; completed, failed, unknown or absent outer ids do not
+        // renew, and the delegate's own in-progress pause keeps priority over renewal.
+        if projection == Projection::Projected
+            && let Some(delegate) = ora_history::subagent_delegation_tool_call_id(meta.as_ref())
+        {
+            let delegate = ToolCallId::new(delegate);
+            if self.pending_tools.contains(&delegate) || self.running_tools.contains(&delegate) {
+                self.reset_at(now);
+            }
+        }
         if let Some(id) = tool {
             match projection {
                 Projection::Projected => {
@@ -591,5 +603,163 @@ mod tests {
             None
         );
         assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(60)));
+    }
+
+    const DEFAULT_WINDOW: [Duration; 1] = [Duration::from_secs(45)];
+
+    /// Builds the parent `Task` opening exactly as the captured s1 sequence sends it.
+    fn parent_delegate(status: ToolCallStatus) -> SessionUpdate {
+        SessionUpdate::ToolCall(ToolCall::new("call-1", "Task").status(status))
+    }
+
+    /// Builds one normalized `_subagent/update` chunk as the connection translator emits it.
+    fn subagent_chunk(delegate: Option<&str>) -> SessionUpdate {
+        let mut source = json!({"sessionId":"sess-1","taskId":"task-1"});
+        if let Some(delegate) = delegate {
+            source["toolCallId"] = json!(delegate);
+        }
+        serde_json::from_value(json!({
+            "sessionUpdate":"agent_message_chunk",
+            "content":{"type":"text","text":"child progress"},
+            "_meta":{"_subagent/update":source},
+        }))
+        .unwrap()
+    }
+
+    /// Builds one normalized subagent tool call whose inner id is already task-scoped.
+    fn subagent_tool_call(delegate: &str) -> SessionUpdate {
+        serde_json::from_value(json!({
+            "sessionUpdate":"tool_call",
+            "toolCallId":"subagent:6:task-1:call-2",
+            "title":"Bash",
+            "status":"pending",
+            "_meta":{"_subagent/update":{"sessionId":"sess-1","taskId":"task-1","toolCallId":delegate}},
+        }))
+        .unwrap()
+    }
+
+    /// D6: child frames rearms the parent window while the delegation is open, and stop once the
+    /// provider completed it; renewal never pauses and never counts the child as a running tool.
+    #[tokio::test(start_paused = true)]
+    async fn subagent_frames_renew_the_parent_window_only_while_the_delegation_is_open() {
+        let base = Instant::now();
+        let mut liveness = PromptLiveness::new(&DEFAULT_WINDOW);
+        liveness.observe(&parent_delegate(ToolCallStatus::Pending));
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(45)));
+
+        tokio::time::advance(Duration::from_secs(10)).await;
+        liveness.observe(&subagent_chunk(Some("call-1")));
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(55)));
+        // A child tool frame renews the same way and stays out of the parent's tool bookkeeping.
+        tokio::time::advance(Duration::from_secs(5)).await;
+        liveness.observe(&subagent_tool_call("call-1"));
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(60)));
+        assert_eq!(
+            liveness.snapshot(),
+            PromptLivenessSnapshot {
+                attempt: 1,
+                window: Duration::from_secs(45),
+                silent_elapsed: Duration::ZERO,
+                running_tools: 0,
+                pending_tools: 1,
+            }
+        );
+
+        // The provider completes the delegation; later child frames must not keep renewing.
+        tokio::time::advance(Duration::from_secs(5)).await;
+        liveness.observe(&SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "call-1",
+            ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
+        )));
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(65)));
+        tokio::time::advance(Duration::from_secs(10)).await;
+        liveness.observe(&subagent_chunk(Some("call-1")));
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(65)));
+    }
+
+    /// D6: missing or unknown outer ids, a failed delegation, and other providers' projections
+    /// never renew the parent window.
+    #[test]
+    fn subagent_frames_without_an_open_known_delegation_do_not_renew() {
+        let base = Instant::now();
+        let later = base + Duration::from_secs(10);
+        let unchanged = Some(base + Duration::from_secs(45));
+
+        // Missing outer id: the frame displays child work but names no delegation.
+        let mut liveness = PromptLiveness::new_at(&DEFAULT_WINDOW, base);
+        liveness.observe_at(&parent_delegate(ToolCallStatus::Pending), base);
+        liveness.observe_at(&subagent_chunk(None), later);
+        assert_eq!(liveness.deadline(), unchanged);
+
+        // Unknown outer id: no parent tool with that id was observed in this attempt.
+        let mut liveness = PromptLiveness::new_at(&DEFAULT_WINDOW, base);
+        liveness.observe_at(&parent_delegate(ToolCallStatus::Pending), base);
+        liveness.observe_at(&subagent_chunk(Some("call-unknown")), later);
+        assert_eq!(liveness.deadline(), unchanged);
+
+        // Failed delegation: the parent call already ended in this attempt.
+        let mut liveness = PromptLiveness::new_at(&DEFAULT_WINDOW, base);
+        liveness.observe_at(&parent_delegate(ToolCallStatus::Failed), base);
+        liveness.observe_at(&subagent_chunk(Some("call-1")), later);
+        assert_eq!(liveness.deadline(), unchanged);
+
+        // OpenCode projections carry no outer delegation id and keep the 20261020 exclusion.
+        let mut liveness = PromptLiveness::new_at(&DEFAULT_WINDOW, base);
+        liveness.observe_at(&parent_delegate(ToolCallStatus::Pending), base);
+        liveness.observe_at(
+            &SessionUpdate::AgentMessageChunk(
+                agent_client_protocol_schema::v1::ContentChunk::new(
+                    agent_client_protocol_schema::v1::ContentBlock::Text(
+                        agent_client_protocol_schema::v1::TextContent::new("background"),
+                    ),
+                )
+                .meta(child_meta(&valid_source())),
+            ),
+            later,
+        );
+        assert_eq!(liveness.deadline(), unchanged);
+    }
+
+    /// D6: renewal never lifts the delegate's own in-progress pause, and a retry drops the old
+    /// attempt's delegation observations until the re-sent turn observes the delegate again.
+    #[test]
+    fn subagent_renewal_never_pauses_and_a_retry_clears_the_delegation() {
+        let base = Instant::now();
+        let mut liveness = PromptLiveness::new_at(&WIDENING_WINDOWS, base);
+        liveness.observe_at(&parent_delegate(ToolCallStatus::InProgress), base);
+        assert_eq!(liveness.deadline(), None);
+        liveness.observe_at(
+            &subagent_chunk(Some("call-1")),
+            base + Duration::from_secs(10),
+        );
+        assert_eq!(liveness.deadline(), None);
+        liveness.observe_at(
+            &SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                "call-1",
+                ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
+            )),
+            base + Duration::from_secs(20),
+        );
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(65)));
+
+        // The retry starts a fresh attempt: the stale outer id no longer names an open delegate.
+        let expiry = base + Duration::from_secs(65);
+        liveness.next_attempt_at(expiry);
+        liveness.observe_at(
+            &subagent_chunk(Some("call-1")),
+            expiry + Duration::from_secs(10),
+        );
+        assert_eq!(liveness.deadline(), Some(expiry + Duration::from_secs(60)));
+        // The re-sent turn observes the delegate again; child frames renew the new window.
+        liveness.observe_at(
+            &parent_delegate(ToolCallStatus::Pending),
+            expiry + Duration::from_secs(20),
+        );
+        assert_eq!(liveness.deadline(), Some(expiry + Duration::from_secs(80)));
+        liveness.observe_at(
+            &subagent_chunk(Some("call-1")),
+            expiry + Duration::from_secs(30),
+        );
+        assert_eq!(liveness.deadline(), Some(expiry + Duration::from_secs(90)));
     }
 }
