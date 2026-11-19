@@ -4,6 +4,7 @@ use crate::RuntimeError;
 use agent_client_protocol_schema::v1::{SessionUpdate, StopReason};
 use ora_contracts::{LoadSessionEvent, ToolCallTiming};
 use ora_history::{AssembledRecord, read_session_history_up_to};
+use ora_logging::ora_warn;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
@@ -190,15 +191,29 @@ impl Drop for SessionFollowers {
     /// An attempt that ends without handing its followers to the retry must still close them.
     ///
     /// The explicit `finish` calls remain the normal path; this guard covers every early return so
-    /// a follower cannot silently observe EOF instead of a terminal boundary.
+    /// a follower cannot silently observe EOF instead of a terminal boundary. A non-empty set at
+    /// drop time means an explicit `finish` was missed, so warn instead of hiding that defect.
     fn drop(&mut self) {
+        if self.followers.is_empty() {
+            return;
+        }
+        ora_warn!(
+            follower_count = self.followers.len(),
+            "closing prompt followers without an explicit finish"
+        );
         for follower in std::mem::take(&mut self.followers).into_values() {
-            if follower
-                .events
-                .try_send(Ok(LoadSessionEvent::turn_ended(StopReason::Cancelled)))
-                .is_ok()
-            {
-                let _ = follower.events.try_send(Ok(LoadSessionEvent::Completed));
+            match follower.events.try_reserve_many(2) {
+                Ok(mut permits) => {
+                    if let Some(permit) = permits.next() {
+                        permit.send(Ok(LoadSessionEvent::turn_ended(StopReason::Cancelled)));
+                    }
+                    if let Some(permit) = permits.next() {
+                        permit.send(Ok(LoadSessionEvent::Completed));
+                    }
+                }
+                Err(_) => {
+                    let _ = follower.overflow.send(());
+                }
             }
         }
     }
