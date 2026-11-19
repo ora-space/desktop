@@ -2,6 +2,61 @@ use super::*;
 use crate::support::until;
 use pretty_assertions::assert_eq;
 
+/// A crash restarts the live plugin once. Ending the same session closes restart admission.
+#[test]
+fn live_plugin_crash_restarts_once_and_end_does_not_schedule_another() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let root = prepare(&fixture, &config, &server);
+        let mut child = launch(&fixture, &config);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut stream, _) = connect(&fixture).await;
+                send(
+                    &mut stream,
+                    ControllerToNodeMessage::StartAgentSession(start("hello")),
+                )
+                .await;
+                loop {
+                    if let NodeToControllerMessage::ThreadEvent(event) = receive(&mut stream).await
+                        && event
+                            .payload
+                            .record
+                            .get("type")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("turnEnded")
+                    {
+                        break;
+                    }
+                }
+                plugin(&root)
+                    .signal(ora_utils::process::ProcessSignal::Kill)
+                    .unwrap();
+                until(|| {
+                    fs::read_to_string(root.join("echo-agent.pids"))
+                        .unwrap()
+                        .lines()
+                        .count()
+                        == 2
+                });
+                send(&mut stream, end()).await;
+                while !matches!(
+                    receive(&mut stream).await,
+                    NodeToControllerMessage::AgentSessionEnded(_)
+                ) {}
+            });
+        child.terminate();
+        let log = fs::read_to_string(fixture.path().join("agent-service.log")).unwrap();
+        assert_eq!(log.matches("scheduling restart").count(), 1, "{log}");
+    });
+}
+
 /// SIGKILL leaves replayable events, and recovery adds exactly one interrupted terminal before commands.
 #[test]
 fn killed_session_replays_and_ends_before_accepting_commands() {
