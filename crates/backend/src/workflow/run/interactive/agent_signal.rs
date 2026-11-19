@@ -68,6 +68,26 @@ impl AgentSignalStore {
         Self::default()
     }
 
+    /// Owns the capability slot for one user turn. Every physical send revokes the old token
+    /// and its pending signal before publishing the new token in a host-only prompt block.
+    pub(crate) fn prompt_instruction(
+        self: &std::sync::Arc<Self>,
+        node: String,
+        turn: String,
+    ) -> ora_agent_runtime::AttemptInstruction {
+        let store = self.clone();
+        Box::new(move || {
+            store.revoke_attempt(&node, &turn);
+            let token = store.issue(&node, &turn);
+            use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+            ContentBlock::Text(TextContent::new(format!(
+                "<workflow_completion>\nWhen this step is complete, call the tool \
+                 ora_complete_workflow_step and pass this attemptToken unchanged: \
+                 {token}\n</workflow_completion>"
+            )))
+        })
+    }
+
     /// Issues one token for a prompt attempt. The token is the only capability the MCP tool needs.
     pub(crate) fn issue(&self, node_run_id: &str, attempt_id: &str) -> String {
         let token = Uuid::new_v4().to_string();

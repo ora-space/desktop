@@ -10,8 +10,8 @@ use super::prompt::{
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::error::BackendError;
+use agent_client_protocol_schema::v1::SessionConfigKind;
 use agent_client_protocol_schema::v1::StopReason;
-use agent_client_protocol_schema::v1::{ContentBlock, SessionConfigKind, TextContent};
 use first_turn_park::{FirstTurnPark, park_first_interactive_turn};
 use ora_agent_runtime::RuntimeError;
 use ora_application::{
@@ -503,7 +503,7 @@ async fn drive_agent_node(
             &config.skills,
             &workspace_root,
         )?;
-        let mut prompt = assemble_workflow_prompt(WorkflowPromptRequest {
+        let prompt = assemble_workflow_prompt(WorkflowPromptRequest {
             node: &rendered_node,
             graph: Some(graph),
             worktree_root: &workspace_root,
@@ -515,22 +515,12 @@ async fn drive_agent_node(
             locale: run_payload.locale,
             previous_failure: previous_failure.as_ref(),
         });
-        // Issue one completion token for this attempt. It travels in the prompt (not the recorded
-        // transcript) and is the only value the host MCP tool accepts for this turn.
-        let completion_attempt = if config.interactive
-            && config.completion_signal == ora_application::AgentCompletionSignal::Agent
-        {
-                let attempt_id = uuid::Uuid::new_v4().to_string();
-                let token = agent_signals.issue(&format!("{node_run_id}"), &attempt_id);
-                prompt.push(ContentBlock::Text(TextContent::new(format!(
-                    "<workflow_completion>\nWhen this step is complete, call the tool \
-                     ora_complete_workflow_step and pass this attemptToken unchanged: \
-                     {token}\n</workflow_completion>"
-                ))));
-                Some(attempt_id)
-            } else {
-                None
-            };
+        let completion_attempt = (config.interactive
+            && config.completion_signal == ora_application::AgentCompletionSignal::Agent)
+            .then(|| uuid::Uuid::new_v4().to_string());
+        let instruction = completion_attempt.as_ref().map(|turn| {
+            agent_signals.prompt_instruction(node_run_id.to_string(), turn.clone())
+        });
         attempt_to_revoke = completion_attempt.clone();
         if let Some(previous) = previous_failure.as_ref() {
             repository.record_node_injected_failure(
@@ -553,14 +543,14 @@ async fn drive_agent_node(
         let baseline = capture_agent_baseline(&workspace_root, config);
 
         let mut stream = agent_runtime
-            .prompt_session_with_inactivity_policy(PromptSessionRequest {
+            .prompt_session_with_attempt_instruction(PromptSessionRequest {
                 session_id: session_id.to_string(),
                 prompt,
                 record_prompt: None,
                 // The node's executor model was applied by the `startSession` above, which is
                 // still holding this session's provider; there is no attach left to carry one.
                 model: None,
-            }, config.prompt_inactivity)
+            }, config.prompt_inactivity, instruction)
             .await?;
 
         // Publish the binding only after the actor accepts the owning prompt. A workflow chat

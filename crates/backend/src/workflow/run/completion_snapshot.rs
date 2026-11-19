@@ -5,11 +5,14 @@
 //! that `completeWorkflowNode` later re-validates. All inputs come from the session's durable
 //! history so the park path and the completion path share one source.
 
-use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, StopReason};
+mod derived;
+mod retry_output;
+pub(crate) use derived::{
+    completion_final_text, derive_completion_snapshot, trailing_assistant_text,
+};
+
 use ora_agent_runtime::PromptEndCause;
 use ora_application::{AgentCompletion, AgentOutputContract};
-use ora_history::{HistoryIntegrity, HistoryRecord, SessionHistory};
-use ora_utils::hash::sha256_hex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -139,6 +142,9 @@ impl CompletionBlocker {
 
 /// Warning written when a declared `mustChange` cannot be judged because its baseline is missing.
 pub(crate) const FILE_CHECK_UNAVAILABLE: &str = "file_check_unavailable";
+
+/// A recovered ACP request ended without delivering any observable result.
+pub(crate) const RETRY_NO_RESULT: &str = "retry_without_result";
 
 /// Adds the baseline-missing warning to a park-derived snapshot.
 ///
@@ -287,6 +293,18 @@ pub(crate) fn completion_payload_with_meta(
 ) -> Value {
     let snapshot = snapshot.clone().with_agent_signal_gate(meta);
     let mut payload = completion_payload(&snapshot);
+    if let Some(user_seq) = snapshot.user_seq
+        && snapshot.park_kind == Some(ParkKind::Abnormal)
+        && (snapshot.stop_cause == Some(StopCause::PromptTimedOut)
+            || snapshot
+                .warnings
+                .iter()
+                .any(|warning| warning == RETRY_NO_RESULT))
+    {
+        // The payload merge retains this audit after a subsequent healthy human turn.
+        payload["promptFailures"][user_seq.to_string()] = json!({ "turnKey": snapshot.turn_key, "stopCause": snapshot.stop_cause,
+            "warnings": snapshot.warnings, "blockers": snapshot.blockers });
+    }
     payload["completionPolicy"] = serde_json::to_value(meta.policy).unwrap_or(Value::Null);
     payload["agentSignal"] = meta
         .agent_signal
@@ -324,6 +342,27 @@ impl CompletionSnapshot {
     /// gate is not stacked on top of it. Normal waiting for a signal or a confirmation is the
     /// user's participation and must park as `awaiting_user`, not as an abnormal stop.
     pub(crate) fn with_agent_signal_gate(mut self, meta: &CompletionMeta) -> Self {
+        if meta.policy == CompletionPolicy::Agent
+            && meta
+                .agent_signal
+                .as_ref()
+                .is_some_and(|signal| Some(signal.turn_key) == self.turn_key)
+        {
+            let count = self.blockers.len();
+            self.blockers
+                .retain(|blocker| blocker.params["reason"] != RETRY_NO_RESULT);
+            if count != self.blockers.len() {
+                self.warnings.retain(|warning| warning != RETRY_NO_RESULT);
+            }
+            if count != self.blockers.len()
+                && self.blockers.is_empty()
+                && self.turn_origin == Some(TurnOrigin::Workflow)
+            {
+                self.blockers.push(CompletionBlocker::new(
+                    CompletionBlockerKind::TurnUnconfirmed,
+                ));
+            }
+        }
         if meta.policy != CompletionPolicy::Agent || has_precise_stop_blocker(&self.blockers) {
             return self;
         }
@@ -433,7 +472,7 @@ pub(crate) fn forced_completion_audit(
     blockers: &[CompletionBlocker],
 ) -> Value {
     let without_turn = snapshot.turn_key.is_none();
-    json!({
+    let mut audit = json!({
         "completion_forced": {
             "by": "human",
             "blockers": blockers,
@@ -445,7 +484,15 @@ pub(crate) fn forced_completion_audit(
                 "turn_window"
             },
         }
-    })
+    });
+    if snapshot
+        .warnings
+        .iter()
+        .any(|warning| warning == RETRY_NO_RESULT)
+    {
+        audit["completion_forced"]["retry_reason"] = json!(RETRY_NO_RESULT);
+    }
+    audit
 }
 
 /// Returns the blocker the declared output contract adds for a settled turn's final text.
@@ -478,212 +525,10 @@ pub(crate) fn output_contract_blocker(
     }
 }
 
-/// Returns the last assistant text after the last user message, whether or not a turn settled.
-///
-/// This is the forced-completion text for a snapshot with no turn key: the contract forbids
-/// borrowing a previous turn's `EndTurn`, but the user still asked for the current draft to be
-/// taken as the output.
-pub(crate) fn trailing_assistant_text(history: &SessionHistory) -> Option<String> {
-    let user_seq = last_user_message_seq(history)?;
-    history
-        .lines
-        .iter()
-        .filter_map(|line| {
-            if line.seq <= user_seq {
-                return None;
-            }
-            let HistoryRecord::Update { update, .. } = &line.record else {
-                return None;
-            };
-            assistant_text(update.as_ref()).map(str::to_string)
-        })
-        .next_back()
-}
-
 /// Parses the completion snapshot stored on a node-run payload, if it is present and valid.
 pub(crate) fn parse_completion_snapshot(payload: Option<&str>) -> Option<CompletionSnapshot> {
     let payload: Value = serde_json::from_str(payload?).ok()?;
     serde_json::from_value(payload.get("completion")?.clone()).ok()
-}
-
-/// Returns the final assistant text of the last settled turn, using the same window as the
-/// snapshot derivation so the completion commit and its digest cannot disagree.
-pub(crate) fn completion_final_text(history: &SessionHistory) -> Option<String> {
-    let user_seq = last_user_message_seq(history)?;
-    let (ended_seq, _) = settled_turn(history, user_seq)?;
-    final_assistant_text(history, user_seq, ended_seq)
-}
-
-/// Derives the completion snapshot for the last settled turn in `history`.
-///
-/// The final text window is `(userSeq, endedSeq]` and takes the last assistant message by `seq`,
-/// including an empty one, matching the contract rather than the legacy "last non-empty" helper.
-/// Retries have no attempt boundary in the current history format, so an abandoned attempt's text
-/// can fall inside the window; that limitation is documented by the ADR and surfaced here rather
-/// than hidden by a different text picker.
-///
-/// `origin` marks the workflow's opening turn: when that turn is otherwise ready, the snapshot
-/// carries `turn_unconfirmed` instead of reporting the step ready, because the agent may have
-/// ended its first reply with a question the user still has to answer. `stop_cause` is the park
-/// site's knowledge of why the owning prompt ended; it only shapes the display classification and
-/// the forced-completion audit, never the blockers.
-pub(crate) fn derive_completion_snapshot(
-    history: &SessionHistory,
-    output_contract: Option<&AgentOutputContract>,
-    provisional: bool,
-    origin: TurnOrigin,
-    stop_cause: Option<StopCause>,
-) -> CompletionSnapshot {
-    let user_seq = last_user_message_seq(history);
-    let turn = user_seq.and_then(|user_seq| settled_turn(history, user_seq));
-    let mut warnings = Vec::new();
-    let mut blockers = Vec::new();
-
-    let (turn_key, stop_reason) = match (user_seq, turn) {
-        (Some(user_seq), Some((ended_seq, reason))) => (
-            Some(TurnKey {
-                user_seq,
-                ended_seq,
-            }),
-            Some(super::executor::stop_reason_label(reason)),
-        ),
-        _ => (None, None),
-    };
-
-    if let HistoryIntegrity::Damaged { unreadable_lines } = history.integrity {
-        warnings.push(format!(
-            "history_integrity_gap: {unreadable_lines} unreadable history line(s)"
-        ));
-        blockers.push(CompletionBlocker::new(CompletionBlockerKind::TurnUnknown));
-    } else if turn.is_none() {
-        blockers.push(CompletionBlocker::new(CompletionBlockerKind::TurnUnknown));
-    }
-
-    let final_text = match (user_seq, turn) {
-        (Some(user_seq), Some((ended_seq, _))) => {
-            final_assistant_text(history, user_seq, ended_seq)
-        }
-        _ => None,
-    };
-    let output_digest = turn.map(|_| {
-        format!(
-            "sha256:{}",
-            sha256_hex(final_text.as_deref().unwrap_or_default().as_bytes())
-        )
-    });
-
-    if let Some(stop_reason) = turn.map(|(_, reason)| reason) {
-        match stop_reason {
-            StopReason::EndTurn => {}
-            StopReason::MaxTokens | StopReason::MaxTurnRequests => {
-                blockers.push(CompletionBlocker::new(CompletionBlockerKind::TurnTruncated));
-            }
-            StopReason::Cancelled => {
-                blockers.push(CompletionBlocker::new(CompletionBlockerKind::TurnStopped));
-            }
-            StopReason::Refusal => {
-                blockers.push(CompletionBlocker::new(CompletionBlockerKind::TurnRefused));
-            }
-            _ => blockers.push(CompletionBlocker::new(CompletionBlockerKind::TurnUnknown)),
-        }
-    }
-
-    // A missing final message is an empty final text; the contract decides whether that blocks.
-    // Without a settled turn there is no output to judge at all: `turn_unknown` already blocks,
-    // and an `empty_output` warning would describe a turn the history never closed.
-    let final_text = final_text.unwrap_or_default();
-    if turn.is_some() {
-        if matches!(output_contract, None | Some(AgentOutputContract::None))
-            && final_text.is_empty()
-        {
-            warnings.push("empty_output".to_string());
-        }
-        if let Some(blocker) = output_contract_blocker(output_contract, Some(final_text.as_str())) {
-            blockers.push(blocker);
-        }
-    }
-
-    // The workflow's opening turn never makes the step ready by itself: its `EndTurn` only means
-    // the agent finished that reply, which may have been a question. The user must answer or
-    // explicitly adopt the output, so the node stays open. A more precise blocker already keeps
-    // the node open and names the actual reason, so only an otherwise-ready snapshot gets the
-    // confirmation marker.
-    if matches!(origin, TurnOrigin::Workflow) && !provisional && blockers.is_empty() {
-        blockers.push(CompletionBlocker::new(
-            CompletionBlockerKind::TurnUnconfirmed,
-        ));
-    }
-
-    CompletionSnapshot {
-        user_seq,
-        turn_key,
-        stop_reason,
-        turn_origin: Some(origin),
-        stop_cause,
-        park_kind: park_kind(&blockers, provisional, stop_cause),
-        blockers,
-        warnings,
-        output_digest,
-        provisional,
-    }
-}
-
-/// Returns the `seq` of the last user message, which opens the turn under evaluation.
-fn last_user_message_seq(history: &SessionHistory) -> Option<u32> {
-    history
-        .lines
-        .iter()
-        .filter(|line| {
-            matches!(
-                &line.record,
-                HistoryRecord::Update { update, .. }
-                    if matches!(update.as_ref(), SessionUpdate::UserMessageChunk(_))
-            )
-        })
-        .map(|line| line.seq)
-        .max()
-}
-
-/// Returns the last `TurnEnded` after `user_seq` with its position.
-fn settled_turn(history: &SessionHistory, user_seq: u32) -> Option<(u32, StopReason)> {
-    history
-        .lines
-        .iter()
-        .filter_map(|line| {
-            let HistoryRecord::TurnEnded { stop_reason } = &line.record else {
-                return None;
-            };
-            (line.seq > user_seq).then_some((line.seq, *stop_reason))
-        })
-        .max_by_key(|(seq, _)| *seq)
-}
-
-/// Returns the last assistant message inside `(user_seq, ended_seq]`, including an empty one.
-fn final_assistant_text(history: &SessionHistory, user_seq: u32, ended_seq: u32) -> Option<String> {
-    history
-        .lines
-        .iter()
-        .filter_map(|line| {
-            if line.seq <= user_seq || line.seq > ended_seq {
-                return None;
-            }
-            let HistoryRecord::Update { update, .. } = &line.record else {
-                return None;
-            };
-            assistant_text(update.as_ref()).map(str::to_string)
-        })
-        .next_back()
-}
-
-/// Extracts the text block of one settled assistant message.
-fn assistant_text(update: &SessionUpdate) -> Option<&str> {
-    let SessionUpdate::AgentMessageChunk(chunk) = update else {
-        return None;
-    };
-    let ContentBlock::Text(text) = &chunk.content else {
-        return None;
-    };
-    Some(&text.text)
 }
 
 #[cfg(test)]
@@ -784,6 +629,159 @@ mod tests {
             Some(format!("sha256:{}", sha256_hex(b"done")))
         );
         assert!(!snapshot.provisional);
+    }
+
+    /// A retry only gets credit for evidence after its own boundary, including tool-only output.
+    #[test]
+    fn a_retried_turn_adopts_only_current_results() {
+        use agent_client_protocol_schema::v1::{ToolCall, ToolCallId, ToolCallStatus};
+        for (status, recovered) in [
+            (ToolCallStatus::Pending, false),
+            (ToolCallStatus::Failed, false),
+            (ToolCallStatus::Completed, true),
+        ] {
+            let tool = ToolCall::new(ToolCallId::new("reused"), "deliver").status(status);
+            let history = history(
+                vec![
+                    user(1, "deliver"),
+                    assistant(2, "discarded"),
+                    HistoryLine::new("", 3, HistoryRecord::PromptRetried),
+                    HistoryLine::new(
+                        "",
+                        4,
+                        HistoryRecord::Update {
+                            update: Box::new(SessionUpdate::ToolCall(tool)),
+                            tool_timing: None,
+                        },
+                    ),
+                    ended(5, StopReason::EndTurn),
+                ],
+                HistoryIntegrity::Complete,
+            );
+            let snapshot =
+                derive_completion_snapshot(&history, None, false, TurnOrigin::Human, None);
+            assert_eq!(super::completion_final_text(&history), None);
+            assert_eq!(snapshot.blockers.is_empty(), recovered);
+            assert_eq!(snapshot.park_kind.is_none(), recovered);
+            let mut next = history;
+            next.lines.insert(4, assistant(5, "final"));
+            *next.lines.last_mut().unwrap() = ended(6, StopReason::EndTurn);
+            assert_eq!(
+                super::completion_final_text(&next).as_deref(),
+                Some("final")
+            );
+        }
+    }
+
+    /// A reused tool ID cannot prove recovery while the earlier call could still send updates.
+    #[test]
+    fn a_retried_turn_rejects_ambiguous_tool_results() {
+        use agent_client_protocol_schema::v1::{ToolCall, ToolCallStatus};
+
+        let tool = |seq, status| {
+            HistoryLine::new(
+                "",
+                seq,
+                HistoryRecord::Update {
+                    update: Box::new(SessionUpdate::ToolCall(
+                        ToolCall::new("shared", "deliver").status(status),
+                    )),
+                    tool_timing: None,
+                },
+            )
+        };
+        for (old_status, blocked) in [
+            (ToolCallStatus::Pending, true),
+            (ToolCallStatus::InProgress, true),
+            (ToolCallStatus::Completed, false),
+        ] {
+            let history = history(
+                vec![
+                    user(1, "deliver"),
+                    tool(2, old_status),
+                    HistoryLine::new("", 3, HistoryRecord::PromptRetried),
+                    tool(4, ToolCallStatus::Completed),
+                    ended(5, StopReason::EndTurn),
+                ],
+                HistoryIntegrity::Complete,
+            );
+            let snapshot =
+                derive_completion_snapshot(&history, None, false, TurnOrigin::Human, None);
+            assert_eq!(snapshot.empty_retry_blocker().is_some(), blocked);
+            assert_eq!(snapshot.blockers.is_empty(), !blocked);
+        }
+    }
+
+    #[test]
+    fn only_parent_text_in_the_final_attempt_can_satisfy_the_retry_guard() {
+        let mut child = ContentChunk::new(ContentBlock::Text(TextContent::new("child result")));
+        child.meta = Some(agent_client_protocol_schema::v1::Meta::from_iter([(
+            "opencode/child-session".to_owned(),
+            json!({"id":"child","parentID":"parent","depth":1}),
+        )]));
+        let history = history(
+            vec![
+                user(1, "work"),
+                HistoryLine::new("", 2, HistoryRecord::PromptRetried),
+                assistant(3, "  \n "),
+                HistoryLine::new(
+                    "",
+                    4,
+                    HistoryRecord::Update {
+                        update: Box::new(SessionUpdate::AgentMessageChunk(child)),
+                        tool_timing: None,
+                    },
+                ),
+                ended(5, StopReason::EndTurn),
+            ],
+            HistoryIntegrity::Complete,
+        );
+        assert_eq!(
+            super::completion_final_text(&history).as_deref(),
+            Some("  \n ")
+        );
+        let snapshot = derive_completion_snapshot(&history, None, false, TurnOrigin::Human, None);
+        assert!(snapshot.empty_retry_blocker().is_some());
+    }
+
+    #[test]
+    fn a_fresh_signal_on_an_empty_opening_retry_still_requires_first_turn_confirmation() {
+        let key = TurnKey {
+            user_seq: 1,
+            ended_seq: 3,
+        };
+        let h = history(
+            vec![
+                user(1, "start"),
+                HistoryLine::new("", 2, HistoryRecord::PromptRetried),
+                ended(3, StopReason::EndTurn),
+            ],
+            HistoryIntegrity::Complete,
+        );
+        let snapshot = derive_completion_snapshot(&h, None, false, TurnOrigin::Workflow, None)
+            .with_agent_signal_gate(&CompletionMeta {
+                policy: CompletionPolicy::Agent,
+                agent_signal: Some(AgentSignal {
+                    signal_id: "fresh".into(),
+                    requested_at: 1,
+                    turn_key: key,
+                }),
+                confirmation: None,
+                auto_accept: true,
+            });
+        assert_eq!(
+            snapshot.blockers,
+            vec![
+                CompletionBlocker::new(CompletionBlockerKind::TurnUnconfirmed),
+                CompletionBlocker::new(CompletionBlockerKind::AgentConfirmationPending),
+            ]
+        );
+        assert!(
+            !snapshot
+                .warnings
+                .iter()
+                .any(|warning| warning == super::RETRY_NO_RESULT)
+        );
     }
 
     /// The workflow's opening turn cannot make the step ready on its own: an `EndTurn` only

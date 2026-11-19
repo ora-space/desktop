@@ -41,6 +41,7 @@ fn map_record(record: HistoryRecord, recorded_at: Option<String>) -> Option<Load
         // These records govern persistence and provider handoff rather than the conversation view,
         // so replay keeps them on disk only.
         HistoryRecord::Meta(_)
+        | HistoryRecord::PromptRetried
         | HistoryRecord::AgentSwitched(_)
         | HistoryRecord::HandoffDelivered { .. } => None,
     }

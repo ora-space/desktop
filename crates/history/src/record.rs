@@ -59,6 +59,8 @@ pub enum HistoryRecord {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_timing: Option<ToolCallTiming>,
     },
+    /// Separates the cancelled send from its replacement within the same user turn.
+    PromptRetried,
     /// Closes one prompt turn with the provider's typed stop reason.
     ///
     /// Without this a replayed turn cannot be told apart from a completed one,
