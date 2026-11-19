@@ -12,7 +12,7 @@ use ora_history::{
 };
 use ora_logging::ora_warn;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// ACP extension method CodeAgent uses to stream subagent progress.
 pub(super) const SUBAGENT_UPDATE_METHOD: &str = "_subagent/update";
@@ -24,12 +24,27 @@ const MAX_CACHED_TASKS: usize = 4096;
 /// opening frames and omit them on subsequent updates. Retaining those reported attributes here
 /// prevents top-level `_meta` replacement in history and the chat store from erasing the known
 /// delegation link or card title.
-#[derive(Default)]
 pub(super) struct SubagentUpdateTranslator {
     known_tasks: HashMap<(String, String), (Option<String>, Option<String>)>,
+    task_order: VecDeque<(String, String)>,
+    max_cached_tasks: usize,
+}
+
+impl Default for SubagentUpdateTranslator {
+    fn default() -> Self {
+        Self::with_max_cached_tasks(MAX_CACHED_TASKS)
+    }
 }
 
 impl SubagentUpdateTranslator {
+    fn with_max_cached_tasks(max_cached_tasks: usize) -> Self {
+        Self {
+            known_tasks: HashMap::new(),
+            task_order: VecDeque::new(),
+            max_cached_tasks,
+        }
+    }
+
     /// Converts a recognized ACP extension notification into a routed `SessionNotification`.
     ///
     /// Unrecognized `_`-prefixed methods are ignored quietly because ACP reserves that namespace
@@ -79,20 +94,28 @@ impl SubagentUpdateTranslator {
         let mut update: SessionUpdate = serde_json::from_value(Value::Object(update_object))
             .map_err(|error| format!("invalid inner sessionUpdate: {error}"))?;
 
-        let key = (session_id.clone(), task_id.clone());
-        if !self.known_tasks.contains_key(&key) && self.known_tasks.len() >= MAX_CACHED_TASKS {
-            self.known_tasks.clear();
-        }
-        let cached = self.known_tasks.entry(key).or_default();
-        if let Some(ref tool_call_id) = parent_tool_call_id {
-            cached.0 = Some(tool_call_id.clone());
-        } else {
-            parent_tool_call_id.clone_from(&cached.0);
-        }
-        if let Some(ref kind) = agent_type {
-            cached.1 = Some(kind.clone());
-        } else {
-            agent_type.clone_from(&cached.1);
+        if self.max_cached_tasks > 0 {
+            let key = (session_id.clone(), task_id.clone());
+            if !self.known_tasks.contains_key(&key) {
+                while self.known_tasks.len() >= self.max_cached_tasks {
+                    let Some(oldest) = self.task_order.pop_front() else {
+                        break;
+                    };
+                    self.known_tasks.remove(&oldest);
+                }
+                self.task_order.push_back(key.clone());
+            }
+            let cached = self.known_tasks.entry(key).or_default();
+            if let Some(ref tool_call_id) = parent_tool_call_id {
+                cached.0 = Some(tool_call_id.clone());
+            } else {
+                parent_tool_call_id.clone_from(&cached.0);
+            }
+            if let Some(ref kind) = agent_type {
+                cached.1 = Some(kind.clone());
+            } else {
+                agent_type.clone_from(&cached.1);
+            }
         }
 
         // Per-frame `timestamp` is omitted so contiguous chunks retain identical `_meta` and merge.
@@ -509,5 +532,231 @@ mod tests {
         ] {
             assert_eq!(translator.translate(subagent_ext(invalid)), None);
         }
+    }
+
+    #[test]
+    fn evicts_oldest_cached_task_fifo_without_clearing_active_tasks() {
+        let mut translator = SubagentUpdateTranslator::with_max_cached_tasks(2);
+        let open = |task: &str, call: &str| {
+            subagent_ext(json!({
+                "sessionId": "ses-main",
+                "taskId": task,
+                "toolCallId": call,
+                "agentType": "Explore",
+                "update": { "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "hi" } },
+            }))
+        };
+        let followup = |task: &str| {
+            subagent_ext(json!({
+                "sessionId": "ses-main",
+                "taskId": task,
+                "update": { "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "more" } },
+            }))
+        };
+
+        assert!(translator.translate(open("task-1", "call-1")).is_some());
+        assert!(translator.translate(open("task-2", "call-2")).is_some());
+        // Inserting task-3 evicts task-1 (oldest), while task-2 stays intact.
+        assert!(translator.translate(open("task-3", "call-3")).is_some());
+
+        let t2 = translator.translate(followup("task-2")).expect("task-2");
+        let SessionUpdate::AgentMessageChunk(t2_chunk) = t2.update else {
+            panic!("message chunk");
+        };
+        assert_eq!(
+            t2_chunk
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get("_subagent/update")),
+            Some(&json!({
+                "sessionId": "ses-main",
+                "taskId": "task-2",
+                "toolCallId": "call-2",
+                "agentType": "Explore",
+            }))
+        );
+
+        let t1 = translator.translate(followup("task-1")).expect("task-1");
+        let SessionUpdate::AgentMessageChunk(t1_chunk) = t1.update else {
+            panic!("message chunk");
+        };
+        assert_eq!(
+            t1_chunk
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get("_subagent/update")),
+            Some(&json!({
+                "sessionId": "ses-main",
+                "taskId": "task-1",
+            }))
+        );
+    }
+
+    #[test]
+    fn real_codeagent_subagent_frame_sequence_preserves_provider_completion_without_turn_end_marker()
+     {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap()
+            .block_on(async {
+                const WINDOWS: [Duration; 1] = [Duration::from_secs(45)];
+                let mut translator = SubagentUpdateTranslator::default();
+                let mut assembler = HistoryAssembler::new(0);
+                let mut liveness = PromptLiveness::new(&WINDOWS);
+
+                // 1. Parent opens `Task` with status `pending` and `_meta.codeAgentCLI.toolName = "Agent"`.
+                let parent_open: SessionUpdate = serde_json::from_value(json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "call-1",
+                    "title": "Task",
+                    "kind": "think",
+                    "status": "pending",
+                    "rawInput": {},
+                    "_meta": { "codeAgentCLI": { "toolName": "Agent" } },
+                }))
+                .unwrap();
+                liveness.observe(&parent_open);
+                let mut records = assembler.push_update(&parent_open);
+                let deadline_after_parent_open = liveness.deadline().expect("pending keeps deadline");
+
+                // 2. Real `_subagent/update` sequence (`sessionId`, `taskId`, `toolCallId`, `agentType`, `timestamp`).
+                let subagent_frames = [
+                    json!({
+                        "sessionId": "sess-1",
+                        "taskId": "task-1",
+                        "toolCallId": "call-1",
+                        "agentType": "Explore",
+                        "update": {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": "call-2",
+                            "title": "List files",
+                            "kind": "execute",
+                            "status": "pending",
+                            "rawInput": { "command": "ls -la", "description": "List workspace files" },
+                            "_meta": { "codeAgentCLI": { "toolName": "Bash" } },
+                        },
+                        "timestamp": 1795073462666_u64,
+                    }),
+                    json!({
+                        "sessionId": "sess-1",
+                        "taskId": "task-1",
+                        "toolCallId": "call-1",
+                        "agentType": "Explore",
+                        "update": {
+                            "sessionUpdate": "tool_call_update",
+                            "toolCallId": "call-2",
+                            "status": "completed",
+                            "content": [{ "type": "content", "content": { "type": "text", "text": "alpha.txt\nbeta.txt" } }],
+                        },
+                        "timestamp": 1795073482287_u64,
+                    }),
+                    json!({
+                        "sessionId": "sess-1",
+                        "taskId": "task-1",
+                        "toolCallId": "call-1",
+                        "agentType": "Explore",
+                        "update": {
+                            "sessionUpdate": "agent_thought_chunk",
+                            "content": { "type": "text", "text": "Summarizing findings" },
+                        },
+                        "timestamp": 1795073485538_u64,
+                    }),
+                    json!({
+                        "sessionId": "sess-1",
+                        "taskId": "task-1",
+                        "toolCallId": "call-1",
+                        "agentType": "Explore",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": { "type": "text", "text": "Subagent workspace inventory" },
+                        },
+                        "timestamp": 1795073507360_u64,
+                    }),
+                ];
+
+                for frame in subagent_frames {
+                    tokio::time::advance(Duration::from_secs(5)).await;
+                    let translated = translator
+                        .translate(subagent_ext(frame))
+                        .expect("valid _subagent/update");
+                    assert_eq!(translated.session_id.0.as_ref(), "sess-1");
+                    liveness.observe(&translated.update);
+                    assert_eq!(
+                        liveness.deadline(),
+                        Some(deadline_after_parent_open),
+                        "subagent frames must not refresh parent deadline"
+                    );
+                    records.extend(assembler.push_update(&translated.update));
+                }
+
+                // 3. Parent Task completes explicitly with mutated `title`, `content`, and omitted `rawOutput`.
+                tokio::time::advance(Duration::from_secs(2)).await;
+                let parent_completed: SessionUpdate = serde_json::from_value(json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "call-1",
+                    "title": "Summarized workspace inventory",
+                    "status": "completed",
+                    "content": [{ "type": "content", "content": { "type": "text", "text": "Subagent workspace inventory" } }],
+                    "_meta": { "codeAgentCLI": { "toolName": "Agent" } },
+                }))
+                .unwrap();
+                liveness.observe(&parent_completed);
+                assert!(
+                    liveness.deadline().expect("rearmed") > deadline_after_parent_open,
+                    "parent completion must rearm parent deadline"
+                );
+                records.extend(assembler.push_update(&parent_completed));
+                records.extend(assembler.end_turn(StopReason::EndTurn));
+
+                let mut seen_parent = None;
+                let mut seen_child_tool = None;
+                for record in records {
+                    if let HistoryRecord::Update { update, .. } = record.record {
+                        match update.as_ref() {
+                            SessionUpdate::ToolCall(call) if call.tool_call_id.0.as_ref() == "call-1" => {
+                                seen_parent = Some(call.clone());
+                            }
+                            SessionUpdate::ToolCall(call)
+                                if call.tool_call_id.0.as_ref() == "subagent:6:task-1:call-2" =>
+                            {
+                                seen_child_tool = Some(call.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                let parent = seen_parent.expect("parent tool recorded");
+                assert_eq!(parent.status, ToolCallStatus::Completed);
+                assert_eq!(parent.title, "Summarized workspace inventory");
+                assert_eq!(parent.content.len(), 1);
+                assert_eq!(parent.raw_output, None);
+                assert!(
+                    parent
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.get(TURN_END_SETTLED_META_KEY))
+                        .is_none(),
+                    "provider-completed parent Task must not carry ora/turn-end-settled"
+                );
+
+                let child = seen_child_tool.expect("scoped child tool recorded");
+                assert_eq!(child.status, ToolCallStatus::Completed);
+                assert_eq!(child_source_id(child.meta.as_ref()), Some("task-1"));
+                assert_eq!(
+                    child
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.get("_subagent/update")),
+                    Some(&json!({
+                        "sessionId": "sess-1",
+                        "taskId": "task-1",
+                        "toolCallId": "call-1",
+                        "agentType": "Explore",
+                    }))
+                );
+            });
     }
 }
