@@ -230,32 +230,31 @@ function WorkflowNodeInspector({
             onClose={onClose}
           />
           <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto p-4">
-            {nodeType.configFields.includes("agent") &&
-              agentConfig !== undefined && (
-                <AgentConfigurationFields
-                  key={node.id}
-                  config={agentConfig}
-                  capabilities={capabilities}
-                  mcpCatalog={mcpCatalog}
-                  modelsLoading={agentModelsLoading}
-                  modelsError={agentModelsError}
-                  onRetryModels={onRetryAgentModels}
-                  agents={agents}
-                  modelsByCli={modelsByCli}
-                  cliStatus={cliStatus}
-                  variableCatalog={variableCatalog}
-                  catalogsLoading={agentCatalogsLoading}
-                  catalogsError={agentCatalogsError}
-                  onRetryCatalogs={onRetryAgentCatalogs}
-                  iterationMember={node.parentId !== undefined}
-                  onChange={(config) =>
-                    onUpdate({
-                      ...node,
-                      data: { ...node.data, agentConfig: config },
-                    })
-                  }
-                />
-              )}
+            {nodeType.configFields.includes("agent") && agentConfig != null && (
+              <AgentConfigurationFields
+                key={node.id}
+                config={agentConfig}
+                capabilities={capabilities}
+                mcpCatalog={mcpCatalog}
+                modelsLoading={agentModelsLoading}
+                modelsError={agentModelsError}
+                onRetryModels={onRetryAgentModels}
+                agents={agents}
+                modelsByCli={modelsByCli}
+                cliStatus={cliStatus}
+                variableCatalog={variableCatalog}
+                catalogsLoading={agentCatalogsLoading}
+                catalogsError={agentCatalogsError}
+                onRetryCatalogs={onRetryAgentCatalogs}
+                iterationMember={node.parentId !== undefined}
+                onChange={(config) =>
+                  onUpdate({
+                    ...node,
+                    data: { ...node.data, agentConfig: config },
+                  })
+                }
+              />
+            )}
             {node.data.kind === "output" && (
               <InspectorField
                 label={t("settings.workflow.field.outputBindings")}

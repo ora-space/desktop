@@ -184,6 +184,39 @@ describe("RunActInspector agent config", () => {
     await user.click(screen.getByRole("button", { name: /close/i }));
   });
 
+  it("keeps an act whose snapshot carries a null agentConfig inspectable", async () => {
+    await appI18n.changeLanguage("en-US");
+    // A snapshot is JSON, so it can carry an explicit null config that no domain type models.
+    const graph = JSON.stringify({
+      nodes: [
+        {
+          id: "agent-1",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: {
+            kind: "agent",
+            title: "Unbound agent",
+            description: "",
+            agentConfig: null,
+          },
+        },
+      ],
+      edges: [],
+    });
+    const { nodes } = parseWorkflowGraph(graph);
+    const { user } = renderInspector(
+      { status: "succeeded" },
+      { data: nodes[0]!.data },
+    );
+
+    // A null config declares no bindings, so the read-only agent section stays out; the act
+    // itself must still open instead of rendering an empty executor and role.
+    expect(await screen.findByText("Unbound agent")).toBeInTheDocument();
+    expect(screen.queryByText("Agent model")).not.toBeInTheDocument();
+    expect(screen.queryByText("Retry on failure")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /close/i }));
+  });
+
   it("shows completed Agent output alongside file changes instead of the empty outcome placeholder", async () => {
     await appI18n.changeLanguage("zh-CN");
     renderInspector({

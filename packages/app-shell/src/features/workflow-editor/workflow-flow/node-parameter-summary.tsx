@@ -93,7 +93,7 @@ function configuredParameters(
   locale: "zh-CN" | "en-US",
 ): NodeParameter[] {
   const parameters: NodeParameter[] = [];
-  if (data.kind === "agent" && data.agentConfig !== undefined) {
+  if (data.kind === "agent" && data.agentConfig != null) {
     const config = normalizeWorkflowAgentConfig(data.agentConfig);
     const enabledSkills = config.skills
       .filter((skill) => skill.enabled)
