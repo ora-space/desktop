@@ -501,24 +501,6 @@ fn run_case(test: impl Future<Output = ()>) {
     });
 }
 
-/// Runs the production loop on the real clock for D6's captured-interval evidence: the renewal
-/// rule is only meaningful when the s1 frame gaps are replayed uncompressed, so these cases
-/// deliberately take tens of real seconds and carry a bounded guard instead of virtual time.
-fn run_case_real_time(test: impl Future<Output = ()>) {
-    ora_logging::initialize_test_clock();
-    ora_logging::with_trace_logging(|| {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                tokio::time::timeout(Duration::from_secs(300), test)
-                    .await
-                    .expect("real-time policy test must settle within its guard");
-            });
-    });
-}
-
 /// Reads past ordinary setup/update traffic to assert a terminal production response.
 async fn completion(stream: &mut SessionEventStream<PromptSessionEvent>) -> StopReason {
     while let Some(event) = stream.recv().await {
@@ -1537,12 +1519,37 @@ fn s1_subagent_frame(update: Value) -> Value {
     })
 }
 
-/// D6 evidence on the real clock: the captured s1 delegation keeps the parent `Task` pending for
-/// 62.66 s while child frames arrive at most 19.6 s apart; replayed uncompressed under the default
-/// `Timeout` policy, renewal must keep the turn alive until the provider answers.
+/// Sends one captured `session/update` or `_subagent/update` frame through the peer/router and
+/// waits until the actor emits its `SessionUpdate` so liveness observes it at the caller's clock.
+async fn send_s1_frame(
+    agent: &mpsc::UnboundedSender<AgentInput>,
+    stream: &mut SessionEventStream<PromptSessionEvent>,
+    frame: &Value,
+) {
+    match frame["method"].as_str().expect("method") {
+        "session/update" => {
+            let notification: SessionNotification =
+                serde_json::from_value(frame["params"].clone()).expect("captured update");
+            agent.send(AgentInput::Update(notification)).unwrap();
+        }
+        "_subagent/update" => {
+            agent.send(AgentInput::RawFrame(frame.clone())).unwrap();
+        }
+        other => panic!("unexpected replay method {other}"),
+    }
+    match stream.recv().await.expect("stream open").expect("no error") {
+        PromptSessionEvent::SessionUpdate { .. } => {}
+        other => panic!("unexpected prompt event during s1 replay: {other:?}"),
+    }
+}
+
+/// D6 evidence on the paused clock with production `PROMPT_INACTIVITY_WINDOWS`: the captured s1
+/// delegation keeps the parent `Task` pending for 62.66 s while child frames arrive at uncompressed
+/// real intervals (16.265 / 19.617 / 3.252 / 0.861 / 14.472 / 6.490 / 1.702 s); renewal must keep
+/// the turn alive until the provider answers.
 #[test]
 fn real_s1_intervals_never_cancel_the_parent_prompt_under_default_timeout() {
-    run_case_real_time(async {
+    run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("sess-1");
         let mut stream = fixture
@@ -1556,23 +1563,7 @@ fn real_s1_intervals_never_cancel_the_parent_prompt_under_default_timeout() {
         let start = tokio::time::Instant::now();
         for (offset, frame) in &updates {
             tokio::time::sleep_until(start + *offset).await;
-            match frame["method"].as_str().expect("method") {
-                "session/update" => {
-                    let notification: SessionNotification =
-                        serde_json::from_value(frame["params"].clone()).expect("captured update");
-                    fixture
-                        .agent
-                        .send(AgentInput::Update(notification))
-                        .unwrap();
-                }
-                "_subagent/update" => {
-                    fixture
-                        .agent
-                        .send(AgentInput::RawFrame(frame.clone()))
-                        .unwrap();
-                }
-                other => panic!("unexpected replay method {other}"),
-            }
+            send_s1_frame(&fixture.agent, &mut stream, frame).await;
         }
         tokio::time::sleep_until(start + response_offset).await;
         fixture
@@ -1583,28 +1574,71 @@ fn real_s1_intervals_never_cancel_the_parent_prompt_under_default_timeout() {
             ))
             .unwrap();
 
-        // The turn must complete without any retry marker, and the provider must never have
-        // been asked to cancel: under the pre-D6 rule the first window expired at 45 s.
-        let mut stop_reason = None;
-        while let Some(event) = stream.recv().await {
-            match event.expect("no timeout error") {
-                PromptSessionEvent::Retrying { .. } => {
-                    panic!("the real s1 timeline must not trigger an inactivity retry")
-                }
-                PromptSessionEvent::Completed {
-                    stop_reason: reason,
-                    ..
-                } => {
-                    stop_reason = Some(reason);
-                    break;
-                }
-                _ => {}
-            }
-        }
-        assert_eq!(stop_reason, Some(StopReason::EndTurn));
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
         while let Ok(frame) = fixture.frames.try_recv() {
             assert_ne!(frame["method"], json!("session/cancel"));
         }
+        fixture.shutdown().await;
+    });
+}
+
+/// Negative control on the exact `s1_complete` timeline: when `_subagent/update` frames carry an
+/// unrecognized outer `toolCallId`, they do not renew the parent `Task` and the default 45 s
+/// production window cancels the turn 45 s after the parent `Task` entered `pending`.
+#[test]
+fn s1_timeline_with_unknown_outer_id_cancels_after_45s() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("sess-1");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("sess-1"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+
+        let (updates, _) = s1_real_replay();
+        let start = tokio::time::Instant::now();
+        let mut parent_pending_at = None;
+        let mut cancelled_at = None;
+        for (offset, mut frame) in updates {
+            if frame["method"] == "_subagent/update" {
+                frame["params"]["toolCallId"] = json!("unknown-call");
+            }
+            tokio::select! {
+                () = tokio::time::sleep_until(start + offset) => {}
+                outbound = fixture.frames.recv() => {
+                    let outbound = outbound.expect("cancel frame");
+                    assert_eq!(outbound["method"], json!("session/cancel"));
+                    cancelled_at = Some(tokio::time::Instant::now());
+                    break;
+                }
+            }
+            send_s1_frame(&fixture.agent, &mut stream, &frame).await;
+            if frame["method"] == "session/update"
+                && frame["params"]["update"]["sessionUpdate"] == "tool_call"
+                && frame["params"]["update"]["toolCallId"] == "call-1"
+            {
+                parent_pending_at = Some(tokio::time::Instant::now());
+            }
+        }
+        let elapsed = cancelled_at
+            .expect("unknown outer toolCallId must cancel on the first 45 s window")
+            .duration_since(parent_pending_at.expect("parent Task opening observed"));
+        assert_eq!(elapsed, Duration::from_secs(45));
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "sess-1".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
         fixture.shutdown().await;
     });
 }
@@ -1613,7 +1647,7 @@ fn real_s1_intervals_never_cancel_the_parent_prompt_under_default_timeout() {
 /// retries, so a stuck subagent cannot hold the parent prompt open indefinitely.
 #[test]
 fn a_silent_subagent_still_times_out_after_renewing_the_parent_window() {
-    run_case_real_time(async {
+    run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("sess-1");
         let mut stream = fixture
@@ -1629,7 +1663,7 @@ fn a_silent_subagent_still_times_out_after_renewing_the_parent_window() {
         stream.recv().await.unwrap().unwrap();
 
         // One child frame 30 s into the first window rearms a full 45 s window.
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::time::advance(Duration::from_secs(30)).await;
         fixture
             .agent
             .send(AgentInput::RawFrame(s1_subagent_frame(json!({
@@ -1640,13 +1674,14 @@ fn a_silent_subagent_still_times_out_after_renewing_the_parent_window() {
         stream.recv().await.unwrap().unwrap();
 
         // The original 45 s deadline passes without a cancellation; the renewed one is still open.
-        tokio::time::sleep(Duration::from_secs(16)).await;
+        tokio::time::advance(Duration::from_secs(16)).await;
         assert!(
             fixture.frames.try_recv().is_err(),
             "renewal must survive the original first-window deadline"
         );
 
-        // No further frames arrive: the renewed window expires and the default policy retries.
+        // No further frames arrive: the renewed window expires at t = 75 s and retries.
+        tokio::time::advance(Duration::from_secs(29)).await;
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         assert!(matches!(
