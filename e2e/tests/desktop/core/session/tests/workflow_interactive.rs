@@ -653,6 +653,14 @@ fn a_load_follower_follows_the_stale_load_retry_to_one_terminal_end() -> TestRes
                 session_id: session_id.clone(),
             })
             .await?;
+        // The first load attaches the follower; the second load releases the deferred failure.
+        let trigger = backend
+            .sessions()
+            .load(LoadSessionRequest {
+                session_id: session_id.clone(),
+            })
+            .await?;
+        drop(trigger);
         let mut live_stop_reasons = Vec::new();
         let mut live_updates = 0;
         let mut completed = 0;
@@ -728,6 +736,14 @@ fn a_load_follower_gets_a_terminal_boundary_when_the_retry_send_fails() -> TestR
                 session_id: session_id.clone(),
             })
             .await?;
+        // The first load attaches the follower; the second load releases the deferred failure.
+        let trigger = backend
+            .sessions()
+            .load(LoadSessionRequest {
+                session_id: session_id.clone(),
+            })
+            .await?;
+        drop(trigger);
 
         let mut live_stop_reasons = Vec::new();
         let mut completed = 0;
