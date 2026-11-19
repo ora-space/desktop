@@ -1646,3 +1646,78 @@ mod review_771_drain_repro {
         });
     }
 }
+
+/// A workflow completion token is a host-only capability: the agent must receive it with every
+/// turn, but the recorded user turn keeps only the user's words, so history, export, and the
+/// transcript replayed into a rebuilt channel never carry a token.
+#[test]
+fn attempt_instruction_is_sent_but_not_recorded() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("instructed");
+        let mut expected_records = Vec::new();
+        // The first turn carries the assembled workflow prompt; the second has the follow-up
+        // shape, a short user reply on the same session with a freshly issued token.
+        for (task, token) in [
+            ("workflow task instructions", "token-first-turn"),
+            ("follow-up from the user", "token-follow-up"),
+        ] {
+            let instruction_text = format!(
+                "<workflow_completion>\nattemptToken unchanged: {token}\n</workflow_completion>"
+            );
+            let sent_instruction = instruction_text.clone();
+            let instruction: crate::AttemptInstruction =
+                Box::new(move || ContentBlock::Text(TextContent::new(sent_instruction.clone())));
+            let mut request = prompt("instructed");
+            request.prompt = vec![ContentBlock::Text(TextContent::new(task))];
+            let mut stream = fixture
+                .manager
+                .prompt_session_with_attempt_instruction(
+                    request,
+                    PromptInactivityPolicy::Wait,
+                    Some(instruction),
+                )
+                .await
+                .unwrap();
+            let frame = fixture.next_frame().await;
+            assert_eq!(frame["method"], "session/prompt");
+            assert_eq!(
+                frame["params"]["prompt"],
+                json!([
+                    {"type": "text", "text": task},
+                    {"type": "text", "text": instruction_text},
+                ])
+            );
+            fixture
+                .agent
+                .send(AgentInput::Finish(
+                    "instructed".to_string(),
+                    StopReason::EndTurn,
+                ))
+                .unwrap();
+            assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+            expected_records.push(ora_history::HistoryRecord::Update {
+                update: Box::new(SessionUpdate::UserMessageChunk(
+                    agent_client_protocol_schema::v1::ContentChunk::new(ContentBlock::Text(
+                        TextContent::new(task),
+                    )),
+                )),
+                tool_timing: None,
+            });
+            expected_records.push(ora_history::HistoryRecord::TurnEnded {
+                stop_reason: StopReason::EndTurn,
+            });
+        }
+        let records = ora_history::read_session_history(
+            &fixture._directory.path().join("sessions"),
+            "instructed",
+        )
+        .unwrap()
+        .lines
+        .into_iter()
+        .map(|line| line.record)
+        .collect::<Vec<_>>();
+        assert_eq!(records, expected_records);
+        fixture.shutdown().await;
+    });
+}
