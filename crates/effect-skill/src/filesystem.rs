@@ -10,7 +10,7 @@ use ora_effect::{
 use ora_utils::directory::DirectoryTreeError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -83,7 +83,11 @@ fn observation_error(
         .join("/");
     let message = format!(
         "{explanation}: {}",
-        if display.is_empty() { "." } else { &display }
+        if display.is_empty() {
+            "workspace folder"
+        } else {
+            &display
+        }
     );
     ResourceAdapterError::new(error).with_observation_blocker(
         ora_effect::StableConditionCode::from_static(code),
@@ -210,10 +214,12 @@ impl SkillDirectoryResourceAdapter {
             return Ok(ResourceObservation {
                 resource: resource.identity.clone(),
                 items: BTreeMap::new(),
+                occupied_file_names: BTreeSet::new(),
                 fingerprint: Fingerprint::sha256(&[]),
             });
         };
         let mut items = BTreeMap::new();
+        let mut occupied_file_names = BTreeSet::new();
         for entry in fs::read_dir(&root).map_err(|source| SkillDirectoryError::Io {
             action: "read_resource_directory",
             path: root.clone(),
@@ -243,6 +249,9 @@ impl SkillDirectoryResourceAdapter {
                 ));
             }
             if metadata.is_file() {
+                if ora_effect::SkillName::parse(&entry_name).is_ok() {
+                    occupied_file_names.insert(entry_name);
+                }
                 continue;
             }
             if !metadata.is_dir() {
@@ -274,10 +283,12 @@ impl SkillDirectoryResourceAdapter {
                 },
             );
         }
-        let summary = serde_json::to_vec(&items).map_err(SkillDirectoryError::MarkerJson)?;
+        let summary = serde_json::to_vec(&(&items, &occupied_file_names))
+            .map_err(SkillDirectoryError::MarkerJson)?;
         Ok(ResourceObservation {
             resource: resource.identity.clone(),
             items,
+            occupied_file_names,
             fingerprint: Fingerprint::sha256(&summary),
         })
     }

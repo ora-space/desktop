@@ -22,7 +22,7 @@ fn quiesce_declaration(stable_key: &str) -> ConsumerDeclaration {
 }
 
 /// Writes one Skill package directory and returns its validated projection.
-fn skill_package(
+pub(super) fn skill_package(
     directory: &std::path::Path,
     package_name: &str,
     manifest: &[u8],

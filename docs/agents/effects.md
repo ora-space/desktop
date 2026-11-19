@@ -83,7 +83,7 @@ request stays pending for the next pass.
 
 Filesystem Resources are Workspace roots plus validated portable relative paths; the adapter
 refuses symbolic links and Windows junctions in the Resource path and skill trees. It ignores
-ordinary files at the skill root. Unsupported entries produce a blocking Resource condition
+ordinary files at the skill root unless they occupy a required skill name. Unsupported entries produce a blocking Resource condition
 with a Workspace-relative path. After fixing the entry, use Retry sync. Each managed directory contains
 `.ora-managed.json`. Mutation requires an exact match between the database ledger, the marker
 identity, the native identity and the last applied fingerprint. A missing managed directory may be

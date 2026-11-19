@@ -146,7 +146,26 @@ impl EffectPlanner for SkillPlanner {
             .map(|item| (item.native_identity.clone(), item))
             .collect::<BTreeMap<_, _>>();
         for item in items.values() {
-            if preserved_by_native.contains_key(&item.native_identity) {
+            if let ora_effect::VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) =
+                &input.resource.descriptor
+                && let Some(name) = input
+                    .observed
+                    .occupied_file_names
+                    .iter()
+                    .find(|name| name.eq_ignore_ascii_case(item.native_identity.as_str()))
+            {
+                conditions.push(blocking_condition(
+                    owner.clone(),
+                    ConditionSubject::DesiredEffect(item.desired_effect.clone()),
+                    "unsafe_skill_directory",
+                    input.generation,
+                    format!(
+                        "Move the regular file that occupies the skill directory: {}/{name}",
+                        descriptor.relative_path
+                    ),
+                    ConditionRetry::OnChange,
+                ));
+            } else if preserved_by_native.contains_key(&item.native_identity) {
                 conditions.push(blocking_condition(
                     owner.clone(),
                     ConditionSubject::DesiredEffect(item.desired_effect.clone()),

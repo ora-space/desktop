@@ -9,6 +9,7 @@ fn unsafe_skill_entries_block_the_bound_target_until_fixed() {
         ".agents/skills/review/vendor/linked",
         ".agents/skills/linked",
         ".agents",
+        "",
     ] {
         assert_blocked_then_repaired(path, Entry::DirectoryLink);
     }
@@ -77,8 +78,12 @@ fn assert_blocked_then_repaired(relative: &str, entry: Entry) {
     let workspace_root = directory.path().join("workspace");
     let link = relative
         .split('/')
+        .filter(|part| !part.is_empty())
         .fold(workspace_root.clone(), |path, part| path.join(part));
     fs::create_dir_all(link.parent().unwrap()).unwrap();
+    if relative.is_empty() {
+        fs::remove_dir(&workspace_root).unwrap();
+    }
     create_entry(entry, &directory.path().join("external"), &link);
     let repository = SqliteEffectRepository::with_clock(pool, crate::test_clock::TestClock::new(1));
     repository
@@ -129,9 +134,14 @@ fn assert_blocked_then_repaired(relative: &str, entry: Entry) {
     };
     assert_eq!(condition.code.as_str(), code);
     assert_eq!(condition.impact, ConditionImpact::Blocking);
+    let display = if relative.is_empty() {
+        "workspace folder"
+    } else {
+        relative
+    };
     assert_eq!(
         condition.safe_details.message,
-        format!("{message}: {relative}")
+        format!("{message}: {display}")
     );
     assert!(
         !condition
@@ -180,4 +190,118 @@ fn assert_blocked_then_repaired(relative: &str, entry: Entry) {
             .conditions
             .is_empty()
     );
+}
+
+/// A regular file owning a required native name must block before mutation is journaled.
+#[test]
+fn occupied_skill_name_blocks_without_a_journal_and_retries_after_cleanup() {
+    for name in ["review", "REVIEW"] {
+        let (directory, pool, workspace) = fixture();
+        let skill_root = directory
+            .path()
+            .join("workspace")
+            .join(".agents")
+            .join("skills");
+        fs::create_dir_all(&skill_root).unwrap();
+        let occupied = skill_root.join(name);
+        fs::write(&occupied, b"user file").unwrap();
+        fs::write(skill_root.join(".DS_Store"), b"desktop metadata").unwrap();
+        let projection = super::consumer_handover::skill_package(
+            directory.path(),
+            "package",
+            b"---\nname: review\ndescription: Reviews changes\n---\n",
+        );
+        let clock = crate::test_clock::TestClock::new(1);
+        SqliteSkillRepository::with_clock(pool.clone(), clock.clone())
+            .replace_plugin_skills(
+                &PluginId::new("official", "review").unwrap(),
+                "1.0.0",
+                &[projection],
+                /*updated_at*/ 1,
+            )
+            .unwrap();
+        let repository = SqliteEffectRepository::with_clock(pool.clone(), clock);
+        repository
+            .declare_consumer(&declaration("official/codex"), &[workspace])
+            .unwrap();
+        let worker = WorkerIdentity::parse("worker").unwrap();
+        let lease = LocalTimestamp::from_millis(100);
+        let (target, claim) = repository
+            .claim_due_targets(
+                &worker,
+                LocalTimestamp::from_millis(11),
+                lease,
+                /*limit*/ 1,
+            )
+            .unwrap()
+            .remove(0);
+        let reconciler = EffectReconciler::new(
+            &repository,
+            &SkillPlanner,
+            &ReadyConsumer,
+            &SkillDirectoryResourceAdapter,
+            &FixedTimestamp,
+        );
+
+        assert!(matches!(
+            reconciler.reconcile(&target, &claim, lease).unwrap(),
+            ReconcileOutcome::Blocked { .. }
+        ));
+        let status = repository.load_target_status(&target).unwrap().unwrap();
+        let [condition] = status.conditions.as_slice() else {
+            panic!("expected one resource blocker");
+        };
+        assert!(matches!(condition.owner, ConditionOwner::Resource(_)));
+        assert_eq!(condition.impact, ConditionImpact::Blocking);
+        assert_eq!(condition.code.as_str(), "unsafe_skill_directory");
+        assert_eq!(
+            condition.safe_details.message,
+            format!(
+                "Move the regular file that occupies the skill directory: .agents/skills/{name}"
+            )
+        );
+        let journal_count: i64 = pool
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM effect_reconcile_attempts",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(Into::into)
+            })
+            .unwrap();
+        assert_eq!(journal_count, 0);
+        assert!(repository.load_unfinished_operations().unwrap().is_empty());
+        assert_eq!(fs::read(&occupied).unwrap(), b"user file");
+
+        fs::remove_file(&occupied).unwrap();
+        assert!(
+            repository
+                .request_reconcile(&target, LocalTimestamp::from_millis(12))
+                .unwrap()
+        );
+        let (_, claim) = repository
+            .claim_due_targets(
+                &worker,
+                LocalTimestamp::from_millis(13),
+                lease,
+                /*limit*/ 1,
+            )
+            .unwrap()
+            .remove(0);
+        assert!(matches!(
+            reconciler.reconcile(&target, &claim, lease).unwrap(),
+            ReconcileOutcome::Mutated { .. }
+        ));
+        assert!(skill_root.join("review").join("SKILL.md").is_file());
+        assert!(
+            repository
+                .load_target_status(&target)
+                .unwrap()
+                .unwrap()
+                .conditions
+                .is_empty()
+        );
+    }
 }
