@@ -1,5 +1,6 @@
 use super::SkillDirectoryError;
 use ora_effect::{EffectResource, FilesystemOperationPlan, VersionedResourceDescriptor};
+use ora_utils::directory::{DirectoryTreeError, is_link_or_reparse_point};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -52,7 +53,13 @@ pub(super) fn resolve_declared_root(
             });
         }
     };
-    if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
+    if is_link_or_reparse_point(&root_metadata) {
+        return Err(DirectoryTreeError::LinkRejected {
+            path: workspace_root.to_path_buf(),
+        }
+        .into());
+    }
+    if !root_metadata.is_dir() {
         return Err(SkillDirectoryError::UnsafeResourcePath {
             path: workspace_root.to_path_buf(),
         });
@@ -74,7 +81,10 @@ pub(super) fn resolve_declared_root(
             continue;
         }
         match fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            Ok(metadata) if is_link_or_reparse_point(&metadata) => {
+                return Err(DirectoryTreeError::LinkRejected { path: current }.into());
+            }
+            Ok(metadata) if !metadata.is_dir() => {
                 return Err(SkillDirectoryError::UnsafeResourcePath { path: current });
             }
             Ok(_) => {}

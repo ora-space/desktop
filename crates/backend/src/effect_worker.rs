@@ -26,6 +26,7 @@ use uuid::Uuid;
 const SCAN_INTERVAL: Duration = Duration::from_secs(30);
 const TARGET_BATCH_SIZE: usize = 16;
 const LEASE_DURATION: Duration = Duration::from_secs(300);
+const BARRIER_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 
 /// Coalesced in-process hint; SQLite remains the durable source of owed work.
@@ -376,24 +377,49 @@ impl<Sessions> PluginConsumerAdapter<'_, Sessions> {
 }
 
 impl<Sessions: ReplacedAgentSessions> ConsumerAdapter for PluginConsumerAdapter<'_, Sessions> {
+    /// Acquires the local fence before Effect Core opens a durable mutation attempt.
+    fn reserve_coordination(&self, target: &EffectTarget) -> Result<(), ConsumerAdapterError> {
+        let plugin_id =
+            PluginId::parse(&target.consumer.stable_key).map_err(ConsumerAdapterError::new)?;
+        if self
+            .held_barriers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(&plugin_id)
+        {
+            return Ok(());
+        }
+        let session_barrier = self.sessions.session_barriers().for_plugin(&plugin_id);
+        let barrier = self
+            .runtime
+            .block_on(async {
+                session_barrier
+                    .acquire_with_timeout(BarrierReason::EffectMutation, BARRIER_ACQUIRE_TIMEOUT)
+                    .await
+            })
+            .map_err(|error| {
+                ora_warn!(
+                    operation = "effect_reconcile",
+                    target = target.identity.as_str(),
+                    plugin = %plugin_id,
+                    timeout_ms = BARRIER_ACQUIRE_TIMEOUT.as_millis() as u64,
+                    "Timed out acquiring Agent Session Barrier for Effect mutation"
+                );
+                ConsumerAdapterError::new(error)
+            })?;
+        self.held_barriers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(plugin_id, barrier);
+        Ok(())
+    }
+
     fn coordinate(
         &self,
         target: &EffectTarget,
         plan: &CoordinationPlan,
     ) -> Result<CoordinationReceipt, ConsumerAdapterError> {
         let contract = self.coordination_contract(target, plan)?;
-        let plugin_id =
-            PluginId::parse(&target.consumer.stable_key).map_err(ConsumerAdapterError::new)?;
-        let barrier = self.runtime.block_on(
-            self.sessions
-                .session_barriers()
-                .for_plugin(&plugin_id)
-                .acquire(BarrierReason::EffectMutation),
-        );
-        self.held_barriers
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(plugin_id, barrier);
         let proof = match self.running_runtime(target)? {
             Some(runtime) => {
                 let receipt = self
@@ -437,12 +463,6 @@ impl<Sessions: ReplacedAgentSessions> ConsumerAdapter for PluginConsumerAdapter<
             .remove(&target.identity);
         let plugin_id =
             PluginId::parse(&target.consumer.stable_key).map_err(ConsumerAdapterError::new)?;
-        drop(
-            self.held_barriers
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&plugin_id),
-        );
         if was_coordinated {
             self.sessions
                 .detach_sessions_for_replaced_plugin(&plugin_id);

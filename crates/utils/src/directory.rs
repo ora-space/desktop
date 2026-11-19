@@ -68,11 +68,41 @@ pub enum DirectoryTreeError {
     },
 }
 
+/// Identifies links and Windows reparse points without following them.
+pub fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+/// Refuses to traverse a tree whose root is itself a link.
+fn reject_link_root(root: &Path) -> Result<(), DirectoryTreeError> {
+    let metadata =
+        fs::symlink_metadata(root).map_err(|source| DirectoryTreeError::RootUnavailable {
+            path: root.to_path_buf(),
+            source,
+        })?;
+    if is_link_or_reparse_point(&metadata) {
+        return Err(DirectoryTreeError::LinkRejected {
+            path: root.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
 /// Computes a deterministic fingerprint while omitting caller-owned root metadata files.
 pub fn fingerprint_directory(
     root: &Path,
     ignored_root_files: &[&OsStr],
 ) -> Result<DirectoryFingerprint, DirectoryTreeError> {
+    reject_link_root(root)?;
     if !root.is_dir() {
         return Err(DirectoryTreeError::RootUnavailable {
             path: root.to_path_buf(),
@@ -137,6 +167,7 @@ pub fn copy_directory(
     destination: &Path,
     forbidden_root_files: &[&OsStr],
 ) -> Result<(), DirectoryTreeError> {
+    reject_link_root(source)?;
     if !source.is_dir() {
         return Err(DirectoryTreeError::RootUnavailable {
             path: source.to_path_buf(),
@@ -211,18 +242,21 @@ fn collect_entries(
         let relative_path = path
             .strip_prefix(root)
             .map_err(|_| DirectoryTreeError::NonPortablePath { path: path.clone() })?;
-        if relative_path.components().count() == 1
-            && ignored_root_files.contains(&child.file_name())
-        {
-            continue;
-        }
         let relative = portable_relative(relative_path, &path)?;
         let metadata = fs::symlink_metadata(&path).map_err(|source| DirectoryTreeError::Io {
             path: path.clone(),
             source,
         })?;
-        if metadata.file_type().is_symlink() {
+        if is_link_or_reparse_point(&metadata) {
             return Err(DirectoryTreeError::LinkRejected { path });
+        }
+        if relative_path.components().count() == 1
+            && ignored_root_files.contains(&child.file_name())
+        {
+            if !metadata.is_file() {
+                return Err(DirectoryTreeError::SpecialEntryRejected { path });
+            }
+            continue;
         }
         if metadata.is_dir() {
             entries.push(TreeEntry {
@@ -275,7 +309,7 @@ fn copy_entries(
                 path: source_path.clone(),
                 source,
             })?;
-        if metadata.file_type().is_symlink() {
+        if is_link_or_reparse_point(&metadata) {
             return Err(DirectoryTreeError::LinkRejected { path: source_path });
         }
         let destination_path = destination.join(relative);

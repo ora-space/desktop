@@ -170,9 +170,8 @@ fn state_matches_path(
             });
         }
     };
-    // The fingerprint helper checks tree entries, but its root may itself be a link.
-    // Resource proof must reject that redirection before reading fingerprints or markers.
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+    // Resource proof requires a directory entry that can be fingerprinted in place.
+    if ora_utils::directory::is_link_or_reparse_point(&metadata) || !metadata.is_dir() {
         return Err(SkillDirectoryError::UnsupportedResourceEntry {
             path: path.to_path_buf(),
         });

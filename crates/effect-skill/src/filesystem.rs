@@ -7,13 +7,13 @@ use ora_effect::{
     ResourceObservation, VerificationReceipt, VersionedAdapterPlan, VersionedMaterializationInput,
     VersionedResourceDescriptor, VersionedResourceLocator,
 };
-use ora_utils::directory::DirectoryTreeError;
+use ora_utils::directory::{DirectoryTreeError, is_link_or_reparse_point};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 mod diagnostics;
@@ -30,6 +30,43 @@ use path::{
     RootAccess, ensure_operation_paths_are_scoped, resolve_declared_root, resolve_resource_root,
     resource_root, verify_operation_root,
 };
+
+impl From<SkillDirectoryError> for ResourceAdapterError {
+    fn from(error: SkillDirectoryError) -> Self {
+        Self::new(error)
+    }
+}
+
+/// Converts deterministic tree errors to diagnostics scoped to the skill resource.
+fn observation_error(error: SkillDirectoryError, root: &Path) -> ResourceAdapterError {
+    let (code, explanation, path) = match &error {
+        SkillDirectoryError::DirectoryTree(DirectoryTreeError::LinkRejected { path }) => (
+            "skill_directory_link",
+            "Symbolic links and Windows junctions are not supported",
+            path,
+        ),
+        SkillDirectoryError::DirectoryTree(
+            DirectoryTreeError::SpecialEntryRejected { path }
+            | DirectoryTreeError::NonPortablePath { path },
+        ) => (
+            "unsafe_skill_directory",
+            "Unsupported entry in the skill directory",
+            path,
+        ),
+        _ => return ResourceAdapterError::new(error),
+    };
+    let message = match path.strip_prefix(root) {
+        Ok(relative) => format!("{explanation}: {relative:?}"),
+        Err(_) => explanation.to_string(),
+    };
+    ResourceAdapterError::new(error).with_observation_blocker(
+        ora_effect::StableConditionCode::from_static(code),
+        ora_effect::SafeConditionDetails {
+            message,
+            parameters: BTreeMap::new(),
+        },
+    )
+}
 
 pub const MARKER_FILE_NAME: &str = ".ora-managed.json";
 pub(super) const OPERATIONS_DIR_NAME: &str = ".ora-effect-operations";
@@ -136,8 +173,33 @@ impl SkillDirectoryResourceAdapter {
     fn observe_resource(
         self,
         resource: &EffectResource,
-    ) -> Result<ResourceObservation, SkillDirectoryError> {
-        let root = resolve_resource_root(resource, RootAccess::Observe)?;
+    ) -> Result<ResourceObservation, ResourceAdapterError> {
+        let root = resolve_resource_root(resource, RootAccess::Observe).map_err(|error| {
+            let (code, explanation) = match &error {
+                SkillDirectoryError::DirectoryTree(DirectoryTreeError::LinkRejected { .. }) => (
+                    "skill_directory_link",
+                    "The skill directory or an ancestor is a symbolic link or Windows junction",
+                ),
+                SkillDirectoryError::UnsafeResourcePath { .. } => (
+                    "unsafe_skill_directory",
+                    "The skill directory or an ancestor is unsafe",
+                ),
+                _ => return ResourceAdapterError::new(error),
+            };
+            let name = match &resource.descriptor {
+                VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) => {
+                    format!("{:?}", descriptor.relative_path.to_path_buf())
+                }
+                _ => "skill directory".to_string(),
+            };
+            ResourceAdapterError::new(error).with_observation_blocker(
+                ora_effect::StableConditionCode::from_static(code),
+                ora_effect::SafeConditionDetails {
+                    message: format!("{explanation}: {name}"),
+                    parameters: BTreeMap::new(),
+                },
+            )
+        })?;
         let Some(root) = root else {
             return Ok(ResourceObservation {
                 resource: resource.identity.clone(),
@@ -169,10 +231,20 @@ impl SkillDirectoryResourceAdapter {
                     path: path.clone(),
                     source,
                 })?;
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(SkillDirectoryError::UnsupportedResourceEntry { path });
+            if is_link_or_reparse_point(&metadata) {
+                return Err(observation_error(
+                    DirectoryTreeError::LinkRejected { path }.into(),
+                    &root,
+                ));
             }
-            let fingerprint = fingerprint(&path)?;
+            if !metadata.is_dir() {
+                return Err(observation_error(
+                    DirectoryTreeError::SpecialEntryRejected { path }.into(),
+                    &root,
+                ));
+            }
+            let fingerprint =
+                fingerprint(&path).map_err(|error| observation_error(error, &root))?;
             let ownership_evidence = read_marker(&path)
                 .filter(|marker| {
                     marker.schema_version == MARKER_SCHEMA_VERSION
@@ -401,9 +473,7 @@ impl ResourceAdapter for SkillDirectoryResourceAdapter {
         &self,
         resource: &EffectResource,
     ) -> Result<ResourceObservation, ResourceAdapterError> {
-        (*self)
-            .observe_resource(resource)
-            .map_err(ResourceAdapterError::new)
+        (*self).observe_resource(resource)
     }
 
     fn apply(&self, operation: &EffectOperation) -> Result<ApplyReceipt, ResourceAdapterError> {

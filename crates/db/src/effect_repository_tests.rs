@@ -2,6 +2,8 @@ mod consumer_handover;
 mod declaration;
 mod recovery;
 mod scope_initialization;
+#[cfg(any(unix, windows))]
+mod skill_directory_blocker;
 mod skill_republish;
 mod stale_status;
 mod time;
