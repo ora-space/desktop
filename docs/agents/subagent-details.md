@@ -14,7 +14,8 @@ After a parent completion, failure or cancellation, the card shows **Delegation 
 either (a) the latest OpenCode delegation call in the same parent turn and source stream names this
 child in `rawOutput.metadata.sessionID`, reports ACP `completed`, and carries the provider's `status`
 of `completed`, or (b) `_subagent/update` explicitly linked the group to a parent `toolCallId` whose
-latest call in the parent stream completed with provider output rather than turn-end settlement. Every other case shows **Further state unknown (projection stopped)**: an unfinished,
+latest call in the parent stream completed with provider output (`content` or `rawOutput`) rather than
+turn-end settlement, and without a non-`completed` `rawOutput.status` or `rawOutput.metadata.status`. Every other case shows **Further state unknown (projection stopped)**: an unfinished,
 failed, cancelled or background `status=running` delegation, or no associable session id. The latest
 call is chosen by persisted position, so a later turn continuing the same child session never revises
 an earlier turn. Both labels describe a returned foreground result or missing subsequent observations,
