@@ -30,12 +30,25 @@ const ACP_JOURNAL: &str = "acp_calls.txt";
 /// environment of its own, and a test must not mutate its own.
 const LOAD_REFUSAL_MARKER: &str = "refuse_session_load";
 
-mod retry_failures;
+/// Prompt marker `[fail-times:N]`: the first N prompts carrying it answer with a JSON-RPC error.
+///
+/// Stands in for an agent whose session breaks a set number of times, so workflow tests can
+/// drive automatic retries through the real session driver.
+const FAIL_TIMES_MARKER: &str = "[fail-times:";
 
-use retry_failures::{
-    CRASH_ON_RETRY_MARKER, FAIL_AFTER_LOAD_MARKER, first_prompt_failed, mark_first_prompt_waiting,
-    planned_prompt_failure, prompt_delay, record_first_failure,
-};
+/// Prompt marker `[fail-delay-ms:N]`: hold the prompt this long before the planned failure.
+const FAIL_DELAY_MARKER: &str = "[fail-delay-ms:";
+
+/// Prompt marker that defers the first failure until a load follower has attached.
+const FAIL_AFTER_LOAD_MARKER: &str = "[fail-after-load]";
+const FIRST_PROMPT_WAITING: &str = "first_prompt_waiting_for_load";
+
+/// Prompt marker that makes the retry exit after the first prompt already failed.
+const CRASH_ON_RETRY_MARKER: &str = "[crash-on-retry]";
+
+/// Journal of prompts failed on purpose, one marker per line, so the count survives new
+/// sessions and a restarted plugin process alike.
+const PROMPT_FAILURE_JOURNAL: &str = "prompt_failures.txt";
 
 /// Journal of every rendered prompt served, appended as one JSON line per call so scenario
 /// tests can assert prompt-level content (injected skill blocks, workspace boundaries) while
@@ -142,8 +155,6 @@ pub(super) struct FakeAcpAgent {
     pending_prompts: BTreeMap<String, Value>,
     /// Sessions whose first prompt waits for a load follower before answering with its failure.
     deferred_prompts: BTreeSet<String>,
-    /// Sessions that already served the follower-attaching load and await the trigger load.
-    deferred_served: BTreeSet<String>,
 }
 
 impl FakeAcpAgent {
@@ -176,7 +187,7 @@ impl FakeAcpAgent {
                             .is_some_and(|session| !session.empty_retry_pending);
                     let defer = prompt.contains(FAIL_AFTER_LOAD_MARKER) && !first_prompt_failed();
                     if defer {
-                        mark_first_prompt_waiting();
+                        let _ = std::fs::write(FIRST_PROMPT_WAITING, b"waiting");
                         self.deferred_prompts.insert(session_id.clone());
                     }
                     if defer || first_empty_retry || prompt.contains("[hold-for-cancel]") {
@@ -192,28 +203,18 @@ impl FakeAcpAgent {
             .then(|| params.get("sessionId").and_then(Value::as_str))
             .flatten()
             .filter(|session| self.deferred_prompts.contains(*session))
-            .map(|session| {
-                let trigger = self.deferred_served.contains(session);
-                if !trigger {
-                    self.deferred_served.insert(session.to_string());
-                }
-                (session.to_string(), trigger)
-            });
+            .map(str::to_string);
 
         match self.handle_request(method, params) {
             Ok(mut call) => {
-                if let Some((session_id, trigger)) = deferred_load {
+                if let Some(session_id) = deferred_load {
+                    self.deferred_prompts.remove(&session_id);
+                    let prompt_id = self.pending_prompts.remove(&session_id);
                     call.notifications.push(json!({
                         "jsonrpc": JSON_RPC_VERSION,
                         "id": id,
                         "result": call.result,
                     }));
-                    if !trigger {
-                        return call.notifications;
-                    }
-                    self.deferred_prompts.remove(&session_id);
-                    self.deferred_served.remove(&session_id);
-                    let prompt_id = self.pending_prompts.remove(&session_id);
                     if let Some(prompt_id) = prompt_id {
                         call.notifications.push(json!({
                             "jsonrpc": JSON_RPC_VERSION,
@@ -233,7 +234,13 @@ impl FakeAcpAgent {
                         call.notifications.clear();
                     }
                     if self.deferred_prompts.contains(&session_id) {
-                        record_first_failure();
+                        if let Ok(mut journal) = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(PROMPT_FAILURE_JOURNAL)
+                        {
+                            let _ = writeln!(journal, "[fail-times:1]");
+                        }
                     }
                     self.pending_prompts.insert(session_id, id);
                     return call.notifications;
@@ -572,6 +579,52 @@ fn record_acp_call(method: &str, session_id: &str) {
     {
         let _ = writeln!(file, "{method} {session_id}");
     }
+}
+
+/// Whether the first attempt with the stale-load marker has already failed.
+fn first_prompt_failed() -> bool {
+    std::fs::read_to_string(PROMPT_FAILURE_JOURNAL)
+        .is_ok_and(|journal| journal.contains("[fail-times:1]"))
+}
+
+/// Reads `[fail-delay-ms:N]` so a test can attach a load follower during the first attempt.
+fn prompt_delay(prompt: &str) -> Option<u64> {
+    let start = prompt.find(FAIL_DELAY_MARKER)?;
+    let length = prompt[start..].find(']')? + 1;
+    prompt[start + FAIL_DELAY_MARKER.len()..start + length - 1]
+        .parse()
+        .ok()
+}
+
+/// Fails this prompt when it carries `[fail-times:N]` and fewer than N prompts with the same
+/// marker have failed so far.
+fn planned_prompt_failure(prompt: &str) -> Option<AcpError> {
+    let start = prompt.find(FAIL_TIMES_MARKER)?;
+    let length = prompt[start..].find(']')? + 1;
+    let marker = &prompt[start..start + length];
+    let times: usize = marker[FAIL_TIMES_MARKER.len()..length - 1].parse().ok()?;
+    let failed = std::fs::read_to_string(PROMPT_FAILURE_JOURNAL)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| *line == marker)
+        .count();
+    if failed >= times {
+        return None;
+    }
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(PROMPT_FAILURE_JOURNAL)
+    {
+        let _ = writeln!(file, "{marker}");
+    }
+    Some(AcpError {
+        code: INTERNAL_ERROR_CODE,
+        message: format!(
+            "fake agent failed prompt {} of {times} on purpose",
+            failed + 1
+        ),
+    })
 }
 
 /// Joins the text blocks of one ACP prompt for mode detection and deterministic replies.
