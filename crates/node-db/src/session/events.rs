@@ -53,7 +53,7 @@ impl<G: WriteGuard> SessionJournal<G> {
             .checked_add(1)
             .filter(|s| *s <= i64::MAX as u64)
             .ok_or(Error::InvalidTransition)?;
-        let sequence = Sequence::new(sequence);
+        let mut sequence = Sequence::new(sequence);
         let event = match record {
             Record::TurnFailed(payload) => {
                 if current.state != ExecutionState::Running {
@@ -92,6 +92,9 @@ impl<G: WriteGuard> SessionJournal<G> {
                     tx.execute("UPDATE session_commands SET state='failed' WHERE execution=?1 AND command_id=?2",params![execution.as_str(),command.as_str()])?;
                 } else if payload.turn_id != current.command.payload.spec.initial_turn.turn_id {
                     return Err(Error::IdentityConflict);
+                } else if super::turn_cancel::discarded_turn(&tx, execution, &payload.turn_id)? {
+                    // A cancel that committed first dropped the initial turn; it has no failure.
+                    return Err(Error::InvalidTransition);
                 }
                 tx.execute(
                     "INSERT INTO session_turn_failures VALUES(?1,?2,?3,?4)",
@@ -149,6 +152,14 @@ impl<G: WriteGuard> SessionJournal<G> {
                 if ended.node.node_id != node {
                     return Err(Error::NodeMismatch);
                 }
+                // Every accepted cancel is settled before any terminal (invariant 2), including
+                // ends that never went through a deferred decision, such as restart settlement.
+                let last = super::settle_pending_as_ending(&tx, &guard, &current)?;
+                sequence = last
+                    .checked_add(1)
+                    .filter(|s| *s <= i64::MAX as u64)
+                    .map(Sequence::new)
+                    .ok_or(Error::InvalidTransition)?;
                 guard.before_write(WritePoint::Complete)?;
                 let payload = AgentSessionResult::AgentSessionEnded(ended);
                 tx.execute(

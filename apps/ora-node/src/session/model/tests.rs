@@ -94,6 +94,15 @@ impl SessionLedger for Ledger {
             "model fixture has no lifecycle turns",
         ))
     }
+    fn settle_turn_cancel(
+        &self,
+        _execution: &ExecutionId,
+        _command_id: &CommandId,
+        _outcome: ora_node_protocol::TurnCancelOutcome,
+        _target: Option<&CommandId>,
+    ) -> Result<ora_node_protocol::TurnCancelOutcome, Self::Error> {
+        Err(std::io::Error::other("model fixture has no turn cancels"))
+    }
     fn record_session_stop(
         &self,
         identity: &ora_node_db::SessionStopIdentity,
@@ -291,6 +300,7 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
             agent_ready_timeout: Duration::from_secs(/*secs*/ 1),
             model_proxy: Some(gateway.config.clone()),
             workload: crate::SessionWorkload::Shared,
+            turn_cancel: Default::default(),
         },
         node.clone(),
         ledger.clone(),
@@ -304,6 +314,8 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
         AgentSessionSpec {
             host_mcp_servers: Vec::new(),
             mcp_lifecycle: false,
+            keep_session_on_cancel: false,
+            keep_session_on_failure: false,
             mcp: Vec::new(),
             agent_configuration: None,
             node_id: node.node_id.clone(),
@@ -477,6 +489,7 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                         agent_ready_timeout: Duration::from_secs(/*secs*/ 1),
                         model_proxy: None,
                         workload: crate::SessionWorkload::Shared,
+                        turn_cancel: Default::default(),
                     },
                     node.clone(),
                     ledger.clone(),
@@ -490,6 +503,8 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                     AgentSessionSpec {
                         host_mcp_servers: Vec::new(),
                         mcp_lifecycle: false,
+                        keep_session_on_cancel: false,
+                        keep_session_on_failure: false,
                         mcp: Vec::new(),
                         workspace_directory: Vec::new(),
                         agent_configuration: None,

@@ -5,12 +5,14 @@ mod events;
 mod journal;
 mod model;
 mod restore;
+mod turn_cancel;
 pub use admission::{MAX_SESSIONS_PER_CHECKOUT, RefusedSession, SessionRefusal};
 pub use model::{
     CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,
     SessionExecution,
 };
 pub use restore::{RestoreAttempt, RestorePhase};
+pub(crate) use turn_cancel::{end_decided, settle_pending_as_ending};
 
 use crate::*;
 use ora_node_protocol::*;
@@ -213,6 +215,14 @@ impl<G: WriteGuard> NodeDatabase<G> {
         self.connection.prepare("SELECT input,state,result,last_sequence FROM node_executions WHERE kind='agent_session' AND state<>'completed' ORDER BY rowid")?
             .query_map([], row)?.map(|r| decode(r?)).collect()
     }
+}
+
+/// Loads a session only while it still runs; ended sessions have no pending settlements.
+pub(crate) fn read_running(
+    connection: &rusqlite::Connection,
+    execution: &ExecutionId,
+) -> Result<Option<SessionExecution>, Error> {
+    Ok(read(connection, execution)?.filter(|session| session.state == ExecutionState::Running))
 }
 
 /// Loads a session while the caller owns the connection or transaction lock.

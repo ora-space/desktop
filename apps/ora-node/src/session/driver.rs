@@ -8,7 +8,8 @@ use super::host::{
     SessionPlugin, ThreadMirror,
 };
 use super::ports::{
-    CheckoutResolver, CommandSettlement, PluginCatalog, PriorRevisionRestore, SessionLedger,
+    CheckoutResolver, CommandSettlement, PluginCatalog, PriorRevisionRestore, SessionCommand,
+    SessionLedger,
 };
 use super::queue::{Plan, plan};
 use super::resume;
@@ -123,7 +124,12 @@ where
     let ended = end.terminal(shared.node.clone());
     match shared.ledger.queued_commands(&execution) {
         Ok(queued) => {
-            for queued in queued {
+            // A still-queued cancel is settled as `session_ending` by the terminal write itself,
+            // before the terminal event; discarding it would leave it without a settlement.
+            for queued in queued
+                .into_iter()
+                .filter(|queued| !matches!(queued.command, SessionCommand::CancelTurn(_)))
+            {
                 settle(
                     &shared.ledger,
                     &execution,
@@ -542,6 +548,18 @@ where
                 control: control.as_ref(),
                 started: std::sync::atomic::AtomicBool::new(false),
                 blocked: std::sync::Mutex::new(std::collections::HashMap::new()),
+                node: shared.node.clone(),
+                keep: conversation::Keep {
+                    on_cancel: spec.keep_session_on_cancel,
+                    on_failure: spec.keep_session_on_failure,
+                },
+                boundary_verified: shared.config.turn_cancel.turn_boundary.iter().any(
+                    |(plugin, version)| {
+                        plugin == &spec.agent_plugin_id && version == &spec.agent_plugin_version
+                    },
+                ),
+                turn_cancel: &shared.config.turn_cancel,
+                ended: std::sync::Mutex::new(std::collections::HashSet::new()),
             };
             let mut stopping = shared.stopping.subscribe();
             let mut model_status = model_access.as_ref().map(|access| access.status.clone());

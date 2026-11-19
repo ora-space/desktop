@@ -9,7 +9,7 @@ use agent_client_protocol_schema::v1::{
     CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk, Implementation,
     InitializeRequest, InitializeResponse, McpCapabilities, NewSessionRequest, NewSessionResponse,
     PromptRequest, PromptResponse, SessionCapabilities, SessionCloseCapabilities,
-    SessionNotification, SessionUpdate, StopReason, TextContent,
+    SessionNotification, SessionUpdate, StopReason, TextContent, ToolCallStatus,
 };
 use ora_plugin_protocol::{
     AGENT_ACP_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_START_METHOD, AGENT_STOP_METHOD,
@@ -36,6 +36,21 @@ const LARGE_ANSWER_BYTES: usize = 300 * 1024;
 struct PendingPrompt {
     request_id: Value,
     session_id: String,
+    /// What the fixture sends right after it answers a cancel of this prompt.
+    after_cancel: AfterCancel,
+    /// Answers a cancel with `end_turn`, as an Agent that finished first would.
+    finishing: bool,
+}
+
+/// Traffic a held prompt sends after it answered a cancel.
+#[derive(Clone, Copy, Default)]
+enum AfterCancel {
+    #[default]
+    Nothing,
+    /// One more message chunk: turn traffic after the response fence.
+    Message,
+    /// A session title: a session-level notification, which belongs to no turn.
+    Title,
 }
 
 /// Everything the fixture remembers between frames.
@@ -149,12 +164,35 @@ impl EchoAgent {
                     .held
                     .take_if(|held| held.session_id == cancel.session_id.to_string())
                 {
-                    respond(
-                        output,
-                        held.request_id,
-                        &PromptResponse::new(StopReason::Cancelled),
-                    )
-                    .await?;
+                    // A `[hold-finishing]` turn finished on its own just as the cancel arrived.
+                    let stop_reason = if held.finishing {
+                        StopReason::EndTurn
+                    } else {
+                        StopReason::Cancelled
+                    };
+                    respond(output, held.request_id, &PromptResponse::new(stop_reason)).await?;
+                    // Traffic that follows the answer is sent a little later, as an Agent's late
+                    // output would be, so the host has settled the answer before it arrives.
+                    if !matches!(held.after_cancel, AfterCancel::Nothing) {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    match held.after_cancel {
+                        AfterCancel::Nothing => {}
+                        AfterCancel::Message => {
+                            message(output, &held.session_id, "still talking").await?;
+                        }
+                        AfterCancel::Title => {
+                            update(
+                                output,
+                                &held.session_id,
+                                SessionUpdate::SessionInfoUpdate(
+                                    agent_client_protocol_schema::v1::SessionInfoUpdate::new()
+                                        .title("Echo title"),
+                                ),
+                            )
+                            .await?;
+                        }
+                    }
                 }
             }
             return Ok(());
@@ -310,11 +348,36 @@ impl EchoAgent {
             )
             .await;
         }
-        if text.contains("[hold]") {
+        if text.contains("[ignore-cancel]") {
+            // Never answers, not even a cancel: the host's cancel deadline must end the session.
+            message(output, &session_id, "ignoring").await?;
+            return Ok(());
+        }
+        if text.contains("[leak]") {
+            // Names the tool call a `[hold-done-tool]` turn ran, as if that turn still produced.
+            tool(output, &session_id, "echo-tool", ToolCallStatus::Completed).await?;
+            return respond(output, id, &PromptResponse::new(StopReason::EndTurn)).await;
+        }
+        if text.contains("[hold") {
             message(output, &session_id, "holding").await?;
+            if text.contains("[hold-running-tool]") {
+                tool(output, &session_id, "echo-tool", ToolCallStatus::InProgress).await?;
+            }
+            if text.contains("[hold-done-tool]") {
+                tool(output, &session_id, "echo-tool", ToolCallStatus::Completed).await?;
+            }
+            let after_cancel = if text.contains("[hold-chatty]") {
+                AfterCancel::Message
+            } else if text.contains("[hold-titled]") {
+                AfterCancel::Title
+            } else {
+                AfterCancel::Nothing
+            };
             self.held = Some(PendingPrompt {
                 request_id: id,
                 session_id,
+                after_cancel,
+                finishing: text.contains("[hold-finishing]"),
             });
             return Ok(());
         }
@@ -346,6 +409,8 @@ impl EchoAgent {
             self.committing = Some(PendingPrompt {
                 request_id: id,
                 session_id,
+                after_cancel: AfterCancel::Nothing,
+                finishing: false,
             });
             return Ok(());
         }
@@ -401,6 +466,42 @@ impl EchoAgent {
         }
         Ok(())
     }
+}
+
+/// Streams one session update.
+async fn update(
+    output: &mut Stdout,
+    session_id: &str,
+    update: SessionUpdate,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let notification = SessionNotification::new(session_id.to_string(), update);
+    acp(
+        output,
+        json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "method": CLIENT_METHOD_NAMES.session_update,
+            "params": notification,
+        }),
+    )
+    .await
+}
+
+/// Reports one tool call with the given status.
+async fn tool(
+    output: &mut Stdout,
+    session_id: &str,
+    tool_call_id: &str,
+    status: ToolCallStatus,
+) -> Result<(), Box<dyn std::error::Error>> {
+    update(
+        output,
+        session_id,
+        SessionUpdate::ToolCall(
+            agent_client_protocol_schema::v1::ToolCall::new(tool_call_id.to_owned(), "Echo tool")
+                .status(status),
+        ),
+    )
+    .await
 }
 
 /// Streams one agent message chunk to the session.

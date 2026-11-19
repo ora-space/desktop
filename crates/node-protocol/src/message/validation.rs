@@ -75,6 +75,10 @@ pub enum MessageValidationError {
     VisibleTextTooLarge,
     #[error("thread preview has invalid identities, positions or size")]
     InvalidThreadPreview,
+    #[error(
+        "turn_cancel confirmation must accompany the turn_cancel and agent_session capabilities"
+    )]
+    InvalidTurnCancelNegotiation,
     #[error("session end detail must be a short snake_case code")]
     InvalidDetailCode,
     #[error("thread record exceeds the encoded size limit")]

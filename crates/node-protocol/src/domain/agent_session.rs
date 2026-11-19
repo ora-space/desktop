@@ -116,6 +116,15 @@ pub struct AgentSessionSpec {
     /// Explicit opt-in; persisted without credentials and compared on duplicate starts.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mcp_lifecycle: bool,
+    /// Keep the session after a turn ends through `CancelTurn`; without it `CancelTurn` is
+    /// refused. Set only over a connection that negotiated `turn_cancel`, and compared on
+    /// duplicate starts like every other input.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_session_on_cancel: bool,
+    /// Keep the session after a turn fails (ACP prompt error, watchdog gave up); without it a
+    /// failed turn ends the session as `agent_failed` with its detail.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_session_on_failure: bool,
     /// Explicit plugin MCP selection; omitted and empty both mean none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp: Vec<super::session_mcp::SessionMcpBinding>,

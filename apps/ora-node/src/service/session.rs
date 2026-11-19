@@ -321,13 +321,33 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             "Controller does not own this Node",
         ));
     }
+    let turn_cancel = hello.payload.turn_cancel && info.keep_sessions.is_some();
+    // A Controller that cannot read `TurnCancelSettled` must not take over sessions that chose a
+    // keep behaviour; refusing the connection before any event or command keeps the reason
+    // diagnosable and changes no execution (D5).
+    if !turn_cancel
+        && let Some(journal) = &info.keep_sessions
+        && journal
+            .has_undrained_keep_sessions()
+            .map_err(|_| Failure::local(CloseReason::InternalError, "ledger unavailable"))?
+    {
+        return Err(Failure::local(
+            CloseReason::IdentityMismatch,
+            "sessions that chose turn_cancel need a Controller that negotiates it",
+        ));
+    }
+    let mut capabilities = info.capabilities.clone();
+    if turn_cancel {
+        capabilities.push(NodeCapability::TurnCancel);
+    }
     let response = NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: HelloAccepted {
             thread_previews: hello.payload.thread_previews && info.agents.is_some(),
+            turn_cancel,
             selected_version: CURRENT_PROTOCOL_VERSION,
             node: info.identity.clone(),
-            capabilities: info.capabilities.clone(),
+            capabilities,
             model_adapter: info.model_adapter.clone(),
         },
     });

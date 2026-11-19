@@ -363,7 +363,7 @@ fn remove_direct_git_schema(connection: &Connection) {
 
 /// Reconstructs an exact pre-v14 schema; production has no downgrade path.
 fn remove_session_stop_schema(connection: &Connection) {
-    connection.execute_batch("DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
+    connection.execute_batch("DROP TABLE session_turn_cancels; DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
 DROP INDEX queued_session_commands;
 ALTER TABLE session_commands RENAME TO new_session_commands;
 CREATE TABLE session_commands (

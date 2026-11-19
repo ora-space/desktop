@@ -169,9 +169,43 @@ directory is removed once the plugin stopped, and leftovers are removed when the
 7. At the end the session stops, releases its runtime, stops the plugin and waits for its tree to exit,
    releases the lease, discards any queued command, writes the terminal result and forgets the session.
 
-Only a successful ACP completion admits another turn. A prompt error or unexpected stream closure ends
-the session as `agent_failed` with `agent_turn_failed` or `agent_stream_closed`; no raw provider
-diagnostic enters history or logs, and an `EndSession` already queued keeps its explicit reason.
+Unless the session chose otherwise (below), only a successful ACP completion admits another turn. A
+prompt error or unexpected stream closure ends the session as `agent_failed` with `agent_turn_failed`
+or `agent_stream_closed`; no raw provider diagnostic enters history or logs, and an `EndSession`
+already queued keeps its explicit reason.
+
+## Cancelling one turn
+
+A session started with `keep_session_on_cancel` accepts `CancelTurn` for any of its turns; one started
+with `keep_session_on_failure` may also outlive a failed turn. A cancel takes effect at the ledger,
+which is the one serial boundary for a cancel, the turn's admission and its MCP wait timeout: whichever
+commits first decides the turn.
+
+- **Queued turn**, including one waiting for the agent or an MCP gate: dropped, its command settled
+  `discarded`, settlement `not_started`, at once. A wait already past its deadline is settled as the
+  timeout first, and the cancel finds the turn `already_ended`.
+- **Admitted, prompt not yet written**: the prompt is never written; `TurnEnded{cancelled}`, then
+  `stopped`, and the session stays.
+- **Running turn**: the runtime answers pending permissions `cancelled`, sends `session/cancel`, and
+  waits until the first cancel's acceptance plus G (15 s for now); later cancels and a running
+  watchdog stop merge into the same stop and deadline, and the watchdog does not resend. An answer
+  writes `TurnEnded{cancelled}` and then the stop is judged; no answer ends the session with
+  `turn_cancel_unanswered`.
+- **Finished, already dropped, failed by timeout, or unknown**: `already_ended` or `unknown`, nothing
+  else changes.
+
+A stopped turn keeps the session only when the session chose that kind of end, the agent plugin
+version is on the Node's verified turn-boundary list (none yet: such stops end the session with
+`turn_boundary_unverified` until conformance runs add versions), every tool call of the turn is
+`completed` or `failed` and it projected no child, and no turn traffic arrives in the quiet window Q
+(2 s for now; title, usage, mode, command and config notifications do not count). Otherwise the
+session ends with `turn_not_quiescent`. A later turn's update that names a stopped turn's tool call or
+child source joins no turn and ends the session with `turn_leak_detected`.
+
+Whenever the session's end is decided, the decision and a `session_ending` settlement for every
+pending cancel are written in one transaction before the agent is signalled; a terminal written
+without a prior decision, such as restart settlement, settles them first as well, so no cancel is left
+without its settlement and none follows the terminal.
 
 ## Scheduled run business facts
 

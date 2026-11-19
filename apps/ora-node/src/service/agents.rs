@@ -403,6 +403,7 @@ pub(super) fn open(
                     agent_ready_timeout: Duration::from_millis(config.ready_timeout_ms),
                     model_proxy: config.model_proxy.clone(),
                     workload: workload.clone(),
+                    turn_cancel: crate::session::TurnCancelConfig::default(),
                 },
                 node.identity().clone(),
                 journal.clone(),
@@ -613,6 +614,17 @@ pub(super) fn command(
                 payload: SessionCommandRejected {
                     command_id,
                     reason: SessionCommandRejection::McpUpdateRequired,
+                },
+            })
+        }
+        CommandAdmission::TurnCancelUnsupported => {
+            NodeToControllerMessage::SessionCommandRejected(SessionCommandRejectedMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                operation_id,
+                execution_id,
+                payload: SessionCommandRejected {
+                    command_id,
+                    reason: SessionCommandRejection::TurnCancelUnsupported,
                 },
             })
         }

@@ -1,10 +1,22 @@
 //! Serialized conversation and turn outcomes.
 use super::*;
 mod admission;
+mod cancel;
+use agent_client_protocol_schema::v1::StopReason;
+pub(super) use cancel::Keep;
+use ora_node_protocol::TurnCancelOutcome;
 
 /// How one running turn stopped.
 enum TurnOutcome {
     Finished,
+    /// A cancel dropped the turn before admission; the Agent never received it.
+    Dropped,
+    /// The Agent answered after a cancel, or answered with a failure: D2 decides what follows.
+    Stopped(cancel::StoppedTurn),
+    /// A cancel's deadline passed without an answer.
+    Unanswered,
+    /// An update of a stopped turn arrived in a later one.
+    Leaked,
     Failed(&'static str),
     EndRequested {
         command_id: CommandId,
@@ -28,6 +40,14 @@ pub(super) struct Conversation<'a, L: SessionLedger> {
     pub(super) blocked: std::sync::Mutex<
         std::collections::HashMap<ora_node_protocol::TurnId, tokio::time::Instant>,
     >,
+    /// Attached to the end decision this conversation records before it stops the Agent.
+    pub(super) node: ora_node_protocol::NodeRuntimeIdentity,
+    pub(super) keep: Keep,
+    /// Whether this Agent version has a verified turn boundary (D2).
+    pub(super) boundary_verified: bool,
+    pub(super) turn_cancel: &'a crate::session::TurnCancelConfig,
+    /// Turns that already have their own result, so a later cancel of one is `already_ended`.
+    pub(super) ended: std::sync::Mutex<std::collections::HashSet<ora_node_protocol::TurnId>>,
 }
 
 impl<L: SessionLedger> Conversation<'_, L> {
@@ -44,6 +64,18 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 return self
                     .stop(SessionEnd::agent_failed("thread_unavailable"))
                     .await;
+            }
+            if self.mirror.fence().leaked() {
+                return self
+                    .stop(SessionEnd::agent_failed("turn_leak_detected"))
+                    .await;
+            }
+            // Between turns every cancel takes effect at once: a queued target is dropped, an
+            // ended one is `already_ended`, anything else `unknown`.
+            if next_turn.is_none()
+                && let Err(end) = self.settle_cancels(None)
+            {
+                return self.stop(end).await;
             }
             let (turn, command_id) = match next_turn.take() {
                 Some(turn) => (turn, None),
@@ -66,6 +98,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                     }
                 },
             };
+            let turn_id = turn.turn_id.clone();
             match self
                 .run_turn(
                     turn,
@@ -76,7 +109,32 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 )
                 .await
             {
-                Ok(TurnOutcome::Finished) => {}
+                Ok(TurnOutcome::Finished) => self.turn_ended(&turn_id),
+                Ok(TurnOutcome::Dropped) => {}
+                Ok(TurnOutcome::Stopped(stopped)) => match self.judge(stopped).await {
+                    cancel::Judged::Kept => self.mirror.set_turn(None),
+                    cancel::Judged::EndRequested(TurnOutcome::EndRequested {
+                        command_id,
+                        reason,
+                        discarded,
+                    }) => return self.end_requested(command_id, reason, discarded).await,
+                    cancel::Judged::EndRequested(_) => {
+                        return self
+                            .stop(SessionEnd::agent_failed("ledger_unavailable"))
+                            .await;
+                    }
+                    cancel::Judged::End(end) => return self.end_or_requested(end).await,
+                },
+                Ok(TurnOutcome::Unanswered) => {
+                    return self
+                        .end_or_requested(SessionEnd::agent_failed("turn_cancel_unanswered"))
+                        .await;
+                }
+                Ok(TurnOutcome::Leaked) => {
+                    return self
+                        .stop(SessionEnd::agent_failed("turn_leak_detected"))
+                        .await;
+                }
                 Ok(TurnOutcome::Failed(code)) => {
                     // A committed EndSession keeps its reason even if its wake-up races the ACP
                     // result. Never replace a durable cancellation with a provider failure.
@@ -110,17 +168,20 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         .stop(SessionEnd::agent_failed("ledger_unavailable"))
                         .await;
                 }
-                Err(end) => {
-                    return match self.queued_end() {
-                        Ok(Some(TurnOutcome::EndRequested {
-                            command_id,
-                            reason,
-                            discarded,
-                        })) => self.end_requested(command_id, reason, discarded).await,
-                        _ => self.stop(end).await,
-                    };
-                }
+                Err(end) => return self.end_or_requested(end).await,
             }
+        }
+    }
+
+    /// Ends with `end`, unless a committed `EndSession` is queued: its reason wins.
+    async fn end_or_requested(&self, end: SessionEnd) -> SessionEnd {
+        match self.queued_end() {
+            Ok(Some(TurnOutcome::EndRequested {
+                command_id,
+                reason,
+                discarded,
+            })) => self.end_requested(command_id, reason, discarded).await,
+            _ => self.stop(end).await,
         }
     }
 
@@ -145,17 +206,52 @@ impl<L: SessionLedger> Conversation<'_, L> {
         };
         // Business time belongs to the admitted turn, never to queued MCP wait budgets.
         let _business = admission::BusinessTime::new(&self.blocked);
+        let turn_id = turn.turn_id.clone();
+        // Cancels merged into this turn's stop, in acceptance order. Cancels accepted while the
+        // turn was being admitted take effect now that it has started.
+        let mut merged = Vec::new();
+        self.request_stop(&mut merged, self.settle_cancels(Some(&turn_id))?);
         let outcome = loop {
             tokio::select! {
                 event = stream.recv() => match event {
-                    Some(Ok(PromptSessionEvent::Completed { .. })) => break TurnOutcome::Finished,
+                    Some(Ok(PromptSessionEvent::Completed { stop_reason, .. })) => {
+                        if merged.is_empty() {
+                            break TurnOutcome::Finished;
+                        }
+                        if stream.end_report().is_some_and(|report| report.unsent()) {
+                            // Admitted but never written: nothing to judge, the session stays.
+                            self.settle_merged(&merged, TurnCancelOutcome::Stopped)?;
+                            break TurnOutcome::Finished;
+                        }
+                        if stop_reason == StopReason::Cancelled {
+                            break TurnOutcome::Stopped(cancel::StoppedTurn {
+                                turn_id: turn_id.clone(),
+                                cause: cancel::StopCause::Cancel,
+                                merged: std::mem::take(&mut merged),
+                            });
+                        }
+                        // The Agent finished the turn before the cancel reached it: the turn keeps
+                        // its own end and the cancel did nothing.
+                        self.settle_merged(&merged, TurnCancelOutcome::AlreadyEnded)?;
+                        break TurnOutcome::Finished;
+                    }
                     Some(Err(error)) => {
+                        if !merged.is_empty() && error.is_turn_cancel_unanswered() {
+                            break TurnOutcome::Unanswered;
+                        }
                         let code = match error.public_error() {
                             PublicError::AgentAuthenticationRequired(_) => {
                                 "agent_authentication_required"
                             }
                             _ => "agent_turn_failed",
                         };
+                        if error.agent_answered() {
+                            break TurnOutcome::Stopped(cancel::StoppedTurn {
+                                turn_id: turn_id.clone(),
+                                cause: cancel::StopCause::Failure(code),
+                                merged: std::mem::take(&mut merged),
+                            });
+                        }
                         break TurnOutcome::Failed(code);
                     }
                     None => break TurnOutcome::Failed("agent_stream_closed"),
@@ -164,6 +260,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 () = self.wake.notified() => {
                     if self.mirror.is_broken() {
                         break TurnOutcome::ThreadBroken;
+                    }
+                    if self.mirror.fence().leaked() {
+                        break TurnOutcome::Leaked;
                     }
                     match self.ledger.queued_commands(self.execution).map(plan) {
                         Ok(Plan::End { command_id, reason, discarded }) => {
@@ -175,6 +274,10 @@ impl<L: SessionLedger> Conversation<'_, L> {
                             break TurnOutcome::LedgerUnavailable;
                         }
                     }
+                    match self.settle_cancels(Some(&turn_id)) {
+                        Ok(cancels) => self.request_stop(&mut merged, cancels),
+                        Err(_) => break TurnOutcome::LedgerUnavailable,
+                    }
                 }
             }
         };
@@ -184,7 +287,11 @@ impl<L: SessionLedger> Conversation<'_, L> {
             TurnOutcome::EndRequested { .. }
             | TurnOutcome::Failed(_)
             | TurnOutcome::ThreadBroken
-            | TurnOutcome::LedgerUnavailable => {}
+            | TurnOutcome::LedgerUnavailable
+            | TurnOutcome::Unanswered
+            | TurnOutcome::Leaked
+            | TurnOutcome::Stopped(_)
+            | TurnOutcome::Dropped => {}
         }
         drop(stream);
         Ok(outcome)
@@ -216,7 +323,18 @@ impl<L: SessionLedger> Conversation<'_, L> {
     }
 
     /// Stops the session, cancelling a running turn and closing the provider session.
+    ///
+    /// The end decision is recorded before the Agent is signalled: its transaction also settles
+    /// every pending cancel as `session_ending`, so a visible `session_ending` always has a
+    /// recoverable decision (D3). A ledger that cannot write still lets the stop proceed, because
+    /// stopping is always safe; the decision is written by the driver or after recovery.
     pub(super) async fn stop(&self, end: SessionEnd) -> SessionEnd {
+        if let Err(error) = self
+            .ledger
+            .defer_session_stop_end(self.execution, &end.terminal(self.node.clone()))
+        {
+            ora_warn!(execution_id = %self.execution, error = %error, "session end decision was not recorded before stopping");
+        }
         if let Some(control) = self.control {
             control.stop();
         }

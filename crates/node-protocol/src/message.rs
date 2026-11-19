@@ -13,9 +13,13 @@ mod runtime_control;
 mod scheduled_artifacts;
 mod session;
 mod thread_preview;
+mod turn_cancel;
 mod validation;
 mod worktree;
 pub use thread_preview::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
+pub use turn_cancel::{
+    CancelTurn, CancelTurnMessage, TurnCancelOutcome, TurnCancelSettled, TurnCancelSettledMessage,
+};
 
 pub use agent_session::{
     AgentSessionEndedMessage, EndSession, EndSessionMessage, EndSessionReason,
@@ -87,6 +91,7 @@ pub enum ControllerToNodeMessage {
     GetSessionMcpState(GetSessionMcpStateMessage),
     ProbeSessionMcp(ProbeSessionMcpMessage),
     EndSession(EndSessionMessage),
+    CancelTurn(CancelTurnMessage),
     DeliverRevision(DeliverRevisionMessage),
     DeliverScheduledArtifacts(DeliverScheduledArtifactsMessage),
     /// Memory-only: never persisted, logged, or acknowledged.
@@ -122,6 +127,7 @@ impl ValidateMessage for ControllerToNodeMessage {
             Self::GetSessionMcpState(message) => message.validate(),
             Self::ProbeSessionMcp(message) => message.validate(),
             Self::EndSession(message) => message.validate(),
+            Self::CancelTurn(message) => message.validate(),
             Self::DeliverRevision(message) => message.validate(),
             Self::DeliverScheduledArtifacts(message) => message.validate(),
             Self::ScheduledArtifactGrants(message) => message.validate(),
@@ -153,6 +159,7 @@ pub enum NodeToControllerMessage {
     SessionCommandRejected(SessionCommandRejectedMessage),
     SessionMcpReply(SessionMcpReplyMessage),
     SessionTurnFailed(SessionTurnFailedMessage),
+    TurnCancelSettled(TurnCancelSettledMessage),
     RevisionResult(RevisionResultMessage),
     ScheduledArtifactsResult(ScheduledArtifactsResultMessage),
     ScheduledArtifactGrantNeeded(ScheduledArtifactGrantNeededMessage),
@@ -180,6 +187,7 @@ impl ValidateMessage for NodeToControllerMessage {
             Self::SessionCommandRejected(message) => message.validate(),
             Self::SessionMcpReply(message) => message.validate(),
             Self::SessionTurnFailed(message) => message.validate(),
+            Self::TurnCancelSettled(message) => message.validate(),
             Self::RevisionResult(message) => message.validate(),
             Self::ScheduledArtifactsResult(message) => message.validate(),
             Self::ScheduledArtifactGrantNeeded(message) => message.validate(),

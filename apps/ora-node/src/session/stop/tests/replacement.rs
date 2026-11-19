@@ -41,6 +41,7 @@ async fn replacement_waits_for_retirement_before_registering_the_successor() -> 
         agent_ready_timeout: Duration::from_secs(5),
         model_proxy: None,
         workload: SessionWorkload::Shared,
+        turn_cancel: Default::default(),
     };
     let sessions = AgentSessions::new(
         config,

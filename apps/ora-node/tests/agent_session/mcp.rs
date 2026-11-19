@@ -74,6 +74,8 @@ pub(super) fn input(mcp: Vec<SessionMcpBinding>) -> StartAgentSessionMessage {
             spec: AgentSessionSpec {
                 host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
+                keep_session_on_cancel: false,
+                keep_session_on_failure: false,
                 mcp,
                 node_id: NodeId::new("node-1"),
                 agent_plugin_id: PluginId::new(PLUGIN_ID),

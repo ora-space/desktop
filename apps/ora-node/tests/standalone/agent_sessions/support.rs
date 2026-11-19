@@ -20,6 +20,8 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
             spec: AgentSessionSpec {
                 host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
+                keep_session_on_cancel: false,
+                keep_session_on_failure: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("test-node"),

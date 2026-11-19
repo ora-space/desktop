@@ -19,6 +19,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub enum SessionCommand {
     SubmitUserTurn(UserTurn),
     EndSession(EndSessionReason),
+    /// Cancels the named turn only; the session decides when the cancel takes effect.
+    CancelTurn(ora_node_protocol::TurnId),
 }
 
 /// A persisted command that the session has not settled yet.
@@ -125,6 +127,18 @@ pub trait SessionLedger: Clone + Send + Sync + 'static {
     /// The whole queue rather than its head, because an `EndSession` accepted behind queued user
     /// turns must be seen while a turn is still running.
     fn queued_commands(&self, execution: &ExecutionId) -> Result<Vec<QueuedCommand>, Self::Error>;
+
+    /// Records the one settlement of a queued `CancelTurn`; for `not_started` it also discards
+    /// `target` in the same transaction. Returns the settlement actually recorded, which is
+    /// `already_ended` when the target turn already failed or was dropped. Fails without writing
+    /// when the target was admitted first, so the caller treats the turn as started.
+    fn settle_turn_cancel(
+        &self,
+        execution: &ExecutionId,
+        command_id: &CommandId,
+        outcome: ora_node_protocol::TurnCancelOutcome,
+        target: Option<&CommandId>,
+    ) -> Result<ora_node_protocol::TurnCancelOutcome, Self::Error>;
 
     /// Settles one queued command.
     fn settle_command(

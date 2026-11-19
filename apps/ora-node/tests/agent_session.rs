@@ -3,6 +3,8 @@
 //! Session executions against the echo agent plugin, driven through the Node's `SessionHost`
 //! with an in-memory ledger in place of the Node database.
 
+#[path = "agent_session/cancel.rs"]
+mod cancel;
 #[path = "agent_session/host_mcp.rs"]
 mod host_mcp;
 #[path = "agent_session/mcp.rs"]
@@ -128,6 +130,8 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
         AgentSessionSpec {
             host_mcp_servers: Vec::new(),
             mcp_lifecycle: false,
+            keep_session_on_cancel: false,
+            keep_session_on_failure: false,
             mcp: Vec::new(),
             agent_configuration: None,
             node_id: fixture.node().node_id,
@@ -848,6 +852,8 @@ async fn an_undeclared_plugin_never_takes_the_legacy_model_route() {
         AgentSessionSpec {
             host_mcp_servers: Vec::new(),
             mcp_lifecycle: false,
+            keep_session_on_cancel: false,
+            keep_session_on_failure: false,
             mcp: Vec::new(),
             agent_configuration: None,
             node_id: fixture.node().node_id,

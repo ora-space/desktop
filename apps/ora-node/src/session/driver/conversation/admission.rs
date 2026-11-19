@@ -14,9 +14,10 @@ pub(super) enum Admitted {
 
 /// Cancellation and the Actor's commit share a boundary even before a reply reaches the caller.
 #[derive(Default)]
-struct TurnGate {
-    committed: bool,
-    expired: bool,
+pub(super) struct TurnGate {
+    pub(super) committed: bool,
+    /// Set by the MCP wait timeout or by a cancel that dropped the turn; either refuses commit.
+    pub(super) expired: bool,
     deadline: Option<Instant>,
 }
 
@@ -183,6 +184,12 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 return Ok(Admitted::Outcome(end));
             }
             let deadline = self.deadline(turn)?;
+            // Between attempts no admission can commit, so a cancel drops the turn directly.
+            if let cancel::WaitingCancel::Dropped =
+                self.cancel_waiting(turn, command, /*gate*/ None, deadline)?
+            {
+                return Ok(Admitted::Outcome(TurnOutcome::Dropped));
+            }
             self.expire_queued(&turn.turn_id)?;
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 self.mirror.set_turn(None);
@@ -233,17 +240,25 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 );
                 tokio::pin!(attempt);
                 loop {
-                    let deadline = self.deadline(turn)?;
+                    let wait_deadline = self.deadline(turn)?;
                     let deadline = {
                         let mut gate = gate
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        gate.deadline = deadline;
-                        if gate.committed { None } else { deadline }
+                        gate.deadline = wait_deadline;
+                        if gate.committed { None } else { wait_deadline }
                     };
                     tokio::select! {
                         biased;
-                        () = self.wake.notified() => { if let Some(end) = self.queued_end()? { return Ok(Admitted::Outcome(end)); } },
+                        () = self.wake.notified() => {
+                            if let Some(end) = self.queued_end()? { return Ok(Admitted::Outcome(end)); }
+                            // The cancel takes the gate the Actor's commit and the timeout take.
+                            if let cancel::WaitingCancel::Dropped =
+                                self.cancel_waiting(turn, command, Some(&gate), wait_deadline)?
+                            {
+                                return Ok(Admitted::Outcome(TurnOutcome::Dropped));
+                            }
+                        },
                         result = &mut attempt => {
                             match result {
                                 Ok(stream) => { self.blocked.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&turn.turn_id); return Ok(Admitted::Stream(stream)); },

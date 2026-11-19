@@ -19,6 +19,9 @@ pub use domain::{
     SessionMcpUpdateMember,
 };
 pub use message::{
+    CancelTurn, CancelTurnMessage, TurnCancelOutcome, TurnCancelSettled, TurnCancelSettledMessage,
+};
+pub use message::{
     GetSessionMcpState, GetSessionMcpStateMessage, ProbeSessionMcp, ProbeSessionMcpMessage,
     SessionMcpMessage, SessionMcpReply, SessionMcpReplyMessage, SessionMcpResult,
     SessionTurnFailed, SessionTurnFailedMessage, SessionTurnFailureCode, UpdateSessionMcp,

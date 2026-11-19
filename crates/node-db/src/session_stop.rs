@@ -171,12 +171,23 @@ impl<G: WriteGuard> SessionJournal<G> {
         execution: &ExecutionId,
         ended: &AgentSessionEnded,
     ) -> Result<(), Error> {
-        let db = self.lock()?;
-        db.guard.before_write(WritePoint::Progress)?;
-        db.connection.execute(
+        let mut db = self.lock()?;
+        let guard = std::sync::Arc::clone(&db.guard);
+        guard.before_write(WritePoint::Progress)?;
+        let tx = db
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let decided = crate::session::end_decided(&tx, execution)?;
+        tx.execute(
             "INSERT OR IGNORE INTO session_stop_ends(execution,ended) VALUES(?1,?2)",
             params![execution.as_str(), serde_json::to_string(ended)?],
         )?;
+        // The decision and the `session_ending` settlements of every pending cancel commit
+        // together, so a visible `session_ending` always has a recoverable decision (D3).
+        if !decided && let Some(current) = crate::session::read_running(&tx, execution)? {
+            crate::session::settle_pending_as_ending(&tx, &guard, &current)?;
+        }
+        tx.commit()?;
         Ok(())
     }
 

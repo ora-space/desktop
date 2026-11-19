@@ -56,6 +56,7 @@ fn event_key(message: &NodeToControllerMessage) -> Option<(&ExecutionId, Sequenc
     match message {
         NodeToControllerMessage::ThreadEvent(m) => Some((&m.execution_id, m.sequence)),
         NodeToControllerMessage::SessionTurnFailed(m) => Some((&m.execution_id, m.sequence)),
+        NodeToControllerMessage::TurnCancelSettled(m) => Some((&m.execution_id, m.sequence)),
         NodeToControllerMessage::AgentSessionEnded(m) => Some((&m.execution_id, m.sequence)),
         NodeToControllerMessage::CloneResult(m) => Some((&m.execution_id, m.sequence)),
         NodeToControllerMessage::PluginsResult(m) => Some((&m.execution_id, m.sequence)),

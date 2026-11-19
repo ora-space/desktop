@@ -167,6 +167,11 @@ pub(super) fn run(
     }
     let model_adapter = agents.as_ref().and_then(agents::SessionHost::model_adapter);
     let info = SessionInfo {
+        keep_sessions: agents
+            .is_some()
+            .then(|| node.database.session_journal())
+            .transpose()
+            .map_err(|e| e.to_string())?,
         model_adapter,
         agents: agents.clone(),
         grants,
@@ -408,6 +413,12 @@ fn handle(
                 ora_node_db::SessionCommandInput::SubmitUserTurn(input),
             )
         }
+        Request::Message(ControllerToNodeMessage::CancelTurn(input)) => agents::command(
+            node,
+            agents.ok_or(crate::Error::UnsupportedMessage)?,
+            controller,
+            ora_node_db::SessionCommandInput::CancelTurn(input),
+        ),
         Request::Message(ControllerToNodeMessage::EndSession(input)) => {
             agents.ok_or(crate::Error::UnsupportedMessage)?;
             let execution = input.execution_id.clone();

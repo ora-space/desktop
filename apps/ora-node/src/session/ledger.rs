@@ -97,6 +97,9 @@ impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> 
                     SessionCommandInput::EndSession(message) => {
                         SessionCommand::EndSession(message.payload.reason)
                     }
+                    SessionCommandInput::CancelTurn(message) => {
+                        SessionCommand::CancelTurn(message.payload.turn_id)
+                    }
                 };
                 QueuedCommand {
                     command_id,
@@ -104,6 +107,18 @@ impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> 
                 }
             })
             .collect())
+    }
+
+    /// Delegates to the ledger, which is the serial boundary for cancel, admission and timeout.
+    fn settle_turn_cancel(
+        &self,
+        execution: &ExecutionId,
+        command_id: &CommandId,
+        outcome: ora_node_protocol::TurnCancelOutcome,
+        target: Option<&CommandId>,
+    ) -> Result<ora_node_protocol::TurnCancelOutcome, Self::Error> {
+        SessionJournal::settle_turn_cancel(self, execution, command_id, outcome, target)
+            .map(|(outcome, _)| outcome)
     }
 
     /// Keeps runtime settlements within the database's one-way command state machine.
