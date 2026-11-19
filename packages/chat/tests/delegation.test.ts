@@ -150,4 +150,39 @@ test("parses _subagent/update attribution and validates toolCallId delegation co
     }),
     false,
   );
+  // Real CodeAgent live completion: content array present, rawOutput omitted, title mutated.
+  assert.equal(
+    delegationToolCallCompleted({
+      ...delegation(undefined, undefined, "completed"),
+      title: "Summarized subagent findings",
+      content: [
+        { type: "content", content: { type: "text", text: "summary" } },
+      ],
+      rawOutput: undefined,
+    }),
+    true,
+  );
+  // Real CodeAgent session/load replay: content empty, top-level rawOutput.status = "completed".
+  assert.equal(
+    delegationToolCallCompleted({
+      ...delegation(undefined, undefined, "completed"),
+      content: [],
+      rawOutput: {
+        status: "completed",
+        agentId: "a1",
+        agentType: "Explore",
+      },
+    }),
+    true,
+  );
+  for (const status of ["running", "failed", "cancelled"]) {
+    assert.equal(
+      delegationToolCallCompleted({
+        ...delegation(undefined, undefined, "completed"),
+        content: [],
+        rawOutput: { status, agentId: "a1", agentType: "Explore" },
+      }),
+      false,
+    );
+  }
 });

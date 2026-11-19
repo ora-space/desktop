@@ -221,18 +221,28 @@ export function delegationResultCompleted(tool: ChatToolCall): boolean {
 /**
  * Reports whether a parent tool call linked by `_subagent/update.toolCallId` returned a result.
  *
- * Turn-end settlement marks unfinished parent tools as `completed` with no output, so only a
- * completed call carrying provider output (and not an explicit background status) qualifies.
+ * Turn-end settlement marks unfinished parent tools as `completed`, so only a provider-reported
+ * `completed` call carrying `content` or `rawOutput` (and without a non-`completed` status field
+ * inside `rawOutput` or `rawOutput.metadata`) qualifies.
  */
 export function delegationToolCallCompleted(tool: ChatToolCall): boolean {
   if (tool.status !== "completed" || tool.settledByTurnEnd) return false;
-  if (tool.content.length === 0 && tool.rawOutput === undefined) return false;
   if (
-    object(tool.rawOutput) &&
-    object(tool.rawOutput.metadata) &&
-    "status" in tool.rawOutput.metadata
+    tool.content.length === 0 &&
+    (tool.rawOutput === undefined || tool.rawOutput === null)
   ) {
-    return tool.rawOutput.metadata.status === "completed";
+    return false;
+  }
+  if (object(tool.rawOutput)) {
+    if (
+      object(tool.rawOutput.metadata) &&
+      "status" in tool.rawOutput.metadata
+    ) {
+      return tool.rawOutput.metadata.status === "completed";
+    }
+    if ("status" in tool.rawOutput) {
+      return tool.rawOutput.status === "completed";
+    }
   }
   return true;
 }
