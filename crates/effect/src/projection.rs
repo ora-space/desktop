@@ -101,6 +101,8 @@ pub struct ObservedItem {
 pub struct ResourceObservation {
     pub resource: EffectResourceId,
     pub items: BTreeMap<NativeResourceIdentity, ObservedItem>,
+    /// Ordinary files at the directory root can occupy a materialization name.
+    pub occupied_file_names: BTreeSet<String>,
     pub fingerprint: Fingerprint,
 }
 

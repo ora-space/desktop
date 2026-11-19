@@ -22,7 +22,7 @@ fn quiesce_declaration(stable_key: &str) -> ConsumerDeclaration {
 }
 
 /// Writes one Skill package directory and returns its validated projection.
-fn skill_package(
+pub(super) fn skill_package(
     directory: &std::path::Path,
     package_name: &str,
     manifest: &[u8],
@@ -569,4 +569,140 @@ fn retiring_local_consumer_handover_to_marketplace_consumer_converges() {
         requests.is_empty(),
         "no reconcile requests remain: {requests:?}"
     );
+}
+
+/// Exercises core ordering against the real attempt journal and a controllable Consumer.
+#[test]
+fn reserves_before_journaling_and_releases_before_readiness() {
+    for should_fail in [true, false] {
+        let (directory, pool, workspace) = fixture();
+        let projection = skill_package(
+            directory.path(),
+            "package",
+            b"---\nname: review\ndescription: Reviews changes\n---\n",
+        );
+        let clock = TestClock::new(1);
+        SqliteSkillRepository::with_clock(pool.clone(), clock.clone())
+            .replace_plugin_skills(
+                &PluginId::new("official", "review").unwrap(),
+                "1.0.0",
+                &[projection],
+                /*updated_at*/ 1,
+            )
+            .unwrap();
+        let repository = SqliteEffectRepository::with_clock(pool.clone(), clock.clone());
+        repository
+            .declare_consumer(&quiesce_declaration("official/codex"), &[workspace])
+            .unwrap();
+        let lease = LocalTimestamp::from_millis(100);
+        let (target, claim) = repository
+            .claim_due_targets(
+                &WorkerIdentity::parse("worker").unwrap(),
+                LocalTimestamp::from_millis(11),
+                lease,
+                /*limit*/ 1,
+            )
+            .unwrap()
+            .remove(0);
+        let consumer = ReservationProbe {
+            pool,
+            should_fail,
+            calls: std::cell::RefCell::default(),
+        };
+        let result = EffectReconciler::new(
+            &repository,
+            &SkillPlanner,
+            &consumer,
+            &SkillDirectoryResourceAdapter,
+            &clock,
+        )
+        .reconcile(&target, &claim, lease);
+        if should_fail {
+            assert!(matches!(result, Err(ReconcileError::Consumer(_))));
+            assert_eq!(*consumer.calls.borrow(), ["reserve"]);
+            assert_eq!(consumer.journal_count(), 0);
+            assert!(repository.load_unfinished_operations().unwrap().is_empty());
+        } else {
+            assert!(matches!(result, Ok(ReconcileOutcome::Mutated { .. })));
+            assert_eq!(
+                *consumer.calls.borrow(),
+                ["reserve", "coordinate", "reactivate", "release", "ready"]
+            );
+            assert_eq!(consumer.journal_count(), 1);
+        }
+    }
+}
+
+/// Records the external coordination calls and checks the journal boundary.
+struct ReservationProbe {
+    pool: crate::RepositoryPool,
+    should_fail: bool,
+    calls: std::cell::RefCell<Vec<&'static str>>,
+}
+
+impl ReservationProbe {
+    /// Counts both completed and unfinished journal attempts.
+    fn journal_count(&self) -> i64 {
+        self.pool
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM effect_reconcile_attempts",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(Into::into)
+            })
+            .unwrap()
+    }
+}
+
+impl ConsumerAdapter for ReservationProbe {
+    /// Observes pre-journal ordering and can reject reservation without coordinating.
+    fn reserve_coordination(&self, _target: &EffectTarget) -> Result<(), ConsumerAdapterError> {
+        self.calls.borrow_mut().push("reserve");
+        assert_eq!(self.journal_count(), 0);
+        if self.should_fail {
+            return Err(ConsumerAdapterError::new(std::io::Error::other(
+                "barrier unavailable",
+            )));
+        }
+        Ok(())
+    }
+
+    /// Records the point when the Consumer is asked to quiesce.
+    fn coordinate(
+        &self,
+        target: &EffectTarget,
+        plan: &CoordinationPlan,
+    ) -> Result<CoordinationReceipt, ConsumerAdapterError> {
+        self.calls.borrow_mut().push("coordinate");
+        assert_eq!(self.journal_count(), 1);
+        ReadyConsumer.coordinate(target, plan)
+    }
+
+    /// Records restoration of the Consumer after mutation.
+    fn reactivate(
+        &self,
+        target: &EffectTarget,
+        plan: &CoordinationPlan,
+    ) -> Result<CoordinationReceipt, ConsumerAdapterError> {
+        self.calls.borrow_mut().push("reactivate");
+        ReadyConsumer.reactivate(target, plan)
+    }
+
+    /// Records when local admission may resume.
+    fn release_coordination(&self) {
+        self.calls.borrow_mut().push("release");
+    }
+
+    /// Records the readiness request after local admission is restored.
+    fn verify_ready(
+        &self,
+        target: &EffectTarget,
+        projection: &TargetProjection,
+    ) -> Result<ReadinessReceipt, ConsumerAdapterError> {
+        self.calls.borrow_mut().push("ready");
+        ReadyConsumer.verify_ready(target, projection)
+    }
 }

@@ -316,6 +316,12 @@ impl ConsumerAdapterError {
 /// Implementations interpret only their own versioned contracts and return receipts tied to the
 /// exact Target projection. Runtime-specific session or deployment state stays behind this seam.
 pub trait ConsumerAdapter {
+    /// Reserves local coordination capacity before a durable mutation attempt is opened.
+    fn reserve_coordination(&self, target: &EffectTarget) -> Result<(), ConsumerAdapterError>;
+
+    /// Releases local reservations after every participant has been reactivated.
+    fn release_coordination(&self) {}
+
     /// Establishes the safe-to-mutate barrier for one participating Target.
     fn coordinate(
         &self,
@@ -342,13 +348,27 @@ pub trait ConsumerAdapter {
 #[derive(Debug, Error)]
 #[error("Resource adapter operation failed")]
 pub struct ResourceAdapterError {
+    pub(crate) observation_blocker:
+        Option<(crate::StableConditionCode, crate::SafeConditionDetails)>,
     #[source]
     source: Box<dyn Error + Send + Sync + 'static>,
 }
 
 impl ResourceAdapterError {
+    /// Adds a user-actionable diagnostic for a deterministic observation failure.
+    pub fn with_observation_blocker(
+        mut self,
+        code: crate::StableConditionCode,
+        details: crate::SafeConditionDetails,
+    ) -> Self {
+        self.observation_blocker = Some((code, details));
+        self
+    }
+
+    /// Wraps an adapter failure without a user-actionable observation diagnostic.
     pub fn new(source: impl Error + Send + Sync + 'static) -> Self {
         Self {
+            observation_blocker: None,
             source: Box::new(source),
         }
     }

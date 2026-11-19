@@ -6,6 +6,7 @@
 use ora_domain::PluginId;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 /// Why one Agent's sessions must stop admitting new prompts.
@@ -42,6 +43,15 @@ impl AgentSessionBarrier {
             reason,
             _guard: self.lock.clone().lock_owned().await,
         }
+    }
+
+    /// Bounds the wait without granting authority when another operation owns the lock.
+    pub async fn acquire_with_timeout(
+        &self,
+        reason: BarrierReason,
+        timeout: Duration,
+    ) -> Result<BarrierGuard, tokio::time::error::Elapsed> {
+        tokio::time::timeout(timeout, self.acquire(reason)).await
     }
 
     /// Returns a hold only when the Agent is not already fenced.
@@ -110,6 +120,36 @@ mod tests {
                 .for_plugin(&plugin)
                 .try_acquire(BarrierReason::AgentReplacement)
                 .is_some()
+        );
+    }
+
+    /// A timed-out waiter leaves the existing guard intact and can retry after release.
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_acquisition_does_not_steal_the_barrier() {
+        let barriers = AgentSessionBarriers::new();
+        let barrier = barriers.for_plugin(&plugin("opencode"));
+        let owner = barrier.acquire(BarrierReason::McpRefresh).await;
+        let timeout = std::time::Duration::from_secs(5);
+        assert!(
+            barrier
+                .acquire_with_timeout(BarrierReason::EffectMutation, timeout)
+                .await
+                .is_err()
+        );
+        assert!(barrier.is_held());
+        let unrelated = barriers.for_plugin(&plugin("claude"));
+        assert!(
+            unrelated
+                .acquire_with_timeout(BarrierReason::EffectMutation, timeout)
+                .await
+                .is_ok()
+        );
+        drop(owner);
+        assert!(
+            barrier
+                .acquire_with_timeout(BarrierReason::EffectMutation, timeout)
+                .await
+                .is_ok()
         );
     }
 
