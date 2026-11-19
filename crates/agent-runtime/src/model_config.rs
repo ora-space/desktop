@@ -9,7 +9,7 @@ use agent_client_protocol_schema::v1::{
 };
 
 /// Preserves the provider's first Model category, falling back only to a single select option.
-fn model_selector(
+pub fn model_selector(
     options: &[SessionConfigOption],
 ) -> Option<(&SessionConfigId, &SessionConfigSelect)> {
     let option = options

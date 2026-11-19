@@ -18,6 +18,7 @@ mod history;
 mod host;
 mod limits;
 mod load;
+mod manager_startup;
 mod mcp_resolver;
 mod memory_host;
 mod model_config;
@@ -35,7 +36,6 @@ mod scheduling;
 mod session_followers;
 mod session_setup;
 mod start;
-mod startup;
 mod stream;
 mod support;
 mod suspend;
@@ -69,6 +69,7 @@ pub use mcp_resolver::{
     revalidate_stdio_command,
 };
 pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp};
+pub use model_config::model_selector;
 pub use operations::AgentRuntime;
 pub use replaced::ReplacedAgentSessions;
 
