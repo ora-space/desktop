@@ -72,7 +72,7 @@ over its `agent/acp` notification channel. See
 
 The private `startup` module owns manager construction and durable session reconciliation; it runs before connection supervisors start.
 
-The private `model_config` module identifies the same provider-reported selector for startup model intents and stale-load rebuilds. Startup applies only offered values, while rebuild reads the reported current value; an empty or non-select-only report carries no model. A load follower registered during the first attempt stays with the logical turn across the stale-load rebuild, so it receives exactly one terminal boundary.
+The private `model_config` module identifies the same provider-reported selector for startup model intents and stale-load rebuilds. Startup applies only offered values, while rebuild reads the reported current value. A report carries no model when it is empty, when two selects make the fallback ambiguous, or when the `Model` category is not a select.
 
 At Backend start, stale `Running` session rows are reconciled to `Stopped`, then one dedicated
 runtime thread per agent starts it and performs `initialize`. The handshake advertises the
@@ -120,7 +120,9 @@ turn locally until `startSession` returns.
   resends the prompt once with the transcript and the model the restored provider reported. If the
   retry fails too, that attempt's error is returned; only a failure to rebuild returns the first
   error. The retry only applies to a reusable `RequestFailed` before any output; a cancelled or
-  otherwise finished first prompt consumes it.
+  otherwise finished first prompt consumes it. A load follower registered during that first
+  attempt stays with the logical turn across the rebuild, so it receives exactly one terminal
+  boundary.
 - **Configure.** A session that holds a provider reports its own options and is configured through
   `setSessionConfig`. A model chosen while a session held no provider is an intent applied at the
   next attach. Reasoning effort is read only from the `thought_level` option a live session reports;

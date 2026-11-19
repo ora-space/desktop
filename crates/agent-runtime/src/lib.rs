@@ -69,6 +69,7 @@ pub use mcp_resolver::{
     revalidate_stdio_command,
 };
 pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp};
+pub use model_config::model_selector;
 pub use operations::AgentRuntime;
 pub use replaced::ReplacedAgentSessions;
 

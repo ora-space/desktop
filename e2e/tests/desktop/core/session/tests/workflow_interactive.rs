@@ -26,6 +26,20 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 /// Deadline for one interactive round trip; the fake agent and the real backend are local.
 const RUN_DEADLINE: Duration = Duration::from_secs(20);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Waits for a fake-agent handshake file instead of relying on a timing window.
+async fn wait_for_file(path: &std::path::Path) -> TestResult {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "{} did not appear in time",
+            path.display()
+        );
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    Ok(())
+}
 /// Marker file that makes the fake agent refuse `session/load`, as a lost provider session would.
 const LOAD_REFUSAL_MARKER: &str = "refuse_session_load";
 /// Prompt marker that keeps the fake agent's turn open until the host cancels it.
@@ -624,14 +638,15 @@ fn a_load_follower_follows_the_stale_load_retry_to_one_terminal_end() -> TestRes
             .prompt(PromptSessionRequest {
                 session_id: session_id.clone(),
                 prompt: vec![ContentBlock::Text(TextContent::new(
-                    "[fail-times:1] [fail-delay-ms:300] carry on",
+                    "[fail-times:1] [fail-after-load] carry on",
                 ))],
                 record_prompt: None,
                 model: None,
             })
             .await?;
-        // Give the first attempt time to send its prompt, then attach a follower while it is held.
-        tokio::time::sleep(Duration::from_millis(80)).await;
+        // The fake agent holds the first attempt until the follower is attached, so the test does
+        // not depend on a timing window to reach the retry.
+        wait_for_file(&package_root.join("first_prompt_waiting_for_load")).await?;
         let mut follower = backend
             .sessions()
             .load(LoadSessionRequest {
@@ -673,6 +688,82 @@ fn a_load_follower_follows_the_stale_load_retry_to_one_terminal_end() -> TestRes
             2,
             "the initial session and the single retry rebuild are both recorded: {calls}"
         );
+        Ok(())
+    })
+}
+
+/// A follower carried into the retry still gets one Cancelled + Completed when the retry send dies.
+#[test]
+fn a_load_follower_gets_a_terminal_boundary_when_the_retry_send_fails() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let (run_id, session_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let run_id = start_interactive_run(&backend, &workspace_id)?;
+            let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending
+            })
+            .await?;
+            (run_id, parked.session_id.ok_or("the node owns a session")?)
+        };
+
+        let backend = open_ready_backend(&setup)?;
+        let mut stream = backend
+            .sessions()
+            .prompt(PromptSessionRequest {
+                session_id: session_id.clone(),
+                prompt: vec![ContentBlock::Text(TextContent::new(
+                    "[fail-times:1] [fail-after-load] [crash-on-retry] carry on",
+                ))],
+                record_prompt: None,
+                model: None,
+            })
+            .await?;
+        wait_for_file(&package_root.join("first_prompt_waiting_for_load")).await?;
+        let mut follower = backend
+            .sessions()
+            .load(LoadSessionRequest {
+                session_id: session_id.clone(),
+            })
+            .await?;
+
+        let mut live_stop_reasons = Vec::new();
+        let mut completed = 0;
+        while let Some(event) = follower.recv().await {
+            match event? {
+                LoadSessionEvent::TurnEnded {
+                    stop_reason,
+                    recorded_at: None,
+                } => live_stop_reasons.push(stop_reason),
+                LoadSessionEvent::Completed => completed += 1,
+                _ => {}
+            }
+        }
+        let mut prompt_error = None;
+        while let Some(event) = stream.recv().await {
+            if let Err(error) = event {
+                prompt_error = Some(error.to_string());
+            }
+        }
+
+        assert!(
+            prompt_error.is_some(),
+            "the retry's connection loss reaches the prompt owner"
+        );
+        assert_eq!(
+            (live_stop_reasons, completed),
+            (vec![StopReason::Cancelled], 1),
+            "the carried follower must receive exactly one Cancelled boundary and one Completed"
+        );
+        let calls = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
+        assert_eq!(
+            calls.matches("session/new").count(),
+            2,
+            "the builder created the session and the stale-load retry rebuilt once: {calls}"
+        );
+        let _ = run_id;
         Ok(())
     })
 }
