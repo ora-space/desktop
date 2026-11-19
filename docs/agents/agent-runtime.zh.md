@@ -92,7 +92,7 @@ setup 按无活动计时，而不是总时长。交付 MCP server 的请求有 1
 
 Agent 消息、思考、计划和工具生命周期更新会重置窗口；会话外围的通知（`available_commands_update`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update`）不会。运行中的工具会暂停窗口直到最后一个并行工具结束，等待权限也会暂停到得到答复，所以一个长工具可以运行数小时。prompt 没有绝对时长上限。
 
-CodeAgent `_subagent/update` 帧是唯一的投影例外：只要其外层 `toolCallId` 指向本次尝试中仍为 `pending` 或 `in_progress` 的父委托，每一帧都为父窗口续期一个完整窗口但不暂停计时。实测 CodeAgent 父 `Task` 从不报告 `in_progress`，这一续期让较长的前台委托不被中途取消；卡住不再发帧的子代理仍会在一个静默窗口后超时，重试则不带旧尝试的父委托观察重新开始。
+CodeAgent `_subagent/update` 帧是唯一的投影例外：只要其外层 `toolCallId` 指向本次尝试中仍为 `pending` 或 `in_progress` 的父委托，每一帧都为父窗口续期一个完整窗口但不暂停计时，重试则清除旧尝试的父委托观察重新开始（续期依赖父 `toolCallId` 在同一 provider 会话内唯一；若 provider 在新委托上复用同一 id，旧任务迟到的子帧仍可能为其续期）。实测 CodeAgent 父 `Task` 从不报告 `in_progress`，这一续期仅在子代理持续按窗口发帧期间保持前台委托存活。续期只看子帧是否到达、不判断子代理是否健康，在 CodeAgent 为父调用补发 `in_progress` 前有两个接受的边界：一是子代理内单个正常工具运行超过当次窗口且期间没有中间帧（或子代理停止发帧）时，父 prompt 仍会被取消并重试，使子代理和该工具重跑；二是子代理即使陷入错误或重试循环，只要持续发帧就会无限续期父窗口，须手动停止。
 
 窗口到期时，运行时发送 `session/cancel`，并在五秒宽限内等待卡住的那个请求的响应。如果响应带着 `stop_reason: cancelled` 到达且还有剩余窗口，就在同一个 provider session 上重发同一条用户 prompt，之前先在所属的流上发出 `retrying { retry, maxRetries }` 标记。必须有这个响应作为分界，因为 ACP 更新不带请求 id。缺少分界、其他 stop reason 或次数用尽时，prompt 以 `agent_timed_out` 失败，只隔离这个会话。重发复用会话，一条用户消息只记录一次。运行时在取消排空后写入 `promptRetried` 边界，排空期间的更新归入被放弃的尝试。宿主为新发送刷新尝试指令和完成 token。
 
@@ -130,4 +130,4 @@ Workspace 和工作流对话提供只读运行详情：最近实时收到的内�
 的后续增量中仍归为子工具；历史或尚未观察到来源的工具显示来源未确认。观察时长不是超时倒计时。
 界面只列出宿主实际暴露的请求；当前 runtime 自动处理权限，未支持的问题表单不会伪造为待处理请求。
 
-OpenCode 子会话投影与 `_subagent/update` 扩展投影仍会显示，且从不暂停父 prompt 的无活动窗口。带有效外层 `toolCallId` 的 `_subagent/update` 帧，若其指向的父委托在本次尝试中仍为 `pending` 或 `in_progress`，还会为父窗口续期一个完整窗口：实测 CodeAgent 父 `Task` 在整个委托期间保持 `pending`，若不续期，超过首个窗口的前台委托会在子代理仍在工作时被取消并重发。父委托已完成、失败、外层 id 不认识或缺失时不续期；重试会清除上一次尝试的父委托观察。子工具后续省略 metadata 的增量仍保持子来源，但不续期。父委托工具自身的 in_progress 继续暂停既有计时，暂停优先于续期；显式 Wait 和取消/错误收尾不变。
+OpenCode 子会话投影与 `_subagent/update` 扩展投影仍会显示，且从不暂停父 prompt 的无活动窗口。带有效外层 `toolCallId` 的 `_subagent/update` 帧，若其指向的父委托在本次尝试中仍为 `pending` 或 `in_progress`，还会为父窗口续期一个完整窗口：实测 CodeAgent 父 `Task` 在整个委托期间保持 `pending`，若不续期，超过首个窗口的前台委托会在子代理持续按窗口发帧期间被取消并重发。父委托已完成、失败、外层 id 不认识或缺失时不续期；重试会清除上一次尝试的父委托观察（假设父 `toolCallId` 在同一 provider 会话内唯一）。子工具后续省略 metadata 的增量仍保持子来源，但不续期。父委托工具自身的 in_progress 继续暂停既有计时，暂停优先于续期；显式 Wait 和取消/错误收尾不变。

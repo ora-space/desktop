@@ -19,7 +19,7 @@ EOF、没有 turn_end 时保持未知，不补造父结束事实。父回合结�
 继续显示在父时间线。实时批处理与重放保留完整 metadata 和文本注解，不因 messageId 相同或缺失而混合
 不同来源；工具增量只替换实际给出的顶层命名空间，包括显式 null，不递归合并未知 provider 对象。
 
-只要关联的委托在本次尝试中仍为 `pending` 或 `in_progress`，它的 `_subagent/update` 帧就会为父 prompt 的无活动窗口续期但不暂停计时，避免较长的前台委托在执行中途被取消；见
+只要关联的委托在本次尝试中仍为 `pending` 或 `in_progress`，它的 `_subagent/update` 帧就会为父 prompt 的无活动窗口续期但不暂停计时，在子代理持续按窗口发帧期间保持前台委托存活（单个静默子工具超过窗口仍会触发取消重试，持续发帧则会一直续期直至手动停止）；见
 [Agent 运行时](agent-runtime.zh.md#prompt-无活动与重试)。
 
 [历史记录模块](session-history.zh.md)必须保存来源 metadata。界面无法补回旧文件中丢失的来源，OpenCode

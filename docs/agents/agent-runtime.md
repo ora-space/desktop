@@ -32,9 +32,10 @@ and never pause their parent prompt's inactivity window. A `_subagent/update` fr
 `toolCallId` names a parent delegation still `pending` or `in_progress` in the current attempt
 additionally rearms a full parent window: the captured CodeAgent parent `Task` stays `pending`
 for the whole delegation, so without this renewal a foreground delegation longer than the first
-window would be cancelled and re-sent while the subagent is still working. Completed, failed,
-unknown or absent outer delegation ids do not renew, and a retry clears the previous attempt's
-delegation observations. Metadata-free child tool deltas retain their known source and do not
+window would be cancelled and re-sent while the subagent continues emitting frames within each
+window. Completed, failed, unknown or absent outer delegation ids do not renew, and a retry
+clears the previous attempt's delegation observations (assuming parent `toolCallId`s are unique
+within a provider session). Metadata-free child tool deltas retain their known source and do not
 renew. The parent delegate's own in-progress update still pauses its existing timer, with pause
 taking priority over renewal; explicit Wait and cancel/error cleanup remain unchanged.
 
@@ -224,10 +225,17 @@ hours. There is no absolute prompt limit.
 
 CodeAgent `_subagent/update` frames are the one projected exception: while their outer
 `toolCallId` names a delegation still `pending` or `in_progress` in the current attempt, each
-frame rearms a full window without pausing it. This keeps a long foreground delegation alive even
-though the captured CodeAgent parent `Task` never reports `in_progress`; a stuck subagent that
-stops sending frames still times out after one silent window, and a retry starts fresh without
-the previous attempt's delegation observations.
+frame rearms a full window without pausing it, and a retry starts fresh without the previous
+attempt's delegation observations (assuming parent `toolCallId`s are unique within a provider
+session; if a provider reused the same id on a new open delegation, a late child frame from the
+old task could still renew it). Because the captured CodeAgent parent `Task` never reports
+`in_progress`, this keeps a foreground delegation alive only while subagent frames continue to
+arrive within each window. Renewal checks frame arrival rather than subagent health, leaving two
+accepted limits until CodeAgent reports parent `in_progress`: if a normal single tool inside the
+subagent runs longer than the active window without intermediate frames (or the subagent stops
+sending frames), the parent prompt still cancels and retries, rerunning the subagent and that
+tool; conversely, a subagent that keeps sending frames (even in an error or retry loop) renews
+the parent window indefinitely and must be stopped manually.
 
 When a window expires the runtime sends `session/cancel` and waits up to the five-second grace for
 the stalled request's response. If it arrived with `stop_reason: cancelled` and the schedule has
