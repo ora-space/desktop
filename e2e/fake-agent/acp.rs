@@ -1,6 +1,6 @@
 //! Minimal but complete ACP agent behavior behind the plugin's `agent/acp` channel.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -38,13 +38,6 @@ const FAIL_TIMES_MARKER: &str = "[fail-times:";
 
 /// Prompt marker `[fail-delay-ms:N]`: hold the prompt this long before the planned failure.
 const FAIL_DELAY_MARKER: &str = "[fail-delay-ms:";
-
-/// Prompt marker that defers the first failure until a load follower has attached.
-const FAIL_AFTER_LOAD_MARKER: &str = "[fail-after-load]";
-const FIRST_PROMPT_WAITING: &str = "first_prompt_waiting_for_load";
-
-/// Prompt marker that makes the retry exit after the first prompt already failed.
-const CRASH_ON_RETRY_MARKER: &str = "[crash-on-retry]";
 
 /// Journal of prompts failed on purpose, one marker per line, so the count survives new
 /// sessions and a restarted plugin process alike.
@@ -153,8 +146,6 @@ pub(super) struct FakeAcpAgent {
     next_session_id: u64,
     /// Held requests allow lifecycle tests to observe a real in-flight ACP cancellation.
     pending_prompts: BTreeMap<String, Value>,
-    /// Sessions whose first prompt waits for a load follower before answering with its failure.
-    deferred_prompts: BTreeSet<String>,
 }
 
 impl FakeAcpAgent {
@@ -185,12 +176,7 @@ impl FakeAcpAgent {
                             .sessions
                             .get(&session_id)
                             .is_some_and(|session| !session.empty_retry_pending);
-                    let defer = prompt.contains(FAIL_AFTER_LOAD_MARKER) && !first_prompt_failed();
-                    if defer {
-                        let _ = std::fs::write(FIRST_PROMPT_WAITING, b"waiting");
-                        self.deferred_prompts.insert(session_id.clone());
-                    }
-                    if defer || first_empty_retry || prompt.contains("[hold-for-cancel]") {
+                    if first_empty_retry || prompt.contains("[hold-for-cancel]") {
                         Some((session_id, None))
                     } else {
                         prompt_mode(&prompt).map(|mode| (session_id, Some(mode)))
@@ -199,48 +185,14 @@ impl FakeAcpAgent {
         } else {
             None
         };
-        let deferred_load = (method == "session/load")
-            .then(|| params.get("sessionId").and_then(Value::as_str))
-            .flatten()
-            .filter(|session| self.deferred_prompts.contains(*session))
-            .map(str::to_string);
 
         match self.handle_request(method, params) {
             Ok(mut call) => {
-                if let Some(session_id) = deferred_load {
-                    self.deferred_prompts.remove(&session_id);
-                    let prompt_id = self.pending_prompts.remove(&session_id);
-                    call.notifications.push(json!({
-                        "jsonrpc": JSON_RPC_VERSION,
-                        "id": id,
-                        "result": call.result,
-                    }));
-                    if let Some(prompt_id) = prompt_id {
-                        call.notifications.push(json!({
-                            "jsonrpc": JSON_RPC_VERSION,
-                            "id": prompt_id,
-                            "error": {
-                                "code": INTERNAL_ERROR_CODE,
-                                "message": "deferred stale-load failure",
-                            },
-                        }));
-                    }
-                    return call.notifications;
-                }
                 if let Some((session_id, mode)) = held_prompt {
                     // Abnormal modes are deliberately silent: dropping the generated notification
                     // is what makes "received the prompt but produced nothing" literal.
                     if mode.is_some() {
                         call.notifications.clear();
-                    }
-                    if self.deferred_prompts.contains(&session_id) {
-                        if let Ok(mut journal) = OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(PROMPT_FAILURE_JOURNAL)
-                        {
-                            let _ = writeln!(journal, "[fail-times:1]");
-                        }
                     }
                     self.pending_prompts.insert(session_id, id);
                     return call.notifications;
@@ -449,11 +401,6 @@ impl FakeAcpAgent {
 
         let prompt = prompt_text(&request.prompt);
         record_prompt(&session_id, &prompt);
-        if prompt.contains(CRASH_ON_RETRY_MARKER) && first_prompt_failed() {
-            // The retry reaches the agent, then the process dies before answering it.
-            std::process::exit(18);
-        }
-
         let late_tool = prompt.contains("[late-child-tool]");
         let mut notifications = Vec::new();
         if prompt.contains("[fake-empty-retry]") {
@@ -579,12 +526,6 @@ fn record_acp_call(method: &str, session_id: &str) {
     {
         let _ = writeln!(file, "{method} {session_id}");
     }
-}
-
-/// Whether the first attempt with the stale-load marker has already failed.
-fn first_prompt_failed() -> bool {
-    std::fs::read_to_string(PROMPT_FAILURE_JOURNAL)
-        .is_ok_and(|journal| journal.contains("[fail-times:1]"))
 }
 
 /// Reads `[fail-delay-ms:N]` so a test can attach a load follower during the first attempt.
