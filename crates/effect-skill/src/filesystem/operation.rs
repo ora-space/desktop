@@ -171,7 +171,7 @@ fn state_matches_path(
         }
     };
     // Resource proof requires a directory entry that can be fingerprinted in place.
-    if ora_utils::directory::is_link_or_reparse_point(&metadata) || !metadata.is_dir() {
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(SkillDirectoryError::UnsupportedResourceEntry {
             path: path.to_path_buf(),
         });

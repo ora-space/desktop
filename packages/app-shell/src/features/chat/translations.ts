@@ -376,7 +376,7 @@ export const chatTranslations = {
     "chat.agentEffectFailure.preservedHint":
       "请移走上列旧技能目录，然后重新同步。",
     "chat.agentEffectFailure.linkHint":
-      "\u8bf7\u5c06\u5217\u51fa\u7684\u7b26\u53f7\u94fe\u63a5\u6216 Windows junction \u66ff\u6362\u4e3a\u666e\u901a\u6587\u4ef6\u6216\u76ee\u5f55\uff0c\u7136\u540e\u91cd\u65b0\u540c\u6b65\u3002",
+      "请将列出的符号链接或 Windows junction 替换为普通文件或目录，然后重新同步。",
     "chat.agentEffectFailure.retryHint": "请先处理上列问题，然后重新同步。",
     "chat.agentEffectFailure.action": "重新同步",
     "chat.agentEffectFailure.pending": "正在重新同步…",

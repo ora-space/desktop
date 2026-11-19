@@ -68,20 +68,6 @@ pub enum DirectoryTreeError {
     },
 }
 
-/// Identifies links and Windows reparse points without following them.
-pub fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    }
-    #[cfg(not(windows))]
-    {
-        metadata.file_type().is_symlink()
-    }
-}
-
 /// Refuses to traverse a tree whose root is itself a link.
 fn reject_link_root(root: &Path) -> Result<(), DirectoryTreeError> {
     let metadata =
@@ -89,7 +75,7 @@ fn reject_link_root(root: &Path) -> Result<(), DirectoryTreeError> {
             path: root.to_path_buf(),
             source,
         })?;
-    if is_link_or_reparse_point(&metadata) {
+    if metadata.file_type().is_symlink() {
         return Err(DirectoryTreeError::LinkRejected {
             path: root.to_path_buf(),
         });
@@ -247,7 +233,7 @@ fn collect_entries(
             path: path.clone(),
             source,
         })?;
-        if is_link_or_reparse_point(&metadata) {
+        if metadata.file_type().is_symlink() {
             return Err(DirectoryTreeError::LinkRejected { path });
         }
         if relative_path.components().count() == 1
@@ -309,7 +295,7 @@ fn copy_entries(
                 path: source_path.clone(),
                 source,
             })?;
-        if is_link_or_reparse_point(&metadata) {
+        if metadata.file_type().is_symlink() {
             return Err(DirectoryTreeError::LinkRejected { path: source_path });
         }
         let destination_path = destination.join(relative);

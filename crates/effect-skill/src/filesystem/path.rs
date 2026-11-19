@@ -1,6 +1,6 @@
 use super::SkillDirectoryError;
 use ora_effect::{EffectResource, FilesystemOperationPlan, VersionedResourceDescriptor};
-use ora_utils::directory::{DirectoryTreeError, is_link_or_reparse_point};
+use ora_utils::directory::DirectoryTreeError;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -53,7 +53,7 @@ pub(super) fn resolve_declared_root(
             });
         }
     };
-    if is_link_or_reparse_point(&root_metadata) {
+    if root_metadata.file_type().is_symlink() {
         return Err(DirectoryTreeError::LinkRejected {
             path: workspace_root.to_path_buf(),
         }
@@ -71,21 +71,23 @@ pub(super) fn resolve_declared_root(
         }
     })?;
     let mut current = canonical_workspace.clone();
+    let mut declared = workspace_root.to_path_buf();
     let mut path_is_missing = false;
     for component in relative_path.to_path_buf().components() {
         let std::path::Component::Normal(segment) = component else {
             return Err(SkillDirectoryError::UnsafeResourcePath { path: current });
         };
         current = current.join(segment);
+        declared.push(segment);
         if path_is_missing {
             continue;
         }
         match fs::symlink_metadata(&current) {
-            Ok(metadata) if is_link_or_reparse_point(&metadata) => {
-                return Err(DirectoryTreeError::LinkRejected { path: current }.into());
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(DirectoryTreeError::LinkRejected { path: declared }.into());
             }
             Ok(metadata) if !metadata.is_dir() => {
-                return Err(SkillDirectoryError::UnsafeResourcePath { path: current });
+                return Err(SkillDirectoryError::UnsafeResourcePath { path: declared });
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => match access {

@@ -173,7 +173,7 @@ describe("AgentEffectRecoveryBanner", () => {
     {
       code: "skill_directory_link",
       message:
-        'Symbolic links and Windows junctions are not supported: "review/vendor/linked"',
+        "Symbolic links and Windows junctions are not supported: .agents/skills/review/vendor/linked",
       hint: /Replace the listed symbolic links|\u66ff\u6362\u4e3a\u666e\u901a/,
     },
   ])(

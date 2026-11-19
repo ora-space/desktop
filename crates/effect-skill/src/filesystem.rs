@@ -7,7 +7,7 @@ use ora_effect::{
     ResourceObservation, VerificationReceipt, VersionedAdapterPlan, VersionedMaterializationInput,
     VersionedResourceDescriptor, VersionedResourceLocator,
 };
-use ora_utils::directory::{DirectoryTreeError, is_link_or_reparse_point};
+use ora_utils::directory::DirectoryTreeError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -37,8 +37,12 @@ impl From<SkillDirectoryError> for ResourceAdapterError {
     }
 }
 
-/// Converts deterministic tree errors to diagnostics scoped to the skill resource.
-fn observation_error(error: SkillDirectoryError, root: &Path) -> ResourceAdapterError {
+/// Converts deterministic observation errors to workspace-relative diagnostics.
+fn observation_error(
+    error: SkillDirectoryError,
+    root: Option<&Path>,
+    descriptor: &ora_effect::FilesystemDirectoryDescriptor,
+) -> ResourceAdapterError {
     let (code, explanation, path) = match &error {
         SkillDirectoryError::DirectoryTree(DirectoryTreeError::LinkRejected { path }) => (
             "skill_directory_link",
@@ -53,12 +57,34 @@ fn observation_error(error: SkillDirectoryError, root: &Path) -> ResourceAdapter
             "Unsupported entry in the skill directory",
             path,
         ),
+        SkillDirectoryError::UnsafeResourcePath { path } => (
+            "unsafe_skill_directory",
+            "The skill directory or an ancestor is unsafe",
+            path,
+        ),
         _ => return ResourceAdapterError::new(error),
     };
-    let message = match path.strip_prefix(root) {
-        Ok(relative) => format!("{explanation}: {relative:?}"),
-        Err(_) => explanation.to_string(),
+    let declared = descriptor.relative_path.to_path_buf();
+    let relative = if let Some(tail) = root.and_then(|root| path.strip_prefix(root).ok()) {
+        declared.join(tail)
+    } else if let Ok(relative) = path.strip_prefix(&descriptor.workspace_root) {
+        relative.to_path_buf()
+    } else {
+        declared
     };
+    let display = relative
+        .iter()
+        .map(|segment| {
+            segment
+                .to_string_lossy()
+                .replace(char::is_control, "\u{fffd}")
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    let message = format!(
+        "{explanation}: {}",
+        if display.is_empty() { "." } else { &display }
+    );
     ResourceAdapterError::new(error).with_observation_blocker(
         ora_effect::StableConditionCode::from_static(code),
         ora_effect::SafeConditionDetails {
@@ -174,32 +200,12 @@ impl SkillDirectoryResourceAdapter {
         self,
         resource: &EffectResource,
     ) -> Result<ResourceObservation, ResourceAdapterError> {
-        let root = resolve_resource_root(resource, RootAccess::Observe).map_err(|error| {
-            let (code, explanation) = match &error {
-                SkillDirectoryError::DirectoryTree(DirectoryTreeError::LinkRejected { .. }) => (
-                    "skill_directory_link",
-                    "The skill directory or an ancestor is a symbolic link or Windows junction",
-                ),
-                SkillDirectoryError::UnsafeResourcePath { .. } => (
-                    "unsafe_skill_directory",
-                    "The skill directory or an ancestor is unsafe",
-                ),
-                _ => return ResourceAdapterError::new(error),
-            };
-            let name = match &resource.descriptor {
-                VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) => {
-                    format!("{:?}", descriptor.relative_path.to_path_buf())
-                }
-                _ => "skill directory".to_string(),
-            };
-            ResourceAdapterError::new(error).with_observation_blocker(
-                ora_effect::StableConditionCode::from_static(code),
-                ora_effect::SafeConditionDetails {
-                    message: format!("{explanation}: {name}"),
-                    parameters: BTreeMap::new(),
-                },
-            )
-        })?;
+        let VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) = &resource.descriptor
+        else {
+            return Err(SkillDirectoryError::UnsupportedResourceDescriptor.into());
+        };
+        let root = resolve_resource_root(resource, RootAccess::Observe)
+            .map_err(|error| observation_error(error, None, descriptor))?;
         let Some(root) = root else {
             return Ok(ResourceObservation {
                 resource: resource.identity.clone(),
@@ -222,8 +228,6 @@ impl SkillDirectoryResourceAdapter {
             if entry_name == OPERATIONS_DIR_NAME {
                 continue;
             }
-            let native_identity = NativeResourceIdentity::parse(entry_name.clone())
-                .map_err(|_| SkillDirectoryError::InvalidNativeIdentity(entry_name))?;
             let path = entry.path();
             let metadata =
                 fs::symlink_metadata(&path).map_err(|source| SkillDirectoryError::Io {
@@ -231,20 +235,27 @@ impl SkillDirectoryResourceAdapter {
                     path: path.clone(),
                     source,
                 })?;
-            if is_link_or_reparse_point(&metadata) {
+            if metadata.file_type().is_symlink() {
                 return Err(observation_error(
                     DirectoryTreeError::LinkRejected { path }.into(),
-                    &root,
+                    Some(&root),
+                    descriptor,
                 ));
+            }
+            if metadata.is_file() {
+                continue;
             }
             if !metadata.is_dir() {
                 return Err(observation_error(
                     DirectoryTreeError::SpecialEntryRejected { path }.into(),
-                    &root,
+                    Some(&root),
+                    descriptor,
                 ));
             }
-            let fingerprint =
-                fingerprint(&path).map_err(|error| observation_error(error, &root))?;
+            let native_identity = NativeResourceIdentity::parse(entry_name.clone())
+                .map_err(|_| SkillDirectoryError::InvalidNativeIdentity(entry_name))?;
+            let fingerprint = fingerprint(&path)
+                .map_err(|error| observation_error(error, Some(&root), descriptor))?;
             let ownership_evidence = read_marker(&path)
                 .filter(|marker| {
                     marker.schema_version == MARKER_SCHEMA_VERSION
