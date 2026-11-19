@@ -7,6 +7,9 @@ pub const OPENCODE_CHILD_SESSION_META_KEY: &str = "opencode/child-session";
 /// Metadata namespace recorded for `_subagent/update` extension notifications.
 pub const SUBAGENT_UPDATE_META_KEY: &str = "_subagent/update";
 
+/// Metadata marker recorded when turn-end settlement synthesizes `completed` for an open parent tool.
+pub const TURN_END_SETTLED_META_KEY: &str = "ora/turn-end-settled";
+
 /// Reports whether `meta` names any recognized child-projection namespace, even when cleared.
 ///
 /// Callers that track per-tool ownership across metadata-free deltas need to distinguish an

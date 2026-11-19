@@ -295,15 +295,20 @@ fn settles_a_tool_call_the_provider_never_reported_finishing() {
     ));
     assembler.push_update(&agent_text("here is what I found", Some("m1")));
 
+    let mut settled_call = ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed);
+    settled_call.meta = Some(
+        serde_json::from_value(serde_json::json!({
+            crate::TURN_END_SETTLED_META_KEY: true
+        }))
+        .unwrap(),
+    );
     assert_eq!(
         assembler.end_turn(StopReason::EndTurn),
         vec![
             AssembledRecord {
                 seq: 0,
                 record: HistoryRecord::Update {
-                    update: Box::new(SessionUpdate::ToolCall(
-                        ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed),
-                    )),
+                    update: Box::new(SessionUpdate::ToolCall(settled_call)),
                     tool_timing: None,
                 },
             },

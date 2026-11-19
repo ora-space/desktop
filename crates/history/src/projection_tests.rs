@@ -155,7 +155,7 @@ fn cleared_or_invalid_child_sources_settle_as_parent_tools() {
         })));
         let expected = update(json!({
             "sessionUpdate":"tool_call","toolCallId":"tool","title":"Work",
-            "status":"completed","_meta":{"opencode/child-session":source}
+            "status":"completed","_meta":{"opencode/child-session":source,"ora/turn-end-settled":true}
         }));
         let records = assembler.end_turn(StopReason::EndTurn);
         assert_eq!(payloads(&records), vec![expected.clone()]);
@@ -391,10 +391,82 @@ fn invalid_or_cleared_subagent_update_sources_settle_as_parent_tools() {
             "toolCallId": "tool",
             "title": "Work",
             "status": "completed",
-            "_meta": { "_subagent/update": invalid },
+            "_meta": { "_subagent/update": invalid, "ora/turn-end-settled": true },
         }));
         let records = assembler.end_turn(StopReason::EndTurn);
         assert_eq!(payloads(&records), vec![expected.clone()]);
         assert_eq!(reload_payloads(&records), vec![expected]);
     }
+}
+
+#[test]
+fn turn_end_settled_parent_tool_carries_implied_marker_while_provider_completion_strips_spoofs() {
+    let mut assembler = HistoryAssembler::new(0);
+    // A provider-reported completion strips any spoofed settlement marker, while an `in_progress`
+    // parent call that streamed output and was never finished gets `ora/turn-end-settled: true`
+    // when `end_turn` closes the turn.
+    let mut records = assembler.push_update(&update(json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "parent-reported",
+        "title": "Task",
+        "status": "completed",
+        "rawOutput": "final output",
+        "_meta": { "ora/turn-end-settled": true },
+    })));
+    records.extend(assembler.push_update(&update(json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "parent-implied",
+        "title": "Task",
+        "status": "in_progress",
+        "rawOutput": "partial output",
+    }))));
+    records.extend(assembler.end_turn(StopReason::EndTurn));
+    let expected = vec![
+        update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "parent-reported",
+            "title": "Task",
+            "status": "completed",
+            "rawOutput": "final output",
+        })),
+        update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "parent-implied",
+            "title": "Task",
+            "status": "completed",
+            "rawOutput": "partial output",
+            "_meta": { "ora/turn-end-settled": true },
+        })),
+    ];
+    assert_eq!(payloads(&records), expected);
+    assert_eq!(reload_payloads(&records), expected);
+}
+
+#[test]
+fn subagent_update_plans_replace_per_task_despite_extra_metadata_through_reload() {
+    let mut assembler = HistoryAssembler::new(0);
+    let plan = |task_id: &str, step: &str, rev: u64| {
+        update(json!({
+            "sessionUpdate": "plan",
+            "entries": [{ "content": step, "priority": "medium", "status": "pending" }],
+            "_meta": {
+                "_subagent/update": {
+                    "sessionId": "main",
+                    "taskId": task_id,
+                    "toolCallId": format!("parent-{task_id}"),
+                },
+                "codeAgentCLI": { "rev": rev },
+            },
+        }))
+    };
+    let sibling = plan("task-b", "Sibling step", 1);
+    let latest_a = plan("task-a", "Step 2", 2);
+    assembler.push_update(&plan("task-a", "Step 1", 1));
+    assembler.push_update(&sibling);
+    assembler.push_update(&latest_a);
+    let expected = vec![latest_a, sibling];
+    assert_eq!(payloads(&assembler.pending_records()), expected);
+    let records = assembler.end_turn(StopReason::EndTurn);
+    assert_eq!(payloads(&records), expected);
+    assert_eq!(reload_payloads(&records), expected);
 }
