@@ -192,10 +192,31 @@ fn assert_blocked_then_repaired(relative: &str, entry: Entry) {
     );
 }
 
-/// A regular file owning a required native name must block before mutation is journaled.
+/// An occupied skill name must block before journaling or quiescing the Consumer.
 #[test]
 fn occupied_skill_name_blocks_without_a_journal_and_retries_after_cleanup() {
-    for name in ["review", "REVIEW"] {
+    use super::consumer_handover::{ReservationProbe, quiesce_declaration, skill_package};
+
+    for (name, directory_blocker, code, message) in [
+        (
+            "review",
+            false,
+            "unsafe_skill_directory",
+            "Move the regular file that occupies the skill directory",
+        ),
+        (
+            "REVIEW",
+            false,
+            "unsafe_skill_directory",
+            "Move the regular file that occupies the skill directory",
+        ),
+        (
+            "REVIEW",
+            true,
+            "preserved_item_conflict",
+            "Move the unmanaged directory that occupies the skill directory",
+        ),
+    ] {
         let (directory, pool, workspace) = fixture();
         let skill_root = directory
             .path()
@@ -204,9 +225,15 @@ fn occupied_skill_name_blocks_without_a_journal_and_retries_after_cleanup() {
             .join("skills");
         fs::create_dir_all(&skill_root).unwrap();
         let occupied = skill_root.join(name);
-        fs::write(&occupied, b"user file").unwrap();
+        let user_file = if directory_blocker {
+            fs::create_dir(&occupied).unwrap();
+            occupied.join("notes.txt")
+        } else {
+            occupied.clone()
+        };
+        fs::write(&user_file, b"user file").unwrap();
         fs::write(skill_root.join(".DS_Store"), b"desktop metadata").unwrap();
-        let projection = super::consumer_handover::skill_package(
+        let projection = skill_package(
             directory.path(),
             "package",
             b"---\nname: review\ndescription: Reviews changes\n---\n",
@@ -222,7 +249,7 @@ fn occupied_skill_name_blocks_without_a_journal_and_retries_after_cleanup() {
             .unwrap();
         let repository = SqliteEffectRepository::with_clock(pool.clone(), clock);
         repository
-            .declare_consumer(&declaration("official/codex"), &[workspace])
+            .declare_consumer(&quiesce_declaration("official/codex"), &[workspace])
             .unwrap();
         let worker = WorkerIdentity::parse("worker").unwrap();
         let lease = LocalTimestamp::from_millis(100);
@@ -235,10 +262,15 @@ fn occupied_skill_name_blocks_without_a_journal_and_retries_after_cleanup() {
             )
             .unwrap()
             .remove(0);
+        let consumer = ReservationProbe {
+            pool,
+            should_fail: false,
+            calls: Default::default(),
+        };
         let reconciler = EffectReconciler::new(
             &repository,
             &SkillPlanner,
-            &ReadyConsumer,
+            &consumer,
             &SkillDirectoryResourceAdapter,
             &FixedTimestamp,
         );
@@ -253,29 +285,18 @@ fn occupied_skill_name_blocks_without_a_journal_and_retries_after_cleanup() {
         };
         assert!(matches!(condition.owner, ConditionOwner::Resource(_)));
         assert_eq!(condition.impact, ConditionImpact::Blocking);
-        assert_eq!(condition.code.as_str(), "unsafe_skill_directory");
+        assert_eq!(condition.code.as_str(), code);
         assert_eq!(
             condition.safe_details.message,
-            format!(
-                "Move the regular file that occupies the skill directory: .agents/skills/{name}"
-            )
+            format!("{message}: .agents/skills/{name}")
         );
-        let journal_count: i64 = pool
-            .with_connection(|connection| {
-                connection
-                    .query_row(
-                        "SELECT COUNT(*) FROM effect_reconcile_attempts",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .map_err(Into::into)
-            })
-            .unwrap();
-        assert_eq!(journal_count, 0);
+        assert_eq!(consumer.journal_count(), 0);
+        assert!(consumer.calls.borrow().is_empty());
         assert!(repository.load_unfinished_operations().unwrap().is_empty());
-        assert_eq!(fs::read(&occupied).unwrap(), b"user file");
+        assert_eq!(fs::read(&user_file).unwrap(), b"user file");
 
-        fs::remove_file(&occupied).unwrap();
+        let moved = directory.path().join("moved-user-entry");
+        fs::rename(&occupied, &moved).unwrap();
         assert!(
             repository
                 .request_reconcile(&target, LocalTimestamp::from_millis(12))
@@ -294,7 +315,17 @@ fn occupied_skill_name_blocks_without_a_journal_and_retries_after_cleanup() {
             reconciler.reconcile(&target, &claim, lease).unwrap(),
             ReconcileOutcome::Mutated { .. }
         ));
+        assert_eq!(
+            *consumer.calls.borrow(),
+            ["reserve", "coordinate", "reactivate", "release", "ready"]
+        );
         assert!(skill_root.join("review").join("SKILL.md").is_file());
+        let moved_user_file = if directory_blocker {
+            moved.join("notes.txt")
+        } else {
+            moved
+        };
+        assert_eq!(fs::read(moved_user_file).unwrap(), b"user file");
         assert!(
             repository
                 .load_target_status(&target)
