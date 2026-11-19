@@ -527,6 +527,63 @@ impl<Sessions: ReplacedAgentSessions> ConsumerAdapter for PluginConsumerAdapter<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ora_agent_runtime::AgentSessionBarriers;
+
+    #[derive(Default)]
+    struct TestSessions {
+        barriers: Arc<AgentSessionBarriers>,
+    }
+
+    impl ReplacedAgentSessions for TestSessions {
+        /// No plugin process is attached in this fixture.
+        fn detach_sessions_for_replaced_plugin(&self, _plugin_id: &PluginId) {}
+
+        /// Exposes the actual session mutexes used by the adapter.
+        fn session_barriers(&self) -> Arc<AgentSessionBarriers> {
+            self.barriers.clone()
+        }
+    }
+
+    /// Checks release through the ConsumerAdapter implementation used by the reconciler.
+    #[test]
+    fn plugin_consumer_adapter_releases_reserved_barriers() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = ora_db::DatabaseBootstrapper::new(crate::test_clock::TestClock)
+            .bootstrap_repository_pool(
+                &ora_db::DatabaseLocation::path(directory.path().join("ora.sqlite3")),
+                &ora_db::default_migration_catalog().unwrap(),
+            )
+            .unwrap();
+        let plugin_host = PluginApi::open(
+            pool.clone(),
+            directory.path().to_path_buf(),
+            std::path::PathBuf::from("deno"),
+            SystemClock,
+            crate::app_event::AppEventHub::new().publisher(),
+            Arc::new(crate::settings::Settings::new(pool)),
+        )
+        .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let sessions = TestSessions::default();
+        let adapter = PluginConsumerAdapter {
+            plugin_host: &plugin_host,
+            sessions: &sessions,
+            runtime: runtime.handle(),
+            coordinated: Mutex::default(),
+            held_barriers: CoordinationBarriers::default(),
+        };
+        let plugin = PluginId::new("ora-space", "opencode").unwrap();
+        let barrier = sessions.barriers.for_plugin(&plugin);
+        runtime
+            .block_on(adapter.held_barriers.reserve(&plugin, &barrier))
+            .unwrap();
+        assert!(barrier.is_held());
+        ConsumerAdapter::release_coordination(&adapter);
+        assert!(barrier.try_acquire(BarrierReason::McpRefresh).is_some());
+    }
 
     /// Exercises the worker's real reservation path against a non-reentrant plugin barrier.
     #[test]
