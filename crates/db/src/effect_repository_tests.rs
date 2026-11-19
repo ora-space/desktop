@@ -40,6 +40,11 @@ impl TimestampSource for FixedTimestamp {
 struct ReadyConsumer;
 
 impl ConsumerAdapter for ReadyConsumer {
+    /// The test consumer owns no runtime barrier.
+    fn reserve_coordination(&self, _target: &EffectTarget) -> Result<(), ConsumerAdapterError> {
+        Ok(())
+    }
+
     /// Returns a matching barrier receipt if a test declaration opts into coordination.
     fn coordinate(
         &self,
@@ -86,6 +91,11 @@ struct PublishSkillOnVerify {
 }
 
 impl ConsumerAdapter for PublishSkillOnVerify {
+    /// The test consumer owns no runtime barrier.
+    fn reserve_coordination(&self, _target: &EffectTarget) -> Result<(), ConsumerAdapterError> {
+        Ok(())
+    }
+
     /// Uses the same coordination contract while interleaving publication at readiness.
     fn coordinate(
         &self,

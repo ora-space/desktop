@@ -317,9 +317,10 @@ impl ConsumerAdapterError {
 /// exact Target projection. Runtime-specific session or deployment state stays behind this seam.
 pub trait ConsumerAdapter {
     /// Reserves local coordination capacity before a durable mutation attempt is opened.
-    fn reserve_coordination(&self, _target: &EffectTarget) -> Result<(), ConsumerAdapterError> {
-        Ok(())
-    }
+    fn reserve_coordination(&self, target: &EffectTarget) -> Result<(), ConsumerAdapterError>;
+
+    /// Releases local reservations after every participant has been reactivated.
+    fn release_coordination(&self) {}
 
     /// Establishes the safe-to-mutate barrier for one participating Target.
     fn coordinate(

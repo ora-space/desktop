@@ -165,6 +165,11 @@ struct TimedConsumer {
 }
 
 impl ConsumerAdapter for TimedConsumer {
+    /// The timing fixture owns no runtime barrier.
+    fn reserve_coordination(&self, _target: &EffectTarget) -> Result<(), ConsumerAdapterError> {
+        Ok(())
+    }
+
     /// Keeps the ordinary fixture's exact coordination proof.
     fn coordinate(
         &self,

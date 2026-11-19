@@ -555,6 +555,7 @@ where
         attempt.mark_activated()?;
         self.repository
             .record_attempt_progress(claim, &attempt, &operations, &receipts)?;
+        self.consumer_adapter.release_coordination();
 
         for resource_id in resource_plans.keys() {
             snapshot
