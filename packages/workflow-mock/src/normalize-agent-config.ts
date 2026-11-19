@@ -4,18 +4,21 @@ import { normalizeWorkflowAgentCompletion } from "./agent-completion";
 /**
  * Builds an editable/displayable projection of untrusted Agent JSON without
  * choosing an executor or authorizing malformed dependency bindings.
+ *
+ * `null` is a value JSON graphs can carry for an Agent node; it declares no
+ * bindings, so it projects to the same empty shape as every other missing field.
  */
 export function normalizeWorkflowAgentConfig(
-  config: WorkflowAgentConfig,
+  config: WorkflowAgentConfig | null,
 ): WorkflowAgentConfig {
   // Completion is removed from the spread and normalized explicitly: an edit must write the
   // declaration (and its version-4 requirement) deliberately instead of inheriting a stale shape.
-  const { completion: rawCompletion, ...rest } = config;
+  const { completion: rawCompletion, ...rest } = config ?? {};
   const completion = normalizeWorkflowAgentCompletion(rawCompletion);
   // Missing/null keeps the legacy default. Any other value is preserved verbatim so a string,
   // unsupported number, or malformed import still reaches the validator instead of being downgraded.
   const schemaVersion =
-    config.schemaVersion == null
+    config?.schemaVersion == null
       ? (3 as const)
       : (config.schemaVersion as WorkflowAgentConfig["schemaVersion"]);
   const skills = Array.isArray(config?.skills)
@@ -83,7 +86,9 @@ export function normalizeWorkflowNodeAgentConfigs<
       const { instruction, ...data } = node.data;
       return { ...node, data: { ...data, input: instruction } };
     }
-    if (node.data.kind !== "agent" || node.data.agentConfig === undefined) {
+    // `null` is a value JSON graphs can carry; like a missing contract it means the node
+    // declares nothing, so it is left untouched instead of being projected into a config.
+    if (node.data.kind !== "agent" || node.data.agentConfig == null) {
       return node;
     }
     return {
