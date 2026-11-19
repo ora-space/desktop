@@ -98,4 +98,4 @@ Server 最多 8 个小写 token 请求头，不能是 HTTP 与 MCP 实现自己�
 Agent 经过同样的检查，缺少能力时结束 execution，不在没有宿主 Server 的情况下继续。
 
 URL 与请求头只在内存和 ACP 请求中。ledger 只保留 `host_mcp_server_names`；重复 start 只比较名称，继续使用
-首次受理的值。解码与校验失败只记录错误类别和字段。Node 重启中断会话，不要求 Controller 重发这些值。
+首次受理的值。解码失败只记录 JSON 错误类别，校验失败只记录被拒绝的字段，因为解码器的错误信息可能引用原值。Node 重启中断会话，不要求 Controller 重发这些值。

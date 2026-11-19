@@ -175,5 +175,6 @@ the same way and ends the execution rather than continuing without them.
 
 URLs and headers stay in memory and the ACP request. The ledger keeps only
 `host_mcp_server_names`; a repeated start compares names and keeps the values first accepted. Decode
-and validation failures log only their category and field. A Node restart interrupts the session
+failures log only the JSON error category, and validation failures only the rejected field, since a
+decoder message can quote a value. A Node restart interrupts the session
 without asking the Controller to resend values.
