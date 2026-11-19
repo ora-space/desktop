@@ -619,6 +619,32 @@ fn retry_attributes_late_tool_deltas_to_the_opening_attempt() {
     assert_eq!(assembler.end_turn(StopReason::EndTurn).len(), 1);
 }
 
+/// An unscoped delta uses the new opening once a retry has reopened the same ID.
+#[test]
+fn retry_routes_tool_deltas_to_the_reopened_id() {
+    let mut assembler = HistoryAssembler::new(0);
+    let old = ToolCall::new("shared", "old tool").status(ToolCallStatus::Pending);
+    assembler.push_update(&SessionUpdate::ToolCall(old));
+    assembler.retry_prompt();
+
+    let reopened = ToolCall::new("shared", "new tool").status(ToolCallStatus::Pending);
+    assembler.push_update(&SessionUpdate::ToolCall(reopened.clone()));
+
+    // ACP has no attempt identifier on the delta, so the assembler uses the active slot.
+    assert_eq!(
+        assembler.push_update(&tool_status_update("shared", ToolCallStatus::Completed)),
+        vec![AssembledRecord {
+            seq: 2,
+            record: HistoryRecord::Update {
+                update: Box::new(SessionUpdate::ToolCall(
+                    reopened.status(ToolCallStatus::Completed)
+                )),
+                tool_timing: None,
+            },
+        }]
+    );
+}
+
 #[test]
 fn only_an_unretried_turn_can_imply_success_for_an_open_parent_tool() {
     for status in [ToolCallStatus::Pending, ToolCallStatus::InProgress] {

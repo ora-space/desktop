@@ -673,6 +673,45 @@ mod tests {
         }
     }
 
+    /// A reused tool ID cannot prove recovery while the earlier call could still send updates.
+    #[test]
+    fn a_retried_turn_rejects_ambiguous_tool_results() {
+        use agent_client_protocol_schema::v1::{ToolCall, ToolCallStatus};
+
+        let tool = |seq, status| {
+            HistoryLine::new(
+                "",
+                seq,
+                HistoryRecord::Update {
+                    update: Box::new(SessionUpdate::ToolCall(
+                        ToolCall::new("shared", "deliver").status(status),
+                    )),
+                    tool_timing: None,
+                },
+            )
+        };
+        for (old_status, blocked) in [
+            (ToolCallStatus::Pending, true),
+            (ToolCallStatus::InProgress, true),
+            (ToolCallStatus::Completed, false),
+        ] {
+            let history = history(
+                vec![
+                    user(1, "deliver"),
+                    tool(2, old_status),
+                    HistoryLine::new("", 3, HistoryRecord::PromptRetried),
+                    tool(4, ToolCallStatus::Completed),
+                    ended(5, StopReason::EndTurn),
+                ],
+                HistoryIntegrity::Complete,
+            );
+            let snapshot =
+                derive_completion_snapshot(&history, None, false, TurnOrigin::Human, None);
+            assert_eq!(snapshot.empty_retry_blocker().is_some(), blocked);
+            assert_eq!(snapshot.blockers.is_empty(), !blocked);
+        }
+    }
+
     #[test]
     fn only_parent_text_in_the_final_attempt_can_satisfy_the_retry_guard() {
         let mut child = ContentChunk::new(ContentBlock::Text(TextContent::new("child result")));

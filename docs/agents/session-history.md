@@ -76,8 +76,10 @@ clock, without polling the backend.
 
 After an automatic resend, history records a `PromptRetried` boundary within the same user turn.
 Tool snapshots retain their provider-reported status across this boundary and at the end of the
-retried turn. A late delta keeps the original tool opening’s position. A fresh opening with the
-same ID belongs to the new attempt.
+retried turn. A late delta updates the original tool opening until the same ID is reopened.
+After reopening, ACP deltas without attempt attribution update the new opening. If the same
+ID was pending or in progress earlier in the turn before the final retry boundary, a
+completion on the new opening does not count as a result for the final attempt.
 
 ACP does not require agents to report a terminal tool status. For a turn without a resend, only a
 normal end records unfinished parent calls as completed; every other ending (cancelled, out of tokens,

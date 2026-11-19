@@ -79,7 +79,7 @@ pub(crate) fn derive_completion_snapshot(
         && final_text
             .as_deref()
             .is_none_or(|text| text.trim().is_empty())
-        && !retry_output::has_non_text_result(history, start, ended)
+        && !retry_output::has_non_text_result(history, user, start, ended)
     {
         warnings.push(RETRY_NO_RESULT.to_string());
     }
