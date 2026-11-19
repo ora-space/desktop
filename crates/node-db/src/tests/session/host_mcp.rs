@@ -22,7 +22,8 @@ fn with_host_servers(marker: &str) -> StartAgentSessionMessage {
     start
 }
 
-/// Reads every file the database owns, including the WAL and shared-memory files.
+/// Reads every file in the database directory. Call it only after the database is closed: on
+/// Windows the open database holds a `LockFileEx` lock that refuses reads of its lock file.
 fn stored_bytes(dir: &std::path::Path) -> Vec<u8> {
     std::fs::read_dir(dir)
         .unwrap()
@@ -30,17 +31,20 @@ fn stored_bytes(dir: &std::path::Path) -> Vec<u8> {
         .collect()
 }
 
-/// The raw stored input of the base execution.
-fn stored_input(db: &NodeDatabase) -> serde_json::Value {
-    let input: String = db
-        .connection
+/// The raw stored input text of the base execution.
+fn stored_text(db: &NodeDatabase) -> String {
+    db.connection
         .query_row(
             "SELECT input FROM node_executions WHERE execution=?1",
             [command().execution_id.as_str()],
             |row| row.get(/*idx*/ 0),
         )
-        .unwrap();
-    serde_json::from_str(&input).unwrap()
+        .unwrap()
+}
+
+/// The raw stored input of the base execution.
+fn stored_input(db: &NodeDatabase) -> serde_json::Value {
+    serde_json::from_str(&stored_text(db)).unwrap()
 }
 
 /// Accepting, starting and reopening keep names only, in a shape distinct from the wire field.
@@ -77,13 +81,13 @@ fn host_mcp_values_never_persist_and_names_survive_reopen() {
             serde_json::json!(["ora-a", "ora-b"])
         )]
     );
+    drop(db);
     let bytes = stored_bytes(dir.path());
     assert!(
         !bytes
             .windows(MARKER.len())
             .any(|window| window == MARKER.as_bytes())
     );
-    drop(db);
     let db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node"))).unwrap();
     assert_eq!(
         db.recoverable_sessions().unwrap(),
@@ -128,7 +132,8 @@ fn host_mcp_duplicate_start_compares_names_only() {
     ));
 }
 
-/// Sessions without host servers write no names, so their rows equal those of older Nodes.
+/// Sessions without host servers write no names, so their rows are byte for byte those of older
+/// Nodes.
 #[test]
 fn host_mcp_absent_names_are_not_written() {
     let dir = tempfile::tempdir().unwrap();
@@ -138,7 +143,7 @@ fn host_mcp_absent_names_are_not_written() {
     )
     .unwrap();
     db.accept_session(&command()).unwrap();
-    assert_eq!(stored_input(&db), serde_json::to_value(command()).unwrap());
+    assert_eq!(stored_text(&db), serde_json::to_string(&command()).unwrap());
     assert_eq!(
         db.find_session(&command().operation_id, &command().execution_id)
             .unwrap()

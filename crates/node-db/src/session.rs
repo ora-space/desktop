@@ -285,10 +285,11 @@ pub(super) fn encode_input(
     command: &StartAgentSessionMessage,
     names: &[String],
 ) -> Result<String, Error> {
-    let mut value = serde_json::to_value(command)?;
-    if !names.is_empty() {
-        value["payload"]["spec"][HOST_MCP_SERVER_NAMES] = serde_json::to_value(names)?;
+    if names.is_empty() {
+        return Ok(serde_json::to_string(command)?);
     }
+    let mut value = serde_json::to_value(command)?;
+    value["payload"]["spec"][HOST_MCP_SERVER_NAMES] = serde_json::to_value(names)?;
     Ok(serde_json::to_string(&value)?)
 }
 
