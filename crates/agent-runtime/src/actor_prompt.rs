@@ -247,10 +247,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         }
         let mut permissions = HashMap::new();
-        let mut followers = attempt
-            .followers
-            .take()
-            .unwrap_or_else(SessionFollowers::new);
         let mut input_state = ActiveInputState::default();
         let mut saw_output = false;
         #[cfg(feature = "test-support")]
