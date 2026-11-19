@@ -1,6 +1,6 @@
 //! The real service: host MCP servers are advertised, refused as a protocol violation when
 //! malformed, and attached unchanged to every ACP setup through refresh and Agent replacement.
-use super::mcp_lifecycle::{current_healthy, install_mcp, reply};
+use super::mcp_lifecycle::{current_healthy, get, install_mcp, reply};
 use super::*;
 use pretty_assertions::assert_eq;
 use std::path::Path;
@@ -188,9 +188,9 @@ fn invalid_host_servers_close_the_connection_before_admission() {
     });
 }
 
-/// The first `session/new`, the refresh load after the update and every setup of the
-/// replacement Agent carry exactly the first accepted host servers after the plugin server; a
-/// repeated start with other values changes nothing.
+/// The first `session/new` and every setup of the replacement Agent carry exactly the first
+/// accepted host servers after the plugin server; a repeated start with other values changes
+/// nothing, and the session MCP state lists the plugin server only.
 #[test]
 fn host_servers_follow_every_setup_through_refresh_and_replacement() {
     ora_logging::with_trace_logging(|| {
@@ -233,6 +233,16 @@ fn host_servers_follow_every_setup_through_refresh_and_replacement() {
                 send(&mut stream, version_update()).await;
                 assert_eq!(reply(&mut stream).await.result, SessionMcpResult::Accepted);
                 current_healthy(&mut stream, 1, 0).await;
+                send(&mut stream, get()).await;
+                let state = reply(&mut stream).await.state.unwrap();
+                assert_eq!(
+                    state
+                        .members
+                        .iter()
+                        .map(|member| member.plugin_id.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["official/fixture.mcp"]
+                );
                 send(&mut stream, end()).await;
                 assert_eq!(
                     ended(&mut stream).await.reason,
@@ -346,6 +356,142 @@ fn replacement_without_http_mcp_ends_with_the_host_code() {
         );
         let log = fs::read_to_string(fixture.path().join("agent-service.log")).unwrap();
         assert!(log.contains("host_mcp_http_capability_missing"));
+        assert!(!log.contains(SECRET));
+        assert_absent(&fixture.config().home_directory, SECRET);
+    });
+}
+
+/// An update the same Agent can apply refreshes it by `session/load`, and that load carries the
+/// host servers too.
+#[test]
+fn same_agent_refresh_load_carries_the_host_servers() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let root = prepare(&fixture, &config, &server);
+        fs::write(
+            root.join("mcp-capabilities.json"),
+            r#"{"load":true,"http":true}"#,
+        )
+        .unwrap();
+        let listener = host_listener(&root);
+        let port = listener.local_addr().unwrap().port();
+        let mut child = launch(&fixture, &config);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut stream, _) = connect(&fixture).await;
+                let mut input = lifecycle_start(port, SECRET);
+                input.payload.spec.mcp = Vec::new();
+                send(
+                    &mut stream,
+                    ControllerToNodeMessage::StartAgentSession(input),
+                )
+                .await;
+                current_healthy(&mut stream, 0, 0).await;
+                let mut update = version_update();
+                if let ControllerToNodeMessage::UpdateSessionMcp(message) = &mut update {
+                    message.payload.members = Vec::new();
+                }
+                send(&mut stream, update).await;
+                assert_eq!(reply(&mut stream).await.result, SessionMcpResult::Accepted);
+                tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                    while !host_frames(&root)
+                        .iter()
+                        .any(|frame| frame.starts_with("session/load"))
+                    {
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .expect("the update refreshes the Agent by session/load");
+                send(&mut stream, end()).await;
+                let _ = ended(&mut stream).await;
+            });
+        child.terminate();
+        assert_eq!(
+            fs::read_to_string(root.join("echo-agent.pids"))
+                .unwrap()
+                .lines()
+                .count(),
+            1,
+            "the refresh kept the Agent"
+        );
+        assert_eq!(
+            host_frames(&root),
+            vec![
+                "session/new plugins=0 host=verified".to_owned(),
+                "session/load plugins=0 host=verified".to_owned()
+            ]
+        );
+        let log = fs::read_to_string(fixture.path().join("agent-service.log")).unwrap();
+        assert!(!log.contains(SECRET));
+        assert_absent(&fixture.config().home_directory, SECRET);
+    });
+}
+
+/// A lifecycle session whose Agent lacks HTTP MCP ends with the host code after `initialize`,
+/// before any setup could carry the host servers.
+#[test]
+fn lifecycle_start_without_http_mcp_ends_with_the_host_code() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let root = prepare(&fixture, &config, &server);
+        fs::write(
+            root.join("mcp-capabilities.json"),
+            r#"{"load":true,"http":false}"#,
+        )
+        .unwrap();
+        install_mcp(&fixture, "1.0.0");
+        let listener = host_listener(&root);
+        let port = listener.local_addr().unwrap().port();
+        let mut child = launch(&fixture, &config);
+        let ended = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut stream, _) = connect(&fixture).await;
+                send(
+                    &mut stream,
+                    ControllerToNodeMessage::StartAgentSession(lifecycle_start(port, SECRET)),
+                )
+                .await;
+                tokio::time::timeout(std::time::Duration::from_secs(90), ended(&mut stream))
+                    .await
+                    .expect("the session ends")
+            });
+        child.terminate();
+        assert_eq!(
+            (
+                ended.reason,
+                ended.detail.as_deref(),
+                ended.plugin_id,
+                ended.transport
+            ),
+            (
+                AgentSessionEndReason::AgentFailed,
+                Some("host_mcp_http_capability_missing"),
+                None,
+                None
+            )
+        );
+        assert!(host_frames(&root).is_empty());
+        assert_eq!(
+            fs::read_to_string(root.join("echo-acp-methods"))
+                .unwrap_or_default()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["initialize"]
+        );
+        let log = fs::read_to_string(fixture.path().join("agent-service.log")).unwrap();
         assert!(!log.contains(SECRET));
         assert_absent(&fixture.config().home_directory, SECRET);
     });
