@@ -12,7 +12,7 @@ use super::{
     open_ready_backend, seed_workspace,
 };
 use crate::setup::DesktopTestSetup;
-use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, TextContent};
+use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, StopReason, TextContent};
 use ora_backend::{Backend, BackendError};
 use ora_contracts::*;
 use ora_history::{HistoryRecord, read_session_history};
@@ -638,13 +638,18 @@ fn a_load_follower_follows_the_stale_load_retry_to_one_terminal_end() -> TestRes
                 session_id: session_id.clone(),
             })
             .await?;
-        let mut endings = 0;
+        let mut live_stop_reasons = Vec::new();
+        let mut live_updates = 0;
         let mut completed = 0;
         while let Some(event) = follower.recv().await {
             match event? {
                 LoadSessionEvent::TurnEnded {
+                    stop_reason,
+                    recorded_at: None,
+                } => live_stop_reasons.push(stop_reason),
+                LoadSessionEvent::SessionUpdate {
                     recorded_at: None, ..
-                } => endings += 1,
+                } => live_updates += 1,
                 LoadSessionEvent::Completed => completed += 1,
                 _ => {}
             }
@@ -654,9 +659,13 @@ fn a_load_follower_follows_the_stale_load_retry_to_one_terminal_end() -> TestRes
         }
 
         assert_eq!(
-            (endings, completed),
-            (1, 1),
-            "the follower must receive exactly one terminal boundary for the logical turn"
+            (live_stop_reasons, completed),
+            (vec![StopReason::EndTurn], 1),
+            "the follower must receive exactly one live terminal boundary for the logical turn"
+        );
+        assert!(
+            live_updates > 0,
+            "the follower must receive the retry's live output"
         );
         let calls = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
         assert_eq!(
