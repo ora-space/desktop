@@ -74,7 +74,7 @@ ACP 的 stdout 是按行分隔的 JSON-RPC。连接读取器把帧无界、有�
 | `initialize` | 15 秒 |
 | 插件模型发现 | 60 秒 |
 | `session/new` / `session/load` 无活动 | 30 秒；交付 MCP server 时为 120 秒；setup 通知会重置 |
-| prompt 无活动窗口 | 45 秒，之后最多三次重试依次为 60、90、120 秒；工具运行和等待权限时暂停 |
+| prompt 无活动窗口 | 45 秒，之后最多三次重试依次为 60、90、120 秒；工具运行和等待权限时暂停；未结束的 CodeAgent 委托由其子代理帧续期 |
 | 取消结算宽限期 | 5 秒 |
 | 连接重试退避 | 250 毫秒，翻倍至 30 秒 |
 | 重启熔断 | 1 分钟内超过 3 次失败时打开 |
@@ -91,6 +91,8 @@ setup 按无活动计时，而不是总时长。交付 MCP server 的请求有 1
 每个 prompt 有一个 `PromptInactivityPolicy`。`Timeout`（普通聊天和默认值）应用无活动窗口；`Wait` 从不仅因为沉默就取消、重发或让 prompt 失败。工作流的 Agent 节点可以选择 `Wait`，见[工作流运行](../workflows/workflow-runs.zh.md#prompt-无活动)。
 
 Agent 消息、思考、计划和工具生命周期更新会重置窗口；会话外围的通知（`available_commands_update`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update`）不会。运行中的工具会暂停窗口直到最后一个并行工具结束，等待权限也会暂停到得到答复，所以一个长工具可以运行数小时。prompt 没有绝对时长上限。
+
+CodeAgent `_subagent/update` 帧是唯一的投影例外：只要其外层 `toolCallId` 指向本次尝试中仍为 `pending` 或 `in_progress` 的父委托，每一帧都为父窗口续期一个完整窗口但不暂停计时。实测 CodeAgent 父 `Task` 从不报告 `in_progress`，这一续期让较长的前台委托不被中途取消；卡住不再发帧的子代理仍会在一个静默窗口后超时，重试则不带旧尝试的父委托观察重新开始。
 
 窗口到期时，运行时发送 `session/cancel`，并在五秒宽限内等待卡住的那个请求的响应。如果响应带着 `stop_reason: cancelled` 到达且还有剩余窗口，就在同一个 provider session 上重发同一条用户 prompt，之前先在所属的流上发出 `retrying { retry, maxRetries }` 标记。必须有这个响应作为分界，因为 ACP 更新不带请求 id。缺少分界、其他 stop reason 或次数用尽时，prompt 以 `agent_timed_out` 失败，只隔离这个会话。重发复用会话，一条用户消息只记录一次。运行时在取消排空后写入 `promptRetried` 边界，排空期间的更新归入被放弃的尝试。宿主为新发送刷新尝试指令和完成 token。
 
@@ -128,5 +130,4 @@ Workspace 和工作流对话提供只读运行详情：最近实时收到的内�
 的后续增量中仍归为子工具；历史或尚未观察到来源的工具显示来源未确认。观察时长不是超时倒计时。
 界面只列出宿主实际暴露的请求；当前 runtime 自动处理权限，未支持的问题表单不会伪造为待处理请求。
 
-OpenCode 子会话投影与 `_subagent/update` 扩展投影仍会显示，但不单独重置或暂停父 prompt 的无活动窗口；子工具后续省略 metadata
-的增量仍保持这个边界。父委托工具自身的 in_progress 继续暂停既有计时，显式 Wait 和取消/错误收尾不变。
+OpenCode 子会话投影与 `_subagent/update` 扩展投影仍会显示，且从不暂停父 prompt 的无活动窗口。带有效外层 `toolCallId` 的 `_subagent/update` 帧，若其指向的父委托在本次尝试中仍为 `pending` 或 `in_progress`，还会为父窗口续期一个完整窗口：实测 CodeAgent 父 `Task` 在整个委托期间保持 `pending`，若不续期，超过首个窗口的前台委托会在子代理仍在工作时被取消并重发。父委托已完成、失败、外层 id 不认识或缺失时不续期；重试会清除上一次尝试的父委托观察。子工具后续省略 metadata 的增量仍保持子来源，但不续期。父委托工具自身的 in_progress 继续暂停既有计时，暂停优先于续期；显式 Wait 和取消/错误收尾不变。

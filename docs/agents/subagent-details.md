@@ -31,6 +31,11 @@ annotations are retained during live batching and replay; distinct sources canno
 or missing message IDs. Incremental tool metadata replaces supplied top-level namespaces, including
 explicit null, without recursively patching unknown provider objects.
 
+While a linked delegation is still `pending` or `in_progress` in the current attempt, its
+`_subagent/update` frames renew the parent prompt's inactivity window without pausing it, so a long
+foreground delegation is not cancelled mid-run; see
+[Agent runtime](agent-runtime.md#prompt-inactivity-and-retries).
+
 The [history owner](session-history.md) must persist the source metadata. This UI cannot recover
 attribution omitted from older files, and ordinary OpenCode projection may stop when the parent prompt
 ends. Cards therefore state that only received content is available and do not promise complete

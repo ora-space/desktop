@@ -27,10 +27,16 @@ countdowns. Silence does not establish provider health or a child lifecycle. Onl
 by the host are listed; the current runtime auto-handles permissions, and unsupported question forms
 do not become pending UI requests.
 
-OpenCode child-session projections and `_subagent/update` extension projections remain visible,
-but do not independently reset or pause their parent prompt's inactivity window. A child tool
-retains this exclusion across metadata-free deltas. The parent delegate's own in-progress update
-still pauses its existing timer; explicit Wait and cancel/error cleanup remain unchanged.
+OpenCode child-session projections and `_subagent/update` extension projections remain visible
+and never pause their parent prompt's inactivity window. A `_subagent/update` frame whose outer
+`toolCallId` names a parent delegation still `pending` or `in_progress` in the current attempt
+additionally rearms a full parent window: the captured CodeAgent parent `Task` stays `pending`
+for the whole delegation, so without this renewal a foreground delegation longer than the first
+window would be cancelled and re-sent while the subagent is still working. Completed, failed,
+unknown or absent outer delegation ids do not renew, and a retry clears the previous attempt's
+delegation observations. Metadata-free child tool deltas retain their known source and do not
+renew. The parent delegate's own in-progress update still pauses its existing timer, with pause
+taking priority over renewal; explicit Wait and cancel/error cleanup remain unchanged.
 
 ## Agents come from plugins
 
@@ -188,7 +194,7 @@ cancelled turn and keeps the actor reusable.
 | `initialize` | 15 s |
 | Plugin model discovery | 60 s |
 | `session/new` / `session/load` inactivity | 30 s, or 120 s when MCP servers are delivered; rearmed by setup notifications |
-| Prompt inactivity windows | 45 s, then 60 s, 90 s and 120 s for up to three retries; paused by running tools and permission waits |
+| Prompt inactivity windows | 45 s, then 60 s, 90 s and 120 s for up to three retries; paused by running tools and permission waits; subagent frames renew open CodeAgent delegations |
 | Cancellation settlement grace | 5 s |
 | Connection retry backoff | 250 ms doubling to 30 s |
 | Restart circuit | Opens after more than 3 failures in 1 minute |
@@ -215,6 +221,13 @@ Agent messages, thoughts, plans and tool lifecycle updates rearm the window; ses
 `session_info_update`, `usage_update`) does not. A running tool pauses the window until the last
 parallel tool settles and a permission wait pauses it until answered, so a long tool can run for
 hours. There is no absolute prompt limit.
+
+CodeAgent `_subagent/update` frames are the one projected exception: while their outer
+`toolCallId` names a delegation still `pending` or `in_progress` in the current attempt, each
+frame rearms a full window without pausing it. This keeps a long foreground delegation alive even
+though the captured CodeAgent parent `Task` never reports `in_progress`; a stuck subagent that
+stops sending frames still times out after one silent window, and a retry starts fresh without
+the previous attempt's delegation observations.
 
 When a window expires the runtime sends `session/cancel` and waits up to the five-second grace for
 the stalled request's response. If it arrived with `stop_reason: cancelled` and the schedule has
