@@ -12,7 +12,7 @@ use super::{
     open_ready_backend, seed_workspace,
 };
 use crate::setup::DesktopTestSetup;
-use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, TextContent};
+use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, StopReason, TextContent};
 use ora_backend::{Backend, BackendError};
 use ora_contracts::*;
 use ora_history::{HistoryRecord, read_session_history};
@@ -532,6 +532,146 @@ fn a_stale_loaded_session_rebuilds_and_retries_the_first_prompt() -> TestResult 
         assert!(
             prompts.contains("previously handled by a different coding agent"),
             "the retry carries the transcript of the pre-restart conversation: {prompts}"
+        );
+        Ok(())
+    })
+}
+
+/// A failed retry returns the retry's error and never attempts a second rebuild.
+#[test]
+fn a_stale_loaded_session_returns_the_retry_error_without_a_second_rebuild() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root: PathBuf =
+            install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let (run_id, session_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let run_id = start_interactive_run(&backend, &workspace_id)?;
+            let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending
+            })
+            .await?;
+            (run_id, parked.session_id.ok_or("the node owns a session")?)
+        };
+
+        let backend = open_ready_backend(&setup)?;
+        drain_load(backend.sessions().load(LoadSessionRequest {
+            session_id: session_id.clone(),
+        }))
+        .await?;
+
+        let mut stream = backend
+            .sessions()
+            .prompt(PromptSessionRequest {
+                session_id: session_id.clone(),
+                prompt: vec![ContentBlock::Text(TextContent::new(
+                    "[fail-times:2] carry on",
+                ))],
+                record_prompt: None,
+                model: None,
+            })
+            .await?;
+        let mut prompt_error = None;
+        while let Some(event) = stream.recv().await {
+            if let Err(error) = event {
+                prompt_error = Some(error.to_string());
+            }
+        }
+        let prompt_error = prompt_error.ok_or("the retry must surface an error")?;
+        assert!(
+            prompt_error.contains("agent protocol operation failed"),
+            "the retry surfaces an agent protocol error: {prompt_error}"
+        );
+        let failures = std::fs::read_to_string(package_root.join("prompt_failures.txt"))?;
+        assert_eq!(
+            failures.matches("[fail-times:2]").count(),
+            2,
+            "both the first attempt and the retry failed: {failures}"
+        );
+
+        let _ = run_id;
+        let calls = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
+        assert_eq!(
+            calls.matches("session/new").count(),
+            2,
+            "the retry rebuilds once and does not rebuild again after failing: {calls}"
+        );
+        Ok(())
+    })
+}
+
+/// A load follower attached during the first attempt follows the retry to exactly one ending.
+#[test]
+fn a_load_follower_follows_the_stale_load_retry_to_one_terminal_end() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let (_run_id, session_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let run_id = start_interactive_run(&backend, &workspace_id)?;
+            let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending
+            })
+            .await?;
+            (run_id, parked.session_id.ok_or("the node owns a session")?)
+        };
+
+        let backend = open_ready_backend(&setup)?;
+        let mut stream = backend
+            .sessions()
+            .prompt(PromptSessionRequest {
+                session_id: session_id.clone(),
+                prompt: vec![ContentBlock::Text(TextContent::new(
+                    "[fail-times:1] [fail-delay-ms:300] carry on",
+                ))],
+                record_prompt: None,
+                model: None,
+            })
+            .await?;
+        // Give the first attempt time to send its prompt, then attach a follower while it is held.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let mut follower = backend
+            .sessions()
+            .load(LoadSessionRequest {
+                session_id: session_id.clone(),
+            })
+            .await?;
+        let mut live_stop_reasons = Vec::new();
+        let mut live_updates = 0;
+        let mut completed = 0;
+        while let Some(event) = follower.recv().await {
+            match event? {
+                LoadSessionEvent::TurnEnded {
+                    stop_reason,
+                    recorded_at: None,
+                } => live_stop_reasons.push(stop_reason),
+                LoadSessionEvent::SessionUpdate {
+                    recorded_at: None, ..
+                } => live_updates += 1,
+                LoadSessionEvent::Completed => completed += 1,
+                _ => {}
+            }
+        }
+        while let Some(event) = stream.recv().await {
+            event?;
+        }
+
+        assert_eq!(
+            (live_stop_reasons, completed),
+            (vec![StopReason::EndTurn], 1),
+            "the follower must receive exactly one live terminal boundary for the logical turn"
+        );
+        assert!(
+            live_updates > 0,
+            "the follower must receive the retry's live output"
+        );
+        let calls = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
+        assert_eq!(
+            calls.matches("session/new").count(),
+            2,
+            "the initial session and the single retry rebuild are both recorded: {calls}"
         );
         Ok(())
     })

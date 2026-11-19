@@ -85,3 +85,71 @@ async fn waiting_for_an_agent_that_is_not_installed_fails_at_once() {
     );
     scheduler.shutdown().await;
 }
+
+/// Manager startup reconciles only visible running rows and preserves all other session facts.
+#[tokio::test]
+async fn manager_startup_reconciles_running_sessions_before_use() {
+    let temporary = TempDir::new().expect("create test directory");
+    let scheduler = Scheduler::new(chrono_tz::UTC);
+    let store = MemorySessionStore::default();
+    let session = |id, status| {
+        Session::new(
+            SessionId::new(id),
+            WorkspaceId::new("workspace-1"),
+            AgentRef::parse("official/ora-space.echo").expect("agent identity"),
+            "provider-1",
+            status,
+            SessionMcpSelection::Automatic,
+            AuditFields::new(1, 1, false),
+        )
+    };
+    let running = store
+        .create_session(session("running", SessionStatus::Running))
+        .expect("seed running row");
+    let stopped = store
+        .create_session(session("stopped", SessionStatus::Stopped))
+        .expect("seed stopped row");
+    let hidden = store
+        .create_session(session("hidden", SessionStatus::Running))
+        .expect("seed deleted row");
+    store.soft_delete_session(&hidden.id, 2).expect("hide row");
+    let before = crate::clock::SystemClock.now_timestamp_millis();
+    let TestRuntime { manager, .. } = test_runtime(
+        temporary.path(),
+        Vec::new(),
+        store.clone(),
+        scheduler.clone(),
+    );
+    let after = crate::clock::SystemClock.now_timestamp_millis();
+    let reconciled = store
+        .find_session(&running.id)
+        .expect("read running row")
+        .expect("visible running row");
+    let updated_at = reconciled.audit_fields.updated_at;
+    assert!((before..=after).contains(&updated_at));
+    assert_eq!(
+        store.list_sessions().expect("list reconciled rows"),
+        vec![
+            running.with_status(SessionStatus::Stopped, updated_at),
+            stopped
+        ],
+    );
+    assert_eq!(
+        store.find_session(&hidden.id).expect("read hidden row"),
+        None
+    );
+    let once = store.list_sessions().expect("capture reconciled rows");
+    drop(manager);
+    let TestRuntime { manager, .. } = test_runtime(
+        temporary.path(),
+        Vec::new(),
+        store.clone(),
+        scheduler.clone(),
+    );
+    assert_eq!(
+        store.list_sessions().expect("list rows after restart"),
+        once
+    );
+    drop(manager);
+    scheduler.shutdown().await;
+}

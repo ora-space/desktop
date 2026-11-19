@@ -13,10 +13,10 @@ use super::title_acquisition::PollAttempt;
 use super::tool_timing::ToolTimings;
 use super::*;
 use crate::attach::LoadRestoration;
+use crate::model_config::current_model;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{
-    AGENT_METHOD_NAMES, PromptRequest, PromptResponse, SessionConfigKind, SessionConfigOption,
-    SessionConfigOptionCategory, StopReason,
+    AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
 use ora_logging::{ora_debug, ora_warn};
 use tokio::time::timeout;
@@ -45,24 +45,6 @@ fn stale_load_retry_allowed(
     reusable && !produced_output && has_context && restoration == LoadRestoration::Restored
 }
 
-/// Reads the model the restored provider last reported, for the replacement handshake.
-fn current_model(options: &[SessionConfigOption]) -> Option<String> {
-    let option = options
-        .iter()
-        .find(|option| matches!(option.category, Some(SessionConfigOptionCategory::Model)))
-        .or_else(|| {
-            let selects: Vec<&SessionConfigOption> = options
-                .iter()
-                .filter(|option| matches!(option.kind, SessionConfigKind::Select(_)))
-                .collect();
-            (selects.len() == 1).then(|| selects[0])
-        })?;
-    let SessionConfigKind::Select(select) = &option.kind else {
-        return None;
-    };
-    Some(select.current_value.0.to_string())
-}
-
 /// One attempt at a prompt, including the single rebuild retry after a stale `session/load`.
 struct PromptAttempt {
     /// Blocks a rebuilt channel must receive; `None` builds the ordinary prompt.
@@ -71,6 +53,8 @@ struct PromptAttempt {
     skip_record: bool,
     /// Only the attempt after a load may rebuild; the retry attempt may not recurse again.
     allow_retry: bool,
+    /// Followers collected so far; the retry continues the same logical turn.
+    followers: Option<SessionFollowers>,
 }
 
 impl PromptAttempt {
@@ -79,6 +63,7 @@ impl PromptAttempt {
             blocks: None,
             skip_record: false,
             allow_retry: true,
+            followers: None,
         }
     }
 }
@@ -250,7 +235,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         }
         let mut permissions = HashMap::new();
-        let mut followers = SessionFollowers::new();
+        let mut followers = attempt
+            .followers
+            .take()
+            .unwrap_or_else(SessionFollowers::new);
         let mut input_state = ActiveInputState::default();
         let mut saw_output = false;
         #[cfg(feature = "test-support")]
@@ -431,7 +419,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                     session_id = %self.session.id,
                                     "first prompt after session/load failed without output; rebuilding and retrying",
                                 );
-                                followers.finish(StopReason::Cancelled);
                                 let model = current_model(&self.reported_config_options);
                                 self.isolate_channel(channel).await;
                                 match self.rebuild_provider_session(model.as_deref()).await {
@@ -443,6 +430,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                                 StopReason::Cancelled,
                                                 &tool_timings,
                                             );
+                                            followers.finish(StopReason::Cancelled);
                                             return;
                                         }
                                         return Box::pin(self.run_prompt_attempt(
@@ -456,6 +444,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                                 blocks: retry_blocks,
                                                 skip_record: true,
                                                 allow_retry: false,
+                                                followers: Some(followers),
                                             },
                                         ))
                                         .await;
@@ -770,9 +759,10 @@ mod tests {
         )));
     }
 
+    /// An empty configuration report carries no model and must not terminate the actor.
     #[test]
     fn an_empty_provider_report_has_no_rebuild_model() {
-        assert_eq!(current_model(&[]), None);
+        pretty_assertions::assert_eq!(current_model(&[]), None);
     }
 
     #[test]
