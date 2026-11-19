@@ -52,7 +52,7 @@ fn cancel(command: &str, turn: &str) -> SessionCommandInput {
 }
 
 /// Every settlement event in the outbox, in sequence order.
-fn settlements(db: &NodeDatabase) -> Vec<(u64, TurnCancelSettled)> {
+fn settlements<G: WriteGuard>(db: &NodeDatabase<G>) -> Vec<(u64, TurnCancelSettled)> {
     let mut statement = db
         .connection
         .prepare("SELECT sequence,event FROM execution_events ORDER BY sequence")
@@ -300,4 +300,142 @@ fn keep_sessions_hold_the_takeover_boundary_until_drained() {
     assert!(journal.has_undrained_keep_sessions().unwrap());
     db.acknowledge_session(&ack(terminal.value())).unwrap();
     assert!(!journal.has_undrained_keep_sessions().unwrap());
+}
+
+/// The end decision of an unanswered cancel.
+fn unanswered() -> AgentSessionEnded {
+    let mut ended = ended();
+    ended.reason = AgentSessionEndReason::AgentFailed;
+    ended.detail = Some("turn_cancel_unanswered".into());
+    ended
+}
+
+/// Case 28: after the decision and its `session_ending` are durable, a restart keeps the
+/// original decision, adds no second settlement, and the terminal carries the original cause.
+#[test]
+fn a_restart_after_the_settlement_keeps_the_original_decision() {
+    let (dir, mut db, journal, start) = keeping();
+    let execution = start.execution_id.clone();
+    db.accept_session_command(&cancel("cancel-1", "initial"))
+        .unwrap();
+    journal
+        .defer_session_stop_end(&execution, &unanswered())
+        .unwrap();
+    drop(journal);
+    drop(db);
+    let db = NodeDatabase::open(
+        &dir.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+    )
+    .unwrap();
+    let journal = db.session_journal().unwrap();
+    let decision = journal.session_stop_end(&execution).unwrap().unwrap();
+    // Recovery may record its own intention again; the first decision stays.
+    journal
+        .defer_session_stop_end(&execution, &ended())
+        .unwrap();
+    assert_eq!(
+        journal.session_stop_end(&execution).unwrap(),
+        Some(decision.clone())
+    );
+    journal.end_session(&execution, decision.clone()).unwrap();
+    assert_eq!(
+        (decision.detail, settlements(&db)),
+        (
+            Some("turn_cancel_unanswered".to_string()),
+            vec![(
+                1,
+                settled("cancel-1", "initial", TurnCancelOutcome::SessionEnding)
+            )]
+        )
+    );
+}
+
+/// Case 29: while the ledger cannot write, nothing is settled from memory; once it can, the end
+/// decision writes exactly one `session_ending` per unsettled cancel and leaves an earlier
+/// settlement alone.
+#[test]
+fn an_unwritable_ledger_settles_only_after_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let fault = std::rc::Rc::new(std::cell::Cell::new(/*value*/ None));
+    let mut db = NodeDatabase::open_with_guard(
+        &dir.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+        crate::tests::Fault(fault.clone()),
+    )
+    .unwrap();
+    let mut start = command();
+    start.payload.spec.keep_session_on_cancel = true;
+    db.accept_session(&start).unwrap();
+    db.start_session(&start, &NodeIncarnationId::new("first"))
+        .unwrap();
+    let journal = db.session_journal().unwrap();
+    let execution = start.execution_id.clone();
+    db.accept_session_command(&user_turn("command-2", "turn-2"))
+        .unwrap();
+    db.accept_session_command(&cancel("cancel-early", "turn-x"))
+        .unwrap();
+    journal
+        .settle_turn_cancel(
+            &execution,
+            &CommandId::new("cancel-early"),
+            TurnCancelOutcome::Unknown,
+            None,
+        )
+        .unwrap();
+    db.accept_session_command(&cancel("cancel-1", "turn-2"))
+        .unwrap();
+    fault.set(Some(WritePoint::Progress));
+    assert!(
+        journal
+            .settle_turn_cancel(
+                &execution,
+                &CommandId::new("cancel-1"),
+                TurnCancelOutcome::NotStarted,
+                Some(&CommandId::new("command-2")),
+            )
+            .is_err()
+    );
+    let mut ledger_unavailable = ended();
+    ledger_unavailable.reason = AgentSessionEndReason::AgentFailed;
+    ledger_unavailable.detail = Some("ledger_unavailable".into());
+    assert!(
+        journal
+            .defer_session_stop_end(&execution, &ledger_unavailable)
+            .is_err()
+    );
+    let unwritten = settlements(&db);
+    fault.set(/*val*/ None);
+    journal
+        .defer_session_stop_end(&execution, &ledger_unavailable)
+        .unwrap();
+    journal
+        .defer_session_stop_end(&execution, &ledger_unavailable)
+        .unwrap();
+    assert_eq!(
+        (
+            unwritten,
+            settlements(&db),
+            journal
+                .command_state(&execution, &CommandId::new("command-2"))
+                .unwrap()
+        ),
+        (
+            vec![(
+                1,
+                settled("cancel-early", "turn-x", TurnCancelOutcome::Unknown)
+            )],
+            vec![
+                (
+                    1,
+                    settled("cancel-early", "turn-x", TurnCancelOutcome::Unknown)
+                ),
+                (
+                    2,
+                    settled("cancel-1", "turn-2", TurnCancelOutcome::SessionEnding)
+                ),
+            ],
+            Some(SessionCommandState::Queued)
+        )
+    );
 }

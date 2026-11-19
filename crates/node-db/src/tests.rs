@@ -164,7 +164,7 @@ fn atomic_acceptance_deduplicates_and_reserves_resources() {
 }
 
 /// Faults are armed after initialization so tests reach the exact transactional boundary.
-struct Fault(std::rc::Rc<std::cell::Cell<Option<WritePoint>>>);
+pub(super) struct Fault(pub(super) std::rc::Rc<std::cell::Cell<Option<WritePoint>>>);
 impl WriteGuard for Fault {
     /// Fails only the requested write without faking SQLite persistence.
     fn before_write(&self, point: WritePoint) -> Result<(), Error> {

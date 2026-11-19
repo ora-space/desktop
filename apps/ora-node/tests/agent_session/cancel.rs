@@ -436,3 +436,95 @@ async fn a_cancel_racing_a_natural_end_does_nothing() {
         )
     );
 }
+
+/// Case 5: two cancels of one turn get one conclusion, whether the second arrives while the
+/// stop waits for the answer or within the quiet window, and both learn of a fallback end.
+#[tokio::test(flavor = "multi_thread")]
+async fn duplicate_cancels_share_one_conclusion() {
+    let mut results = Vec::new();
+    for (verified, second_in_quiet) in [(true, false), (true, true), (false, false)] {
+        let mut fixture = Fixture::new();
+        if verified {
+            fixture.verify_turn_boundary();
+            fixture.turn_cancel.quiet = std::time::Duration::from_secs(2);
+        }
+        let sessions = fixture.sessions(PLUGIN_VERSION);
+        fixture.start_keeping(&sessions, "[hold]", CANCEL);
+        running(&fixture, 0).await;
+        fixture.ledger.accept(
+            "cancel-1",
+            SessionCommand::CancelTurn(TurnId::new("turn-1")),
+        );
+        if second_in_quiet {
+            sessions.command_arrived(&ExecutionId::new(EXECUTION));
+            // The answer is recorded; the stop now waits out the quiet window.
+            until(|| (turn_ends(&fixture) == 1).then_some(())).await;
+            assert!(fixture.ledger.cancels().is_empty());
+        }
+        fixture.ledger.accept(
+            "cancel-2",
+            SessionCommand::CancelTurn(TurnId::new("turn-1")),
+        );
+        sessions.command_arrived(&ExecutionId::new(EXECUTION));
+        let first = settled(&fixture, "cancel-1").await;
+        let second = settled(&fixture, "cancel-2").await;
+        if fixture.ledger.ended().is_none() {
+            end(&fixture, &sessions).await;
+        }
+        results.push((first, second));
+    }
+    assert_eq!(
+        results,
+        vec![
+            (TurnCancelOutcome::Stopped, TurnCancelOutcome::Stopped),
+            (TurnCancelOutcome::Stopped, TurnCancelOutcome::Stopped),
+            (
+                TurnCancelOutcome::SessionEnding,
+                TurnCancelOutcome::SessionEnding
+            ),
+        ]
+    );
+}
+
+/// Case 6: a cancel accepted while a failed turn waits out its quiet window finds the turn
+/// already ended by its failure, and the session that chose to stay after failures stays.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancel_during_a_failed_turns_quiet_window_is_already_ended() {
+    let mut fixture = Fixture::new();
+    fixture.verify_turn_boundary();
+    fixture.turn_cancel.quiet = std::time::Duration::from_secs(2);
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping(
+        &sessions,
+        "[request-failed]",
+        Keep {
+            on_cancel: true,
+            on_failure: true,
+        },
+    );
+    until(|| (turn_ends(&fixture) == 1).then_some(())).await;
+    fixture.command(
+        &sessions,
+        "cancel-1",
+        SessionCommand::CancelTurn(TurnId::new("turn-1")),
+    );
+    let outcome = settled(&fixture, "cancel-1").await;
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::SubmitUserTurn(turn("turn-2", "hello")),
+    );
+    until(|| (turn_ends(&fixture) == 2 || fixture.ledger.ended().is_some()).then_some(())).await;
+    assert_eq!(
+        (
+            outcome,
+            fixture.ledger.ended(),
+            end(&fixture, &sessions).await
+        ),
+        (
+            TurnCancelOutcome::AlreadyEnded,
+            None,
+            AgentSessionEndReason::UserEnded
+        )
+    );
+}
