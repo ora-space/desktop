@@ -54,4 +54,63 @@ describe("useWorkflowUninstallImpact", () => {
     // No workflow can reference this plugin, so even the library listing is wasted work.
     expect(listWorkflows).not.toHaveBeenCalled();
   });
+
+  it("queries workflow summaries without fetching drafts or skills for a workflow plugin", async () => {
+    const workflowPlugin: InstalledPlugin = {
+      ...skillPlugin,
+      id: "official/ora.cdase-workflow",
+      name: "ora.cdase-workflow",
+      displayName: "CDASE Workflow",
+      kind: "workflow",
+      configuration: { state: "not_declared" },
+    };
+    const getWorkflow = vi.fn(async () => {
+      throw new Error("workflow plugin check must not fetch individual drafts");
+    });
+    const listSkills = vi.fn(async () => {
+      throw new Error("unrelated skills catalog error");
+    });
+    const client = createTestClient({
+      listWorkflows: async () => ({
+        workflows: [
+          {
+            id: "wf-1",
+            namespace: "local",
+            name: "导入流程",
+            publishedVersion: "1.0.0",
+            sourcePluginId: workflowPlugin.id,
+            createdAt: 1n,
+            updatedAt: 1n,
+          },
+          {
+            id: "wf-local",
+            namespace: "local",
+            name: "本地流程",
+            publishedVersion: null,
+            sourcePluginId: null,
+            createdAt: 2n,
+            updatedAt: 2n,
+          },
+        ],
+      }),
+      getWorkflow,
+      listSkills,
+    });
+    const queryClient = createWarmQueryClient();
+    queryClient.setQueryData(pluginKeys.installedPlugins, [workflowPlugin]);
+
+    const { result } = renderHookWithClient(
+      () => useWorkflowUninstallImpact([workflowPlugin.id], true),
+      client,
+      queryClient,
+    );
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.impact).toEqual({ dependents: [], unreadable: 0 });
+    expect(result.current.importedWorkflows).toEqual([
+      { workflowId: "wf-1", name: "导入流程" },
+    ]);
+    expect(getWorkflow).not.toHaveBeenCalled();
+    expect(listSkills).not.toHaveBeenCalled();
+  });
 });

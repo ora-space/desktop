@@ -16,6 +16,7 @@ import {
   IconSearch,
 } from "@tabler/icons-react";
 import { useWorkflowLibrary } from "../../state/data/workflows";
+import { useUninstalledWorkflowSources } from "../../state/hooks/use-uninstalled-workflow-sources";
 import { useUiStore } from "../../state/stores/ui-store";
 
 interface SidebarCreateMenuProps {
@@ -49,6 +50,7 @@ export function SidebarCreateMenu({
   const { t } = useTranslation();
   const setDialog = useUiStore((s) => s.setDialog);
   const libraryQuery = useWorkflowLibrary();
+  const uninstalledSources = useUninstalledWorkflowSources(libraryQuery.data);
   // Runs bind to the published snapshot. Drafts are authoring-only and would
   // fail create, so this picker never offers them.
   const workflows = useMemo(
@@ -218,7 +220,7 @@ export function SidebarCreateMenu({
             side="right"
             alignOffset={-4}
             sideOffset={6}
-            className="w-56 gap-1 p-1"
+            className="w-max min-w-56 max-w-80 gap-1 p-1"
           >
             <div className="relative">
               <IconSearch className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -244,39 +246,50 @@ export function SidebarCreateMenu({
                   {t("sidebar.noWorkflows")}
                 </p>
               )}
-              {visibleWorkflows.map((workflow) => (
-                <button
-                  key={workflow.id}
-                  type="button"
-                  title={
-                    workflow.publishedVersion == null
-                      ? workflow.name
-                      : `${workflow.name} · ${workflow.publishedVersion}`
-                  }
-                  className={`${ITEM_CLASS} min-w-0`}
-                  onClick={() => {
-                    if (workspaceId === null) return;
-                    closeAll();
-                    setDialog({
-                      kind: "runWorkflow",
-                      projectId,
-                      workspaceId,
-                      ...(taskId !== undefined ? { taskId } : {}),
-                      workflowId: workflow.id,
-                      workflowName: workflow.name,
-                    });
-                  }}
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {workflow.name}
-                  </span>
-                  {workflow.publishedVersion != null && (
-                    <span className="max-w-16 shrink truncate text-[10px] text-muted-foreground">
-                      {workflow.publishedVersion}
+              {visibleWorkflows.map((workflow) => {
+                const sourceUninstalled = uninstalledSources.has(workflow.id);
+                const titleParts = [workflow.name];
+                if (workflow.publishedVersion != null) {
+                  titleParts.push(workflow.publishedVersion);
+                }
+                if (sourceUninstalled) {
+                  titleParts.push(t("sidebar.workflowSourcePluginUninstalled"));
+                }
+                return (
+                  <button
+                    key={workflow.id}
+                    type="button"
+                    title={titleParts.join(" · ")}
+                    className={`${ITEM_CLASS} min-w-0`}
+                    onClick={() => {
+                      if (workspaceId === null) return;
+                      closeAll();
+                      setDialog({
+                        kind: "runWorkflow",
+                        projectId,
+                        workspaceId,
+                        ...(taskId !== undefined ? { taskId } : {}),
+                        workflowId: workflow.id,
+                        workflowName: workflow.name,
+                      });
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {workflow.name}
                     </span>
-                  )}
-                </button>
-              ))}
+                    {sourceUninstalled && (
+                      <span className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground">
+                        {t("sidebar.workflowSourcePluginUninstalled")}
+                      </span>
+                    )}
+                    {workflow.publishedVersion != null && (
+                      <span className="max-w-16 shrink truncate text-[10px] text-muted-foreground">
+                        {workflow.publishedVersion}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </PopoverContent>
         </Popover>

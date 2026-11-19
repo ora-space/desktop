@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { InstalledPlugin, Skill } from "@ora/contracts";
+import type { InstalledPlugin, Skill, WorkflowSummary } from "@ora/contracts";
 import {
+  findImportedWorkflowsFromPlugins,
   findWorkflowDependents,
+  hasWorkflowSourceCandidate,
   uninstallDependencyTargets,
 } from "./workflow-dependency-impact";
 
@@ -438,5 +440,72 @@ describe("findWorkflowDependents", () => {
       ],
       unreadable: 1,
     });
+  });
+});
+
+function workflowSummary(
+  id: string,
+  name: string,
+  sourcePluginId: string | null,
+): WorkflowSummary {
+  return {
+    id,
+    namespace: "local",
+    name,
+    publishedVersion: "1.0.0",
+    sourcePluginId,
+    createdAt: 1n,
+    updatedAt: 1n,
+  };
+}
+
+describe("hasWorkflowSourceCandidate", () => {
+  it("recognizes workflow plugins and unknown Pack members while skipping non-workflow plugins", () => {
+    const workflowPlugin: InstalledPlugin = {
+      ...mcpPlugin("official/wf-pack"),
+      kind: "workflow",
+    };
+    expect(
+      hasWorkflowSourceCandidate(
+        ["official/wf-pack"],
+        [workflowPlugin, skillPlugin("official/skill-pack")],
+      ),
+    ).toBe(true);
+    expect(
+      hasWorkflowSourceCandidate(
+        ["official/skill-pack", "official/mcp-pack"],
+        [skillPlugin("official/skill-pack"), mcpPlugin("official/mcp-pack")],
+      ),
+    ).toBe(false);
+    expect(
+      hasWorkflowSourceCandidate(["official/unknown-member"], [workflowPlugin]),
+    ).toBe(true);
+  });
+});
+
+describe("findImportedWorkflowsFromPlugins", () => {
+  it("lists surviving workflows matching the canonical plugin id, preserving renamed entries", () => {
+    const imported = findImportedWorkflowsFromPlugins(
+      [
+        workflowSummary(
+          "wf-renamed",
+          "用户已改名流程",
+          "official/ora.cdase-workflow",
+        ),
+        workflowSummary("wf-other-ns", "同名跨源", "other/ora.cdase-workflow"),
+        workflowSummary("wf-local", "本地手工", null),
+        workflowSummary(
+          "wf-second",
+          "第二个流程",
+          "official/ora.cdase-workflow",
+        ),
+      ],
+      ["official/ora.cdase-workflow"],
+    );
+
+    expect(imported).toEqual([
+      { workflowId: "wf-renamed", name: "用户已改名流程" },
+      { workflowId: "wf-second", name: "第二个流程" },
+    ]);
   });
 });
