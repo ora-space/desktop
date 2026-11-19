@@ -262,7 +262,7 @@ function prepareIterationMember(
   delete serializable.extent;
   delete serializable.expandParent;
   const data =
-    node.data.kind === "agent" && node.data.agentConfig !== undefined
+    node.data.kind === "agent" && node.data.agentConfig != null
       ? {
           ...node.data,
           agentConfig: { ...node.data.agentConfig, interactive: false },

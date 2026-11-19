@@ -134,6 +134,11 @@ structured output, interactivity, retry and prompt inactivity. The runtime meani
   enabled ids form the node Session's allowlist; no selection (including graphs without `mcps`) means
   no MCP servers. The inspector lists installed `kind: "mcp"` plugins; missing plugins stay visible by
   id and can be disabled or removed. Malformed bindings fail executable parsing.
+- **Absent config**: a graph is JSON, so an Agent node can carry `"agentConfig": null`; the
+  backend imports such a document as-is. `null` means the node declares no executor, role or
+  bindings, exactly like an absent field: the editor opens it with the same default a new Agent node
+  gets, and the run inspector shows no agent section. Opening the graph never rewrites the `null`
+  into a materialized config.
 - **Retry**: `agentConfig.retry = { enabled, maxRetries, initialDelaySeconds }`, with `maxRetries`
   0–5 and `initialDelaySeconds` 0–300. Absent or `null` means
   `{ enabled: true, maxRetries: 2, initialDelaySeconds: 10 }`; a present object must be complete.

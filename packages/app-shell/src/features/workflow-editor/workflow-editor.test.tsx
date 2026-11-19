@@ -786,6 +786,48 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it("opens a draft whose agent node carries a null agentConfig as the default binding", async () => {
+    const state = createFixtureState();
+    seedDemoWorkflows(state);
+    // A workflow package ships its graph JSON verbatim, so a stored draft can carry
+    // an explicit `null` agent config. Loading it must treat the node as unbound
+    // instead of crashing while normalizing the graph.
+    const record = state.workflows.find(
+      (candidate) => candidate.workflow.id === "code-review",
+    );
+    if (record === undefined) {
+      throw new Error("the code-review fixture workflow is missing");
+    }
+    const graph = JSON.parse(record.draft.graph) as {
+      nodes: { id: string; data: { kind: string; agentConfig?: unknown } }[];
+      edges: unknown[];
+    };
+    const agentNode = graph.nodes.find(
+      (node) => node.id === "understand" && node.data.kind === "agent",
+    );
+    if (agentNode === undefined) {
+      throw new Error("the code-review fixture draft has no agent node");
+    }
+    agentNode.data.agentConfig = null;
+    record.draft.graph = JSON.stringify(graph);
+
+    const user = userEvent.setup();
+    renderEditor(undefined, state, undefined, false);
+
+    // The unbound node hydrates with the same default executor a new Agent node gets.
+    const node = await screen.findByLabelText("Agent节点: 理解改动");
+    expect(within(node).getByLabelText("配置参数")).toHaveTextContent(
+      "opencode/big-pickle",
+    );
+
+    // Selecting the node opens the inspector on the same default config.
+    await user.click(node.closest(".react-flow__node") ?? node);
+    expect(screen.getByLabelText("Agent 模型")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "角色" })).toHaveTextContent(
+      "无角色",
+    );
+  });
+
   it("presents backend-derived unused nodes while preserving them in saved documents", async () => {
     const user = userEvent.setup();
     const saved: string[] = [];

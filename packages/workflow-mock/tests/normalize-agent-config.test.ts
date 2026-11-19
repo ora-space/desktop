@@ -201,3 +201,40 @@ describe("normalizeWorkflowAgentConfig", () => {
     });
   });
 });
+
+describe("normalizeWorkflowAgentConfig with a null config", () => {
+  it("projects JSON null to the empty no-binding shape instead of throwing", () => {
+    // A workflow package can carry "agentConfig": null and the backend imports it as-is.
+    expect(normalizeWorkflowAgentConfig(null)).toEqual({
+      schemaVersion: 3,
+      executor: { agentCli: "", modelId: "" },
+      roleId: "",
+      prompt: "",
+      interactive: false,
+      skills: [],
+      mcps: [],
+    });
+  });
+
+  it("leaves a null agent config on an envelope node untouched like an absent one", () => {
+    // JSON graphs can carry an explicit null even though a parsed node type only models the
+    // contract's absence; the cast stands for that untrusted document.
+    const nodes = [
+      {
+        id: "agent-1",
+        type: "workflow" as const,
+        position: { x: 0, y: 0 },
+        data: {
+          kind: "agent",
+          title: "未绑定",
+          description: "",
+          agentConfig: null,
+        } as unknown as WorkflowNodeData,
+      },
+    ] satisfies Node<WorkflowNodeData, "workflow">[];
+
+    const [normalized] = normalizeWorkflowNodeAgentConfigs(nodes);
+
+    expect(normalized?.data.agentConfig).toBeNull();
+  });
+});
