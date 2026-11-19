@@ -1861,6 +1861,61 @@ it("reports workflow dependencies after a marketplace install", async () => {
   expect(within(report).getByRole("button", { name: /去安装/ })).toBeVisible();
 });
 
+/**
+ * An Agent node may carry an explicit `agentConfig: null`; the backend imports it as-is, so the
+ * report has to read it as "no bindings" instead of dereferencing null and unmounting the whole
+ * app on the first render (ora-space/circus#1281).
+ */
+it("reports a marketplace install whose Agent node has a null agent config", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedWorkflows = [
+    {
+      state: "imported",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    JSON.stringify({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        {
+          id: "agent-1",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: {
+            kind: "agent",
+            title: "编写发布说明",
+            agentConfig: null,
+          },
+        },
+      ],
+      edges: [],
+      annotations: [],
+      globalVariables: [],
+    }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText(/工作流导入结果/)).toBeVisible();
+  expect(within(report).getByText("发布流程")).toBeVisible();
+  // A null binding is an empty binding list, not an unreadable graph.
+  expect(
+    within(report).getByText(/没有引用任何 MCP 或 Skill 插件/),
+  ).toBeVisible();
+  expect(within(report).queryByText(/无法读取「发布流程」的图/)).toBeNull();
+});
+
 /** An upgrade that delivers documents reports them too, not only a first install. */
 it("reports workflow dependencies after a marketplace update", async () => {
   const user = userEvent.setup();
@@ -2140,7 +2195,7 @@ it("leaves the uninstall confirmation unchanged when no workflow depends on it",
 /** Uninstalling from the plugin detail page surfaces dependent workflows just like the manager. */
 it("names affected workflows before uninstalling from the detail page", async () => {
   const user = userEvent.setup();
-  const { state, client } = clientWithWorkflowPackage();
+  const { state, handlers, client } = clientWithWorkflowPackage();
   state.availablePlugins[0] = { ...state.availablePlugins[0]!, kind: "mcp" };
   state.installedPlugins.push({
     ...weatherInstalled(),
@@ -2153,15 +2208,36 @@ it("names affected workflows before uninstalling from the detail page", async ()
     "发布流程",
     agentGraph({ mcps: ["official/weather"] }),
   );
+  const originalGetWorkflow = handlers.getWorkflow!;
+  let releaseWorkflow: (() => void) | undefined;
+  vi.spyOn(handlers, "getWorkflow").mockImplementation(
+    (req) =>
+      new Promise((resolve) => {
+        releaseWorkflow = () => {
+          void Promise.resolve(originalGetWorkflow(req)).then(resolve);
+        };
+      }),
+  );
   renderSettings(client);
 
   await user.click(await screen.findByText("Weather"));
   await user.click(await screen.findByRole("button", { name: "卸载" }));
 
   const dialog = await screen.findByRole("alertdialog");
+  expect(
+    await within(dialog).findByText(/正在检查引用该插件的工作流/),
+  ).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "卸载" })).toBeDisabled();
+
+  await act(async () => {
+    releaseWorkflow?.();
+    await Promise.resolve();
+  });
+
   expect(await within(dialog).findByText(/1 个工作流依赖该插件/)).toBeVisible();
   expect(within(dialog).getByText("发布流程")).toBeVisible();
   expect(within(dialog).getByText(/用于：编写发布说明/)).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "卸载" })).toBeEnabled();
 });
 
 /**
@@ -2451,6 +2527,64 @@ it("skips fetching workflow drafts when the removed plugin owns no Skill or MCP 
   expect(getWorkflowSpy).not.toHaveBeenCalled();
 });
 
+/**
+ * A draft refetch that fails keeps the previous graph in the cache; presenting it as a checked
+ * result would hide the bindings the failed read might carry, so the scan must report unreadable.
+ */
+it("does not reuse cached draft graphs when the refresh fails", async () => {
+  const user = userEvent.setup();
+  const { state, handlers, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    kind: "skill",
+    configuration: { state: "not_declared" },
+  });
+  state.skills.skills.push({
+    id: "skill-release-notes",
+    namespace: "local",
+    name: "release-notes",
+    description: "Writes release notes",
+    source: { kind: "plugin", pluginId: "official/weather" },
+    availability: "available",
+  });
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ skills: ["release-notes"] }),
+  );
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /打开 weather 的菜单/ }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "卸载" }));
+
+  const firstDialog = await screen.findByRole("alertdialog");
+  expect(
+    await within(firstDialog).findByText(/1 个工作流依赖该插件/),
+  ).toBeVisible();
+  await user.click(within(firstDialog).getByRole("button", { name: "取消" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+
+  vi.spyOn(handlers, "getWorkflow").mockRejectedValue(
+    new Error("draft unavailable"),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /打开 weather 的菜单/ }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "卸载" }));
+
+  const secondDialog = await screen.findByRole("alertdialog");
+  expect(
+    await within(secondDialog).findByText(
+      /1 个工作流的图无法读取，未能确认它们的依赖/,
+    ),
+  ).toBeVisible();
+  expect(within(secondDialog).queryByText("发布流程")).toBeNull();
+});
+
 /** Composes workflow and Skill catalogs onto a Pack fixture so its documents can be checked. */
 function packClientWithWorkflowPackage() {
   const { state: plugins } = clientWithPack();
@@ -2459,12 +2593,12 @@ function packClientWithWorkflowPackage() {
     workflows: createWorkflowMemory(),
     skills: createSkillMemory(),
   };
-  const client = createTestClient({
+  const handlers: TestHandlers = {
     ...createFixtureHandlers(state),
     ...workflowHandlers(state.workflows),
     ...skillHandlers(state.skills),
-  });
-  return { state, client };
+  };
+  return { state, handlers, client: createTestClient(handlers) };
 }
 
 /** A Pack install that delivers documents reports them like a single-plugin install. */
@@ -2499,7 +2633,7 @@ it("reports workflow dependencies after a Pack install", async () => {
 /** A Pack uninstall names the workflows its removable members still serve. */
 it("names the workflows a Pack uninstall would break", async () => {
   const user = userEvent.setup();
-  const { state, client } = packClientWithWorkflowPackage();
+  const { state, handlers, client } = packClientWithWorkflowPackage();
   state.installedPlugins = [
     packMember(CORE_MEMBER_ID),
     packMember(LINT_MEMBER_ID),
@@ -2532,13 +2666,38 @@ it("names the workflows a Pack uninstall would break", async () => {
     "发布流程",
     agentGraph({ skills: ["python-core-skill"] }),
   );
+  const originalGetWorkflow = handlers.getWorkflow!;
+  let releaseWorkflow: (() => void) | undefined;
+  vi.spyOn(handlers, "getWorkflow").mockImplementation(
+    (req) =>
+      new Promise((resolve) => {
+        releaseWorkflow = () => {
+          void Promise.resolve(originalGetWorkflow(req)).then(resolve);
+        };
+      }),
+  );
   renderSettings(client);
 
   await user.click(await screen.findByRole("button", { name: /卸载集合包/ }));
 
   const dialog = await screen.findByRole("alertdialog");
+  expect(
+    await within(dialog).findByText(/正在检查引用该插件的工作流/),
+  ).toBeVisible();
+  expect(
+    within(dialog).getByRole("button", { name: /确认卸载|Uninstall/ }),
+  ).toBeDisabled();
+
+  await act(async () => {
+    releaseWorkflow?.();
+    await Promise.resolve();
+  });
+
   expect(await within(dialog).findByText(/1 个工作流依赖该插件/)).toBeVisible();
   expect(within(dialog).getByText("发布流程")).toBeVisible();
+  expect(
+    within(dialog).getByRole("button", { name: /确认卸载|Uninstall/ }),
+  ).toBeEnabled();
 });
 
 /** A path picker that rejects surfaces an error toast without touching the backend. */

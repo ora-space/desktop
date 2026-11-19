@@ -340,7 +340,56 @@ describe("findWorkflowDependents", () => {
     expect(impact).toEqual({ dependents: [], unreadable: 7 });
   });
 
-  it("counts a malformed node with agentConfig: null as unreadable without aborting", () => {
+  it("reads an explicit null agent config as a workflow with no dependencies", () => {
+    const impact = findWorkflowDependents({
+      workflows: [
+        {
+          workflowId: "workflow-null",
+          name: "空配置流程",
+          draftGraph: JSON.stringify({
+            viewport: { x: 0, y: 0, zoom: 1 },
+            nodes: [
+              {
+                id: "agent-null",
+                type: "workflow",
+                position: { x: 0, y: 0 },
+                data: {
+                  kind: "agent",
+                  title: "空配置节点",
+                  agentConfig: null,
+                },
+              },
+            ],
+            edges: [],
+            annotations: [],
+            globalVariables: [],
+          }),
+        },
+        {
+          workflowId: "workflow-good",
+          name: "发布流程",
+          draftGraph: graph({ skills: ["release-notes"] }),
+        },
+      ],
+      plugins: [skillPlugin("official/release")],
+      skills: [skillOwnedBy("release-notes", "official/release")],
+      targets: [{ kind: "skill", name: "release-notes" }],
+    });
+
+    // A null config declares no bindings; the install report reads it the same way.
+    expect(impact).toEqual({
+      dependents: [
+        {
+          workflowId: "workflow-good",
+          name: "发布流程",
+          nodeTitles: ["发布说明"],
+        },
+      ],
+      unreadable: 0,
+    });
+  });
+
+  it("counts a malformed node whose bindings cannot be read as unreadable without aborting", () => {
     const skills = [skillOwnedBy("release-notes", "official/release")];
     const malformedGraph = JSON.stringify({
       viewport: { x: 0, y: 0, zoom: 1 },
@@ -352,7 +401,8 @@ describe("findWorkflowDependents", () => {
           data: {
             kind: "agent",
             title: "坏配置节点",
-            agentConfig: null,
+            // Not a binding list: the resolver throws, so the workflow stays unknown.
+            agentConfig: { mcps: 42 },
           },
         },
       ],
