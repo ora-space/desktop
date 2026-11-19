@@ -268,7 +268,8 @@ async fn rejects_a_response_with_an_unknown_id() {
     }
 }
 
-/// Verifies extension requests receive method-not-found without closing request correlation.
+/// Verifies extension requests receive method-not-found without closing request correlation,
+/// including `_`-prefixed extension methods that carry an id.
 #[tokio::test]
 async fn rejects_unknown_agent_request_and_continues_reading() {
     let (peer, mut link) = spawn_peer();
@@ -295,6 +296,25 @@ async fn rejects_unknown_agent_request_and_continues_reading() {
             "error": {
                 "code": -32601,
                 "message": "method not found: ext/future",
+            },
+        })
+    );
+
+    link.send(json!({
+        "jsonrpc": "2.0",
+        "id": 100,
+        "method": "_subagent/control",
+        "params": {},
+    }));
+
+    assert_eq!(
+        link.next_outbound().await,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 100,
+            "error": {
+                "code": -32601,
+                "message": "method not found: _subagent/control",
             },
         })
     );

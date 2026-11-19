@@ -97,6 +97,9 @@ impl SubagentUpdateTranslator {
         if self.max_cached_tasks > 0 {
             let key = (session_id.clone(), task_id.clone());
             if !self.known_tasks.contains_key(&key) {
+                // Eviction is FIFO by first appearance, not LRU: later frames for an already
+                // cached task do not refresh its position, so a long-lived task can be evicted
+                // while newer tasks keep arriving.
                 while self.known_tasks.len() >= self.max_cached_tasks {
                     let Some(oldest) = self.task_order.pop_front() else {
                         break;
@@ -523,6 +526,26 @@ mod tests {
                 "sessionId": "s1",
                 "taskId": "t1",
                 "update": { "sessionUpdate": "session_info_update", "title": "Hijacked" },
+            }),
+            json!({
+                "sessionId": "s1",
+                "taskId": "t1",
+                "update": { "sessionUpdate": "current_mode_update", "currentModeId": "auto" },
+            }),
+            json!({
+                "sessionId": "s1",
+                "taskId": "t1",
+                "update": { "sessionUpdate": "config_option_update", "configOptions": [] },
+            }),
+            json!({
+                "sessionId": "s1",
+                "taskId": "t1",
+                "update": { "sessionUpdate": "available_commands_update", "availableCommands": [] },
+            }),
+            json!({
+                "sessionId": "s1",
+                "taskId": "t1",
+                "update": { "sessionUpdate": "usage_update", "used": 10, "size": 100 },
             }),
             json!({
                 "sessionId": "s1",
