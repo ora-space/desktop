@@ -53,6 +53,7 @@ import {
   type WorkflowImportReportInput,
 } from "./workflow-import-report-dialog";
 import { marketplaceWorkflowReportInput } from "./workflow-import-report";
+import { useWorkflowUninstallImpact } from "./use-workflow-uninstall-impact";
 import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
 import type {
   WorkflowDependency,
@@ -167,6 +168,10 @@ function PluginDetailAction({
     useState<HookExecutionAction | null>(null);
   const [importReport, setImportReport] =
     useState<WorkflowImportReportInput | null>(null);
+  const uninstallImpact = useWorkflowUninstallImpact(
+    [plugin.id],
+    uninstallOpen && (plugin.kind === "mcp" || plugin.kind === "skill"),
+  );
   const uninstalling = mutations.uninstall.isPending;
   const incompatible = plugin.compatibility === "incompatible";
   const isHook = plugin.kind === "hook";
@@ -346,10 +351,7 @@ function PluginDetailAction({
               {t("settings.plugins.uninstallDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {uninstallOpen &&
-            (plugin.kind === "mcp" || plugin.kind === "skill") && (
-              <WorkflowUninstallImpact pluginIds={[plugin.id]} />
-            )}
+          <WorkflowUninstallImpact state={uninstallImpact} />
           {isHook && <HookRemovalDisclosure />}
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -365,7 +367,7 @@ function PluginDetailAction({
             </AlertDialogCancel>
             <Button
               variant="destructive"
-              disabled={uninstalling}
+              disabled={uninstalling || uninstallImpact.checking}
               onClick={() =>
                 mutations.uninstall.mutate(
                   {

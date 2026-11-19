@@ -3,11 +3,12 @@ import { useContractsClient } from "../../contracts-client-context";
 import { pluginKeys } from "../data/plugins";
 
 /** Loads the backend's immutable startup snapshot of installed plugin manifests. */
-export function useInstalledPlugins() {
+export function useInstalledPlugins(enabled = true) {
   const client = useContractsClient();
   return useQuery({
     queryKey: pluginKeys.installedPlugins,
     queryFn: () =>
       client.plugin.listInstalled({}).then((response) => response.plugins),
+    enabled,
   });
 }

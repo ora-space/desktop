@@ -70,6 +70,7 @@ import {
   useDeleteSkill,
 } from "../../state/hooks/use-atom-mutations";
 import { SettingsHeading } from "./settings-heading";
+import { useWorkflowUninstallImpact } from "./use-workflow-uninstall-impact";
 import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
 import { invalidateAgents } from "../../state/data/agents";
 import { invalidateSkills } from "../../state/data/skills";
@@ -399,6 +400,10 @@ function DeletePluginSkillsDialog({
   const queryClient = useQueryClient();
   const mutations = usePluginMutations(pluginId ?? "");
   const uninstalling = mutations.uninstall.isPending;
+  const uninstallImpact = useWorkflowUninstallImpact(
+    pluginId === null ? [] : [pluginId],
+    pluginId !== null,
+  );
 
   return (
     <AlertDialog open={pluginId !== null} onOpenChange={onOpenChange}>
@@ -412,19 +417,17 @@ function DeletePluginSkillsDialog({
           <AlertDialogDescription>
             {t("settings.skills.deletePluginDescription")}
           </AlertDialogDescription>
-          {pluginId !== null && (
-            // Plugin-provided Skills cannot be deleted on their own, so the removal has to name
-            // the workflows that would lose the Skill before the user confirms it.
-            <WorkflowUninstallImpact pluginIds={[pluginId]} />
-          )}
         </AlertDialogHeader>
+        {/* Plugin-provided Skills cannot be deleted on their own, so the removal has to name
+            the workflows that would lose the Skill before the user confirms it. */}
+        <WorkflowUninstallImpact state={uninstallImpact} />
         <AlertDialogFooter>
           <AlertDialogCancel disabled={uninstalling}>
             {t("common.cancel")}
           </AlertDialogCancel>
           <Button
             variant="destructive"
-            disabled={uninstalling}
+            disabled={uninstalling || uninstallImpact.checking}
             onClick={() =>
               mutations.uninstall.mutate(
                 { dataDisposition: "delete" },

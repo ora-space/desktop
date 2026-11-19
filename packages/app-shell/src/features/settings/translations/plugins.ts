@@ -216,7 +216,7 @@ export const pluginTranslations = {
     "settings.plugins.uninstallDependencyChecking":
       "正在检查引用该插件的工作流…",
     "settings.plugins.uninstallDependencyUnknown":
-      "无法读取工作流或插件目录，暂时无法确认卸载影响。",
+      "无法读取工作流或插件目录，暂时无法确认卸载影响；现在卸载会跳过这项检查。",
     "settings.plugins.uninstallDependencyTitle": "{{count}} 个工作流依赖该插件",
     "settings.plugins.uninstallDependencyDescription":
       "卸载后这些工作流会缺依赖，运行到引用该插件的节点时会失败。",
@@ -645,13 +645,17 @@ export const pluginTranslations = {
     "settings.plugins.uninstallDependencyChecking":
       "Checking the workflows that use this plugin…",
     "settings.plugins.uninstallDependencyUnknown":
-      "Unable to read the workflows or the plugin catalog, so the uninstall impact can’t be checked right now.",
-    "settings.plugins.uninstallDependencyTitle":
-      "{{count}} workflow(s) depend on this plugin",
+      "Unable to read the workflows or the plugin catalog, so the uninstall impact can’t be confirmed right now. Uninstalling now skips this check.",
+    "settings.plugins.uninstallDependencyTitle_one":
+      "{{count}} workflow depends on this plugin",
+    "settings.plugins.uninstallDependencyTitle_other":
+      "{{count}} workflows depend on this plugin",
     "settings.plugins.uninstallDependencyDescription":
       "After uninstalling, these workflows will be missing a dependency and fail at the nodes that use it.",
-    "settings.plugins.uninstallDependencyUnreadable":
-      "The graph of {{count}} workflow(s) could not be read, so their references are unconfirmed.",
+    "settings.plugins.uninstallDependencyUnreadable_one":
+      "The graph of {{count}} workflow could not be read, so its references are unconfirmed.",
+    "settings.plugins.uninstallDependencyUnreadable_other":
+      "The graphs of {{count}} workflows could not be read, so their references are unconfirmed.",
     "settings.plugins.hook.confirmTitle":
       "Run the program bundled with {{name}}?",
     "settings.plugins.hook.executionDisclosure":

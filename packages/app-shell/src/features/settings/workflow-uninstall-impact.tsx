@@ -1,91 +1,38 @@
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { IconAlertTriangle } from "@tabler/icons-react";
-import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
-import { useSkills } from "../../state/hooks/use-skills";
-import {
-  useWorkflowDrafts,
-  useWorkflowLibrary,
-} from "../../state/data/workflows";
-import {
-  findWorkflowDependents,
-  uninstallDependencyTargets,
-} from "./workflow-dependency-impact";
+import type { WorkflowUninstallImpactState } from "./use-workflow-uninstall-impact";
 
 /**
- * Names the workflows an uninstall would leave without a dependency.
+ * Presents the workflows an uninstall would leave without a dependency.
  *
- * The check reads every workflow draft on demand, so it only mounts while the uninstall
- * confirmation is open. It reports an unreadable catalog or graph as unconfirmed instead of
- * showing no impact, because silence would tell the user the removal is safe when it is not.
+ * The dialog passes the resolved state from {@link useWorkflowUninstallImpact} so the same scan
+ * both names affected workflows and disables destructive confirmation until checking finishes.
  */
 export function WorkflowUninstallImpact({
-  pluginIds,
+  state,
 }: {
-  /** Plugin ids the pending uninstall removes; a pack passes its removable members. */
-  pluginIds: readonly string[];
+  state: WorkflowUninstallImpactState;
 }) {
   const { t } = useTranslation();
-  const library = useWorkflowLibrary();
-  const plugins = useInstalledPlugins();
-  const skills = useSkills();
-  const workflowIds = useMemo(
-    () => (library.data ?? []).map((workflow) => workflow.id),
-    [library.data],
-  );
-  const drafts = useWorkflowDrafts(workflowIds);
-  const pending =
-    library.isPending ||
-    plugins.isPending ||
-    skills.isPending ||
-    drafts.some((draft) => draft.isPending);
-  const failed =
-    library.isError ||
-    plugins.isError ||
-    skills.isError ||
-    drafts.some((draft) => draft.isError);
 
-  const impact = useMemo(() => {
-    if (pending || failed) return null;
-    const workflows = (library.data ?? []).map((summary, index) => ({
-      workflowId: summary.id,
-      name: summary.name,
-      graph: drafts[index]?.data?.draft.graph,
-    }));
-    return findWorkflowDependents({
-      workflows,
-      plugins: plugins.data ?? [],
-      skills: skills.data ?? [],
-      targets: uninstallDependencyTargets(
-        pluginIds,
-        plugins.data ?? [],
-        skills.data ?? [],
-      ),
-    });
-  }, [
-    pending,
-    failed,
-    library.data,
-    drafts,
-    pluginIds,
-    plugins.data,
-    skills.data,
-  ]);
+  if (state.status === "idle") return null;
 
-  if (failed) {
+  if (state.status === "failed") {
     return (
       <p className="text-[12px] text-muted-foreground">
         {t("settings.plugins.uninstallDependencyUnknown")}
       </p>
     );
   }
-  if (impact === null) {
+  if (state.status === "checking") {
     return (
       <p role="status" className="text-[12px] text-muted-foreground">
         {t("settings.plugins.uninstallDependencyChecking")}
       </p>
     );
   }
+
+  const { impact } = state;
   if (impact.dependents.length === 0) {
     return impact.unreadable > 0 ? (
       <p className="text-[12px] text-muted-foreground">

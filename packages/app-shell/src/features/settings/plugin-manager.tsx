@@ -45,6 +45,7 @@ import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { PluginLogo } from "./plugin-logo";
 import { workflowDocumentSummary } from "./plugin-install-feedback";
 import { marketplaceWorkflowReportInput } from "./workflow-import-report";
+import { useWorkflowUninstallImpact } from "./use-workflow-uninstall-impact";
 import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
 import {
   WorkflowImportReportDialog,
@@ -255,6 +256,10 @@ function InstalledPluginRow({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [importReport, setImportReport] =
     useState<WorkflowImportReportInput | null>(null);
+  const uninstallImpact = useWorkflowUninstallImpact(
+    [plugin.id],
+    uninstallOpen && (plugin.kind === "mcp" || plugin.kind === "skill"),
+  );
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
   };
@@ -555,13 +560,10 @@ function InstalledPluginRow({
             <AlertDialogDescription>
               {t("settings.plugins.uninstallDescription")}
             </AlertDialogDescription>
-            {uninstallOpen &&
-              (plugin.kind === "mcp" || plugin.kind === "skill") && (
-                // A Skill or MCP a workflow binds must name that workflow before it leaves, so the
-                // user sees the break instead of discovering it when the run fails.
-                <WorkflowUninstallImpact pluginIds={[plugin.id]} />
-              )}
           </AlertDialogHeader>
+          {/* A Skill or MCP a workflow binds must name that workflow before it leaves, so the
+              user sees the break instead of discovering it when the run fails. */}
+          <WorkflowUninstallImpact state={uninstallImpact} />
           {isHook && <HookRemovalDisclosure />}
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -577,7 +579,7 @@ function InstalledPluginRow({
             </AlertDialogCancel>
             <Button
               variant="destructive"
-              disabled={uninstalling}
+              disabled={uninstalling || uninstallImpact.checking}
               onClick={() =>
                 mutations.uninstall.mutate(
                   {

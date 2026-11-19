@@ -46,7 +46,10 @@ function skillOwnedBy(name: string, pluginId: string): Skill {
 }
 
 /** One Agent node graph envelope binding the given Skills and MCPs. */
-function graph(bindings: { skills?: string[]; mcps?: string[] } = {}): string {
+function graph(
+  bindings: { skills?: string[]; mcps?: string[] } = {},
+  title = "发布说明",
+): string {
   return JSON.stringify({
     viewport: { x: 0, y: 0, zoom: 1 },
     nodes: [
@@ -56,7 +59,7 @@ function graph(bindings: { skills?: string[]; mcps?: string[] } = {}): string {
         position: { x: 0, y: 0 },
         data: {
           kind: "agent",
-          title: "发布说明",
+          title,
           agentConfig: {
             skills: (bindings.skills ?? []).map((skillId) => ({
               skillId,
@@ -112,12 +115,12 @@ describe("findWorkflowDependents", () => {
         {
           workflowId: "workflow-1",
           name: "发布流程",
-          graph: graph({ skills: ["release-notes"] }),
+          draftGraph: graph({ skills: ["release-notes"] }),
         },
         {
           workflowId: "workflow-2",
           name: "回归流程",
-          graph: graph(),
+          draftGraph: graph(),
         },
       ],
       plugins: [skillPlugin("official/release")],
@@ -143,7 +146,7 @@ describe("findWorkflowDependents", () => {
         {
           workflowId: "workflow-1",
           name: "发布流程",
-          graph: graph({ mcps: ["official/mcp-weather"] }),
+          draftGraph: graph({ mcps: ["official/mcp-weather"] }),
         },
       ],
       plugins: [mcpPlugin("official/mcp-weather")],
@@ -156,17 +159,234 @@ describe("findWorkflowDependents", () => {
     ]);
   });
 
-  it("counts a workflow whose graph cannot be read instead of clearing it", () => {
+  it("checks the published snapshot even after the draft drops the binding", () => {
+    const skills = [skillOwnedBy("release-notes", "official/release")];
     const impact = findWorkflowDependents({
       workflows: [
-        { workflowId: "workflow-1", name: "发布流程", graph: "not json" },
-        { workflowId: "workflow-2", name: "回归流程", graph: undefined },
+        {
+          workflowId: "workflow-1",
+          name: "发布流程",
+          draftGraph: graph(),
+          publishedGraph: graph({ skills: ["release-notes"] }, "线上节点"),
+        },
+      ],
+      plugins: [skillPlugin("official/release")],
+      skills,
+      targets: [{ kind: "skill", name: "release-notes" }],
+    });
+
+    expect(impact).toEqual({
+      dependents: [
+        {
+          workflowId: "workflow-1",
+          name: "发布流程",
+          nodeTitles: ["线上节点"],
+        },
+      ],
+      unreadable: 0,
+    });
+  });
+
+  it("merges draft and published node titles without duplicating shared nodes", () => {
+    const skills = [skillOwnedBy("release-notes", "official/release")];
+    const impact = findWorkflowDependents({
+      workflows: [
+        {
+          workflowId: "workflow-1",
+          name: "发布流程",
+          draftGraph: JSON.stringify({
+            viewport: { x: 0, y: 0, zoom: 1 },
+            nodes: [
+              {
+                id: "agent-1",
+                type: "workflow",
+                position: { x: 0, y: 0 },
+                data: {
+                  kind: "agent",
+                  title: "共享节点",
+                  agentConfig: {
+                    skills: [{ skillId: "release-notes", enabled: true }],
+                    mcps: [],
+                  },
+                },
+              },
+              {
+                id: "agent-2",
+                type: "workflow",
+                position: { x: 0, y: 0 },
+                data: {
+                  kind: "agent",
+                  title: "草稿节点",
+                  agentConfig: {
+                    skills: [{ skillId: "release-notes", enabled: true }],
+                    mcps: [],
+                  },
+                },
+              },
+            ],
+            edges: [],
+            annotations: [],
+            globalVariables: [],
+          }),
+          publishedGraph: JSON.stringify({
+            viewport: { x: 0, y: 0, zoom: 1 },
+            nodes: [
+              {
+                id: "agent-1",
+                type: "workflow",
+                position: { x: 0, y: 0 },
+                data: {
+                  kind: "agent",
+                  title: "共享节点",
+                  agentConfig: {
+                    skills: [{ skillId: "release-notes", enabled: true }],
+                    mcps: [],
+                  },
+                },
+              },
+              {
+                id: "agent-3",
+                type: "workflow",
+                position: { x: 0, y: 0 },
+                data: {
+                  kind: "agent",
+                  title: "已发布节点",
+                  agentConfig: {
+                    skills: [{ skillId: "release-notes", enabled: true }],
+                    mcps: [],
+                  },
+                },
+              },
+            ],
+            edges: [],
+            annotations: [],
+            globalVariables: [],
+          }),
+        },
+      ],
+      plugins: [skillPlugin("official/release")],
+      skills,
+      targets: [{ kind: "skill", name: "release-notes" }],
+    });
+
+    expect(impact).toEqual({
+      dependents: [
+        {
+          workflowId: "workflow-1",
+          name: "发布流程",
+          nodeTitles: ["共享节点", "草稿节点", "已发布节点"],
+        },
+      ],
+      unreadable: 0,
+    });
+  });
+
+  it("counts a workflow when its published graph is unreadable without losing draft hits", () => {
+    const skills = [skillOwnedBy("release-notes", "official/release")];
+    const impact = findWorkflowDependents({
+      workflows: [
+        {
+          workflowId: "workflow-1",
+          name: "发布流程",
+          draftGraph: graph(),
+          publishedGraph: "[]",
+        },
+        {
+          workflowId: "workflow-2",
+          name: "双坏流程",
+          draftGraph: "not json",
+          publishedGraph: "null",
+        },
+        {
+          workflowId: "workflow-3",
+          name: "草稿命中流程",
+          draftGraph: graph({ skills: ["release-notes"] }),
+          publishedGraph: "not json",
+        },
+      ],
+      plugins: [skillPlugin("official/release")],
+      skills,
+      targets: [{ kind: "skill", name: "release-notes" }],
+    });
+
+    expect(impact).toEqual({
+      dependents: [
+        {
+          workflowId: "workflow-3",
+          name: "草稿命中流程",
+          nodeTitles: ["发布说明"],
+        },
+      ],
+      unreadable: 3,
+    });
+  });
+
+  it("counts valid JSON graphs that are not objects as unreadable", () => {
+    const impact = findWorkflowDependents({
+      workflows: [
+        { workflowId: "workflow-1", name: "数组图", draftGraph: "[]" },
+        { workflowId: "workflow-2", name: "空值图", draftGraph: "null" },
+        { workflowId: "workflow-3", name: "数字图", draftGraph: "42" },
+        { workflowId: "workflow-4", name: "文本图", draftGraph: '"text"' },
+        { workflowId: "workflow-5", name: "布尔图", draftGraph: "true" },
+        { workflowId: "workflow-6", name: "缺失图", draftGraph: undefined },
+        { workflowId: "workflow-7", name: "坏JSON", draftGraph: "not json" },
       ],
       plugins: [skillPlugin("official/release")],
       skills: [],
       targets: [{ kind: "skill", name: "release-notes" }],
     });
 
-    expect(impact).toEqual({ dependents: [], unreadable: 2 });
+    expect(impact).toEqual({ dependents: [], unreadable: 7 });
+  });
+
+  it("counts a malformed node with agentConfig: null as unreadable without aborting", () => {
+    const skills = [skillOwnedBy("release-notes", "official/release")];
+    const malformedGraph = JSON.stringify({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        {
+          id: "agent-bad",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: {
+            kind: "agent",
+            title: "坏配置节点",
+            agentConfig: null,
+          },
+        },
+      ],
+      edges: [],
+      annotations: [],
+      globalVariables: [],
+    });
+    const impact = findWorkflowDependents({
+      workflows: [
+        {
+          workflowId: "workflow-bad",
+          name: "异常节点流程",
+          draftGraph: malformedGraph,
+        },
+        {
+          workflowId: "workflow-good",
+          name: "发布流程",
+          draftGraph: graph({ skills: ["release-notes"] }),
+        },
+      ],
+      plugins: [skillPlugin("official/release")],
+      skills,
+      targets: [{ kind: "skill", name: "release-notes" }],
+    });
+
+    expect(impact).toEqual({
+      dependents: [
+        {
+          workflowId: "workflow-good",
+          name: "发布流程",
+          nodeTitles: ["发布说明"],
+        },
+      ],
+      unreadable: 1,
+    });
   });
 });

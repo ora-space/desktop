@@ -72,7 +72,7 @@ export function uninstallDependencyTargets(
 }
 
 /**
- * Reports whether a draft graph is a JSON object the workflow codec can read at all.
+ * Reports whether a snapshot graph is a JSON object the workflow codec can read at all.
  *
  * The codec deliberately turns an unparsable snapshot into an empty envelope so the canvas still
  * opens; that is the right answer for editing and the wrong answer for an uninstall check, where
@@ -100,18 +100,23 @@ function referencesTarget(
 }
 
 /**
- * Finds every workflow draft that binds a plugin the user is about to uninstall.
+ * Finds every workflow whose draft or published snapshot binds a plugin the user is about to
+ * uninstall.
  *
- * The same resolver the import report uses supplies the references, so an uninstall warning and
- * an install report agree on what a workflow needs. A graph that cannot be read is counted rather
- * than dropped: an unknown reference must not read as "nothing depends on this plugin".
+ * Runs execute the published snapshot while editing changes the draft, so removing a binding in an
+ * unpublished draft must not hide an active dependency in the published graph. Both snapshots share
+ * the import report's dependency resolver, and any unreadable or malformed graph is counted once
+ * per workflow rather than failing the whole scan or reading as "no references".
  */
 export function findWorkflowDependents(input: {
-  /** Library summaries in display order, each with the draft graph a caller loaded for it. */
+  /** Library summaries in display order, each with the draft and published graphs loaded for it. */
   workflows: readonly {
     workflowId: string;
     name: string;
-    graph: string | undefined;
+    /** `undefined` when the workflow record itself could not be fetched. */
+    draftGraph: string | undefined;
+    /** `null` or `undefined` when the workflow has no published snapshot. */
+    publishedGraph?: string | null;
   }[];
   plugins: readonly InstalledPlugin[];
   skills: readonly Skill[];
@@ -121,25 +126,48 @@ export function findWorkflowDependents(input: {
   let unreadable = 0;
 
   for (const workflow of input.workflows) {
-    if (workflow.graph === undefined || !isReadableGraph(workflow.graph)) {
+    if (workflow.draftGraph === undefined) {
       unreadable += 1;
       continue;
     }
-    const dependencies = collectWorkflowDependencies(
-      parseWorkflowGraph(workflow.graph).nodes,
-      input.plugins,
-      input.skills,
-    );
-    const matching = dependencies.filter((dependency) =>
-      referencesTarget(dependency, input.targets),
-    );
-    if (matching.length === 0) continue;
+    const graphs = [workflow.draftGraph];
+    if (
+      workflow.publishedGraph != null &&
+      workflow.publishedGraph !== workflow.draftGraph
+    ) {
+      graphs.push(workflow.publishedGraph);
+    }
+
+    let workflowUnreadable = false;
     const nodeTitles: string[] = [];
-    for (const dependency of matching) {
-      for (const title of dependency.nodeTitles) {
-        if (!nodeTitles.includes(title)) nodeTitles.push(title);
+    for (const rawGraph of graphs) {
+      if (!isReadableGraph(rawGraph)) {
+        workflowUnreadable = true;
+        continue;
+      }
+      let dependencies: ReturnType<typeof collectWorkflowDependencies>;
+      try {
+        dependencies = collectWorkflowDependencies(
+          parseWorkflowGraph(rawGraph).nodes,
+          input.plugins,
+          input.skills,
+        );
+      } catch {
+        workflowUnreadable = true;
+        continue;
+      }
+      for (const dependency of dependencies) {
+        if (!referencesTarget(dependency, input.targets)) continue;
+        for (const title of dependency.nodeTitles) {
+          if (!nodeTitles.includes(title)) nodeTitles.push(title);
+        }
       }
     }
+
+    if (workflowUnreadable) {
+      unreadable += 1;
+    }
+    if (nodeTitles.length === 0) continue;
     dependents.push({
       workflowId: workflow.workflowId,
       name: workflow.name,
