@@ -27,19 +27,14 @@
 //!   without `CAP_SYS_PTRACE`). An unreadable process of the scanner's own user is one that made
 //!   itself non-dumpable; counting all of those would let unrelated programs block every stop.
 
+mod freeze;
 mod scan;
 
-use super::linux_process::{LinuxPidFd, ProcessSignal, linux_process};
-use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::io;
 
 /// Separates the tokens of nested launches inside one value.
 const SEPARATOR: u8 = b':';
-
-/// Freezing passes before the frozen processes are killed. A pass that finds no process it has
-/// not frozen yet ends the loop early; the bound only stops a fork storm from holding the caller.
-const FREEZE_PASSES: usize = 32;
 
 /// One `NAME=token` environment entry a launcher gives every process it starts.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,63 +142,13 @@ impl MarkScope {
     /// A frozen process can neither fork nor exit, so a child forked just before its parent froze
     /// still names that parent in the next pass even if it cleared its environment; killing
     /// straight away would orphan it first. A process whose pidfd could not be opened is tried
-    /// again in the next pass of the same call; one that could never be pinned stays claimed,
-    /// so the next scan still sees it. Signal failures are not reported: only a later
+    /// again in the next pass of the same call. No process stays frozen longer than two
+    /// seconds: past that a watchdog kills every frozen process even while a scan hangs, and
+    /// later passes kill instead of freezing. Signal failures are not reported: only a later
     /// scan shows what remains, so callers decide on evidence, never on this call returning.
     pub fn kill(&self) -> io::Result<()> {
-        // A stopped process cannot exit on its own, so a frozen one is remembered by PID and
-        // start tick and pinned again to be killed: one pidfd is open at a time however many
-        // processes are frozen, and a PID taken over meanwhile fails the start-tick check.
-        let mut frozen = BTreeSet::new();
-        let mut scanned = Ok(());
-        for _ in 0..FREEZE_PASSES {
-            let scan = match self.scan() {
-                Ok(scan) => scan,
-                Err(error) => {
-                    scanned = Err(error);
-                    break;
-                }
-            };
-            let mut quiet = true;
-            for process in scan.claimed {
-                if frozen.contains(&process) {
-                    continue;
-                }
-                quiet = false;
-                match pin(process) {
-                    Ok(handle) => {
-                        let _ = handle.signal(ProcessSignal::Stop);
-                        frozen.insert(process);
-                    }
-                    // It exited; nothing is left to freeze.
-                    Err(error) if scan::gone(&error) => {
-                        frozen.insert(process);
-                    }
-                    // Not remembered, so the next pass tries this process again.
-                    Err(_) => {}
-                }
-            }
-            if quiet {
-                break;
-            }
-        }
-        // Frozen processes are always killed, even after a failed rescan, so none stays stopped.
-        for process in frozen {
-            if let Ok(handle) = pin(process) {
-                let _ = handle.signal(ProcessSignal::Kill);
-            }
-        }
-        scanned
+        freeze::kill_within(freeze::FREEZE_BOUND, || self.scan())
     }
-}
-
-/// Pins the claimed process again, refusing a PID that a later process has taken over.
-fn pin(process: ClaimedProcess) -> io::Result<LinuxPidFd> {
-    let current = linux_process(process.pid)?;
-    if current.start_ticks != process.start_ticks {
-        return Err(io::Error::from_raw_os_error(libc::ESRCH));
-    }
-    LinuxPidFd::from_observation(&current)
 }
 
 /// The current boot-relative time in the clock ticks `/proc/<pid>/stat` reports start times in.
