@@ -35,9 +35,8 @@ that reached `plugin_webview_invoke` could only address its own instance.
 `window.open` from a surface never creates an Ora webview: a remote URL inside the allow list goes to
 the system browser and every popup request is denied. Workbench pages never open popups.
 
-Each plugin has one persistent web profile under its data directory (`web-profile/`; on macOS a data
-store identifier derived from the plugin id as a UUID v5), so a webview plugin keeps its login and a
-workbench page keeps its own `localStorage` even where all `ora-plugin://` pages share one origin.
+Each plugin has one persistent web profile under its data directory (`web-profile/`), so a webview
+plugin keeps its login and a workbench page keeps its own `localStorage` even where all `ora-plugin://` pages share one origin.
 The profile is never exposed to any page or to `ora/storage/*`.
 
 ## Opening and closing

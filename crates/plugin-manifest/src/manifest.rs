@@ -6,9 +6,9 @@ use crate::raw::{
 use crate::webview::RawWebview;
 use crate::workbench::RawWorkbench;
 use crate::{
-    HomepageUrl, HookTarget, InvalidFieldReason, ManifestError, ManifestField, PluginKind,
-    PluginName, PluginPack, PluginWebview, PluginWorkbench, ReleaseLocator, RepositoryUrl,
-    Sha256Digest,
+    HomepageUrl, HookTarget, HookTargetError, InvalidFieldReason, ManifestError, ManifestField,
+    PluginKind, PluginName, PluginPack, PluginWebview, PluginWorkbench, ReleaseLocator,
+    RepositoryUrl, Sha256Digest,
 };
 use ora_utils::GitBranchName;
 use semver::{Version, VersionReq};
@@ -628,9 +628,19 @@ fn validate_release_source(
     let mut compiled: Vec<PluginReleaseTarget> = Vec::with_capacity(raw_targets.len());
     let mut seen: Vec<HookTarget> = Vec::with_capacity(raw_targets.len());
     for (index, raw) in raw_targets.iter().enumerate() {
-        let target = HookTarget::parse(&raw.target).map_err(|reason| {
-            invalid_field(ManifestField::ReleaseTargetTarget { index }, reason.into())
-        })?;
+        let target = match HookTarget::parse(&raw.target) {
+            Ok(target) => target,
+            // Listings published while Ora still shipped for macOS keep their darwin artifacts
+            // next to the supported ones; no host can select them, so they are dropped rather
+            // than making the whole listing unparseable.
+            Err(HookTargetError::Retired { .. }) => continue,
+            Err(reason) => {
+                return Err(invalid_field(
+                    ManifestField::ReleaseTargetTarget { index },
+                    reason.into(),
+                ));
+            }
+        };
         if seen.iter().any(|seen| seen == &target) {
             return Err(invalid_field(
                 ManifestField::ReleaseTargetTarget { index },
@@ -649,6 +659,11 @@ fn validate_release_source(
             url,
             sha256,
         });
+    }
+    // A listing whose only artifacts target retired platforms has nothing any host can install,
+    // which is the same as declaring no release.
+    if compiled.is_empty() {
+        return Ok(None);
     }
     Ok(Some(PluginReleaseSource::Targets(compiled)))
 }

@@ -71,7 +71,7 @@ operation tests cover this boundary in addition to generated-code checks.
 `third_party/cloud` is a git submodule of the Cloud repository whose gitlink pins the contract commit.
 Its working tree is a partial clone (`--filter=blob:none`) with a sparse checkout limited to `proto/`.
 
-- `task proto:init` (Linux and macOS) clones and checks out the pinned commit, or moves an initialized
+- `task proto:init` (Linux) clones and checks out the pinned commit, or moves an initialized
   submodule to it. It uses `buf` from `PATH` or `~/.local/bin` and otherwise installs Buf from its
   official GitHub release into `~/.local/bin` without sudo (network required). A plain `git clone`
   does not initialize the submodule. Windows builds use the committed generated client and need

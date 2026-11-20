@@ -49,10 +49,10 @@ explicit `SHUTDOWN` exits without acknowledging it; `shutdown_reaper` counts a c
 by a successful exit as a completed shutdown, since the reaper exits successfully only after its
 cleanup succeeded. The cleanup only submits
 `SIGKILL`s, so it is bounded. SIGKILL cannot be intercepted and still strands registered groups.
-A signal the parent set to `SIG_IGN` differs by platform, since POSIX leaves unspecified whether a
-blocked, ignored signal is discarded: Linux keeps it pending and the reaper still cleans up, while
-macOS discards it and the reaper keeps running, for example with SIGINT inherited by a
-non-interactive shell's background job or SIGHUP under `nohup`. Either way no group is stranded.
+A signal the parent set to `SIG_IGN` still reaches the reaper: POSIX leaves unspecified whether a
+blocked, ignored signal is discarded, and Linux keeps it pending, so the reaper still cleans up,
+for example with SIGINT inherited by a non-interactive shell's background job or SIGHUP under
+`nohup`.
 Windows has no such signals; however the reaper ends, including `TerminateProcess` and console
 control events, the kernel closes its aggregate Job Object and `KILL_ON_JOB_CLOSE` terminates every
 registered tree.

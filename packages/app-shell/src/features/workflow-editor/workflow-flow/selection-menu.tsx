@@ -37,7 +37,6 @@ export function WorkflowSelectionMenu({
   onClose,
 }: WorkflowSelectionMenuProps) {
   const { t } = useTranslation();
-  const modifier = /Mac|iPhone|iPad/i.test(navigator.platform) ? "⌘" : "Ctrl";
   useEffect(() => {
     function onPointerDown(event: PointerEvent): void {
       if (
@@ -70,7 +69,7 @@ export function WorkflowSelectionMenu({
     >
       <SelectionMenuItem
         label={t("settings.workflow.copyNodes")}
-        shortcut={`${modifier}+C`}
+        shortcut="Ctrl+C"
         disabled={!canCopy}
         onSelect={() => {
           onCopy();
@@ -79,7 +78,7 @@ export function WorkflowSelectionMenu({
       />
       <SelectionMenuItem
         label={t("settings.workflow.pasteNodes")}
-        shortcut={`${modifier}+V`}
+        shortcut="Ctrl+V"
         disabled={!canPaste}
         onSelect={() => {
           onPaste();
@@ -88,7 +87,7 @@ export function WorkflowSelectionMenu({
       />
       <SelectionMenuItem
         label={t("settings.workflow.duplicateNodes")}
-        shortcut={`${modifier}+D`}
+        shortcut="Ctrl+D"
         disabled={!canCopy}
         onSelect={() => {
           onDuplicate();

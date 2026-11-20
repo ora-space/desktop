@@ -25,9 +25,9 @@ use crate::{
 };
 
 fn bootstrapped_pool() -> (TempDir, RepositoryPool) {
-    // macOS exposes its default temporary root through `/var`, which is a symlink. The
-    // artifact store deliberately rejects symlinked ancestors, so keep these fixtures under
-    // the checkout instead of relaxing the production safety boundary.
+    // The artifact store deliberately rejects symlinked ancestors, and the system temporary
+    // root is not guaranteed to be free of them, so keep these fixtures under the checkout
+    // instead of relaxing the production safety boundary.
     let temporary = tempfile::tempdir_in(std::env::current_dir().expect("current directory"))
         .expect("create temp directory");
     let pool = bootstrapped_pool_at(&temporary);

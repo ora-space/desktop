@@ -11,12 +11,11 @@
 //! thread receives them synchronously with `sigwait`. That thread runs ordinary Rust code: it
 //! takes the same mutex as the protocol loop, which may meanwhile stay blocked in its stdin read.
 //!
-//! A signal whose disposition the parent set to `SIG_IGN` behaves differently by platform, since
-//! POSIX leaves it unspecified whether such a signal is discarded at generation while blocked.
-//! Linux keeps it pending, so `sigwait` still receives it and the reaper cleans up. macOS (XNU)
-//! discards it, so the reaper keeps running as if it was never sent; a non-interactive shell's
-//! background job, for example, inherits an ignored SIGINT, and `nohup` ignores SIGHUP. No tree
-//! is stranded either way, because an ignored signal does not end the reaper.
+//! A signal whose disposition the parent set to `SIG_IGN` still reaches the reaper. POSIX leaves
+//! it unspecified whether such a signal is discarded at generation while blocked, and Linux keeps
+//! it pending, so `sigwait` still receives it and the reaper cleans up; a
+//! non-interactive shell's background job, for example, inherits an ignored SIGINT, and `nohup`
+//! ignores SIGHUP. No tree is stranded, because the signal runs the same final cleanup.
 //!
 //! Windows has no termination signals. Anything that ends the reaper there, `TerminateProcess`
 //! and console control events included, closes the only handle to its aggregate Job Object, whose
@@ -139,8 +138,8 @@ fn respond_to_termination_signal(cleanup: Cleanup<'_>, signal: i32) -> SignalRes
 /// trees. The reaper sits outside Ora's process group, so these arrive by PID: SIGTERM from a
 /// cleanup owner or a service manager, SIGINT from an operator, SIGHUP when the reaper's session
 /// or terminal goes away, which, like parent EOF, means its supervisor is gone. SIGQUIT keeps its
-/// core-dump default for diagnostics, and SIGKILL cannot be caught. On macOS a signal inherited
-/// as ignored stays ignored; see the module documentation.
+/// core-dump default for diagnostics, and SIGKILL cannot be caught. A signal inherited as ignored
+/// still arrives on Linux; see the module documentation.
 ///
 /// The caller must not have started any other thread: a thread that does not inherit the blocked
 /// mask could receive a signal with its default action. Returns an error, leaving the signals

@@ -97,7 +97,7 @@ Agent 会话和插件进程不向 reaper 登记，见 [Agent 会话](agent-sessi
 尝试锁文件放在它旁边的 `home_directory/git-attempts/` 中。
 
 - 打开时在同级的 `ora-node.sqlite3.lock` 上持有排他的操作系统租约，持续到数据库关闭，而不是锁数据库文件本身，
-  否则在 macOS 和 Windows 上 SQLite 自己的锁会与整文件租约冲突。租约排除另一个 Node owner，但不证明较早的
+  否则在 Windows 上 SQLite 自己的锁会与整文件租约冲突。租约排除另一个 Node owner，但不证明较早的
   Git 进程已经停止。
 - SQLite 使用默认的回滚日志和 `synchronous=FULL`。数据库的 application id 为 `0x4f52414e`。打开时先检查身份、
   完整性、精确的表和索引定义以及外键；空文件、其他数据库、不支持的版本、目录和损坏的数据库都会被拒绝，从不重建。

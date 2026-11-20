@@ -20,7 +20,7 @@
 | `task proto:check` | Cloud 契约 submodule 固定在指定 commit，生成的客户端与之一致（属于 `lint:crates`） |
 | `deno task test:tooling` | `scripts/` 下的工具脚本 |
 
-Tauri crate 与其他 Rust crate 共享根目录的 `Cargo.lock`、依赖图和 target 目录。CI 分别运行各组，crates 任务在 Linux、macOS 和
+Tauri crate 与其他 Rust crate 共享根目录的 `Cargo.lock`、依赖图和 target 目录。CI 分别运行各组，crates 任务在 Linux 和
 Windows 上运行。迭代时使用最小的相关任务；Desktop 的改动需要 `task test:tauri`，不能只跑 workspace 测试，横跨多处的改动最后要跑
 `task test`。
 

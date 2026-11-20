@@ -581,7 +581,7 @@ async fn unmatched_target_never_downloads() {
     };
     input.payload.spec.plugins[0].release = PluginRelease::Targets {
         targets: vec![PluginTargetDownload {
-            target: "aarch64-apple-darwin".into(),
+            target: "x86_64-pc-windows-msvc".into(),
             download,
         }],
     };

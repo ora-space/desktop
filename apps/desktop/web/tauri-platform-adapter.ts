@@ -46,7 +46,6 @@ const PLUGIN_INSTALL_PROGRESS_EVENT = "plugin-install-progress";
 function detectWindowManagerOs(): WindowManagerOs | null {
   if (typeof navigator === "undefined") return null;
   const ua = navigator.userAgent;
-  if (/Mac|iPhone|iPad|iPod/i.test(ua)) return "macos";
   if (/Windows|Win32|Win64|WOW64/i.test(ua)) return "windows";
   if (/Linux|X11|CrOS/i.test(ua)) return "linux";
   return null;
@@ -61,7 +60,7 @@ function createTauriWindowControls(): WindowControlsCapability {
   }
 
   const os = detectWindowManagerOs();
-  if (os === null || os === "macos") {
+  if (os === null) {
     return { kind: "none" };
   }
 

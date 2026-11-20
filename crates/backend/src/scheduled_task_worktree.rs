@@ -1090,7 +1090,7 @@ mod tests {
                 .expect("scheduled provisioning");
             let worktree_task_id = ora_domain::TaskId::new(&created.task.id);
             // The projection can differ in spelling (8.3 short names on Windows,
-            // /var symlinks on macOS) from the committed path; both name the same
+            // symlinked temporary roots) from the committed path; both name the same
             // directory, so compare their canonical forms.
             assert_eq!(
                 std::fs::canonicalize(&created.worktree_path).expect("committed path exists"),

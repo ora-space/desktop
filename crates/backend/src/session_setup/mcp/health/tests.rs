@@ -189,7 +189,7 @@ impl Drop for SilentHttpServer {
 /// Reports accept errors that mean "no connection this time", not a dead listener.
 ///
 /// `WouldBlock` is the normal nonblocking result. `Interrupted` and
-/// `ConnectionAborted` also show up on a loaded macOS runner; treating them as
+/// `ConnectionAborted` also show up on a loaded CI runner; treating them as
 /// fatal stops the accept thread and the reuse test then sees zero connections.
 fn transient_accept(error: &std::io::Error) -> bool {
     matches!(
@@ -210,7 +210,7 @@ fn transient_accept(error: &std::io::Error) -> bool {
 async fn wait_accepted(server: &SilentHttpServer, count: usize) {
     // The accept thread polls independently of the probe. A loaded runner can
     // leave the established connection in the backlog well after the probe
-    // has already timed out; 10s was not enough on the macOS CI host.
+    // has already timed out; 10s proved too short on a loaded CI host.
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         if server.accepts() >= count {

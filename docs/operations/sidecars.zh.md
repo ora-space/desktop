@@ -11,8 +11,8 @@ sidecar 则由 `task build:desktop` 从检出的源码构建。
 `apps/desktop/src-tauri/binaries` 中的 Deno 和 ripgrep，对本机目标还会运行 `--version`。过期、损坏或无法执行的文件只有在新下载
 通过所有检查之后才会被替换；其他目标平台的可执行文件只通过摘要认证，不运行。
 
-`scripts/sidecar-checksums.json` 是信任来源：它的 key 把精确的官方 GitHub release URL 绑定到 Linux x64 和 arm64、macOS arm64 和
-x64 以及 Windows x64 的压缩包和可执行文件 SHA-256。Node 镜像从同样的固定值安装 Deno。
+`scripts/sidecar-checksums.json` 是信任来源：它的 key 把精确的官方 GitHub release URL 绑定到 Linux 和 Windows x64（以及
+Linux arm64 的 Deno）的压缩包和可执行文件 SHA-256。Node 镜像从同样的固定值安装 Deno。
 
 - 每次安装都在 `binaries` 内、目标文件系统上自己的临时目录中暂存。压缩包在解压之前必须匹配固定值；解压出的普通可执行文件必须
   匹配固定值，在本机上还必须报告期望的版本，然后才通过原子重命名发布。

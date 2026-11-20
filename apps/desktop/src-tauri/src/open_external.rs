@@ -19,14 +19,14 @@ pub async fn open_external_url(request: OpenExternalUrlRequest) -> Result<(), Co
     let url = request.url;
     // Windows ShellExecuteW returns without waiting for the browser, so the
     // first click must not hop through spawn_blocking (cold thread pool + the
-    // old cmd.exe path is what made that press feel frozen). Other hosts still
-    // spawn because `open` / `xdg-open` can block.
+    // old cmd.exe path is what made that press feel frozen). Linux still
+    // spawns because `xdg-open` can block.
     let result = {
         #[cfg(target_os = "windows")]
         {
             request_span.in_scope(|| open_external_url_blocking(&url))
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let blocking_span = request_span.clone();
             match tauri::async_runtime::spawn_blocking(move || {
@@ -138,30 +138,8 @@ pub(crate) fn open_external_url_blocking(url: &str) -> Result<(), BackendError> 
     Ok(())
 }
 
-/// Launches the OS browser through macOS `open`.
-#[cfg(target_os = "macos")]
-pub(crate) fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
-    use std::process::Command;
-    if !is_browser_url(url) {
-        return Err(open_external_url_scheme_error(std::io::Error::other(
-            "URL scheme is not allowed",
-        )));
-    }
-    let status = Command::new("open")
-        .arg(url)
-        .status()
-        .map_err(open_external_url_os_error)?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(open_external_url_os_error(std::io::Error::other(format!(
-            "open command exited with {status}"
-        ))))
-    }
-}
-
-/// Linux Desktop is not a shipping host; keep the command defined for completeness.
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+/// Launches the desktop session's default browser for one validated URL through `xdg-open`.
+#[cfg(target_os = "linux")]
 pub(crate) fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
     use std::process::Command;
     if !is_browser_url(url) {

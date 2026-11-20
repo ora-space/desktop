@@ -121,7 +121,7 @@ and event records and the recorded Git attempts; the attempt lock files live bes
 
 - Opening holds an exclusive OS lease on the sibling `ora-node.sqlite3.lock` for the database's
   lifetime, never on the database file, whose SQLite locks would otherwise collide with a whole-file
-  lease on macOS and Windows. The lease excludes another Node owner but does not prove an older Git
+  lease on Windows. The lease excludes another Node owner but does not prove an older Git
   process stopped.
 - SQLite uses its default rollback journal with `synchronous=FULL`. The database has application id
   `0x4f52414e`. Opening checks identity, integrity, exact table and index definitions and foreign

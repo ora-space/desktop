@@ -4,8 +4,10 @@ English | [中文](local-development.zh.md)
 
 ## Prerequisites
 
-Install the Deno version pinned in `.deno-version`, Rust (see `rust-toolchain.toml`), Task, Git,
-ripgrep and the Tauri system dependencies for your platform. Node.js and pnpm are not required.
+Ora Desktop is developed and shipped on Windows and Linux; macOS is not supported (v0.6.0 was the
+last macOS release). Install the Deno version pinned in `.deno-version`, Rust (see
+`rust-toolchain.toml`), Task, Git, ripgrep and the Tauri system dependencies for your platform.
+Node.js and pnpm are not required.
 
 ```sh
 task install:frontend   # locked npm dependencies through Deno, plus Git hooks

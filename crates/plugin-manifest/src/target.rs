@@ -20,9 +20,15 @@ const CANONICAL_RUST_TARGET_TRIPLES: &[&str] = &[
     "aarch64-unknown-linux-gnu",
     "x86_64-unknown-linux-musl",
     "aarch64-unknown-linux-musl",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
 ];
+
+/// Triples of platforms Ora no longer ships for: macOS, whose last release was v0.6.0.
+///
+/// Listings published before that decision still carry artifacts for these triples next to the
+/// supported ones. They are told apart from unknown triples so release parsing can skip those
+/// artifacts instead of rejecting the whole listing, while every other use — an installed
+/// package's `[artifact]` declaration included — still refuses them.
+const RETIRED_RUST_TARGET_TRIPLES: &[&str] = &["x86_64-apple-darwin", "aarch64-apple-darwin"];
 
 /// Holds one canonical Rust target triple identifying an installable artifact's OS, architecture,
 /// and binary ABI.
@@ -59,6 +65,11 @@ impl HookTarget {
         // packaging mistake rather than a portable value.
         if !value.is_ascii() {
             return Err(HookTargetError::NonAscii);
+        }
+        if RETIRED_RUST_TARGET_TRIPLES.contains(&value) {
+            return Err(HookTargetError::Retired {
+                found: value.to_owned(),
+            });
         }
         if !CANONICAL_RUST_TARGET_TRIPLES.contains(&value) {
             return Err(HookTargetError::Unsupported {
@@ -111,6 +122,8 @@ pub enum HookTargetError {
     NonAscii,
     #[error("unsupported target triple {found:?}")]
     Unsupported { found: String },
+    #[error("target triple {found:?} belongs to a platform Ora no longer supports")]
+    Retired { found: String },
 }
 
 #[cfg(test)]
@@ -155,6 +168,22 @@ mod tests {
             Err(HookTargetError::Unsupported {
                 found: "not-a-real-triple".to_owned(),
             })
+        );
+    }
+
+    /// macOS triples are recognized as retired rather than unknown, and never parse.
+    #[test]
+    fn reports_macos_triples_as_retired() {
+        assert_eq!(
+            ["aarch64-apple-darwin", "x86_64-apple-darwin"].map(HookTarget::parse),
+            [
+                Err(HookTargetError::Retired {
+                    found: "aarch64-apple-darwin".to_owned(),
+                }),
+                Err(HookTargetError::Retired {
+                    found: "x86_64-apple-darwin".to_owned(),
+                }),
+            ]
         );
     }
 }

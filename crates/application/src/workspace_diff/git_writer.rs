@@ -36,7 +36,7 @@ impl GitWorkspaceGitWriter {
         let worktree = self.resolve_worktree(worktree_path)?;
         // Compare canonicalized roots, matching how `find_worktree` itself resolves
         // `worktree_path` against `git worktree list` output: a raw lexical comparison would
-        // false-negative on symlink differences (e.g. macOS `/tmp` -> `/private/tmp`).
+        // false-negative on symlink differences (e.g. a symlinked temporary or home directory).
         if canonicalize_longest_existing_prefix(worktree.worktree_root().as_path())
             != canonicalize_longest_existing_prefix(worktree_path)
             || worktree.branch_name().map(gitlancer::BranchName::as_str)

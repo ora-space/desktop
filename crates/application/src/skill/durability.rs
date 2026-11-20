@@ -182,9 +182,9 @@ fn directory_sync_is_unsupported(error: &io::Error) -> bool {
     }
     #[cfg(not(windows))]
     {
-        // EINVAL plus the Linux and macOS ENOTSUP values cover filesystems that accept opening a
-        // directory but reject fsync on it (for example some overlay or network mounts).
-        matches!(error.raw_os_error(), Some(22 | 45 | 95))
+        // EINVAL and Linux's ENOTSUP cover filesystems that accept opening a directory but
+        // reject fsync on it (for example some overlay or network mounts).
+        matches!(error.raw_os_error(), Some(22 | 95))
     }
 }
 

@@ -4,6 +4,7 @@
 
 ## 前提
 
+Ora Desktop 只在 Windows 和 Linux 上开发和发布，不支持 macOS（v0.6.0 是最后一个 macOS 版本）。
 安装 `.deno-version` 固定的 Deno 版本、Rust（见 `rust-toolchain.toml`）、Task、Git、ripgrep，以及所在平台的 Tauri 系统依赖。
 不需要 Node.js 和 pnpm。
 

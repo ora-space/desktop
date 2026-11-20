@@ -29,6 +29,9 @@ forms accept an optional human-readable `title` that falls back to the identifie
 - Model the resolver-one release source as a mutually exclusive union: one universal `url` +
   `sha256` pair installable on every host, or one or more unique `[[targets]]` entries each carrying
   an exact Rust target triple (`HookTarget`) from a known rustc allowlist, URL, and digest. The
+  macOS triples (`*-apple-darwin`) are retired: Ora no longer ships for macOS (v0.6.0 was the last
+  release), so a listing's darwin entries are skipped rather than failing the listing, a listing
+  left with no other target has no release, and an installed `[artifact]` naming one is refused. The
   targeted form is limited to the kinds that ship a native binary of their own
   (`PluginKind::may_ship_targeted_artifact`): `hook`, which _is_ that binary, and `agent`, which
   may bundle the CLI it drives rather than requiring the user to install one. An installed

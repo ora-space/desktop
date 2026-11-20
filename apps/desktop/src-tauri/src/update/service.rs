@@ -186,13 +186,13 @@ impl UpdateService {
         }
         self.set_state(RuntimeUpdateState::Current);
         self.inner.artifacts.clear();
-        // Windows hands control to the NSIS updater, which terminates this process itself; the
-        // other platforms replace the bundle in place and have to be restarted here.
+        // Windows hands control to the NSIS updater, which terminates this process itself; Linux
+        // replaces the AppImage in place and has to be restarted here.
         #[cfg(target_os = "windows")]
         {
             Ok(())
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             self.inner.app.restart()
         }

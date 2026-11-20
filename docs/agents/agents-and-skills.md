@@ -53,8 +53,7 @@ across a rename, so a slow Skills root cannot starve other writers.
 Package files, journal markers and directory promotes are flushed before the row is committed, and
 SQLite runs with `synchronous=FULL`, so the only crash window left is "directory exists, row not
 committed", which startup reconciliation repairs by removing unowned packages. Mutation-time
-directory fsync is a hard error on Unix and best effort on Windows; macOS `sync_all` is `fsync`
-rather than `F_FULLFSYNC`. Startup blocks on this reconciliation before serving requests.
+directory fsync is a hard error on Unix and best effort on Windows. Startup blocks on this reconciliation before serving requests.
 
 Details are in [`crates/application/src/skill/README.md`](../../crates/application/src/skill/README.md).
 

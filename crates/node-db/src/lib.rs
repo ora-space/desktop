@@ -97,7 +97,7 @@ pub struct NodeDatabase<G = DurableWrites> {
     node_id: NodeId,
     // A sibling lock inode resolves the same for every spelling of the home, while leaving the
     // database file free for SQLite's own locks: a whole-file lease on the database collides with
-    // them on macOS (flock and fcntl share one lock table) and Windows (mandatory LockFileEx).
+    // them on Windows (mandatory LockFileEx).
     _lease: Arc<ExclusiveFileLock>,
 }
 

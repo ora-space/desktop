@@ -38,7 +38,7 @@ Revision 的代码进入 Git Server；对象存储只存会话历史。`GrantRev
 
 `third_party/cloud` 是 Cloud 仓库的 git submodule，它的 gitlink 固定了契约的 commit。工作树是部分 clone（`--filter=blob:none`），sparse checkout 只包含 `proto/`。
 
-- `task proto:init`（Linux 和 macOS）clone 并检出固定的 commit，或把已初始化的 submodule 移到该 commit。它使用 `PATH` 或 `~/.local/bin` 中的 `buf`，没有时从官方 GitHub release 安装 Buf 到 `~/.local/bin`，不需要 sudo（需要网络）。普通的 `git clone` 不会初始化 submodule。Windows 构建使用已提交的生成客户端，既不需要 submodule 也不需要 `buf`。
+- `task proto:init`（Linux）clone 并检出固定的 commit，或把已初始化的 submodule 移到该 commit。它使用 `PATH` 或 `~/.local/bin` 中的 `buf`，没有时从官方 GitHub release 安装 Buf 到 `~/.local/bin`，不需要 sudo（需要网络）。普通的 `git clone` 不会初始化 submodule。Windows 构建使用已提交的生成客户端，既不需要 submodule 也不需要 `buf`。
 - `crates/controller-proto`（`ora-controller-proto`）只保存 `src/gen/` 下的生成代码，由 `buf` 用固定版本的远程插件（`neoeinstein-prost`、`neoeinstein-tonic`）生成，不需要本地 `protoc`。服务端 stub 在 `test-server` feature 之后生成：生产代码从不编译它们，Controller 的测试用它们在真实契约上托管一个内存中的 Cloud。
 - `task proto:generate` 重新生成。`task proto:check`（属于 `task lint:crates`）检查 submodule 处于固定的 commit 且 `proto/` 下没有本地改动，重新生成，有任何差异就失败。`buf lint` 和 `buf breaking` 属于 Cloud 仓库。
 

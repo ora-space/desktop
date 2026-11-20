@@ -79,9 +79,7 @@ export async function setupBinaries(options: SetupOptions = {}): Promise<void> {
       environment.RUST_TARGET;
     if (configuredTriple) return configuredTriple;
 
-    if (platform === "darwin") {
-      return arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
-    }
+    // Ora Desktop ships for Windows and Linux only, so other hosts have no default target.
     if (platform === "win32") {
       return "x86_64-pc-windows-msvc";
     }
@@ -157,11 +155,9 @@ export async function setupBinaries(options: SetupOptions = {}): Promise<void> {
     async function verifyExecutable(file: string): Promise<void> {
       await verifySidecarHash(file, checksums.executableSha256);
       const hostTriple =
-        platform === "darwin"
-          ? `${arch === "arm64" ? "aarch64" : "x86_64"}-apple-darwin`
-          : platform === "win32"
-            ? "x86_64-pc-windows-msvc"
-            : "x86_64-unknown-linux-gnu";
+        platform === "win32"
+          ? "x86_64-pc-windows-msvc"
+          : "x86_64-unknown-linux-gnu";
       if (triple !== hostTriple) return;
       const result = await execFileAsync(file, ["--version"]);
       const reported =

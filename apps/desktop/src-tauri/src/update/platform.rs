@@ -15,9 +15,9 @@ pub(super) enum InstallSupport {
     SelfUpdating,
     /// The user has to update through the channel named by the reason.
     ///
-    /// Linux is the only target that can currently produce this: Windows and macOS ship a single
-    /// bundle format that the updater always owns.
-    #[cfg_attr(not(target_os = "linux"), expect(dead_code))]
+    /// Linux is the only target that can currently produce this: Windows ships a single bundle
+    /// format that the updater always owns.
+    #[cfg_attr(target_os = "windows", expect(dead_code))]
     Manual(ManualUpdateReason),
 }
 
@@ -39,8 +39,8 @@ pub(super) fn install_support() -> InstallSupport {
     }
 }
 
-/// Classifies the running installation for the current target platform.
-#[cfg(not(target_os = "linux"))]
+/// Classifies a Windows installation, which the NSIS updater always owns.
+#[cfg(target_os = "windows")]
 pub(super) fn install_support() -> InstallSupport {
     InstallSupport::SelfUpdating
 }

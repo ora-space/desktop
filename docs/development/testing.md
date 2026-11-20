@@ -22,7 +22,7 @@ gates and what each covers.
 | `deno task test:tooling` | Tooling scripts under `scripts/` |
 
 The Tauri crate shares the root `Cargo.lock`, dependency graph and target directory with the other Rust
-crates. CI runs the groups independently, and the crates job runs on Linux, macOS and Windows. Use the
+crates. CI runs the groups independently, and the crates job runs on Linux and Windows. Use the
 smallest relevant task while iterating; Desktop changes need `task test:tauri`, not only workspace tests,
 and cross-cutting changes finish with `task test`.
 

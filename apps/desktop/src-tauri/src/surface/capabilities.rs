@@ -36,11 +36,7 @@ impl SurfaceCapabilities {
         };
         let capabilities = Self {
             embedded: compiled && platform_supported,
-            web_data_isolation: if cfg!(any(
-                target_os = "linux",
-                target_os = "windows",
-                target_os = "macos"
-            )) {
+            web_data_isolation: if cfg!(any(target_os = "linux", target_os = "windows")) {
                 WebDataIsolation::Isolated
             } else {
                 WebDataIsolation::Degraded

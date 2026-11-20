@@ -117,7 +117,7 @@ pub struct ResolveWorkspaceCwdResponse {
 ///
 /// Git reports worktree paths with forward slashes on every platform, so this keeps
 /// both the copied text and the opened target reading naturally on Windows while
-/// leaving already-native paths untouched on macOS.
+/// leaving already-native paths untouched on Linux.
 fn to_native_path_string(path: &std::path::Path) -> String {
     let rendered = path.to_string_lossy().into_owned();
     #[cfg(target_os = "windows")]

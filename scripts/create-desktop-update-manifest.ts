@@ -24,9 +24,10 @@ export async function createUpdateManifest(options: {
       throw new Error(`Duplicate updater asset name: ${name}`);
     assets.set(name, file);
   }
+  // Windows and Linux are the only released platforms; v0.6.0 was the last macOS release, so
+  // macOS installs keep that version and find no newer entry for their platform.
   const patterns = {
     "windows-x86_64": /(?:_x64-setup|setup)\.exe$/i,
-    "darwin-aarch64": /\.app\.tar\.gz$/i,
     "linux-x86_64": /\.AppImage$/,
   };
   const manifest: UpdateManifest = {

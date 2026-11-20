@@ -23,7 +23,7 @@ Skill 是一条目录行加上磁盘上的包 `<数据根目录>/atoms/skills/<n
 
 SQLite 与文件系统之间的原子性来自日志和启动恢复，而不是一个跨越两者的事务。每次变更都先把包暂存到保留目录 `<Skill 根目录>/.ora-staging`，在 `.ora-journal` 下写一个 `Prepared` 标记，提升正式目录，把日志标为 `Swapped`，写入行，最后才清除日志和备份（`.ora-backup`）。行写入失败会回滚目录。重命名期间从不持有 SQLite 事务，所以一个缓慢的 Skill 根目录不会饿死其他写入方。
 
-包文件、日志标记和目录提升都在行提交之前刷盘，SQLite 又以 `synchronous=FULL` 运行，所以唯一剩下的崩溃窗口是"目录已存在、行尚未提交"，由启动协调删除无主的包来修复。变更时的目录 fsync 在 Unix 上是硬错误，在 Windows 上是尽力而为；macOS 的 `sync_all` 是 `fsync` 而不是 `F_FULLFSYNC`。启动会等这次协调完成后才开始服务请求。
+包文件、日志标记和目录提升都在行提交之前刷盘，SQLite 又以 `synchronous=FULL` 运行，所以唯一剩下的崩溃窗口是"目录已存在、行尚未提交"，由启动协调删除无主的包来修复。变更时的目录 fsync 在 Unix 上是硬错误，在 Windows 上是尽力而为。启动会等这次协调完成后才开始服务请求。
 
 细节见 [`crates/application/src/skill/README.md`](../../crates/application/src/skill/README.md)。
 
