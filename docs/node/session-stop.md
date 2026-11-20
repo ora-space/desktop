@@ -15,42 +15,76 @@ admission wait for confirmation and resource release.
 
 Every process the spawn gate starts also carries `ORA_SESSION_ATTEMPT=<attempt>`, which its
 descendants inherit. Before the ledger records the attempt, `session-attempts/<attempt>.mark`
-durably records the attempt's start, in boot clock ticks, and the user its processes run as. This
-reaches tool jobs that leave every original group and drop the inherited lock, such as a `cmd &`
-in an Agent tool shell started under `setsid` (OpenCode's bash tool, Claude's Bash), adopted by
-init, from a runtime like Bun that closes inherited descriptors. A live process belongs to the
-attempt when it carries the mark and started at or after the attempt, or when its parent belongs
-to it. Termination freezes every such process with SIGSTOP through a pidfd, rescans until no new
-one appears (at most 32 passes), then kills them all, before it signals the original groups. Stop
-proof also requires two consecutive clean scans: a claimed live process keeps the attempt
-running; an unreadable scope or procfs, or an unreadable process of the attempt's user while the
-Node runs as another user without `CAP_SYS_PTRACE`, leaves the evidence unknown. A confirmed
-attempt with a mark scope records the proof `lock_processes_and_marks`; an attempt an older Node
-registered has no scope, none of its processes carries a mark, and it records
-`lock_and_processes` as before. Neither same-boot proof counts for `after-host-reboot`
-reconciliation. Schema 15 admits the new value; older programs refuse a schema 15 database.
+durably records the attempt's start, in boot clock ticks, and the user its processes run as, and
+the ledger row records that the attempt has this scope. This reaches tool jobs that leave every
+original group and drop the inherited lock, such as a `cmd &` in an Agent tool shell started under
+`setsid` (OpenCode's bash tool, Claude's Bash), adopted by init, from a runtime like Bun that
+closes inherited descriptors. A live process belongs to the attempt when it carries the mark and
+started at or after the attempt, or when its parent belongs to it; a process whose leader thread
+exited while other threads run still counts as live. Termination freezes every such process with
+SIGSTOP through a pidfd, rescans until no new one appears (at most 32 passes), then kills them
+all, before it signals the original groups. Stop proof also requires two consecutive clean scans:
+a claimed live process keeps the attempt running; a failed scan (procfs unreadable, descriptors
+exhausted), or an unreadable process of the attempt's user while the Node runs as another user
+without `CAP_SYS_PTRACE`, leaves the evidence unknown.
+
+| Ledger scope flag | `.mark` scope record | Evidence once lock, clues and scans are clean |
+| --- | --- | --- |
+| set (every attempt this Node registers) | valid | `lock_processes_and_marks` |
+| set | missing, damaged or unreadable | Unknown, handed to reconciliation |
+| not set (registered before marks) | not read | `lock_and_processes`, as before |
+
+Neither same-boot proof counts for `after-host-reboot` reconciliation or lifts `legacy_unknown`.
+Schema 15 adds the proof value and the flag in one table rebuild that leaves every existing row
+unflagged; older programs refuse a schema 15 database.
+
+**Cost and bounds.** Scans and kills never run on the Node's runtime thread: they run one at a time
+on a single blocking worker, and each stop observation (a termination plus the two evidence scans)
+has a 5 second budget, which includes waiting for the worker. An observation that runs out of
+budget, for example because an `environ` read hangs on a stuck FUSE or NFS mount, counts as
+Unknown; the hung read keeps the worker, so later observations also time out instead of starting
+more threads. Between observations of an unsettled attempt the Node waits 25 ms, doubling up to 1
+second, until the confirmation deadline. A scan opens at most a few descriptors at a time whatever
+the number of processes, and reads environments only of processes that started at or after the
+attempt.
 
 **What dies, and when.** When a session ends (EndSession, an Agent failure, a cancel that ends the
 session, graceful shutdown, or restart recovery after a Node crash) and when MCP lifecycle replaces
-the session's Agent process, every live process carrying that attempt's mark is killed before the
-stop is confirmed. That includes everything the Agent started: tool background jobs, dev servers,
-watchers, MCP and language servers, and shared daemons such as a Gradle daemon or an sccache
-server that a tool in the session launched. Nothing is killed between turns. A user who needs a
-daemon to outlive the session must start it outside Ora; one started by the Agent dies with the
-session even when other sessions or programs use it.
+the session's Agent process, every live process carrying that attempt's mark, or claimed through a
+parent that carries it, is killed before the stop is confirmed. That covers what the Agent started
+and what keeps its environment: tool background jobs, dev servers and watchers that run as
+ordinary programs, MCP and language servers, and shared daemons such as a Gradle daemon or an
+sccache server that a tool in the session launched. Nothing is killed between turns. A user who
+needs a daemon to outlive the session must start it outside Ora; one started by the Agent dies with
+the session even when other sessions or programs use it. Not every daemon is covered; see the
+limits below.
 
-**Known limits.** The mark is Linux only and does not make containment strong.
-- A process that clears its environment (`env -i`) or makes itself non-dumpable is found only while
-  its parent belongs to the attempt; once orphaned it is invisible. In particular, an orphaned
-  process of the attempt's own user whose environment the Node cannot read is not counted, and does
-  not make the evidence unknown: unrelated programs (ssh-agent, binaries with file capabilities)
-  are unreadable in the same way, and counting them would block every stop.
+**Known limits.** The mark is Linux only and the guarantee stays BestEffort.
+- A process that clears its environment (`env -i`), overwrites its own environment block (daemons
+  that rewrite their process title over it, such as PostgreSQL and nginx), or makes itself
+  non-dumpable is found only while its parent belongs to the attempt; once orphaned, as daemons
+  usually are, it is invisible and survives the session.
+- An orphaned process of the attempt's own user whose environment the Node cannot read is not
+  counted, and does not make the evidence unknown: unrelated programs (ssh-agent, binaries with file
+  capabilities) are unreadable in the same way, and counting them would block every stop. An
+  orphan that changed user (after `sudo` or another setuid program) is not counted either.
+- Processes started on the session's behalf by a service outside the attempt (for example through
+  `docker run` or `systemd-run`) never inherit the mark and are not stopped.
 - A Node that itself runs under another attempt's mark (a nested Node started by an outer Agent)
   passes both on as `outer:attempt`, so the outer attempt's stop also kills the inner Node's
   attempts. The inner Node only ever claims processes listing its own attempt.
 - The mark is not a secret: a process that can read it can start processes carrying it, and those
   die with the attempt, but it cannot make the Node signal a process that started before the
-  attempt.
+  attempt. Starting such processes without end can hold a stop until it ends as `stop_unconfirmed`.
+- A PID taken over by another process within one scan is not trusted as a parent, but other
+  PID-reuse races within the few milliseconds of a scan remain possible and unlikely.
+
+**Deployment prerequisite.** The Node and the workload run as the same user, or the Node holds
+`CAP_SYS_PTRACE`. Desktop and cloud v2 run both as one user. Otherwise, for example a root Node
+with `process.workload_uid` inside the default Docker capability set, the Node cannot read any
+workload environment: it logs a warning at startup and keeps serving, but any live process of the
+workload user in an attempt's window, including one of another session, leaves that attempt's
+evidence Unknown, so stops end as `stop_unconfirmed` and marked jobs are not found.
 
 `node.session_stop.confirmation_timeout_ms` defaults to 600000 and must be positive. Its first
 deadline is durable; retries do not extend it. Different-boot proof requires an explicit
