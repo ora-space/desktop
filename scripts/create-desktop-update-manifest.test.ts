@@ -7,7 +7,6 @@ import { withTempDirectory } from "./test-support.ts";
 async function signedAssets(root: string): Promise<void> {
   for (const [platform, name] of [
     ["windows", "Ora_1.2.3_x64-setup.exe"],
-    ["mac", "Ora.app.tar.gz"],
     ["linux", "Ora 1.2.3.AppImage"],
   ]) {
     const file = path.join(root, platform, name);
@@ -38,10 +37,6 @@ Deno.test(
             url: `${base}Ora_1.2.3_x64-setup.exe`,
             signature: "signature-windows\n",
           },
-          "darwin-aarch64": {
-            url: `${base}Ora.app.tar.gz`,
-            signature: "signature-mac\n",
-          },
           "linux-x86_64": {
             url: `${base}Ora%201.2.3.AppImage`,
             signature: "signature-linux\n",
@@ -58,7 +53,7 @@ Deno.test(
 Deno.test("missing signatures do not overwrite an existing manifest", () =>
   withTempDirectory(async (root) => {
     await signedAssets(root);
-    await Deno.remove(path.join(root, "mac", "Ora.app.tar.gz.sig"));
+    await Deno.remove(path.join(root, "linux", "Ora 1.2.3.AppImage.sig"));
     await Deno.writeTextFile(path.join(root, "latest.json"), "previous");
     await assert.rejects(
       createUpdateManifest({ bundlesDirectory: root, releaseTag: "v1.2.3" }),
@@ -80,7 +75,7 @@ Deno.test("updater rejects missing tags and ambiguous assets", () =>
     await signedAssets(root);
     await Deno.mkdir(path.join(root, "duplicate"));
     await Deno.writeTextFile(
-      path.join(root, "duplicate", "Ora.app.tar.gz"),
+      path.join(root, "duplicate", "Ora 1.2.3.AppImage"),
       "duplicate",
     );
     await assert.rejects(
