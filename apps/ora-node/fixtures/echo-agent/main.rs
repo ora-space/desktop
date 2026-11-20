@@ -22,6 +22,8 @@
 
 #[cfg(target_os = "linux")]
 mod agent;
+#[cfg(target_os = "linux")]
+mod mcp_checks;
 
 /// Runs as `ora-git` when asked to, and as the agent plugin otherwise.
 #[cfg(target_os = "linux")]
