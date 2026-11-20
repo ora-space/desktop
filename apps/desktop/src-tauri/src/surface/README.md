@@ -38,8 +38,7 @@ machine, and this module executes the resulting effects.
   `embedded-surfaces` feature.
 - `migrate.rs`: popout/dock. With the feature both reparent the webview; without it popout is
   close-and-reopen-windowed and dock is `UNSUPPORTED`.
-- `web_data.rs`: `WebDataPolicy` to `ResolvedWebData` (profile directory on Windows/Linux, UUID
-  v5 data store identifier on macOS).
+- `web_data.rs`: `WebDataPolicy` to `ResolvedWebData` (profile directory on Windows/Linux).
 - `downloads.rs`: `DownloadDispatcher`, the `DownloadSink` attached to every surface webview:
   selects the disposition from the plugin's manifest rules against the initiating page URL,
   reserves `.part` files in the plugin's `webview/downloads/` directory, promotes or removes
