@@ -11,7 +11,7 @@
 use crate::managed::attempt_lock::StopEvidence;
 use ora_node_db::AttemptId;
 use ora_process::ProcessIdentity;
-use ora_utils::process::{EnvironmentMark, MarkScope, linux_boot_ticks};
+use ora_utils::process::{EnvironmentMark, MarkScan, MarkScope, linux_boot_ticks};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -57,8 +57,8 @@ pub(super) fn record(
     fs::File::open(directory)?.sync_all()
 }
 
-/// Reads the scope back. Attempts recorded before marks existed have none, and none of their
-/// processes carries a mark, so their evidence stays the lock and the clues alone.
+/// Reads the scope back; `None` when the file is missing. Whether a missing scope is an attempt
+/// from before marks or a lost record is the ledger's `SessionStopScope`, never this file.
 pub(super) fn scope(directory: &Path, attempt: &AttemptId) -> io::Result<Option<MarkScope>> {
     let mut bytes = Vec::new();
     match fs::File::open(path(directory, attempt)) {
@@ -77,10 +77,11 @@ pub(super) fn scope(directory: &Path, attempt: &AttemptId) -> io::Result<Option<
 
 /// Stopped only after two clean scans in a row: a process that forks and exits while one scan
 /// passes over its new child's slot, after PID wrap-around, cannot hide its child from both. An
-/// unreadable procfs or an undecided process is never evidence that nothing runs.
-pub(super) fn evidence(scope: &MarkScope) -> StopEvidence {
+/// unreadable procfs or an undecided process is never evidence that nothing runs. `scan` is the
+/// scope's own scan; tests feed recorded outcomes through the same rule.
+pub(super) fn evidence(mut scan: impl FnMut() -> io::Result<MarkScan>) -> StopEvidence {
     for _ in 0..2 {
-        match scope.scan() {
+        match scan() {
             Ok(scan) if !scan.claimed.is_empty() => return StopEvidence::Running,
             Ok(scan) if scan.undecided == 0 => {}
             Ok(_) | Err(_) => return StopEvidence::Unknown,

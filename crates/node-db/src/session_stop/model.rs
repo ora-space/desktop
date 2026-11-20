@@ -77,6 +77,22 @@ pub enum SessionStopProof {
     FencedVolume,
 }
 
+/// Whether an attempt was registered with a mark scope record on disk.
+///
+/// The ledger keeps this so that a scope record lost after registration reads as missing
+/// evidence, never as an attempt from before marks existed. Rows that predate the column are
+/// `Absent`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStopScope {
+    /// The attempt's processes carry the mark and its scope record was durable before
+    /// registration.
+    Recorded,
+    /// Registered before attempt marks existed; none of its processes carries one.
+    #[default]
+    Absent,
+}
+
 /// The first stop deadline is immutable across repeated requests and Node restarts.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -89,6 +105,8 @@ pub struct SessionStopRecord {
     pub confirmed_at_ms: Option<i64>,
     pub proof: Option<SessionStopProof>,
     pub resources_released: bool,
+    #[serde(default)]
+    pub scope: SessionStopScope,
 }
 
 /// Closed mutations retain ownership until evidence and resource release have both committed.

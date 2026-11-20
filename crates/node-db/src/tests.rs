@@ -361,7 +361,8 @@ fn remove_direct_git_schema(connection: &Connection) {
         .unwrap();
 }
 
-/// Reconstructs the exact v15 stop table, which did not admit `lock_processes_and_marks`.
+/// Reconstructs the stop table as it was just before the stop-marks schema: no
+/// `lock_processes_and_marks` proof and no `mark_scope` flag.
 fn remove_session_stop_marks_schema(connection: &Connection) {
     connection.execute_batch("DROP INDEX session_stop_execution;
 DROP INDEX session_stop_checkout;
@@ -383,11 +384,17 @@ CREATE TABLE session_stop_attempts (
     CHECK((state='confirmed') = (confirmed_at_ms IS NOT NULL)),
     CHECK(resources_released=0 OR state='confirmed')
 );
-INSERT INTO session_stop_attempts SELECT * FROM new_session_stop_attempts;
+INSERT INTO session_stop_attempts SELECT attempt,execution,checkout,record,state,created_at_ms,first_stop_at_ms,bound_at_ms,confirmed_at_ms,evidence,resources_released FROM new_session_stop_attempts;
 DROP TABLE new_session_stop_attempts;
 CREATE INDEX session_stop_execution ON session_stop_attempts(execution,state);
-CREATE INDEX session_stop_checkout ON session_stop_attempts(checkout,state);
-PRAGMA user_version=15;").unwrap();
+CREATE INDEX session_stop_checkout ON session_stop_attempts(checkout,state);").unwrap();
+    connection
+        .pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            crate::schema::STOP_MARKS_VERSION - 1,
+        )
+        .unwrap();
 }
 
 /// Reconstructs an exact pre-v14 schema; production has no downgrade path.

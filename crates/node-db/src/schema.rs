@@ -3,6 +3,14 @@ use ora_node_protocol::NodeId;
 use rusqlite::Connection;
 
 const APPLICATION_ID: i64 = 0x4f52414e;
+
+/// The newest schema this program writes; files beyond it are refused, never misread.
+pub(crate) const LATEST_VERSION: i64 = STOP_MARKS_VERSION;
+
+/// The schema whose migration admits attempt-mark stop evidence: the `lock_processes_and_marks`
+/// proof and the per-attempt `mark_scope` flag, in one table rebuild after v15's cancel
+/// settlements.
+pub(crate) const STOP_MARKS_VERSION: i64 = 16;
 const METADATA: &str = "CREATE TABLE node_metadata (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), node_id TEXT NOT NULL CHECK(length(node_id) > 0));";
 
 /// Checks identity before any persistent pragma or migration touches an existing database.
@@ -42,7 +50,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=16) {
+    if app != APPLICATION_ID || !matches!(version, 1..=LATEST_VERSION) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -98,7 +106,7 @@ pub(super) fn initialize(
     if version >= 15 {
         expected.execute_batch(include_str!("turn_cancel.sql"))?;
     }
-    if version >= 16 {
+    if version >= STOP_MARKS_VERSION {
         expected.execute_batch(include_str!("session_stop_marks.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
@@ -285,17 +293,18 @@ pub(super) fn initialize(
         )?;
         tx.commit()?;
     }
-    if version < 16 {
-        // v16 admits the stop proof `lock_processes_and_marks`, recorded once the attempt mark
-        // scan also came back clean. SQLite cannot widen a CHECK in place, so the table is
-        // rebuilt with every row and value unchanged; older programs reject a v16 file instead
-        // of misreading the new proof.
+    if version < STOP_MARKS_VERSION {
+        // Admits the stop proof `lock_processes_and_marks`, recorded once the attempt mark scan
+        // also came back clean, and adds the `mark_scope` flag that tells a lost scope record
+        // from an attempt registered before marks. SQLite cannot widen a CHECK in place, so the
+        // table is rebuilt: every row and value is copied unchanged and existing rows get no
+        // flag. Older programs refuse the new file instead of misreading the new proof.
         let tx = connection.transaction()?;
         tx.execute_batch(include_str!("session_stop_marks.sql"))?;
         tx.pragma_update(
             /*schema_name*/ None,
             "user_version",
-            /*pragma_value*/ 16,
+            /*pragma_value*/ STOP_MARKS_VERSION,
         )?;
         tx.commit()?;
     }

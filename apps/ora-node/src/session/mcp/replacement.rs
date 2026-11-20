@@ -113,6 +113,7 @@ where
                 .await
         })
         .await;
+    let mut pause = Duration::from_millis(25);
     loop {
         if control.snapshot(false).convergence == ora_node_protocol::SessionMcpConvergence::Stopping
         {
@@ -120,12 +121,15 @@ where
         }
         let files =
             stop::files::StopFiles::open(&shared.config.home_directory).map_err(|_| blocked())?;
-        files.terminate(&old, &shared.config.stop.host());
-        let (evidence, proof) = files.probe(
-            &old,
-            &shared.config.stop.host(),
-            shared.config.stop.single_mount_with_storage_fencing,
-        );
+        // The live attempt being replaced was prepared by this Node, with its scope record.
+        let (evidence, proof) = files
+            .settle(
+                &old,
+                ora_node_db::SessionStopScope::Recorded,
+                &shared.config.stop.host(),
+                shared.config.stop.single_mount_with_storage_fencing,
+            )
+            .await;
         if evidence == crate::managed::attempt_lock::StopEvidence::Stopped {
             shared
                 .ledger
@@ -146,7 +150,8 @@ where
                 .map_err(|_| blocked())?;
             return Err(blocked());
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::time::sleep(pause).await;
+        pause = (pause * 2).min(Duration::from_secs(1));
     }
     let control = shared
         .controls

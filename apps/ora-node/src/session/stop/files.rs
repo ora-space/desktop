@@ -4,6 +4,7 @@ use super::marks;
 use crate::managed::attempt_lock::{AttemptLocks, LockDurability, StopEvidence};
 use ora_node_db::{
     AttemptId, SessionStopHost, SessionStopIdentity, SessionStopKind, SessionStopProof,
+    SessionStopScope,
 };
 use ora_process::ProcessIdentity;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,40 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+/// Stop observations run one at a time on a blocking worker, never on the Node's single runtime
+/// thread: a scan walks all of procfs, and one `environ` read can hang on a stuck filesystem.
+static STOP_WORKER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// How long one stop observation, including waiting for the worker, may take before it counts as
+/// Unknown. A hung read keeps the worker, so later observations also time out instead of piling
+/// up threads.
+const STOP_WORK_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Runs one blocking stop observation on the worker; `None` when it did not finish in budget.
+async fn off_runtime<T: Send + 'static>(job: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    off_runtime_within(STOP_WORK_BUDGET, job).await
+}
+
+/// As [`off_runtime`] with an explicit budget. The job keeps the worker until it returns, even
+/// after its caller gave up, so a hung read makes later observations time out too.
+pub(super) async fn off_runtime_within<T: Send + 'static>(
+    budget: std::time::Duration,
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    tokio::time::timeout(budget, async {
+        let permit = STOP_WORKER.acquire().await.ok()?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            job()
+        })
+        .await
+        .ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
 
 #[derive(Clone)]
 pub(crate) struct StopFiles {
@@ -92,6 +127,7 @@ impl StopFiles {
     pub(crate) fn probe(
         &self,
         identity: &SessionStopIdentity,
+        scope: SessionStopScope,
         current: &SessionStopHost,
         fenced_volume: bool,
     ) -> (StopEvidence, Option<SessionStopProof>) {
@@ -157,17 +193,21 @@ impl StopFiles {
             }
         }
         // Jobs that left the original groups and dropped the inherited descriptor stay visible
-        // only through the mark; a scope that cannot be read proves nothing. The proof names
-        // which evidence held, so an audit can tell a marked attempt from a pre-mark one.
-        let proof = match marks::scope(&self.directory, &identity.attempt) {
-            Ok(Some(scope)) => match marks::evidence(&scope) {
-                StopEvidence::Stopped => SessionStopProof::LockProcessesAndMarks,
-                evidence @ (StopEvidence::Running | StopEvidence::Unknown) => {
-                    return (evidence, None);
-                }
+        // only through the mark. The proof names which evidence held, so an audit can tell a
+        // marked attempt from one registered before marks existed.
+        let proof = match scope {
+            SessionStopScope::Absent => SessionStopProof::LockAndProcesses,
+            SessionStopScope::Recorded => match marks::scope(&self.directory, &identity.attempt) {
+                Ok(Some(mark)) => match marks::evidence(|| mark.scan()) {
+                    StopEvidence::Stopped => SessionStopProof::LockProcessesAndMarks,
+                    evidence @ (StopEvidence::Running | StopEvidence::Unknown) => {
+                        return (evidence, None);
+                    }
+                },
+                // Registered with a scope that is now missing or damaged: nothing shows that the
+                // attempt's marked jobs are gone, and the weaker proof would hide that.
+                Ok(None) | Err(_) => return (StopEvidence::Unknown, None),
             },
-            Ok(None) => SessionStopProof::LockAndProcesses,
-            Err(_) => return (StopEvidence::Unknown, None),
         };
         (StopEvidence::Stopped, Some(proof))
     }
@@ -204,6 +244,47 @@ impl StopFiles {
                 }
             }
         }
+    }
+
+    /// Terminates the attempt and then probes it, off the runtime; Unknown when out of budget.
+    pub(crate) async fn settle(
+        &self,
+        identity: &SessionStopIdentity,
+        scope: SessionStopScope,
+        current: &SessionStopHost,
+        fenced_volume: bool,
+    ) -> (StopEvidence, Option<SessionStopProof>) {
+        let (files, identity, current) = (self.clone(), identity.clone(), current.clone());
+        off_runtime(move || {
+            files.terminate(&identity, &current);
+            files.probe(&identity, scope, &current, fenced_volume)
+        })
+        .await
+        .unwrap_or((StopEvidence::Unknown, None))
+    }
+
+    /// Probes the attempt off the runtime without signalling it; Unknown when out of budget.
+    pub(crate) async fn observe(
+        &self,
+        identity: &SessionStopIdentity,
+        scope: SessionStopScope,
+        current: &SessionStopHost,
+        fenced_volume: bool,
+    ) -> (StopEvidence, Option<SessionStopProof>) {
+        let (files, identity, current) = (self.clone(), identity.clone(), current.clone());
+        off_runtime(move || files.probe(&identity, scope, &current, fenced_volume))
+            .await
+            .unwrap_or((StopEvidence::Unknown, None))
+    }
+
+    /// Terminates the attempt off the runtime; a request only, so an expired budget is silent.
+    pub(crate) async fn terminate_off_runtime(
+        &self,
+        identity: &SessionStopIdentity,
+        current: &SessionStopHost,
+    ) {
+        let (files, identity, current) = (self.clone(), identity.clone(), current.clone());
+        off_runtime(move || files.terminate(&identity, &current)).await;
     }
 
     /// Called only after durable confirmation and age/reference checks, never to manufacture proof.

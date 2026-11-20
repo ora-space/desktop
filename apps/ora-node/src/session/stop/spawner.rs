@@ -97,15 +97,21 @@ impl SessionAttemptSpawner {
         host: &ora_node_db::SessionStopHost,
         cleanup: impl std::future::Future<Output = T>,
     ) -> T {
-        {
+        // Close the gate under the lock, but scan and signal outside it and off the runtime:
+        // termination walks procfs, which must hold neither the spawn gate nor the Node.
+        let attempt = {
             let attempt = self.attempt.lock().unwrap_or_else(PoisonError::into_inner);
             attempt
                 .descriptor
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take();
-            attempt.files.terminate(&attempt.identity, host);
-        }
+            Arc::clone(&attempt)
+        };
+        attempt
+            .files
+            .terminate_off_runtime(&attempt.identity, host)
+            .await;
         cleanup.await
     }
 

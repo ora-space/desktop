@@ -773,6 +773,7 @@ fn restart_settles_a_pending_cancel_while_stop_evidence_is_missing()
             kind: SessionStopKind::Agent,
             packages: Vec::new(),
         },
+        ora_node_db::SessionStopScope::Recorded,
         1,
     )?;
     node.database

@@ -42,7 +42,9 @@ fn prior_revision_is_fenced_by_residual_stop_even_with_a_legacy_terminal_row() {
     let path = directory.path().join("db");
     let (mut db, journal, input) = running(&path);
     let original = identity(&input);
-    journal.record_session_stop(&original, 10).unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 10)
+        .unwrap();
     journal
         .change_session_stop(
             &original.attempt,
@@ -96,11 +98,19 @@ fn restart_preserves_clock_identity_terminal_intent_and_resource_fence() {
     let path = directory.path().join("db");
     let (db, journal, input) = running(&path);
     let original = identity(&input);
-    journal.record_session_stop(&original, 10).unwrap();
-    journal.record_session_stop(&original, 11).unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 10)
+        .unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 11)
+        .unwrap();
     let mut changed = original.clone();
     changed.host.boot_id = "other".into();
-    assert!(journal.record_session_stop(&changed, 12).is_err());
+    assert!(
+        journal
+            .record_session_stop(&changed, SessionStopScope::Recorded, 12)
+            .is_err()
+    );
     journal
         .change_session_stop(
             &original.attempt,
@@ -182,7 +192,9 @@ fn audit_is_root_only_idempotent_and_commits_proof_before_release() {
     let directory = tempfile::tempdir().unwrap();
     let (_db, journal, input) = running(&directory.path().join("db"));
     let original = identity(&input);
-    journal.record_session_stop(&original, 1).unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 1)
+        .unwrap();
     let request = SessionStopReconcile {
         request_id: "recheck-1".into(),
         execution: input.execution_id,
@@ -311,7 +323,9 @@ fn gc_requires_age_release_ack_and_completed_audit_and_retains_a_summary() {
     let path = directory.path().join("db");
     let (mut db, journal, input) = running(&path);
     let original = identity(&input);
-    journal.record_session_stop(&original, 1).unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 1)
+        .unwrap();
     let later = 8 * 24 * 60 * 60 * 1000;
     assert!(
         journal
@@ -393,15 +407,18 @@ fn gc_requires_age_release_ack_and_completed_audit_and_retains_a_summary() {
     );
 }
 
-/// A v15 file keeps every stop row through the v16 rebuild, after which the mark-scan proof is
-/// recorded and read back while the older proof stays as it was.
+/// A file from just before the stop-marks schema keeps every stop row through the rebuild, with
+/// no scope flag; afterwards the mark-scan proof and the flag are recorded and read back while
+/// the older row stays as it was.
 #[test]
-fn v16_upgrade_keeps_stop_rows_and_admits_the_mark_scan_proof() {
+fn stop_marks_upgrade_keeps_rows_unflagged_and_admits_the_mark_scan_proof() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db");
     let (db, journal, input) = running(&path);
     let [older, marked] = [identity(&input), identity(&input)];
-    journal.record_session_stop(&older, 1).unwrap();
+    journal
+        .record_session_stop(&older, SessionStopScope::Recorded, 1)
+        .unwrap();
     for change in [
         SessionStopChange::Request {
             at_ms: 10,
@@ -414,7 +431,16 @@ fn v16_upgrade_keeps_stop_rows_and_admits_the_mark_scan_proof() {
     ] {
         journal.change_session_stop(&older.attempt, change).unwrap();
     }
-    let before = journal.session_stop_records(None).unwrap();
+    // Only the flag differs after the rebuild: an older row cannot claim a scope it never had.
+    let before: Vec<_> = journal
+        .session_stop_records(None)
+        .unwrap()
+        .into_iter()
+        .map(|record| SessionStopRecord {
+            scope: SessionStopScope::Absent,
+            ..record
+        })
+        .collect();
     drop(journal);
     drop(db);
     let old = Connection::open(&path).unwrap();
@@ -427,7 +453,9 @@ fn v16_upgrade_keeps_stop_rows_and_admits_the_mark_scan_proof() {
     let db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node"))).unwrap();
     let journal = db.session_journal().unwrap();
     let migrated = journal.session_stop_records(None).unwrap();
-    journal.record_session_stop(&marked, 2).unwrap();
+    journal
+        .record_session_stop(&marked, SessionStopScope::Recorded, 2)
+        .unwrap();
     for change in [
         SessionStopChange::Request {
             at_ms: 12,
@@ -446,7 +474,10 @@ fn v16_upgrade_keeps_stop_rows_and_admits_the_mark_scan_proof() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert!(rejected.is_err(), "the v15 table refuses the new proof");
+    assert!(
+        rejected.is_err(),
+        "the previous table refuses the new proof"
+    );
     assert_eq!(
         (
             version,
@@ -455,17 +486,22 @@ fn v16_upgrade_keeps_stop_rows_and_admits_the_mark_scan_proof() {
                 .session_stop_records(None)
                 .unwrap()
                 .into_iter()
-                .map(|record| (record.identity.attempt, record.proof))
+                .map(|record| (record.identity.attempt, record.proof, record.scope))
                 .collect::<Vec<_>>()
         ),
         (
-            16,
+            crate::schema::STOP_MARKS_VERSION,
             true,
             vec![
-                (older.attempt, Some(SessionStopProof::LockAndProcesses)),
+                (
+                    older.attempt,
+                    Some(SessionStopProof::LockAndProcesses),
+                    SessionStopScope::Absent
+                ),
                 (
                     marked.attempt,
-                    Some(SessionStopProof::LockProcessesAndMarks)
+                    Some(SessionStopProof::LockProcessesAndMarks),
+                    SessionStopScope::Recorded
                 ),
             ]
         )

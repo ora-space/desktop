@@ -16,9 +16,10 @@ impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> 
     fn record_session_stop(
         &self,
         identity: &ora_node_db::SessionStopIdentity,
+        scope: ora_node_db::SessionStopScope,
         at_ms: i64,
     ) -> Result<(), Self::Error> {
-        SessionJournal::record_session_stop(self, identity, at_ms)
+        SessionJournal::record_session_stop(self, identity, scope, at_ms)
     }
 
     fn session_stop_records(

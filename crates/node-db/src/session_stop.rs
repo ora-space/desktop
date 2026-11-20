@@ -22,7 +22,7 @@ pub(crate) fn records(
     connection: &Connection,
     execution: Option<&ExecutionId>,
 ) -> Result<Vec<SessionStopRecord>, Error> {
-    let mut statement = connection.prepare("SELECT record,state,created_at_ms,first_stop_at_ms,bound_at_ms,confirmed_at_ms,resources_released,evidence FROM session_stop_attempts WHERE (?1 IS NULL OR execution=?1) ORDER BY created_at_ms,attempt")?;
+    let mut statement = connection.prepare("SELECT record,state,created_at_ms,first_stop_at_ms,bound_at_ms,confirmed_at_ms,resources_released,evidence,mark_scope FROM session_stop_attempts WHERE (?1 IS NULL OR execution=?1) ORDER BY created_at_ms,attempt")?;
     let rows = statement.query_map([execution.map(ExecutionId::as_str)], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -33,6 +33,7 @@ pub(crate) fn records(
             r.get(5)?,
             r.get(6)?,
             r.get::<_, Option<String>>(7)?,
+            r.get::<_, bool>(8)?,
         ))
     })?;
     rows.map(|row| {
@@ -45,6 +46,7 @@ pub(crate) fn records(
             confirmed_at_ms,
             resources_released,
             proof,
+            scoped,
         ) = row?;
         Ok(SessionStopRecord {
             identity: serde_json::from_str(&identity)?,
@@ -57,6 +59,11 @@ pub(crate) fn records(
             proof: proof
                 .map(|proof| serde_json::from_value(serde_json::Value::String(proof)))
                 .transpose()?,
+            scope: if scoped {
+                SessionStopScope::Recorded
+            } else {
+                SessionStopScope::Absent
+            },
         })
     })
     .collect()
@@ -104,6 +111,7 @@ impl<G: WriteGuard> SessionJournal<G> {
     pub fn record_session_stop(
         &self,
         identity: &SessionStopIdentity,
+        scope: SessionStopScope,
         at_ms: i64,
     ) -> Result<(), Error> {
         let mut db = self.lock()?;
@@ -118,15 +126,16 @@ impl<G: WriteGuard> SessionJournal<G> {
         let tx = db
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let prior: Option<String> = tx
+        let scoped = scope == SessionStopScope::Recorded;
+        let prior: Option<(String, bool)> = tx
             .query_row(
-                "SELECT record FROM session_stop_attempts WHERE attempt=?1",
+                "SELECT record,mark_scope FROM session_stop_attempts WHERE attempt=?1",
                 [identity.attempt.as_str()],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
         if let Some(prior) = prior {
-            return if prior == record {
+            return if prior == (record, scoped) {
                 Ok(())
             } else {
                 Err(Error::IdentityConflict)
@@ -136,7 +145,7 @@ impl<G: WriteGuard> SessionJournal<G> {
         if !allowed {
             return Err(Error::InvalidTransition);
         }
-        tx.execute("INSERT INTO session_stop_attempts(attempt,execution,checkout,record,state,created_at_ms) VALUES(?1,?2,?3,?4,'prepared',?5)", params![identity.attempt.as_str(),identity.execution.as_str(),identity.checkout.as_str(),record,at_ms])?;
+        tx.execute("INSERT INTO session_stop_attempts(attempt,execution,checkout,record,state,created_at_ms,mark_scope) VALUES(?1,?2,?3,?4,'prepared',?5,?6)", params![identity.attempt.as_str(),identity.execution.as_str(),identity.checkout.as_str(),record,at_ms,scoped])?;
         tx.commit()?;
         Ok(())
     }

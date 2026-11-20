@@ -471,7 +471,9 @@ fn the_stop_clock_commits_with_the_decision_and_survives_restart() {
     let (dir, mut db, journal, start) = keeping();
     let execution = start.execution_id.clone();
     let identity = attempt(&start);
-    journal.record_session_stop(&identity, 500).unwrap();
+    journal
+        .record_session_stop(&identity, SessionStopScope::Recorded, 500)
+        .unwrap();
     db.accept_session_command(&cancel("cancel-1", "initial"))
         .unwrap();
     journal

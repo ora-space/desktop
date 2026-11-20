@@ -58,6 +58,7 @@ pub trait SessionLedger: Clone + Send + Sync + 'static {
     fn record_session_stop(
         &self,
         identity: &ora_node_db::SessionStopIdentity,
+        scope: ora_node_db::SessionStopScope,
         at_ms: i64,
     ) -> Result<(), Self::Error>;
 

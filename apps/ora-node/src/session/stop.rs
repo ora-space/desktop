@@ -9,7 +9,9 @@ mod tests;
 use super::{SessionLedger, workload::SessionPlacement};
 use crate::{SessionStopConfig, managed::attempt_lock::StopEvidence};
 use files::StopFiles;
-use ora_node_db::{AttemptId, SessionStopChange, SessionStopIdentity, SessionStopState};
+use ora_node_db::{
+    AttemptId, SessionStopChange, SessionStopIdentity, SessionStopScope, SessionStopState,
+};
 use ora_node_protocol::ExecutionId;
 use ora_process::TokioProcessSpawner;
 use spawner::SessionAttemptSpawner;
@@ -59,7 +61,7 @@ pub(super) fn prepare<L: SessionLedger>(
     let files = StopFiles::open(home)?;
     files.create(&identity.attempt, inner.identity())?;
     ledger
-        .record_session_stop(&identity, now_ms())
+        .record_session_stop(&identity, SessionStopScope::Recorded, now_ms())
         .map_err(|_| io::Error::other("stop journal unavailable"))?;
     SessionAttemptSpawner::new(inner, identity, files)
 }
@@ -112,6 +114,7 @@ pub(crate) async fn confirm<L: SessionLedger>(
 ) -> Result<bool, L::Error> {
     request(ledger, execution, config)?;
     let files = StopFiles::open(home).ok();
+    let mut pause = FIRST_RECHECK;
     loop {
         let mut pending = false;
         let mut before_bound = false;
@@ -119,17 +122,22 @@ pub(crate) async fn confirm<L: SessionLedger>(
             if record.state == SessionStopState::Confirmed {
                 continue;
             }
-            let proof = files.as_ref().and_then(|files| {
-                files.terminate(&record.identity, &config.host());
-                let (evidence, proof) = files.probe(
-                    &record.identity,
-                    &config.host(),
-                    config.single_mount_with_storage_fencing,
-                );
-                (evidence == StopEvidence::Stopped)
-                    .then_some(proof)
-                    .flatten()
-            });
+            let proof = match &files {
+                Some(files) => {
+                    let (evidence, proof) = files
+                        .settle(
+                            &record.identity,
+                            record.scope,
+                            &config.host(),
+                            config.single_mount_with_storage_fencing,
+                        )
+                        .await;
+                    (evidence == StopEvidence::Stopped)
+                        .then_some(proof)
+                        .flatten()
+                }
+                None => None,
+            };
             if let Some(proof) = proof {
                 ledger.change_session_stop(
                     &record.identity.attempt,
@@ -156,9 +164,17 @@ pub(crate) async fn confirm<L: SessionLedger>(
         if !wait || !before_bound {
             return Ok(false);
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::time::sleep(pause).await;
+        pause = (pause * 2).min(LAST_RECHECK);
     }
 }
+
+/// The first wait between stop observations; a stop that settles at once is confirmed quickly.
+const FIRST_RECHECK: Duration = Duration::from_millis(25);
+
+/// The longest wait between stop observations. Every observation terminates and scans procfs,
+/// so a process that refuses to die costs at most one round per second until the bound.
+const LAST_RECHECK: Duration = Duration::from_secs(1);
 
 /// Resource release is a second durable boundary, after proof and actual removal of local views.
 pub(crate) fn released<L: SessionLedger>(

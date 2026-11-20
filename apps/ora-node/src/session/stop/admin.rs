@@ -195,6 +195,7 @@ async fn reconcile(
         .find(|record| record.identity.attempt == request.attempt)
         .ok_or(Error::InvalidTransition)?;
     let bound = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut pause = Duration::from_millis(25);
     let (evidence, proof) = loop {
         if record.state == SessionStopState::Confirmed {
             break (StopEvidence::Stopped, record.proof);
@@ -202,24 +203,15 @@ async fn reconcile(
         if record.state == SessionStopState::Prepared {
             break (StopEvidence::Unknown, None);
         }
-        let (evidence, proof) = files.probe(
-            &record.identity,
-            &config.host(),
-            config.single_mount_with_storage_fencing,
-        );
-        let allowed = match request.mode {
-            SessionStopMode::Recheck => proof,
-            SessionStopMode::AfterHostReboot => {
-                // Same-boot proofs, with or without the mark scan, never stand for a reboot.
-                proof.filter(|proof| {
-                    !matches!(
-                        proof,
-                        SessionStopProof::LockAndProcesses
-                            | SessionStopProof::LockProcessesAndMarks
-                    )
-                })
-            }
-        };
+        let (evidence, proof) = files
+            .observe(
+                &record.identity,
+                record.scope,
+                &config.host(),
+                config.single_mount_with_storage_fencing,
+            )
+            .await;
+        let allowed = proof.filter(|proof| admits(request.mode, *proof));
         if allowed.is_some() {
             break (StopEvidence::Stopped, allowed);
         }
@@ -236,8 +228,11 @@ async fn reconcile(
                 None,
             );
         }
-        files.terminate(&record.identity, &config.host());
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        files
+            .terminate_off_runtime(&record.identity, &config.host())
+            .await;
+        tokio::time::sleep(pause).await;
+        pause = (pause * 2).min(Duration::from_secs(1));
     };
     let result = SessionStopAuditResult {
         observation: match evidence {
@@ -260,6 +255,18 @@ async fn reconcile(
     };
     journal.finish_session_stop_audit(request, &result, now_ms())?;
     Ok(result)
+}
+
+/// Whether a reconciliation mode accepts a proof. Both same-boot proofs, with or without the
+/// mark scan, show only that this boot's processes are gone, never that the host rebooted.
+fn admits(mode: SessionStopMode, proof: SessionStopProof) -> bool {
+    match mode {
+        SessionStopMode::Recheck => true,
+        SessionStopMode::AfterHostReboot => match proof {
+            SessionStopProof::LockAndProcesses | SessionStopProof::LockProcessesAndMarks => false,
+            SessionStopProof::HostReboot | SessionStopProof::FencedVolume => true,
+        },
+    }
 }
 
 /// Confirmed details retire in bounded hourly batches; unconfirmed rows never age out.
@@ -294,4 +301,30 @@ pub fn client(home: &Path, request: &SessionStopReconcile) -> io::Result<Reply> 
         return Err(io::Error::other("invalid reconciliation response"));
     }
     serde_json::from_str(&response).map_err(io::Error::other)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::admits;
+    use ora_node_db::{SessionStopMode, SessionStopProof};
+    use pretty_assertions::assert_eq;
+
+    /// After-host-reboot reconciliation accepts only reboot or fencing evidence; recheck accepts
+    /// whatever proof the original evidence produced.
+    #[test]
+    fn after_host_reboot_refuses_both_same_boot_proofs() {
+        let proofs = [
+            SessionStopProof::LockAndProcesses,
+            SessionStopProof::LockProcessesAndMarks,
+            SessionStopProof::HostReboot,
+            SessionStopProof::FencedVolume,
+        ];
+        assert_eq!(
+            (
+                proofs.map(|proof| admits(SessionStopMode::Recheck, proof)),
+                proofs.map(|proof| admits(SessionStopMode::AfterHostReboot, proof)),
+            ),
+            ([true; 4], [false, false, true, true])
+        );
+    }
 }

@@ -711,7 +711,7 @@ fn version_four_upgrade_ends_the_host_attempt_as_stopped_without_rewriting_clone
             |r| r.get(/*idx*/ 0),
         )
         .unwrap();
-    assert_eq!(version, 16);
+    assert_eq!(version, crate::schema::LATEST_VERSION);
     let journal = db.process_journal().unwrap();
     assert_eq!(
         (
