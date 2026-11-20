@@ -65,8 +65,8 @@ tasks:
   proto:init:
     desc: Ensure buf is installed and initialize the Cloud contract submodule at its pinned commit; idempotent
     # The generated client is committed, so Windows builds never need the submodule or buf; the
-    # contract checks are platform-independent and run where Task can drive git: Linux and macOS.
-    platforms: [linux, darwin]
+    # contract checks are platform-independent and run where Task can drive git: Linux.
+    platforms: [linux]
     env:
       PATH: "{{.PATH}}:{{.HOME}}/.local/bin"
     cmds:
@@ -83,7 +83,7 @@ tasks:
 
   proto:check:
     desc: Fail when the Cloud contract submodule is off its pinned commit or edited, or the committed client drifts from it
-    platforms: [linux, darwin]
+    platforms: [linux]
     cmds:
       - bash scripts/bash/check-cloud-proto.sh
       - task: proto:generate
@@ -300,4 +300,4 @@ tasks:
       - cmd: pwsh -NoProfile -File scripts/logdy.ps1 -Port "{{.PORT | default "8090"}}"
         platforms: [windows]
       - cmd: bash scripts/bash/logdy.sh "{{.PORT | default "8090"}}"
-        platforms: [linux, darwin]
+        platforms: [linux]
