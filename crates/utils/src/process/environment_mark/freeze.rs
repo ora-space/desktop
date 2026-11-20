@@ -108,6 +108,12 @@ fn passes(
 /// Kills every frozen process once. A stopped process cannot exit on its own, so each is pinned
 /// again by PID and start tick: one pidfd is open at a time, and a PID taken over meanwhile
 /// fails the start-tick check.
+///
+/// A process that cannot be pinned again for another reason stays stopped until a later call.
+/// Retrying here would not help: what fails is opening a descriptor, which runs out for the whole
+/// Node, not for one process, and spinning under the lock would hold back the passes too. A
+/// stopped process is still live and still carries its mark, so every scan claims it until a
+/// later call kills it, and evidence never reads it as stopped meanwhile.
 fn close(freeze: &mut Freeze) {
     if freeze.closed {
         return;
@@ -231,6 +237,52 @@ mod tests {
         assert!(
             died_after < bound + Duration::from_millis(500),
             "{died_after:?}"
+        );
+        Ok(())
+    }
+
+    /// Once the watchdog has fired, a pass kills what it finds instead of freezing it: the frozen
+    /// set was already killed, so nothing would kill a process frozen afterwards.
+    #[test]
+    fn a_pass_after_the_bound_kills_without_freezing() -> TestResult {
+        let (_early_child, early) = sleeper()?;
+        let (_late_child, late) = sleeper()?;
+        let (early_handle, late_handle) = (pin(early)?, pin(late)?);
+        let mut scanned = 0;
+        kill_within(Duration::from_millis(100), || {
+            scanned += 1;
+            match scanned {
+                1 => Ok(MarkScan {
+                    claimed: vec![early],
+                    undecided: 0,
+                }),
+                // Only the watchdog kills `early` while this scan runs, so returning once it died
+                // hands `late` to a pass that certainly runs after the bound.
+                2 => {
+                    let began = Instant::now();
+                    while !early_handle.has_exited()? && began.elapsed() < Duration::from_secs(5) {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Ok(MarkScan {
+                        claimed: vec![late],
+                        undecided: 0,
+                    })
+                }
+                _ => Ok(MarkScan::default()),
+            }
+        })?;
+        let began = Instant::now();
+        while !late_handle.has_exited()? && began.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Neither child is reaped yet, so a killed one is a zombie and a frozen one still `T`.
+        assert_eq!(
+            (
+                early_handle.has_exited()?,
+                late_handle.has_exited()?,
+                state(late.pid)
+            ),
+            (true, true, Some('Z'))
         );
         Ok(())
     }

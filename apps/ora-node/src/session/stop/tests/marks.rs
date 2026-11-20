@@ -27,10 +27,10 @@ print(os.getpid(),flush=True)
 os.close(write)
 time.sleep(60)";
 
-/// Starts the job through the attempt's own spawn gate and returns it pinned.
+/// Starts the job through the attempt's own spawn gate and returns it pinned, with its PID.
 async fn detached_job(
     spawner: &stop::spawner::SessionAttemptSpawner,
-) -> Result<LinuxPidFd, Box<dyn std::error::Error>> {
+) -> Result<(LinuxPidFd, u32), Box<dyn std::error::Error>> {
     let mut launcher = spawner.spawn(ProcessSpec::new("python3").args(["-c", DETACHED_JOB]))?;
     let output = launcher.take_stdout().ok_or("missing stdout")?;
     let mut line = String::new();
@@ -39,9 +39,10 @@ async fn detached_job(
         BufReader::new(output).read_line(&mut line),
     )
     .await??;
-    let job = LinuxPidFd::from_observation(&linux_process(line.trim().parse()?)?)?;
+    let pid = line.trim().parse()?;
+    let job = LinuxPidFd::from_observation(&linux_process(pid)?)?;
     launcher.wait().await?;
-    Ok(job)
+    Ok((job, pid))
 }
 
 /// Re-probes until the outcome is `expected` or two seconds pass, and returns the last outcome.
@@ -81,7 +82,7 @@ async fn a_detached_job_blocks_proof_until_terminate_kills_it() -> TestResult {
         identity.clone(),
         TokioProcessSpawner::new().without_reaper_registration(),
     )?;
-    let job = detached_job(&spawner).await?;
+    let (job, _) = detached_job(&spawner).await?;
     spawner.close();
     let probe = || files.probe(&identity, SessionStopScope::Recorded, &identity.host, false);
     let held = probe();
@@ -115,7 +116,7 @@ async fn a_surviving_job_or_damaged_scope_is_never_proof() -> TestResult {
         identity.clone(),
         TokioProcessSpawner::new().without_reaper_registration(),
     )?;
-    let job = detached_job(&spawner).await?;
+    let (job, _) = detached_job(&spawner).await?;
     spawner.close();
     let probe = || files.probe(&identity, SessionStopScope::Recorded, &identity.host, false);
     let surviving = eventually(probe, (StopEvidence::Running, None)).await;
@@ -125,6 +126,49 @@ async fn a_surviving_job_or_damaged_scope_is_never_proof() -> TestResult {
     assert_eq!(
         (surviving, damaged),
         ((StopEvidence::Running, None), (StopEvidence::Unknown, None))
+    );
+    Ok(())
+}
+
+/// A marked job left stopped, as one is when the final kill of a terminate cannot pin it again,
+/// keeps the attempt running, and the next terminate kills it: a frozen job delays the proof but
+/// never fakes it.
+#[tokio::test]
+async fn a_job_left_frozen_stays_running_until_the_next_terminate_kills_it() -> TestResult {
+    let (home, files, identity) = fixture()?;
+    let journal = journal(home.path())?;
+    let spawner = stop::prepare(
+        &journal,
+        home.path(),
+        identity.clone(),
+        TokioProcessSpawner::new().without_reaper_registration(),
+    )?;
+    let (job, pid) = detached_job(&spawner).await?;
+    spawner.close();
+    job.signal(ora_utils::process::ProcessSignal::Stop)?;
+    let stat = || std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !stat().contains(") T ") {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await?;
+    let probe = || files.probe(&identity, SessionStopScope::Recorded, &identity.host, false);
+    let frozen = probe();
+    files.terminate(&identity, &identity.host);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !job.has_exited().unwrap() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await?;
+    let stopped = (
+        StopEvidence::Stopped,
+        Some(SessionStopProof::LockProcessesAndMarks),
+    );
+    assert_eq!(
+        (frozen, eventually(probe, stopped).await),
+        ((StopEvidence::Running, None), stopped)
     );
     Ok(())
 }
@@ -201,7 +245,7 @@ async fn a_marked_attempt_records_lock_processes_and_marks() -> TestResult {
         identity.clone(),
         TokioProcessSpawner::new().without_reaper_registration(),
     )?;
-    let job = detached_job(&spawner).await?;
+    let (job, _) = detached_job(&spawner).await?;
     spawner.close();
     let record = confirmed(&journal, home.path(), &identity.attempt).await?;
     assert_eq!(
