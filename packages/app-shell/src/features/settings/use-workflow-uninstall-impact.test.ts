@@ -114,6 +114,40 @@ describe("useWorkflowUninstallImpact", () => {
     expect(listSkills).not.toHaveBeenCalled();
   });
 
+  it("reports only dependency uncertainty when a Skill uninstall cannot read workflows", async () => {
+    const client = createTestClient({
+      listWorkflows: async () => {
+        throw new Error("workflow library unavailable");
+      },
+    });
+    const queryClient = createWarmQueryClient();
+    queryClient.setQueryData(pluginKeys.installedPlugins, [skillPlugin]);
+    queryClient.setQueryData(skillKeys.skills, [
+      {
+        id: "release-notes",
+        namespace: "local",
+        name: "release-notes",
+        description: "Writes release notes",
+        source: { kind: "plugin", pluginId: skillPlugin.id },
+        availability: "available",
+      },
+    ]);
+
+    const { result } = renderHookWithClient(
+      () => useWorkflowUninstallImpact([skillPlugin.id], true),
+      client,
+      queryClient,
+    );
+
+    await waitFor(() =>
+      expect(result.current).toMatchObject({
+        status: "failed",
+        dependencyImpactUnknown: true,
+        retentionUnknown: false,
+      }),
+    );
+  });
+
   it("fails the check instead of reporting no imports when the workflow library cannot be read", async () => {
     const workflowPlugin: InstalledPlugin = {
       ...skillPlugin,

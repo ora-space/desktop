@@ -1,7 +1,11 @@
 import { act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { InstalledPlugin, WorkflowSummary } from "@ora/contracts";
-import { pluginKeys } from "../data/plugins";
+import type {
+  InstalledPlugin,
+  PluginConfigurationDetails,
+  WorkflowSummary,
+} from "@ora/contracts";
+import { cachePluginConfiguration, pluginKeys } from "../data/plugins";
 import { createTestClient } from "../../test/contracts-transport";
 import { renderHookWithClient } from "../../test/hook-harness";
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
@@ -109,6 +113,54 @@ describe("useUninstalledWorkflowSources", () => {
     });
     await waitFor(() => expect([...result.current]).toEqual(["wf-market"]));
 
+    // A failed refresh can retain the last successful (empty) catalog in the query cache.
+    listSpy.mockRejectedValueOnce(new Error("catalog unavailable"));
+    await act(async () => {
+      await queryClient.invalidateQueries({
+        queryKey: pluginKeys.installedPlugins,
+      });
+    });
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryState(pluginKeys.installedPlugins)?.status,
+      ).toBe("error"),
+    );
+    await waitFor(() => expect(result.current.size).toBe(0));
+
+    // Saving settings for one plugin cannot confirm which other plugins are installed.
+    const configuration: PluginConfigurationDetails = {
+      pluginId: "official/settings",
+      schemaVersion: 1,
+      revision: 1n,
+      declarationFingerprint: "settings-v1",
+      settings: [],
+      summary: { state: "not_declared" },
+    };
+    act(() =>
+      cachePluginConfiguration(
+        queryClient,
+        configuration.pluginId,
+        configuration,
+      ),
+    );
+    expect(
+      queryClient.getQueryData(
+        pluginKeys.pluginConfiguration(configuration.pluginId),
+      ),
+    ).toEqual(configuration);
+    expect(queryClient.getQueryState(pluginKeys.installedPlugins)?.status).toBe(
+      "error",
+    );
+    expect(result.current.size).toBe(0);
+
+    // A successful refresh restores the absence marker, even if the catalog is still empty.
+    await act(async () => {
+      await queryClient.invalidateQueries({
+        queryKey: pluginKeys.installedPlugins,
+      });
+    });
+    await waitFor(() => expect([...result.current]).toEqual(["wf-market"]));
+
     // Reinstalling the exact canonical plugin id removes the marker.
     state.installedPlugins.push(
       installedWorkflowPlugin("official/ora.cdase-workflow"),
@@ -119,17 +171,5 @@ describe("useUninstalledWorkflowSources", () => {
       });
     });
     await waitFor(() => expect(result.current.size).toBe(0));
-
-    // A later catalog read error must not falsely mark workflows either.
-    listSpy.mockRejectedValueOnce(new Error("catalog unavailable"));
-    const failedHook = renderHookWithClient(
-      () => useUninstalledWorkflowSources(summaries),
-      createTestClient({
-        listInstalledPlugins: async () => {
-          throw new Error("catalog unavailable");
-        },
-      }),
-    );
-    await waitFor(() => expect(failedHook.result.current.size).toBe(0));
   });
 });
