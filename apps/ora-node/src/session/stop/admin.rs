@@ -196,6 +196,9 @@ async fn reconcile(
         .ok_or(Error::InvalidTransition)?;
     let bound = tokio::time::Instant::now() + Duration::from_secs(10);
     let mut pause = super::FIRST_RECHECK;
+    // The bound covers the whole recheck: each observation, termination and wait gets only what
+    // is left of it, so neither can run a full budget past the ten seconds.
+    let mut last = StopEvidence::Unknown;
     let (evidence, proof) = loop {
         if record.state == SessionStopState::Confirmed {
             break (StopEvidence::Stopped, record.proof);
@@ -203,12 +206,17 @@ async fn reconcile(
         if record.state == SessionStopState::Prepared {
             break (StopEvidence::Unknown, None);
         }
+        let budget = super::files::budget_until(bound);
+        if budget.is_zero() {
+            break (last, None);
+        }
         let (evidence, proof) = files
             .observe(
                 &record.identity,
                 record.scope,
                 &config.host(),
                 config.single_mount_with_storage_fencing,
+                budget,
             )
             .await;
         let allowed = proof.filter(|proof| admits(request.mode, *proof));
@@ -228,10 +236,16 @@ async fn reconcile(
                 None,
             );
         }
+        last = evidence;
         files
-            .terminate_off_runtime(&record.identity, &config.host())
+            .terminate_off_runtime(
+                &record.identity,
+                &config.host(),
+                super::files::budget_until(bound),
+            )
             .await;
-        tokio::time::sleep(pause).await;
+        tokio::time::sleep(pause.min(bound.saturating_duration_since(tokio::time::Instant::now())))
+            .await;
         pause = super::next_recheck(pause);
     };
     let result = SessionStopAuditResult {

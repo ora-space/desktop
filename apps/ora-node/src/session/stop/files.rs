@@ -16,28 +16,45 @@ use std::{
     sync::Arc,
 };
 
-/// Stop observations run one at a time on a blocking worker, never on the Node's single runtime
-/// thread: a scan walks all of procfs, and one `environ` read can hang on a stuck filesystem.
+/// Stop observations of every session run one at a time on one blocking worker per Node, never
+/// on the Node's single runtime thread: a scan walks all of procfs, and one `environ` read can
+/// hang on a stuck filesystem.
 static STOP_WORKER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 /// How long one stop observation, including waiting for the worker, may take before it counts as
-/// Unknown. A hung read keeps the worker, so later observations also time out instead of piling
-/// up threads.
-const STOP_WORK_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+/// Unknown. The wait counts on purpose: a hung read keeps the worker, and only a budget that
+/// includes the wait makes later observations give up instead of queueing behind it forever, or
+/// piling up threads if they did not queue at all.
+pub(crate) const STOP_WORK_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Runs one blocking stop observation on the worker; `None` when it did not finish in budget.
-async fn off_runtime<T: Send + 'static>(job: impl FnOnce() -> T + Send + 'static) -> Option<T> {
-    off_runtime_within(STOP_WORK_BUDGET, job).await
+/// The budget of an observation that must also end by `deadline`.
+pub(crate) fn budget_until(deadline: tokio::time::Instant) -> std::time::Duration {
+    deadline
+        .saturating_duration_since(tokio::time::Instant::now())
+        .min(STOP_WORK_BUDGET)
 }
 
-/// As [`off_runtime`] with an explicit budget. The job keeps the worker until it returns, even
-/// after its caller gave up, so a hung read makes later observations time out too.
-pub(super) async fn off_runtime_within<T: Send + 'static>(
+/// Runs one blocking stop observation on the worker; `None` when it did not finish in budget.
+async fn off_runtime<T: Send + 'static>(
     budget: std::time::Duration,
     job: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
+    off_runtime_within(&STOP_WORKER, budget, job).await
+}
+
+/// As [`off_runtime`] on an explicit worker. The job keeps the worker until it returns, even
+/// after its caller gave up, so a hung read makes later observations time out too. A spent
+/// budget starts no job at all.
+pub(super) async fn off_runtime_within<T: Send + 'static>(
+    worker: &'static tokio::sync::Semaphore,
+    budget: std::time::Duration,
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    if budget.is_zero() {
+        return None;
+    }
     tokio::time::timeout(budget, async {
-        let permit = STOP_WORKER.acquire().await.ok()?;
+        let permit = worker.acquire().await.ok()?;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             job()
@@ -255,7 +272,7 @@ impl StopFiles {
         fenced_volume: bool,
     ) -> (StopEvidence, Option<SessionStopProof>) {
         let (files, identity, current) = (self.clone(), identity.clone(), current.clone());
-        off_runtime(move || {
+        off_runtime(STOP_WORK_BUDGET, move || {
             files.terminate(&identity, &current);
             files.probe(&identity, scope, &current, fenced_volume)
         })
@@ -263,28 +280,32 @@ impl StopFiles {
         .unwrap_or((StopEvidence::Unknown, None))
     }
 
-    /// Probes the attempt off the runtime without signalling it; Unknown when out of budget.
+    /// Probes the attempt off the runtime without signalling it; Unknown when out of `budget`.
     pub(crate) async fn observe(
         &self,
         identity: &SessionStopIdentity,
         scope: SessionStopScope,
         current: &SessionStopHost,
         fenced_volume: bool,
+        budget: std::time::Duration,
     ) -> (StopEvidence, Option<SessionStopProof>) {
         let (files, identity, current) = (self.clone(), identity.clone(), current.clone());
-        off_runtime(move || files.probe(&identity, scope, &current, fenced_volume))
-            .await
-            .unwrap_or((StopEvidence::Unknown, None))
+        off_runtime(budget, move || {
+            files.probe(&identity, scope, &current, fenced_volume)
+        })
+        .await
+        .unwrap_or((StopEvidence::Unknown, None))
     }
 
-    /// Terminates the attempt off the runtime; a request only, so an expired budget is silent.
+    /// Terminates the attempt off the runtime; a request only, so an expired `budget` is silent.
     pub(crate) async fn terminate_off_runtime(
         &self,
         identity: &SessionStopIdentity,
         current: &SessionStopHost,
+        budget: std::time::Duration,
     ) {
         let (files, identity, current) = (self.clone(), identity.clone(), current.clone());
-        off_runtime(move || files.terminate(&identity, &current)).await;
+        off_runtime(budget, move || files.terminate(&identity, &current)).await;
     }
 
     /// Called only after durable confirmation and age/reference checks, never to manufacture proof.

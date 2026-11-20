@@ -110,7 +110,7 @@ impl SessionAttemptSpawner {
         };
         attempt
             .files
-            .terminate_off_runtime(&attempt.identity, host)
+            .terminate_off_runtime(&attempt.identity, host, super::files::STOP_WORK_BUDGET)
             .await;
         cleanup.await
     }

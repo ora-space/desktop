@@ -383,23 +383,54 @@ fn a_durable_unstarted_lock_is_proof_but_missing_corrupt_or_foreign_boot_evidenc
 
 /// A stop observation that outlives its budget returns no evidence at once instead of holding
 /// the runtime, and keeps the single worker, so the next observation also gives up within its
-/// own budget rather than starting a second thread behind a hung read.
+/// own budget rather than starting a second thread behind a hung read. The worker is the test's
+/// own, so other tests in this binary can neither delay nor be delayed by it.
 #[tokio::test]
 async fn a_hung_observation_costs_its_budget_and_holds_the_worker() {
+    static WORKER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
     let budget = Duration::from_millis(50);
     let began = tokio::time::Instant::now();
-    let hung = files::off_runtime_within(budget, || {
+    let hung = files::off_runtime_within(&WORKER, budget, || {
         std::thread::sleep(Duration::from_millis(400));
         "finished"
     })
     .await;
-    let behind = files::off_runtime_within(budget, || "queued").await;
+    let behind = files::off_runtime_within(&WORKER, budget, || "queued").await;
     let elapsed = began.elapsed();
     // Once the hung job returns, the worker serves again.
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let after = files::off_runtime_within(budget, || "served").await;
+    let after = files::off_runtime_within(&WORKER, budget, || "served").await;
     assert_eq!((hung, behind, after), (None, None, Some("served")));
     assert!(elapsed < Duration::from_millis(300), "{elapsed:?}");
+}
+
+/// A deadline narrows the budget of each observation, and once it has passed no job is started:
+/// a spent budget must not occupy the worker with work nobody waits for.
+#[tokio::test]
+async fn a_deadline_narrows_the_budget_and_a_spent_one_starts_nothing() {
+    static WORKER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let now = tokio::time::Instant::now();
+    let near = files::budget_until(now + Duration::from_millis(200));
+    let far = files::budget_until(now + Duration::from_secs(60));
+    let spent = files::budget_until(now);
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = started.clone();
+    let outcome = files::off_runtime_within(&WORKER, spent, move || {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(near <= Duration::from_millis(200) && near > Duration::from_millis(100));
+    assert_eq!(
+        (
+            far,
+            spent,
+            outcome,
+            started.load(std::sync::atomic::Ordering::SeqCst),
+            WORKER.available_permits()
+        ),
+        (files::STOP_WORK_BUDGET, Duration::ZERO, None, false, 1)
+    );
 }
 
 /// Stop loops wait 25 ms after the first observation and double the wait up to one second, so
