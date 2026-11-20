@@ -118,13 +118,12 @@ parsing or validation fails. The session history is the only source of the full 
 
 ### Prompt inactivity
 
-`agentConfig.promptInactivity: "wait"` keeps a long-running prompt waiting through silence instead of
-the default 45/60/90/120-second windows, see
-[Agent runtime](../agents/agent-runtime.md#prompt-inactivity-and-retries). The frozen value applies to
-the first turn, node retries, Loop and Iteration rounds and follow-up turns on interactive nodes. A
-waiting prompt stays running; it is neither a retry wait nor an interactive pause. A stuck execution
-may need a manual stop, and real session errors still follow the node's retry policy. To change an
-existing workflow, edit the node, publish a new snapshot and start a new run.
+A workflow Agent configured with `promptInactivity: "wait"` fails its turn after 30 consecutive
+minutes without progress. The node editor can override the limit in minutes. Model output, changed
+plans, tool status transitions, and answered permissions renew the window. A tool stalled in progress
+still reaches the deadline. The turn sends the prompt once. The ordinary node retry policy applies
+after failure. The frozen setting covers all node attempts, loop rounds, and interactive follow-ups.
+See [Agent runtime](../agents/agent-runtime.md#prompt-inactivity-and-retries).
 
 ### Interactive nodes
 

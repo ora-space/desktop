@@ -10,8 +10,23 @@ pub enum PromptInactivityPolicy {
     /// Cancel and retry when the runtime's meaningful-activity window expires.
     #[default]
     Timeout,
-    /// Await completion even without updates, while retaining explicit cancellation and errors.
+    /// Wait for the default workflow silence window without resending the prompt.
     Wait,
+    /// Single-send wait with a node-specific silence limit.
+    #[serde(rename = "waitMinutes")]
+    WaitMinutes(std::num::NonZeroU16),
+}
+
+impl PromptInactivityPolicy {
+    /// Returns a deadline budget for single-send turns. Ordinary prompts use a retry schedule.
+    pub fn wait_limit(self) -> Option<std::time::Duration> {
+        let minutes = match self {
+            Self::Timeout => return None,
+            Self::Wait => 30,
+            Self::WaitMinutes(minutes) => minutes.get(),
+        };
+        Some(std::time::Duration::from_secs(u64::from(minutes) * 60))
+    }
 }
 
 #[cfg(test)]

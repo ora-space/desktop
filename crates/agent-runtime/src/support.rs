@@ -213,7 +213,7 @@ pub(super) fn permission_not_pending() -> RuntimeError {
 /// Every deadline in the runtime — process start, ACP initialize, session load, config exchange —
 /// collapses onto one public error because the user's response to all of them is to retry. The
 /// phase that actually expired stays in `context` for logs, where it distinguishes them.
-pub(super) fn agent_timed_out(context: &'static str) -> RuntimeError {
+pub(super) fn agent_timed_out(context: impl Into<String>) -> RuntimeError {
     RuntimeError::new(
         ErrorClassification::Unprocessable,
         PublicError::AgentTimedOut(EmptyErrorParams {}),
