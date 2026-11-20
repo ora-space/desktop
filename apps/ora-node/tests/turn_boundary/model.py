@@ -15,6 +15,7 @@ class Model:
         self.output = output
         self.requests = []
         self.task_issued = False
+        self.wakes = []
         self.tool_number = 0
         self.lock = threading.Lock()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self.handler())
@@ -68,10 +69,12 @@ class Model:
                     )
                     for message in messages
                 )
-                call = model.call(tools, has_result)
+                woken, call = model.wake(tools, messages)
+                if not woken:
+                    call = model.call(tools, has_result)
                 # Keep the parent's prompt open after starting background work, so cancellation
                 # occurs while that work is still alive, rather than after a normal turn end.
-                if model.scenario == "background" and has_result and tools:
+                if model.scenario == "background" and has_result and tools and not woken:
                     time.sleep(20)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -186,6 +189,48 @@ class Model:
                 self.wfile.flush()
 
         return Handler
+
+    def wake(self, tools, messages):
+        """Answer a request the Agent starts by itself about background work, promptly.
+
+        Claude Code sends such a request, carrying a `<task-notification>`, when a background
+        task ends, also after a cancelled turn. A model answers it within seconds, so the fixture
+        answers at once with a shell call: holding it like the parent's continuation would push
+        the self-started work past the observation window. Returns `(True, call)` for such a
+        request or for the result of its shell call, and `(False, None)` otherwise.
+        """
+        if self.scenario == "plain" or not messages:
+            return False, None
+        last = messages[-1]
+        blocks = last.get("content") if isinstance(last.get("content"), list) else []
+        if str(last.get("tool_call_id", "")).startswith("probe-wake") or any(
+            isinstance(block, dict)
+            and block.get("type") == "tool_result"
+            and str(block.get("tool_use_id", "")).startswith("probe-wake")
+            for block in blocks
+        ):
+            return True, None
+        if not any(
+            isinstance(block, dict) and "<task-notification>" in str(block.get("text", ""))
+            for block in blocks
+        ):
+            return False, None
+        with self.lock:
+            self.wakes.append(time.monotonic())
+            first = len(self.wakes) == 1
+        names = [
+            tool.get("name", tool.get("function", {}).get("name", "")) for tool in tools
+        ]
+        shell = next((name for name in names if name.lower() == "bash"), None)
+        if not first or not shell:
+            return True, None
+        woke = shlex.quote(str(self.workspace / "woke"))
+        arguments = {
+            "command": f"printf woke >> {woke}",
+            "description": "background task follow-up",
+            "timeout": 60000,
+        }
+        return True, (shell, arguments, "probe-wake-1")
 
     def call(self, tools, has_result):
         if has_result or self.scenario not in ["shell", "subagent", "background"]:

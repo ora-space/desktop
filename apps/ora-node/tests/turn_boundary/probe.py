@@ -254,6 +254,7 @@ async def probe(args):
             summary["response"] = answer
             summary["turn_processes_at_response"] = turn_processes
             written_at_response = (workspace / "leaked").exists()
+            woke_at_response = (workspace / "woke").exists()
             summary["background_write_at_response"] = written_at_response
             tools = {}
             for entry in events:
@@ -275,6 +276,14 @@ async def probe(args):
             summary["late_turn_traffic"] = late
             summary["background_write_after_response"] = (
                 not written_at_response and (workspace / "leaked").exists()
+            )
+            # Requests the Agent started by itself about its background work, and whether the
+            # shell call the fixture answered them with ran after the answer.
+            summary["wake_requests_after_response"] = [
+                round(at - answered_at, 3) for at in model.wakes if at > answered_at
+            ]
+            summary["wake_write_after_response"] = (
+                not woke_at_response and (workspace / "woke").exists()
             )
             summary["model_requests"] = len(model.requests)
             summary["tool_names"] = [
@@ -313,6 +322,7 @@ async def probe(args):
                 and not turn_processes
                 and not written_at_response
                 and not summary["background_write_after_response"]
+                and not summary["wake_write_after_response"]
                 and continued.get("result", {}).get("stopReason") == "end_turn"
             )
         except Exception as error:
