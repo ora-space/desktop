@@ -1498,4 +1498,58 @@ mod tests {
         );
         assert_eq!(payload["completion"]["parkKind"], json!("abnormal"));
     }
+
+    #[test]
+    fn completion_final_text_ignores_projected_subagent_messages() {
+        let user_line = user(1, "go");
+        let parent_reply = HistoryLine::new(
+            "2026-11-18T10:00:01+08:00",
+            2,
+            HistoryRecord::Update {
+                update: Box::new(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::Text(TextContent::new("parent deliverable")),
+                ))),
+                tool_timing: None,
+            },
+        );
+        let child_reply = HistoryLine::new(
+            "2026-11-18T10:00:02+08:00",
+            3,
+            HistoryRecord::Update {
+                update: Box::new(
+                    serde_json::from_value(json!({
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": { "type": "text", "text": "subagent text" },
+                        "_meta": {
+                            "_subagent/update": {
+                                "sessionId": "main",
+                                "taskId": "task-1",
+                            }
+                        }
+                    }))
+                    .unwrap(),
+                ),
+                tool_timing: None,
+            },
+        );
+        let ended = HistoryLine::new(
+            "2026-11-18T10:00:03+08:00",
+            4,
+            HistoryRecord::TurnEnded {
+                stop_reason: StopReason::EndTurn,
+            },
+        );
+        let hist = history(
+            vec![user_line, parent_reply, child_reply, ended],
+            HistoryIntegrity::Complete,
+        );
+        assert_eq!(
+            super::completion_final_text(&hist),
+            Some("parent deliverable".to_string())
+        );
+        assert_eq!(
+            trailing_assistant_text(&hist),
+            Some("parent deliverable".to_string())
+        );
+    }
 }

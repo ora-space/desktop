@@ -196,22 +196,19 @@ fn final_assistant_text(history: &SessionHistory, user_seq: u32, ended_seq: u32)
             let HistoryRecord::Update { update, .. } = &line.record else {
                 return None;
             };
-            if retry_seq.is_some()
-                && matches!(update.as_ref(), SessionUpdate::AgentMessageChunk(chunk)
-                if ora_history::child_source_id(chunk.meta.as_ref()).is_some())
-            {
-                return None;
-            }
             assistant_text(update.as_ref()).map(str::to_string)
         })
         .next_back()
 }
 
-/// Extracts the text block of one settled assistant message.
+/// Extracts the text block of one settled parent-stream assistant message.
 fn assistant_text(update: &SessionUpdate) -> Option<&str> {
     let SessionUpdate::AgentMessageChunk(chunk) = update else {
         return None;
     };
+    if ora_history::child_source_id(chunk.meta.as_ref()).is_some() {
+        return None;
+    }
     let ContentBlock::Text(text) = &chunk.content else {
         return None;
     };

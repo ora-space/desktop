@@ -24,6 +24,8 @@ pub struct AssistantOutputAccumulator {
     interrupted: bool,
     /// Tool ids already seen this turn, so an update to a known tool claims no new position.
     seen_tool_ids: HashSet<ToolCallId>,
+    /// Projected subagent tool ids whose metadata-free follow-up updates must stay excluded.
+    child_tool_ids: HashSet<ToolCallId>,
     /// Whether a plan has already been seen, so a plan replacement claims no new position.
     has_plan: bool,
 }
@@ -33,6 +35,9 @@ impl AssistantOutputAccumulator {
     pub fn consume(&mut self, update: &SessionUpdate) {
         match update {
             SessionUpdate::AgentMessageChunk(chunk) => {
+                if ora_history::child_source_id(chunk.meta.as_ref()).is_some() {
+                    return;
+                }
                 let Some(text) = chunk_text(&chunk.content) else {
                     // Non-text content claims its own position, so it interrupts an implicit run.
                     self.interrupted = true;
@@ -48,15 +53,33 @@ impl AssistantOutputAccumulator {
                 self.text.push_str(text);
             }
             // A tool opening, or the first update of an unknown tool, claims a new position and
-            // interrupts an implicit run; an update to a known tool does not.
+            // interrupts an implicit run; an update to a known tool does not. Projected child
+            // tools never participate in the parent output boundary.
             SessionUpdate::ToolCall(call) => {
+                if ora_history::child_source_id(call.meta.as_ref()).is_some() {
+                    self.child_tool_ids.insert(call.tool_call_id.clone());
+                    return;
+                }
+                self.child_tool_ids.remove(&call.tool_call_id);
                 self.interrupted |= self.seen_tool_ids.insert(call.tool_call_id.clone());
             }
             SessionUpdate::ToolCallUpdate(update) => {
+                if ora_history::has_child_source_namespace(update.meta.as_ref()) {
+                    if ora_history::child_source_id(update.meta.as_ref()).is_some() {
+                        self.child_tool_ids.insert(update.tool_call_id.clone());
+                        return;
+                    }
+                    self.child_tool_ids.remove(&update.tool_call_id);
+                } else if self.child_tool_ids.contains(&update.tool_call_id) {
+                    return;
+                }
                 self.interrupted |= self.seen_tool_ids.insert(update.tool_call_id.clone());
             }
-            // Only the first plan claims a position; a replacement does not interrupt.
-            SessionUpdate::Plan(_) => {
+            // Only the first parent plan claims a position; a replacement does not interrupt.
+            SessionUpdate::Plan(plan) => {
+                if ora_history::child_source_id(plan.meta.as_ref()).is_some() {
+                    return;
+                }
                 self.interrupted |= !self.has_plan;
                 self.has_plan = true;
             }
@@ -153,6 +176,74 @@ mod tests {
             ContentBlock::Text(TextContent::new("world")),
         )));
         assert_eq!(accumulator.into_output(), Some("hello world".to_string()));
+    }
+
+    /// Child-attributed text, tools, and plans never merge into or interrupt the parent node output.
+    #[test]
+    fn assistant_output_accumulator_excludes_projected_subagent_updates() {
+        let mut accumulator = AssistantOutputAccumulator::default();
+        let subagent_meta = serde_json::json!({
+            "_subagent/update": {
+                "sessionId": "main",
+                "taskId": "task-1",
+                "toolCallId": "delegate-1",
+            }
+        });
+        accumulator.consume(&SessionUpdate::ToolCall(ToolCall::new(
+            ToolCallId::new("delegate-1"),
+            "Agent",
+        )));
+        accumulator.consume(&SessionUpdate::AgentMessageChunk(
+            serde_json::from_value(serde_json::json!({
+                "content": { "type": "text", "text": "subagent summary " },
+                "_meta": subagent_meta,
+            }))
+            .unwrap(),
+        ));
+        accumulator.consume(&SessionUpdate::ToolCall(
+            serde_json::from_value(serde_json::json!({
+                "toolCallId": "subagent:6:task-1:c1",
+                "title": "Read",
+                "_meta": subagent_meta,
+            }))
+            .unwrap(),
+        ));
+        accumulator.consume(&SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            ToolCallId::new("subagent:6:task-1:c1"),
+            ToolCallUpdateFields::new(),
+        )));
+        accumulator.consume(&SessionUpdate::Plan(
+            serde_json::from_value(serde_json::json!({
+                "entries": [],
+                "_meta": subagent_meta,
+            }))
+            .unwrap(),
+        ));
+        accumulator.consume(&SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            ToolCallId::new("delegate-1"),
+            ToolCallUpdateFields::new(),
+        )));
+        accumulator.consume(&agent_text_update(None, "parent final answer"));
+        assert_eq!(
+            accumulator.into_output(),
+            Some("parent final answer".to_string())
+        );
+
+        // Even if a parent answer came before a trailing subagent summary, the subagent text
+        // does not replace or append to it.
+        let mut trailing_child = AssistantOutputAccumulator::default();
+        trailing_child.consume(&agent_text_update(None, "parent answer"));
+        trailing_child.consume(&SessionUpdate::AgentMessageChunk(
+            serde_json::from_value(serde_json::json!({
+                "content": { "type": "text", "text": "subagent trailing text" },
+                "_meta": subagent_meta,
+            }))
+            .unwrap(),
+        ));
+        assert_eq!(
+            trailing_child.into_output(),
+            Some("parent answer".to_string())
+        );
     }
 }
 

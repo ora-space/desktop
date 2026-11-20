@@ -135,4 +135,79 @@ describe("delegation result association", () => {
       ),
     ).toBe(true);
   });
+
+  it("associates _subagent/update groups by outer toolCallId and flags conflicting links", () => {
+    const parentCall: ChatToolCall = {
+      kind: "toolCall",
+      id: "agent-call-1",
+      title: "Task",
+      status: "completed",
+      content: [
+        { type: "content", content: { type: "text", text: "summary" } },
+      ],
+      locations: [],
+      createdAt: 0,
+      updatedAt: 1,
+    };
+    const subagentMsg: ChatTurnItem = {
+      kind: "message",
+      id: "sub-msg",
+      role: "assistant",
+      content: "explored",
+      createdAt: 0,
+      metadata: {
+        "_subagent/update": {
+          sessionId: "main-session",
+          taskId: "task-42",
+          toolCallId: "agent-call-1",
+          agentType: "Explore",
+        },
+      },
+    };
+    const grouped = groupSubagentItems([parentCall, subagentMsg]);
+    expect(grouped).toHaveLength(2);
+    expect(grouped[1]).toMatchObject({
+      kind: "subagentGroup",
+      sourceId: "task-42",
+      title: "Explore",
+      delegationToolCallId: "agent-call-1",
+      relationshipUnknown: false,
+    });
+    expect(
+      delegationReturned(
+        parentStreamItems([parentCall, subagentMsg]),
+        "task-42",
+        "agent-call-1",
+      ),
+    ).toBe(true);
+
+    // Synthesized turn-end completion without output must not report delegation returned.
+    const synthesizedParent: ChatToolCall = { ...parentCall, content: [] };
+    expect(
+      delegationReturned([synthesizedParent], "task-42", "agent-call-1"),
+    ).toBe(false);
+
+    // Synthesized turn-end completion with streamed output must not report delegation returned.
+    const impliedParentWithOutput: ChatToolCall = {
+      ...parentCall,
+      settledByTurnEnd: true,
+    };
+    expect(
+      delegationReturned([impliedParentWithOutput], "task-42", "agent-call-1"),
+    ).toBe(false);
+
+    // Explicit `delegationToolCallId` must not be overridden by an unrelated tool with matching `sessionID`.
+    const unrelatedSessionIdMatch = delegation(
+      "other-call",
+      "task-42",
+      "completed",
+    );
+    expect(
+      delegationReturned(
+        [impliedParentWithOutput, unrelatedSessionIdMatch],
+        "task-42",
+        "agent-call-1",
+      ),
+    ).toBe(false);
+  });
 });

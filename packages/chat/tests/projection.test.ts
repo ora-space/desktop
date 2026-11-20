@@ -6,6 +6,7 @@ import {
   childSessionSource,
   createChatStore,
   type ChatSessionClient,
+  type ChatTurnItem,
 } from "../src/index.ts";
 
 const source = (id: string) => ({
@@ -233,4 +234,83 @@ test("a source switch does not discard leading whitespace or merge unidentified 
     [" ", "B", "A"],
   );
   store.getState().dispose();
+});
+
+test("replaces _subagent/update plans by child source id across changing extra metadata in live and reload", async () => {
+  const plan = (taskId: string, step: string, rev: number) => ({
+    sessionUpdate: "plan" as const,
+    entries: [
+      {
+        content: step,
+        priority: "medium" as const,
+        status: "pending" as const,
+      },
+    ],
+    _meta: {
+      "_subagent/update": {
+        sessionId: "main",
+        taskId,
+        toolCallId: `parent-${taskId}`,
+      },
+      codeAgentCLI: { rev },
+    },
+  });
+  const liveUpdates = [
+    plan("task-a", "Step 1", 1),
+    plan("task-b", "Sibling", 1),
+    plan("task-a", "Step 2", 2),
+  ];
+  const client: ChatSessionClient = {
+    prompt: () =>
+      events<PromptSessionEvent>([
+        ...liveUpdates.map((update) => ({
+          type: "session_update" as const,
+          update,
+        })),
+        { type: "completed", stopReason: "end_turn" },
+      ]),
+    load: () =>
+      events<LoadSessionEvent>([
+        {
+          type: "session_update",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "go" },
+          },
+        },
+        { type: "session_update", update: plan("task-a", "Step 2", 2) },
+        { type: "session_update", update: plan("task-b", "Sibling", 1) },
+        { type: "turn_ended", stopReason: "end_turn" },
+        { type: "completed" },
+      ]),
+    setConfig: async () => ({ configOptions: [] }),
+    respondToPermission: async () => ({}),
+  };
+  const store = createChatStore(client);
+  await store.getState().sendMessage({ oraSessionId: "live", text: "go" });
+  const cold = createChatStore(client);
+  await cold.getState().loadSession("cold");
+  const summary = (items: ChatTurnItem[]) =>
+    items.map((item) =>
+      item.kind === "plan"
+        ? {
+            sourceId: childSessionSource(item.metadata)?.id,
+            entries: item.entries.map((entry) => entry.content),
+          }
+        : null,
+    );
+  const expected = [
+    { sourceId: "task-a", entries: ["Step 2"] },
+    { sourceId: "task-b", entries: ["Sibling"] },
+  ];
+  assert.deepEqual(
+    summary(store.getState().conversations.live!.turns[0]!.items),
+    expected,
+  );
+  assert.deepEqual(
+    summary(cold.getState().conversations.cold!.turns[0]!.items),
+    expected,
+  );
+  store.getState().dispose();
+  cold.getState().dispose();
 });

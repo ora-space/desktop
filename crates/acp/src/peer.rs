@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::client::AcpClient;
 use crate::error::AcpError;
-use crate::events::{AcpInboundEvent, PermissionRequest, SessionResponse};
+use crate::events::{AcpInboundEvent, ExtensionNotification, PermissionRequest, SessionResponse};
 use crate::frame::send_traced;
 use crate::pending::{PendingRequest, PendingRequests, ResponseRequest, lock_pending};
 use crate::trace::SessionTraceRegistry;
@@ -175,6 +175,14 @@ where
                 .send(AcpInboundEvent::SessionUpdate(notification))
                 .map_err(|_| AcpError::StreamClosed)
         }
+        (Some(method), None) if method.starts_with('_') => inbound
+            .send(AcpInboundEvent::ExtensionNotification(
+                ExtensionNotification {
+                    method: method.to_string(),
+                    params: object.get("params").cloned().unwrap_or(Value::Null),
+                },
+            ))
+            .map_err(|_| AcpError::StreamClosed),
         (Some(_), None) => Ok(()),
         (None, Some(request_id)) => {
             let response = if let Some(result) = object.get("result") {
