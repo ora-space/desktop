@@ -146,6 +146,9 @@ impl WorkflowRepository for SqliteWorkflowRepository {
     fn list_workflows(&self) -> Result<Vec<WorkflowSummary>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
+                // Source records are keyed by package path for import deduplication. Keep the
+                // lookup here without another index while local libraries are small; a partial
+                // index on imported workflow IDs is warranted if larger libraries make this scan costly.
                 let mut statement = connection.prepare(
                     "SELECT w.id, w.namespace, w.name, ws.version, w.created_at, w.updated_at,
                             (SELECT wdi.source_namespace || '/' || wdi.identifier
