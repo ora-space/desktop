@@ -47,10 +47,11 @@ export function useUninstalledWorkflowSources(
     if (
       !hasSourced ||
       workflows === undefined ||
+      installed.isError ||
       installed.data === undefined
     ) {
       return EMPTY_WORKFLOW_IDS;
     }
     return findUninstalledWorkflowSourceIds(workflows, installed.data);
-  }, [hasSourced, workflows, installed.data]);
+  }, [hasSourced, workflows, installed.data, installed.isError]);
 }
