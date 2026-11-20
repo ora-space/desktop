@@ -1,10 +1,12 @@
-//! One spawn gate and inherited OFD for the plugin runtime and every host-managed subprocess.
-use super::files::StopFiles;
+//! One spawn gate, inherited OFD and attempt mark for the plugin runtime and every host-managed
+//! subprocess.
+use super::{files::StopFiles, marks};
 use ora_node_db::SessionStopIdentity;
 use ora_process::{
     ManagedProcess, ProcessSpawner, ProcessSpec, TokioManagedProcess, TokioProcessSpawner,
 };
 use std::{
+    ffi::OsString,
     fmt, io,
     os::fd::OwnedFd,
     sync::{Arc, Mutex, PoisonError},
@@ -19,6 +21,8 @@ struct Attempt {
     identity: SessionStopIdentity,
     files: StopFiles,
     descriptor: Mutex<Option<Arc<OwnedFd>>>,
+    /// The mark entry every child receives, whatever environment its spawner passes on.
+    mark: (String, OsString),
 }
 
 impl fmt::Debug for SessionAttemptSpawner {
@@ -62,12 +66,17 @@ impl SessionAttemptSpawner {
         files: StopFiles,
     ) -> io::Result<Self> {
         let descriptor = files.hold(&identity.attempt)?;
+        let mark = marks::mark(&identity.attempt)?;
+        // A Node that itself runs inside another launch's mark passes that mark on as well, so
+        // the enclosing launch still finds this attempt's processes when it stops.
+        let value = mark.child_value(std::env::var_os(mark.name()).as_deref());
         Ok(Self {
             inner,
             attempt: Arc::new(Mutex::new(Arc::new(Attempt {
                 identity,
                 files,
                 descriptor: Mutex::new(Some(descriptor)),
+                mark: (mark.name().to_owned(), value),
             }))),
         })
     }
@@ -123,9 +132,11 @@ impl ProcessSpawner for SessionAttemptSpawner {
         let descriptor = guard
             .as_ref()
             .ok_or_else(|| io::Error::other("session attempt is stopping"))?;
+        // Set last, so neither a cleared environment nor a caller's own entry can drop the mark.
+        let (name, value) = &attempt.mark;
         let process = self
             .inner
-            .spawn(spec.inherit_descriptor(descriptor.clone()))?;
+            .spawn(spec.env(name, value).inherit_descriptor(descriptor.clone()))?;
         if process.id().is_none_or(|pid| {
             attempt
                 .files

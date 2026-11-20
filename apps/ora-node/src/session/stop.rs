@@ -1,6 +1,7 @@
 //! Independent process responsibility outlives conversations, plugin handles, and Node restarts.
 pub(crate) mod admin;
 pub(crate) mod files;
+mod marks;
 pub(crate) mod spawner;
 #[cfg(test)]
 mod tests;
@@ -56,7 +57,7 @@ pub(super) fn prepare<L: SessionLedger>(
     inner: TokioProcessSpawner,
 ) -> io::Result<SessionAttemptSpawner> {
     let files = StopFiles::open(home)?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, inner.identity())?;
     ledger
         .record_session_stop(&identity, now_ms())
         .map_err(|_| io::Error::other("stop journal unavailable"))?;

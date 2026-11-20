@@ -1,10 +1,11 @@
 //! Real kernel locks and processes distinguish shutdown requests from stop proof.
+mod marks;
 mod replacement;
 
 use super::*;
 use ora_node_db::{SessionStopHost, SessionStopKind, SessionStopProof};
 use ora_node_protocol::{NodeId, NodeIncarnationId, NodeRuntimeIdentity};
-use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec};
+use ora_process::{ManagedProcess, ProcessIdentity, ProcessSpawner, ProcessSpec};
 use pretty_assertions::assert_eq;
 use std::os::unix::fs::PermissionsExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -17,7 +18,7 @@ async fn stop_wait_keeps_original_bound_and_does_not_treat_request_failure_as_pr
     use ora_node_db::{SessionStopChange, SessionStopState};
     let (home, files, identity) = fixture()?;
     let journal = journal(home.path())?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let descriptor = files.hold(&identity.attempt)?;
     journal.record_session_stop(&identity, now_ms())?;
     let config = SessionStopConfig {
@@ -55,7 +56,7 @@ async fn stop_wait_keeps_original_bound_and_does_not_treat_request_failure_as_pr
 #[test]
 fn foreign_or_missing_host_identity_cannot_turn_a_boot_change_into_stop_proof() -> TestResult {
     let (_home, files, mut identity) = fixture()?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     identity.host.boot_id = "old-boot".into();
     identity.host.trusted_host_id = Some("old-host".into());
     for host in [Some("other-host".into()), None, Some(String::new())] {
@@ -91,7 +92,7 @@ fn journal(home: &Path) -> Result<ora_node_db::SessionJournal, Box<dyn std::erro
 async fn successful_cleanup_with_held_lock_leaves_attempt_unconfirmed() -> TestResult {
     let (home, files, identity) = fixture()?;
     let journal = journal(home.path())?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let _held = files.hold(&identity.attempt)?;
     journal.record_session_stop(&identity, now_ms())?;
     let config = SessionStopConfig {
@@ -200,7 +201,7 @@ async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> 
 #[tokio::test]
 async fn replacement_signals_old_groups_before_lifecycle_cleanup() -> TestResult {
     let (_home, files, identity) = fixture()?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let spawner = SessionAttemptSpawner::new(
         TokioProcessSpawner::new().without_reaper_registration(),
         identity.clone(),
@@ -225,7 +226,7 @@ async fn replacement_signals_old_groups_before_lifecycle_cleanup() -> TestResult
 #[tokio::test]
 async fn plugin_and_each_host_child_share_one_attempt_while_siblings_stay_running() -> TestResult {
     let (_home, files, identity) = fixture()?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let inner = TokioProcessSpawner::new().without_reaper_registration();
     let spawner = SessionAttemptSpawner::new(inner.clone(), identity.clone(), files.clone())?;
     let plugin = spawner.spawn(ProcessSpec::new("sleep").arg("60"))?;
@@ -268,7 +269,7 @@ async fn plugin_and_each_host_child_share_one_attempt_while_siblings_stay_runnin
 #[tokio::test]
 async fn live_direct_child_that_closes_its_descriptor_is_not_stop_proof() -> TestResult {
     let (_home, files, identity) = fixture()?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let spawner = SessionAttemptSpawner::new(
         TokioProcessSpawner::new().without_reaper_registration(),
         identity.clone(),
@@ -312,7 +313,7 @@ fn a_durable_unstarted_lock_is_proof_but_missing_corrupt_or_foreign_boot_evidenc
         files.probe(&identity, &identity.host, false).0,
         StopEvidence::Unknown
     );
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     assert_eq!(
         files.probe(&identity, &identity.host, false).0,
         StopEvidence::Stopped

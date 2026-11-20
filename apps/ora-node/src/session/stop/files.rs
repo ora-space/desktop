@@ -1,8 +1,11 @@
-//! Session-scoped OFD evidence plus one identity-checked clue for every host-spawned process group.
+//! Session-scoped OFD evidence, one identity-checked clue for every host-spawned process group,
+//! and the attempt mark that reaches processes outside those groups.
+use super::marks;
 use crate::managed::attempt_lock::{AttemptLocks, LockDurability, StopEvidence};
 use ora_node_db::{
     AttemptId, SessionStopHost, SessionStopIdentity, SessionStopKind, SessionStopProof,
 };
+use ora_process::ProcessIdentity;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -35,13 +38,15 @@ impl StopFiles {
         })
     }
 
-    /// The marker and parent directory are durable before the database takes responsibility.
-    pub(crate) fn create(&self, attempt: &AttemptId) -> io::Result<()> {
+    /// The lock marker, the mark scope of processes running as `identity`, and their parent
+    /// directory are durable before the database takes responsibility.
+    pub(crate) fn create(&self, attempt: &AttemptId, identity: ProcessIdentity) -> io::Result<()> {
         self.locks.create(
             attempt,
             Path::new(attempt.as_str()),
             LockDurability::Recorded,
-        )
+        )?;
+        marks::record(&self.directory, attempt, identity)
     }
 
     /// Acquires after recording; the owner serializes this against recovery and dispatch.
@@ -151,16 +156,35 @@ impl StopFiles {
                 Err(_) => return (StopEvidence::Unknown, None),
             }
         }
+        // Jobs that left the original groups and dropped the inherited descriptor stay visible
+        // only through the mark; a scope that cannot be read proves nothing.
+        match marks::scope(&self.directory, &identity.attempt) {
+            Ok(Some(scope)) => match marks::evidence(&scope) {
+                StopEvidence::Stopped => {}
+                evidence @ (StopEvidence::Running | StopEvidence::Unknown) => {
+                    return (evidence, None);
+                }
+            },
+            Ok(None) => {}
+            Err(_) => return (StopEvidence::Unknown, None),
+        }
         (
             StopEvidence::Stopped,
             Some(SessionStopProof::LockAndProcesses),
         )
     }
 
-    /// Signals only groups whose boot and direct-child identity still match the original attempt.
+    /// Signals only processes of the original attempt: those its mark claims, and the groups
+    /// whose boot and direct-child identity still match.
     pub(crate) fn terminate(&self, identity: &SessionStopIdentity, current: &SessionStopHost) {
         if current.boot_id.is_empty() || current.boot_id != identity.host.boot_id {
             return;
+        }
+        // Marked processes are frozen and killed before any group is signalled: a group kill
+        // would orphan an environment-cleared child before the scan sees its marked parent.
+        // Group members carry the mark too; the group kill still reaches those that cleared it.
+        if let Ok(Some(scope)) = marks::scope(&self.directory, &identity.attempt) {
+            let _ = scope.kill();
         }
         let Ok(clues) = self.clues(&identity.attempt) else {
             return;

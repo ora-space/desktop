@@ -42,6 +42,11 @@ impl TokioProcessSpawner {
         }
     }
 
+    /// The identity every child of this spawner runs as.
+    pub fn identity(&self) -> ProcessIdentity {
+        self.identity
+    }
+
     /// Configures inheritance once for a scoped owner; explicit ProcessSpec envs still apply.
     pub fn with_environment(mut self, environment: ProcessEnvironment) -> Self {
         self.environment = environment;
