@@ -88,7 +88,7 @@ impl crate::ora_git::OraGitBroker for UnopenedBroker {
 
 /// A test-local writer records the same wrapper event startup emits.
 #[derive(Clone, Default)]
-struct Logs(Arc<Mutex<Vec<u8>>>);
+pub(super) struct Logs(pub(super) Arc<Mutex<Vec<u8>>>);
 
 impl Write for Logs {
     /// Appends one formatted event to this test's buffer.

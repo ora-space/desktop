@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 mod ora_git;
+mod startup;
 
 /// A service configuration over `root` that would run agents as `workload_uid` from
 /// `workload_directory`; everything else is valid and never reached by these tests.
