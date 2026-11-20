@@ -2,8 +2,8 @@
 //! session with its code, and a rewritten remote history is noted in the first turn.
 use super::field;
 use super::support::*;
-use ora_node::SessionCommand;
 use ora_node::{RestoreFailure, RestoreRequest, Restored};
+use ora_node::{SessionCommand, SessionHost};
 use ora_node_protocol::{
     AgentSessionEndReason, AgentSessionEnded, CommitId, DeliveryRef, EndSessionReason, ExecutionId,
     GitRepositoryUrl, OperationId, PriorRevision, RevisionId,
@@ -229,5 +229,141 @@ async fn an_end_during_the_restore_cancels_it_before_any_plugin_starts() {
                 vec![ora_node::CommandSettlement::Executed]
             )],
         ),
+    );
+}
+
+/// Cancels accepted while a prior Revision is still being restored take effect at once: the
+/// initial turn and a queued turn are both dropped as `not_started` without waiting for the
+/// restore, which keeps running, and neither ever reaches an Agent.
+///
+/// Evidence for specs/test-cases/node/protocol/cancel-turn-and-keep-session.md cases 2 and 23
+#[tokio::test(flavor = "multi_thread")]
+async fn cancels_during_the_restore_settle_without_waiting_for_it() {
+    let fixture = Fixture::new();
+    fixture
+        .restorer
+        .hold
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping_resuming(
+        &sessions,
+        "hello",
+        Keep {
+            on_cancel: true,
+            on_failure: false,
+        },
+        Some(prior()),
+    );
+    until(|| (!fixture.restorer.requests.lock().unwrap().is_empty()).then_some(())).await;
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::SubmitUserTurn(turn("turn-2", "never")),
+    );
+    fixture.command(
+        &sessions,
+        "cancel-2",
+        SessionCommand::CancelTurn(ora_node_protocol::TurnId::new("turn-2")),
+    );
+    fixture.command(
+        &sessions,
+        "cancel-1",
+        SessionCommand::CancelTurn(ora_node_protocol::TurnId::new("turn-1")),
+    );
+    until(|| (fixture.ledger.cancels().len() == 2).then_some(())).await;
+    let during_restore = (
+        fixture.ledger.cancels(),
+        fixture
+            .restorer
+            .cancelled
+            .load(std::sync::atomic::Ordering::SeqCst),
+        fixture.ledger.ended(),
+    );
+    fixture.command(
+        &sessions,
+        "command-end",
+        SessionCommand::EndSession(EndSessionReason::UserEnded),
+    );
+    fixture.ended().await;
+    assert_eq!(
+        during_restore,
+        (
+            vec![
+                (
+                    "cancel-2".to_string(),
+                    ora_node_protocol::TurnCancelOutcome::NotStarted
+                ),
+                (
+                    "cancel-1".to_string(),
+                    ora_node_protocol::TurnCancelOutcome::NotStarted
+                ),
+            ],
+            0,
+            None
+        )
+    );
+    assert_eq!(fixture.plugin_pids(), Vec::<u32>::new());
+}
+
+/// An `EndSession` during a restore records its decision, stop clock and the pending cancels'
+/// settlement as soon as its reason is chosen, even while the restore takes long to wind down:
+/// the conclusion is readable, the terminal still waits, and a restart keeps the reason.
+///
+/// Evidence for specs/test-cases/node/protocol/cancel-turn-and-keep-session.md cases 19 and 21
+#[tokio::test(flavor = "multi_thread")]
+async fn an_end_during_the_restore_settles_cancels_before_the_restore_winds_down() {
+    let fixture = Fixture::new();
+    fixture
+        .restorer
+        .hold
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fixture
+        .restorer
+        .stall
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping_resuming(
+        &sessions,
+        "hello",
+        Keep {
+            on_cancel: true,
+            on_failure: false,
+        },
+        Some(prior()),
+    );
+    until(|| (!fixture.restorer.requests.lock().unwrap().is_empty()).then_some(())).await;
+    fixture.ledger.accept(
+        "cancel-1",
+        SessionCommand::CancelTurn(ora_node_protocol::TurnId::new("turn-1")),
+    );
+    fixture.ledger.accept(
+        "command-end",
+        SessionCommand::EndSession(EndSessionReason::UserEnded),
+    );
+    sessions.command_arrived(&ExecutionId::new(EXECUTION));
+    let settled = until(|| fixture.ledger.cancels().first().cloned()).await;
+    let while_winding_down = (
+        settled,
+        fixture.ledger.decision().map(|decision| decision.reason),
+        fixture.ledger.ended(),
+    );
+    fixture
+        .restorer
+        .stall
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let ended = fixture.ended().await;
+    assert_eq!(
+        (while_winding_down, ended.reason),
+        (
+            (
+                (
+                    "cancel-1".to_string(),
+                    ora_node_protocol::TurnCancelOutcome::SessionEnding
+                ),
+                Some(AgentSessionEndReason::UserEnded),
+                None
+            ),
+            AgentSessionEndReason::UserEnded
+        )
     );
 }

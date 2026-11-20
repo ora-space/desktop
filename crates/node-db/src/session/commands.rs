@@ -51,6 +51,10 @@ impl<G: WriteGuard> NodeDatabase<G> {
         if existing.is_some() {
             return Ok(CommandAdmission::Accepted);
         }
+        let spec = &session.command.payload.spec;
+        if matches!(input, SessionCommandInput::CancelTurn(_)) && !spec.keep_session_on_cancel {
+            return Ok(CommandAdmission::TurnCancelUnsupported);
+        }
         if session.command.payload.spec.mcp_lifecycle
             && let SessionCommandInput::SubmitUserTurn(turn) = input
             && turn
@@ -63,6 +67,14 @@ impl<G: WriteGuard> NodeDatabase<G> {
         }
         self.guard.before_write(WritePoint::Accept)?;
         tx.execute("INSERT INTO session_commands(execution,command_id,input,state) VALUES(?1,?2,?3,'queued')", params![input.execution_id().as_str(),input.command_id().as_str(),serde_json::to_string(input)?])?;
+        // Once the end is decided the turn's state no longer matters: the cancel is settled as
+        // `session_ending` in the transaction that accepts it (D1).
+        if matches!(input, SessionCommandInput::CancelTurn(_))
+            && super::end_decided(&tx, input.execution_id())?
+        {
+            let guard = Arc::clone(&self.guard);
+            super::settle_pending_as_ending(&tx, &guard, &session)?;
+        }
         tx.commit()?;
         Ok(CommandAdmission::Accepted)
     }

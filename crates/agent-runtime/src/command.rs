@@ -50,6 +50,10 @@ pub(crate) enum RuntimeCommand {
         response: oneshot::Sender<Result<StopSessionResponse, RuntimeError>>,
     },
     CancelActivePrompt,
+    /// Drains idle traffic and answers whether any of it belonged to a turn.
+    TakeIdleTurnTraffic {
+        response: oneshot::Sender<bool>,
+    },
     Cancel {
         operation_id: u64,
         completion: Option<oneshot::Sender<Result<(), RuntimeError>>>,

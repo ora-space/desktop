@@ -165,7 +165,8 @@ impl<G: WriteGuard> SessionJournal<G> {
         Ok(())
     }
 
-    /// Keeps the first terminal intention while independent cleanup proceeds.
+    /// Keeps the first terminal intention while independent cleanup proceeds. It settles no
+    /// cancel: only [`Self::decide_session_end`], which also anchors the stop clock, does.
     pub fn defer_session_stop_end(
         &self,
         execution: &ExecutionId,
@@ -177,6 +178,39 @@ impl<G: WriteGuard> SessionJournal<G> {
             "INSERT OR IGNORE INTO session_stop_ends(execution,ended) VALUES(?1,?2)",
             params![execution.as_str(), serde_json::to_string(ended)?],
         )?;
+        Ok(())
+    }
+
+    /// Records the end decision, anchors the stop clock of every outstanding stop
+    /// responsibility of the execution, and settles every pending cancel as `session_ending`, all
+    /// in one transaction, before any stop signal (cancel-turn D3). The first decision and the
+    /// first clock are kept: a repeated call changes neither and settles nothing again.
+    pub fn decide_session_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
+    ) -> Result<(), Error> {
+        if bound_at_ms <= at_ms {
+            return Err(Error::InvalidTransition);
+        }
+        let mut db = self.lock()?;
+        let guard = std::sync::Arc::clone(&db.guard);
+        guard.before_write(WritePoint::Progress)?;
+        let tx = db
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO session_stop_ends(execution,ended) VALUES(?1,?2)",
+            params![execution.as_str(), serde_json::to_string(ended)?],
+        )?;
+        tx.execute("UPDATE session_stop_attempts SET first_stop_at_ms=coalesce(first_stop_at_ms,?2),bound_at_ms=coalesce(bound_at_ms,?3),state=CASE WHEN state='prepared' THEN 'stopping' ELSE state END WHERE execution=?1 AND state!='confirmed'", params![execution.as_str(), at_ms, bound_at_ms])?;
+        // Settling is idempotent: only still-queued cancels are written.
+        if let Some(current) = crate::session::read_running(&tx, execution)? {
+            crate::session::settle_pending_as_ending(&tx, &guard, &current)?;
+        }
+        tx.commit()?;
         Ok(())
     }
 

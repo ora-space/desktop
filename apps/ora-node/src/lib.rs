@@ -73,7 +73,7 @@ pub use session::{
     AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable,
     InstalledConfigurationError, PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel,
     RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig, SessionHost,
-    SessionLedger, SessionWorkload,
+    SessionLedger, SessionWorkload, TurnCancelConfig,
 };
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;

@@ -3,13 +3,13 @@ use crate::AgentRuntimeHost;
 
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Closes the recorded turn after the ordered event consumer has settled its events.
-    pub(super) fn end_turn(&mut self, stop_reason: StopReason) {
+    pub(crate) fn end_turn(&mut self, stop_reason: StopReason) {
         let outcome = self.recorder.record_turn_end(stop_reason);
         self.settle_record(outcome);
     }
 
     /// Freezes this prompt's tool durations before history settles its open snapshots.
-    pub(super) fn end_timed_turn(&mut self, stop_reason: StopReason, timings: &ToolTimings) {
+    pub(crate) fn end_timed_turn(&mut self, stop_reason: StopReason, timings: &ToolTimings) {
         self.recorder.finish_tool_timings(timings.finish_all());
         self.end_turn(stop_reason);
         // Any terminal prompt consumes the restored channel's one automatic-retry eligibility,

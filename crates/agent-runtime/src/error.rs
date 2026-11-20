@@ -36,6 +36,9 @@ pub struct RuntimeError {
     public_error: PublicError,
     context: String,
     source: Option<SharedError>,
+    /// The Agent answered the prompt (with an error, or after a watchdog cancel) before this
+    /// failure, so its main flow reached the response fence.
+    answered: bool,
 }
 
 impl RuntimeError {
@@ -57,6 +60,37 @@ impl RuntimeError {
         )
     }
 
+    /// A turn cancel whose Agent did not answer the prompt by the caller's deadline; the provider
+    /// session was isolated and the turn's work may still be running.
+    pub(crate) fn turn_cancel_unanswered() -> Self {
+        Self::with_source(
+            ErrorClassification::Unprocessable,
+            PublicError::AgentTimedOut(ora_contracts::EmptyErrorParams {}),
+            "agent did not answer the cancelled prompt before its deadline",
+            TurnCancelUnanswered,
+        )
+    }
+
+    /// Distinguishes an unanswered turn cancel from other failures of the cancelled prompt.
+    pub fn is_turn_cancel_unanswered(&self) -> bool {
+        self.source
+            .as_deref()
+            .is_some_and(<dyn Error + Send + Sync + 'static>::is::<TurnCancelUnanswered>)
+    }
+
+    /// Marks a prompt failure the Agent itself answered: an ACP error response, or a watchdog
+    /// stop whose cancel the Agent confirmed before the runtime gave up.
+    pub(crate) fn answered(mut self) -> Self {
+        self.answered = true;
+        self
+    }
+
+    /// Whether the Agent answered the failed prompt; only such a failure can leave the provider
+    /// session in a state another turn may follow (cancel-turn D2).
+    pub fn agent_answered(&self) -> bool {
+        self.answered
+    }
+
     /// Hosts can wait for MCP convergence while treating unrelated Agent failures as terminal.
     pub fn is_mcp_admission(&self) -> bool {
         self.source
@@ -74,6 +108,7 @@ impl RuntimeError {
             public_error,
             context: context.into(),
             source: None,
+            answered: false,
         }
     }
 
@@ -99,6 +134,7 @@ impl RuntimeError {
             public_error,
             context: context.to_string(),
             source: Some(Arc::new(source)),
+            answered: false,
         }
     }
 
@@ -114,6 +150,7 @@ impl RuntimeError {
             public_error,
             context,
             source,
+            answered: false,
         }
     }
 
@@ -148,6 +185,11 @@ impl RuntimeError {
 #[derive(Debug, thiserror::Error)]
 #[error("MCP admission failed")]
 struct McpAdmissionFailure(#[source] RuntimeError);
+
+/// Marks [`RuntimeError::turn_cancel_unanswered`].
+#[derive(Debug, thiserror::Error)]
+#[error("turn cancel unanswered")]
+struct TurnCancelUnanswered;
 
 impl fmt::Display for RuntimeError {
     /// Formats only the semantic context added by the runtime.

@@ -7,6 +7,21 @@ use tokio::time::Instant;
 #[cfg(test)]
 mod tests;
 
+/// How long a turn may wait for its MCP gate before it fails (session MCP refresh D4).
+pub(super) const MCP_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Whether the turn's MCP wait reached its deadline: its timeout must be settled before anything
+/// else decides the turn, even if the timeout task has not run yet.
+pub(super) fn mcp_wait_expired(
+    blocked: &std::collections::HashMap<ora_node_protocol::TurnId, Instant>,
+    turn: &ora_node_protocol::TurnId,
+    now: Instant,
+) -> bool {
+    blocked
+        .get(turn)
+        .is_some_and(|first| now >= *first + MCP_WAIT)
+}
+
 pub(super) enum Admitted {
     Stream(SessionEventStream<PromptSessionEvent>),
     Outcome(TurnOutcome),
@@ -14,9 +29,10 @@ pub(super) enum Admitted {
 
 /// Cancellation and the Actor's commit share a boundary even before a reply reaches the caller.
 #[derive(Default)]
-struct TurnGate {
-    committed: bool,
-    expired: bool,
+pub(super) struct TurnGate {
+    pub(super) committed: bool,
+    /// Set by the MCP wait timeout or by a cancel that dropped the turn; either refuses commit.
+    pub(super) expired: bool,
     deadline: Option<Instant>,
 }
 
@@ -86,7 +102,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get(&turn.turn_id)
-                .map(|first| *first + std::time::Duration::from_secs(300));
+                .map(|first| *first + MCP_WAIT);
             let Some(deadline) = deadline else {
                 continue;
             };
@@ -115,6 +131,8 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .remove(&turn.turn_id);
+            // The timed-out turn has its own result; a later cancel of it is `already_ended`.
+            self.turn_ended(&turn.turn_id);
         }
         Ok(next)
     }
@@ -140,9 +158,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 }
             }
         }
-        Ok(times
-            .get(&turn.turn_id)
-            .map(|first| *first + std::time::Duration::from_secs(300)))
+        Ok(times.get(&turn.turn_id).map(|first| *first + MCP_WAIT))
     }
 
     /// EndSession is checked before attempts, after wakes, and again inside the durable commit.
@@ -183,6 +199,12 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 return Ok(Admitted::Outcome(end));
             }
             let deadline = self.deadline(turn)?;
+            // Between attempts no admission can commit, so a cancel drops the turn directly.
+            if let cancel::WaitingCancel::Dropped =
+                self.cancel_waiting(turn, command, /*gate*/ None, deadline)?
+            {
+                return Ok(Admitted::Outcome(TurnOutcome::Dropped));
+            }
             self.expire_queued(&turn.turn_id)?;
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 self.mirror.set_turn(None);
@@ -233,17 +255,25 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 );
                 tokio::pin!(attempt);
                 loop {
-                    let deadline = self.deadline(turn)?;
+                    let wait_deadline = self.deadline(turn)?;
                     let deadline = {
                         let mut gate = gate
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        gate.deadline = deadline;
-                        if gate.committed { None } else { deadline }
+                        gate.deadline = wait_deadline;
+                        if gate.committed { None } else { wait_deadline }
                     };
                     tokio::select! {
                         biased;
-                        () = self.wake.notified() => { if let Some(end) = self.queued_end()? { return Ok(Admitted::Outcome(end)); } },
+                        () = self.wake.notified() => {
+                            if let Some(end) = self.queued_end()? { return Ok(Admitted::Outcome(end)); }
+                            // The cancel takes the gate the Actor's commit and the timeout take.
+                            if let cancel::WaitingCancel::Dropped =
+                                self.cancel_waiting(turn, command, Some(&gate), wait_deadline)?
+                            {
+                                return Ok(Admitted::Outcome(TurnOutcome::Dropped));
+                            }
+                        },
                         result = &mut attempt => {
                             match result {
                                 Ok(stream) => { self.blocked.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&turn.turn_id); return Ok(Admitted::Stream(stream)); },
@@ -323,6 +353,10 @@ impl<L: SessionLedger> Conversation<'_, L> {
         let execution = self.execution.clone();
         let command = command.cloned();
         let control = self.control.cloned();
+        let turn_id = turn.turn_id.clone();
+        let manager = self.manager.clone();
+        let session = self.session_id.to_string();
+        let grace = self.turn_cancel.grace;
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let commit_failed = Arc::clone(&failed);
         self.mirror.set_turn(Some(turn.turn_id.clone()));
@@ -371,9 +405,23 @@ impl<L: SessionLedger> Conversation<'_, L> {
                     match control {
                         Some(control) => control.admit(commit).map_err(|error| {
                             RuntimeError::internal("MCP admission changed", error)
-                        })?,
-                        None => commit(),
+                        })??,
+                        None => commit()?,
                     }
+                    // A cancel accepted while admission committed reaches the runtime before the
+                    // prompt is written, so the Agent never receives the turn (D1, admitted but
+                    // not yet written); the conversation settles it once the stream ends.
+                    if ledger.queued_commands(&execution).is_ok_and(|queued| {
+                        queued.iter().any(|queued| {
+                            matches!(&queued.command, SessionCommand::CancelTurn(target) if target == &turn_id)
+                        })
+                    }) && let Err(error) = manager.cancel_turn_prompt(
+                        &session,
+                        tokio::time::Instant::now() + grace,
+                    ) {
+                        ora_warn!(execution_id = %execution, error = %error, "turn cancel could not reach the runtime");
+                    }
+                    Ok(())
                 },
             )
             .await;

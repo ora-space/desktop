@@ -250,7 +250,7 @@ impl Node {
                             self.agents.previews_negotiated.store(previews, Ordering::SeqCst);
                             greeted = true; Some(NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
                             protocol_version: CURRENT_PROTOCOL_VERSION,
-                            payload: HelloAccepted { thread_previews: previews,
+                            payload: HelloAccepted { thread_previews: previews, turn_cancel: false,
                                 selected_version: CURRENT_PROTOCOL_VERSION,
                                 node: identity.clone(),
                                 capabilities: plugins::capabilities(self),

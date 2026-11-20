@@ -7,6 +7,7 @@ pub(super) fn hello() -> Case {
             protocol_version: CURRENT_PROTOCOL_VERSION,
             payload: Hello {
                 thread_previews: false,
+                turn_cancel: false,
                 controller_id: ControllerId::new("controller-1"),
                 supported_versions: vec![CURRENT_PROTOCOL_VERSION],
             },
@@ -33,6 +34,7 @@ pub(super) fn hello_accepted() -> Case {
                 payload: HelloAccepted {
                     model_adapter: None,
                     thread_previews: false,
+                    turn_cancel: false,
                     selected_version: CURRENT_PROTOCOL_VERSION,
                     node: node(),
                     capabilities: vec![NodeCapability::WorktreeExecution],

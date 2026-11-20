@@ -124,8 +124,56 @@ Completed 状态。actor、插件和恢复都不会启动，也不存在会话�
    然后把自己结算为 `executed`。
 7. 结束时，会话停止，释放运行时，停止插件并等待进程树退出，释放租约，丢弃排队的命令，写入终止结果，然后忘掉这个会话。
 
-只有 ACP 成功完成才允许下一个轮次。prompt 出错或流意外关闭时，会话以 `agent_failed` 结束，带 `agent_turn_failed` 或
-`agent_stream_closed`；原始的服务商诊断信息从不进入历史或日志，已经排队的 `EndSession` 保留它显式的原因。
+除非会话另有选择（见下文），只有 ACP 成功完成才允许下一个轮次。prompt 出错或流意外关闭时，会话以 `agent_failed`
+结束，带 `agent_turn_failed` 或 `agent_stream_closed`；原始的服务商诊断信息从不进入历史或日志，已经排队的
+`EndSession` 保留它显式的原因。
+
+## 取消一轮
+
+以 `keep_session_on_cancel` 启动的会话受理针对它任一轮次的 `CancelTurn`；以 `keep_session_on_failure` 启动的会话
+在一轮失败后也可能保留。取消在账本处生效：取消、这一轮的准入和它的 MCP 等候超时共用这一个串行边界，先提交的
+决定这一轮。持久受理本身就会唤醒会话，不等受理回复写出；一次停止的截止时刻从第一个取消的受理时刻起算。在准入之前的
+整个准备阶段（恢复 prior Revision、布置工作负载、模型授权），取消同样立即生效。模型授权进入结束、会话在等
+Controller 的 `EndSession` 时，待结算的取消把这段等待限制在它自己的截止时刻之内，到时按当时已知的原因写结束
+决定。重启时先写结束决定、结算待结算的取消，再等停止证据。
+
+- **排队中的轮次**（包括正在等 Agent 或 MCP 门禁的）：立即丢弃，命令结算为 `discarded`，结论 `not_started`。
+  等候已过截止时刻的，先按超时结算，取消随后得到 `already_ended`。
+- **已准入、prompt 还没写出**：不再写出 prompt；`TurnEnded{cancelled}`，然后 `stopped`，会话保留。
+- **正在执行**：运行时先不等待地看这次 prompt 的回应是否已经可读。已经可读说明 Agent 赢了竞争：这一轮保留它
+  自己的结果（停止原因或失败），取消得到 `already_ended`。否则以 `cancelled` 应答挂起的权限请求，发 `session/cancel`，等到第一个取消的受理时刻加 G
+  （暂定 15 秒）。之后的取消和正在进行的看门狗停止并入同一次停止和截止时刻，看门狗不再重发。`session/cancel`
+  写出之后的任何回应（即使是 `end_turn`）都是对取消的回应：写 `TurnEnded{cancelled}`，再判定这次停止；没有回应时以 `turn_cancel_unanswered` 结束会话。
+- **已结束、已被丢弃、已超时失败或不存在**：`already_ended` 或 `unknown`，不做其他事。
+
+停下的一轮只有同时满足下列条件才保留会话：会话选择了对应的结束方式；Agent 插件版本在 Node 已验证的轮次边界
+清单里（目前为空：在一致性测试加入版本之前，这类停止都以 `turn_boundary_unverified` 结束会话）；这一轮的每个
+工具调用都是 `completed` 或 `failed`，且没有子代理投影；静默窗口 Q（暂定 2 秒）内没有轮次流量（标题、用量、
+模式、命令和配置通知不算）。否则会话以 `turn_not_quiescent` 结束。之后的轮次中引用已停下轮次的工具调用或子代理
+来源的更新不记入任何一轮，会话以 `turn_leak_detected` 结束。
+
+ACP 请求报错时，Agent 进程可能仍在，但 provider 会话已经失效。Agent 明确报告会话已关闭或不存在时，运行时
+丢弃这个会话的连接；下一轮先恢复，再发送 `session/prompt`。MCP 生命周期模式只恢复原 provider ID，load 失败时
+保持 blocked，这些 load 同样计入 Agent 进程替换预算。替换进程不结束 Ora 会话，也不新建 provider ID。
+普通模型错误和认证错误仍保留既有的 provider 连接。
+
+`apps/ora-node/tests/turn_boundary/probe.py` 是手动运行的 Linux 一致性探针，通过 Deno 和插件真实的 framed ACP
+桥接调用解包后未修改的 Agent 包。`PATH` 需要 Python 3.10+ 和 Deno。本地模型 fixture 驱动真实 Agent 的工具，
+不需要模型凭据，也不调用外部模型。逐项运行 `shell`、`subagent`、`background`、`error`：
+
+```sh
+python3 apps/ora-node/tests/turn_boundary/probe.py --agent opencode \
+  --package /tmp/extracted-agent-package --scenario background --output /tmp/new-probe-output
+```
+
+Claude 包使用 `--agent claude`。每次指定新的输出目录，保存包文件哈希、ACP 流量、模型请求和总结。退出码 1
+表示发现违约，或探针没能实际触发目标场景。有限时间内没有观察到违约，不自动登记版本：修改轮次边界清单前要
+综合所有场景、工具收尾与后台工作。实测数据写入 circus 运行 issue。
+
+每当会话决定结束，这份结束决定、所有未解除停止责任的停止时钟和所有待结算取消的 `session_ending` 在一个事务中
+写入，然后才向 Agent 发停止信号，所以重启后原因和时钟都不变。原因还不确定时（模型授权在 Controller 的
+`EndSession` 到达之前结束），结束决定等原因确定后再写；
+没有事先决定就写入的终态（例如重启收口）同样先结算它们，所以没有取消会缺少结论，也没有结论排在终态之后。
 
 ## 定时运行的业务事实
 

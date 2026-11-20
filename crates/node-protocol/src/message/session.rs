@@ -33,6 +33,9 @@ pub enum NodeCapability {
     /// Sessions with a prior Revision, fetched from the Git Server and restored before the agent
     /// starts; a delivery of such a session reports an unchanged prior final commit as unchanged.
     RevisionRestore,
+    /// `CancelTurn`, `TurnCancelSettled` and the per-session keep choices. Declared only to a
+    /// Controller whose `Hello` asked for it, because older Controllers decode this enum closed.
+    TurnCancel,
 }
 
 /// Controller greeting used to negotiate a protocol version for a new session.
@@ -42,6 +45,10 @@ pub struct Hello {
     /// Optional live-preview opt-in; omitted by older Controllers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thread_previews: bool,
+    /// Declares that this Controller understands `CancelTurn`, `TurnCancelSettled`, the new
+    /// rejection reason and terminal details; omitted by older Controllers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub turn_cancel: bool,
     pub controller_id: ControllerId,
     pub supported_versions: Vec<ProtocolVersion>,
 }
@@ -53,6 +60,10 @@ pub struct HelloAccepted {
     /// True only when both peers opted into ephemeral preview messages.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thread_previews: bool,
+    /// True only when the Controller declared `turn_cancel` and this Node supports it; always sent
+    /// together with the `turn_cancel` capability.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub turn_cancel: bool,
     pub selected_version: ProtocolVersion,
     pub node: NodeRuntimeIdentity,
     pub capabilities: Vec<NodeCapability>,
@@ -162,6 +173,13 @@ impl ValidateMessage for HelloAcceptedMessage {
             if !capabilities.insert(*capability) {
                 return Err(MessageValidationError::DuplicateCapability);
             }
+        }
+        // The confirmation and the capability travel together so a peer never sees one without
+        // the other, and only beside session support.
+        if payload.turn_cancel != capabilities.contains(&NodeCapability::TurnCancel)
+            || (payload.turn_cancel && !capabilities.contains(&NodeCapability::AgentSession))
+        {
+            return Err(MessageValidationError::InvalidTurnCancelNegotiation);
         }
         if capabilities.is_empty() {
             return Err(MessageValidationError::NoExecutionCapabilities);

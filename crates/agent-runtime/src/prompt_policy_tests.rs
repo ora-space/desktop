@@ -4,6 +4,8 @@
 mod plugin_replacement_tests;
 #[path = "prompt_policy_tests/restore_replay.rs"]
 mod restore_replay;
+#[path = "turn_cancel_tests.rs"]
+mod turn_cancel_tests;
 
 use super::*;
 use crate::host::SessionStore;
@@ -447,7 +449,8 @@ async fn fake_agent(
                             (Some(id), CancelReply::Confirm) => Some(json!({"jsonrpc":"2.0","id":id,"result":PromptResponse::new(StopReason::Cancelled)})),
                             (Some(id), CancelReply::EndTurn) => Some(json!({"jsonrpc":"2.0","id":id,"result":PromptResponse::new(StopReason::EndTurn)})),
                             (Some(id), CancelReply::RequestError) => Some(json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"fake cancellation failure"}})),
-                            (None, _) | (Some(_), CancelReply::Ignore) => None,
+                            (Some(id), CancelReply::Ignore) => { pending.insert(session, id); None }
+                            (None, _) => None,
                         }
                     }
                     _ => { frames.send(frame).unwrap(); None }

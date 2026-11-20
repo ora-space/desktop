@@ -3,6 +3,8 @@
 //! Session executions against the echo agent plugin, driven through the Node's `SessionHost`
 //! with an in-memory ledger in place of the Node database.
 
+#[path = "agent_session/cancel.rs"]
+mod cancel;
 #[path = "agent_session/host_mcp.rs"]
 mod host_mcp;
 #[path = "agent_session/mcp.rs"]
@@ -128,6 +130,8 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
         AgentSessionSpec {
             host_mcp_servers: Vec::new(),
             mcp_lifecycle: false,
+            keep_session_on_cancel: false,
+            keep_session_on_failure: false,
             mcp: Vec::new(),
             agent_configuration: None,
             node_id: fixture.node().node_id,
@@ -848,6 +852,8 @@ async fn an_undeclared_plugin_never_takes_the_legacy_model_route() {
         AgentSessionSpec {
             host_mcp_servers: Vec::new(),
             mcp_lifecycle: false,
+            keep_session_on_cancel: false,
+            keep_session_on_failure: false,
             mcp: Vec::new(),
             agent_configuration: None,
             node_id: fixture.node().node_id,
@@ -878,5 +884,223 @@ async fn an_undeclared_plugin_never_takes_the_legacy_model_route() {
             fixture.plugin_pids()
         ),
         (Vec::new(), Vec::<String>::new(), Vec::new())
+    );
+}
+
+/// Model access that ends at renewal stops the Agent first and records the end decision only
+/// once the Controller's `EndSession` names the reason, so a restart can never publish the
+/// provisional `model_access_revoked` (desktop#793 review).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_model_ending_records_the_reason_of_the_end_session() {
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    gateway
+        .behavior
+        .ending_at_renewal
+        .store(/*val*/ true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured(&sessions, "[hold]", "{}");
+    // The grant expires in two seconds; its renewal reports that Cloud is ending the session.
+    until(|| {
+        gateway
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(route, _)| route.contains("/renew "))
+            .then_some(())
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let before = fixture.ledger.decision();
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::EndSession(EndSessionReason::Cancelled),
+    );
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (
+            before,
+            fixture.ledger.decision().map(|decision| decision.reason),
+            ended.reason
+        ),
+        (
+            None,
+            Some(AgentSessionEndReason::Cancelled),
+            AgentSessionEndReason::Cancelled
+        )
+    );
+}
+
+/// A cancel accepted while model authorization is still pending settles at once: the initial
+/// turn was never admitted, so it is `not_started` before the grant is answered, and the session
+/// then waits for its next turn instead of running it (desktop#793 review).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancel_during_model_authorization_settles_before_the_grant() {
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    gateway
+        .behavior
+        .hold_grant
+        .store(/*val*/ true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured_keeping(
+        &sessions,
+        "never answered",
+        "{}",
+        Keep {
+            on_cancel: true,
+            on_failure: false,
+        },
+    );
+    until(|| (!gateway.requests.lock().unwrap().is_empty()).then_some(())).await;
+    fixture.command(
+        &sessions,
+        "cancel-1",
+        SessionCommand::CancelTurn(TurnId::new("turn-1")),
+    );
+    let settled = until(|| fixture.ledger.cancels().first().cloned()).await;
+    gateway
+        .behavior
+        .hold_grant
+        .store(/*val*/ false, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    fixture.command(
+        &sessions,
+        "end",
+        SessionCommand::EndSession(EndSessionReason::UserEnded),
+    );
+    fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (settled, turn_ends(&fixture)),
+        (
+            (
+                "cancel-1".to_string(),
+                ora_node_protocol::TurnCancelOutcome::NotStarted
+            ),
+            0
+        )
+    );
+}
+
+/// Model access ending with a cancel pending: the cancel is settled within its deadline even
+/// though the Controller's `EndSession` is later than that, and the end keeps the reason known
+/// when the decision had to be made (desktop#793 review).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancel_during_a_model_ending_settles_within_its_deadline() {
+    let mut fixture = Fixture::new();
+    fixture.turn_cancel.grace = std::time::Duration::from_secs(1);
+    let gateway = gateway::Gateway::new(&fixture.home());
+    gateway
+        .behavior
+        .ending_at_renewal
+        .store(/*val*/ true, std::sync::atomic::Ordering::SeqCst);
+    // The revocation hangs, as a slow gateway's would: the decision must not wait for it.
+    gateway
+        .behavior
+        .hold_revoke
+        .store(/*val*/ true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured_keeping(
+        &sessions,
+        "[hold]",
+        "{}",
+        Keep {
+            on_cancel: true,
+            on_failure: false,
+        },
+    );
+    until(|| {
+        gateway
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(route, _)| route.contains("/renew "))
+            .then_some(())
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let accepted = std::time::Instant::now();
+    fixture.ledger.accept(
+        "cancel-1",
+        SessionCommand::CancelTurn(TurnId::new("turn-1")),
+    );
+    sessions.turn_cancel_accepted(
+        &ora_node_protocol::ExecutionId::new(EXECUTION),
+        &ora_node_protocol::CommandId::new("cancel-1"),
+        tokio::time::Instant::now(),
+    );
+    let settled = until(|| fixture.ledger.cancels().first().cloned()).await;
+    let elapsed = accepted.elapsed();
+    let decided_while_revoking =
+        fixture.ledger.ended().is_none() && fixture.ledger.decision().is_some();
+    gateway
+        .behavior
+        .hold_revoke
+        .store(/*val*/ false, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        decided_while_revoking,
+        "the decision is recorded before the revocation returns"
+    );
+    fixture.command(
+        &sessions,
+        "end",
+        SessionCommand::EndSession(EndSessionReason::Cancelled),
+    );
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (settled.1, ended.detail),
+        (
+            ora_node_protocol::TurnCancelOutcome::SessionEnding,
+            Some("model_access_revoked".to_string())
+        )
+    );
+    // G is one second here; the Controller's end would only have been waited for 30 seconds.
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "settled after {elapsed:?}"
+    );
+}
+
+/// A ledger error while a preparation step runs never ends the session ahead of that step: the
+/// session stays unfinished until the held authorization returns, then ends with the ledger's
+/// failure (desktop#793 review).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ledger_error_during_preparation_waits_for_the_step() {
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    gateway
+        .behavior
+        .hold_grant
+        .store(/*val*/ true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured_keeping(
+        &sessions,
+        "never answered",
+        "{}",
+        Keep {
+            on_cancel: true,
+            on_failure: false,
+        },
+    );
+    until(|| (!gateway.requests.lock().unwrap().is_empty()).then_some(())).await;
+    fixture.ledger.fail_next_queue_read();
+    sessions.command_arrived(&ora_node_protocol::ExecutionId::new(EXECUTION));
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let ended_while_held = fixture.ledger.ended();
+    gateway
+        .behavior
+        .hold_grant
+        .store(/*val*/ false, std::sync::atomic::Ordering::SeqCst);
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (ended_while_held, ended.detail),
+        (None, Some("ledger_unavailable".to_string()))
     );
 }

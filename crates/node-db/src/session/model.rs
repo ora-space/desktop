@@ -38,6 +38,8 @@ pub enum CommandAdmission {
     McpUpdateRequired,
     Accepted,
     SessionEnded,
+    /// `CancelTurn` for a session that did not choose `keep_session_on_cancel`; nothing stored.
+    TurnCancelUnsupported,
 }
 
 /// Immutable command input, including its execution, operation and target identities.
@@ -46,6 +48,7 @@ pub enum CommandAdmission {
 pub enum SessionCommandInput {
     SubmitUserTurn(SubmitUserTurnMessage),
     EndSession(EndSessionMessage),
+    CancelTurn(CancelTurnMessage),
 }
 
 impl SessionCommandInput {
@@ -54,6 +57,7 @@ impl SessionCommandInput {
         match self {
             Self::SubmitUserTurn(m) => &m.payload.command_id,
             Self::EndSession(m) => &m.payload.command_id,
+            Self::CancelTurn(m) => &m.payload.command_id,
         }
     }
     /// Names the session that owns this queue entry.
@@ -61,6 +65,7 @@ impl SessionCommandInput {
         match self {
             Self::SubmitUserTurn(m) => &m.execution_id,
             Self::EndSession(m) => &m.execution_id,
+            Self::CancelTurn(m) => &m.execution_id,
         }
     }
     /// Preserves the operation identity rather than accepting an execution-only alias.
@@ -68,6 +73,7 @@ impl SessionCommandInput {
         match self {
             Self::SubmitUserTurn(m) => &m.operation_id,
             Self::EndSession(m) => &m.operation_id,
+            Self::CancelTurn(m) => &m.operation_id,
         }
     }
     /// Identifies the only Node permitted to admit the command.
@@ -75,6 +81,7 @@ impl SessionCommandInput {
         match self {
             Self::SubmitUserTurn(m) => &m.payload.node_id,
             Self::EndSession(m) => &m.payload.node_id,
+            Self::CancelTurn(m) => &m.payload.node_id,
         }
     }
 }
@@ -84,6 +91,7 @@ impl ValidateMessage for SessionCommandInput {
         match self {
             Self::SubmitUserTurn(m) => m.validate(),
             Self::EndSession(m) => m.validate(),
+            Self::CancelTurn(m) => m.validate(),
         }
     }
 }

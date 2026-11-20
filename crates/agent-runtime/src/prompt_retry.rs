@@ -13,8 +13,9 @@ use ora_contracts::PromptSessionEvent;
 use ora_domain::PromptInactivityPolicy;
 use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::timeout;
+use tokio::time::Instant;
 
 /// What the prompt loop does after its meaningful-activity window expired.
 pub(super) enum StalledPrompt {
@@ -22,6 +23,12 @@ pub(super) enum StalledPrompt {
     Resent(ora_acp::PendingSessionRequest<PromptResponse>),
     /// No retry is possible or the re-send failed; the loop ends the turn with this error.
     Failed(RuntimeError),
+    /// A turn cancel merged into this stop: never resend. `reusable` says whether the Agent
+    /// answered by the cancel's deadline.
+    Cancelled {
+        reusable: bool,
+        session_invalid: bool,
+    },
 }
 
 /// Cancels a stalled attempt and, while the schedule allows, re-sends the same prompt.
@@ -59,11 +66,39 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
     );
     let client = channel.connection.client.clone();
     actor.cancel(&client, permissions).await;
-    let settled = timeout(
-        CANCELLATION_GRACE,
-        settle_cancelled_prompt(actor, channel, &client, pending, events, saw_output),
-    )
-    .await;
+    // The watchdog's own grace applies until a turn cancel merges in; the first merged cancel
+    // replaces it with that cancel's deadline once, and the watchdog's cancel is that cancel's.
+    let turn_cancel = Arc::clone(&actor.turn_cancel);
+    let watchdog_deadline = Instant::now() + CANCELLATION_GRACE;
+    let settled = {
+        let settle = settle_cancelled_prompt(actor, channel, &client, pending, events, saw_output);
+        tokio::pin!(settle);
+        loop {
+            // One snapshot decides both the timer and whether to keep listening, so a cancel that
+            // arrives between two reads cannot leave the watchdog's grace in charge.
+            let merged = turn_cancel.deadline();
+            let deadline = merged.unwrap_or(watchdog_deadline);
+            tokio::select! {
+                settled = &mut settle => break Ok(settled),
+                () = tokio::time::sleep_until(deadline) => break Err(()),
+                () = turn_cancel.requested(), if merged.is_none() => {}
+            }
+        }
+    };
+    if turn_cancel.deadline().is_some() {
+        let reusable = matches!(
+            settled,
+            Ok(Some(Ok(_))) | Ok(Some(Err(ora_acp::AcpError::RequestFailed(_))))
+        );
+        if !reusable {
+            drain_queued_prompt_events(actor, channel, &client, events, saw_output).await;
+        }
+        let session_invalid = matches!(&settled, Ok(Some(Err(error))) if super::support::provider_session_invalid(error));
+        return StalledPrompt::Cancelled {
+            reusable,
+            session_invalid,
+        };
+    }
     let (cancellation_result, stop_reason) = match &settled {
         Ok(Some(Ok(response))) => ("response", Some(response.stop_reason)),
         Ok(Some(Err(_))) => ("request_error", None),
@@ -91,10 +126,19 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         Ok(Some(Ok(_) | Err(_))) | Ok(None) | Err(_) => None,
     };
     let Some(retry) = retry else {
+        let answered = matches!(
+            settled,
+            Ok(Some(Ok(_))) | Ok(Some(Err(ora_acp::AcpError::RequestFailed(_))))
+        );
         if !matches!(settled, Ok(Some(_))) {
             drain_queued_prompt_events(actor, channel, &client, events, saw_output).await;
         }
-        return StalledPrompt::Failed(agent_timed_out("agent prompt made no progress"));
+        let failure = agent_timed_out("agent prompt made no progress");
+        return StalledPrompt::Failed(if answered {
+            failure.answered()
+        } else {
+            failure
+        });
     };
     ora_warn!(session_id = %actor.session.id, retry = retry.retry, max_retries = retry.max_retries, "prompt inactive; re-sending prompt");
     let outcome = actor.recorder.record_retry();
@@ -128,6 +172,15 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         // Admission appended the host-only block last. Rotate it after the response fence;
         // otherwise the abandoned send's pending completion could authorize its replacement.
         *block = instruction();
+    }
+    // A turn cancel that arrived while the retry was being prepared still wins: the Agent
+    // confirmed the stalled attempt cancelled, so nothing is resent and the session stays usable.
+    // This check is the last step before the write, as for a first prompt.
+    if turn_cancel.deadline().is_some() {
+        return StalledPrompt::Cancelled {
+            reusable: true,
+            session_invalid: false,
+        };
     }
     match client
         .start_session_request::<_, PromptResponse>(

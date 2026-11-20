@@ -254,6 +254,8 @@ pub(super) struct ThreadMirror<L> {
     wake: Arc<Notify>,
     operation: OperationId,
     previews: super::preview::PreviewBuffer,
+    /// Tracks the current turn's tool calls and refuses lines of fenced (stopped) turns.
+    fence: Arc<super::fence::TurnFence>,
 }
 
 impl<L: SessionLedger> ThreadMirror<L> {
@@ -273,12 +275,22 @@ impl<L: SessionLedger> ThreadMirror<L> {
             wake,
             operation,
             previews,
+            fence: Arc::default(),
         }
     }
 
-    /// Attributes every line settled from now on to `turn_id`, or to no turn.
+    /// Attributes every line settled from now on to `turn_id`, or to no turn. A new turn starts
+    /// its own tool bookkeeping.
     pub(super) fn set_turn(&self, turn_id: Option<TurnId>) {
+        if turn_id.is_some() {
+            self.fence.begin_turn();
+        }
         *self.turn.lock().unwrap_or_else(PoisonError::into_inner) = turn_id;
+    }
+
+    /// The turn bookkeeping the conversation reads when a turn ends by cancel or failure.
+    pub(super) fn fence(&self) -> &super::fence::TurnFence {
+        &self.fence
     }
 
     /// Reports whether a line failed to reach the ledger.
@@ -314,8 +326,18 @@ impl<L: SessionLedger> RuntimeEvents for ThreadMirror<L> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
+        let admitted: Vec<_> = records
+            .iter()
+            .filter(|record| self.fence.admits_preview(&record.record))
+            .cloned()
+            .collect();
+        if admitted.len() != records.len() {
+            // The same leak the settled line would report; end the session without waiting.
+            ora_warn!(execution_id = %self.execution, "pending update of a stopped turn arrived in a later turn");
+            self.wake.notify_one();
+        }
         self.previews
-            .replace(&self.operation, &self.execution, turn, records);
+            .replace(&self.operation, &self.execution, turn, &admitted);
     }
     /// A Thread has no title of its own; Cloud names the run.
     fn session_title_updated(&self, _session_id: &SessionId) {}
@@ -325,6 +347,13 @@ impl<L: SessionLedger> RuntimeEvents for ThreadMirror<L> {
 
     fn record_settled(&self, _session_id: &SessionId, line: &HistoryLine) {
         if self.is_broken() {
+            return;
+        }
+        // A line naming a stopped turn's tool call or child joins no turn; the conversation
+        // ends the session with `turn_leak_detected` once woken.
+        if self.fence.observe(line) == super::fence::Admission::Leak {
+            ora_warn!(execution_id = %self.execution, "update of a stopped turn arrived in a later turn");
+            self.wake.notify_one();
             return;
         }
         let turn_id = self

@@ -32,6 +32,8 @@ pub(in crate::cloud) fn start(
             spec: AgentSessionSpec {
                 host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
+                keep_session_on_cancel: false,
+                keep_session_on_failure: false,
                 mcp: Vec::new(),
                 node_id: node.clone(),
                 agent_plugin_id: PluginId::new(spec.agent_plugin_id.clone()),
@@ -435,6 +437,8 @@ mod tests {
                     spec: AgentSessionSpec {
                         host_mcp_servers: Vec::new(),
                         mcp_lifecycle: false,
+                        keep_session_on_cancel: false,
+                        keep_session_on_failure: false,
                         mcp: Vec::new(),
                         node_id: NodeId::new("node"),
                         agent_plugin_id: PluginId::new("official/ora-space.echo"),

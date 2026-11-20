@@ -164,7 +164,7 @@ fn atomic_acceptance_deduplicates_and_reserves_resources() {
 }
 
 /// Faults are armed after initialization so tests reach the exact transactional boundary.
-struct Fault(std::rc::Rc<std::cell::Cell<Option<WritePoint>>>);
+pub(super) struct Fault(pub(super) std::rc::Rc<std::cell::Cell<Option<WritePoint>>>);
 impl WriteGuard for Fault {
     /// Fails only the requested write without faking SQLite persistence.
     fn before_write(&self, point: WritePoint) -> Result<(), Error> {
@@ -363,7 +363,7 @@ fn remove_direct_git_schema(connection: &Connection) {
 
 /// Reconstructs an exact pre-v14 schema; production has no downgrade path.
 fn remove_session_stop_schema(connection: &Connection) {
-    connection.execute_batch("DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
+    connection.execute_batch("DROP TABLE session_turn_cancels; DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
 DROP INDEX queued_session_commands;
 ALTER TABLE session_commands RENAME TO new_session_commands;
 CREATE TABLE session_commands (

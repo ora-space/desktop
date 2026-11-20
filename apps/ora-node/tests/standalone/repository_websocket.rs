@@ -34,6 +34,7 @@ async fn hello(endpoint: &WsEndpoint) -> (ClientReceiver, SessionSender) {
                     protocol_version: CURRENT_PROTOCOL_VERSION,
                     payload: Hello {
                         thread_previews: false,
+                        turn_cancel: false,
                         controller_id: ControllerId::new("owner"),
                         supported_versions: vec![CURRENT_PROTOCOL_VERSION],
                     },
@@ -595,6 +596,7 @@ fn node_closes_sessions_with_the_reason_code() {
                         protocol_version: CURRENT_PROTOCOL_VERSION,
                         payload: Hello {
                             thread_previews: false,
+                            turn_cancel: false,
                             controller_id: ControllerId::new("intruder"),
                             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
                         },

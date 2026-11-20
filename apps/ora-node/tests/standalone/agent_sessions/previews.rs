@@ -29,6 +29,7 @@ fn negotiated_preview_streams_before_the_agent_turn_finishes() {
                             controller_id: ControllerId::new("owner"),
                             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
                             thread_previews: true,
+                            turn_cancel: false,
                         },
                     }),
                 )

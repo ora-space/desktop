@@ -195,6 +195,8 @@ impl<G: WriteGuard> SessionJournal<G> {
         execution: &ExecutionId,
         ended: &AgentSessionEnded,
     ) -> Result<(), Error> {
+        // Pending cancels are settled only with the full end decision, which also anchors the
+        // stop clock (`decide_session_end`), never by this restore-owned intention.
         let db = self.lock()?;
         db.guard.before_write(WritePoint::Progress)?;
         db.connection.execute("UPDATE session_restores SET deferred_end=?2 WHERE execution=?1 AND deferred_end IS NULL", params![execution.as_str(), serde_json::to_string(ended)?])?;

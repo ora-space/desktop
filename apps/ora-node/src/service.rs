@@ -147,6 +147,9 @@ struct SessionInfo {
     identity: NodeRuntimeIdentity,
     controller: ControllerId,
     capabilities: Vec<NodeCapability>,
+    /// Present when this Node runs sessions: the handshake reads it to decide `turn_cancel` and
+    /// whether a Controller that did not negotiate it may take over (D5).
+    keep_sessions: Option<ora_node_db::SessionJournal>,
     /// Advertised beside `model_proxy`; absent when this Node cannot run plugin-owned adapters.
     model_adapter: Option<ora_node_protocol::ModelAdapterCapability>,
 }

@@ -321,13 +321,33 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             "Controller does not own this Node",
         ));
     }
+    let turn_cancel = hello.payload.turn_cancel && info.keep_sessions.is_some();
+    // A Controller that cannot read `TurnCancelSettled` must not take over sessions that chose a
+    // keep behaviour; refusing the connection before any event or command keeps the reason
+    // diagnosable and changes no execution (D5).
+    if !turn_cancel
+        && let Some(journal) = &info.keep_sessions
+        && journal
+            .has_undrained_keep_sessions()
+            .map_err(|_| Failure::local(CloseReason::InternalError, "ledger unavailable"))?
+    {
+        return Err(Failure::local(
+            CloseReason::IdentityMismatch,
+            "sessions that chose turn_cancel need a Controller that negotiates it",
+        ));
+    }
+    let mut capabilities = info.capabilities.clone();
+    if turn_cancel {
+        capabilities.push(NodeCapability::TurnCancel);
+    }
     let response = NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: HelloAccepted {
             thread_previews: hello.payload.thread_previews && info.agents.is_some(),
+            turn_cancel,
             selected_version: CURRENT_PROTOCOL_VERSION,
             node: info.identity.clone(),
-            capabilities: info.capabilities.clone(),
+            capabilities,
             model_adapter: info.model_adapter.clone(),
         },
     });
@@ -446,6 +466,15 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                     "Controller exceeded unanswered request limit",
                 ));
             };
+            // A keep choice is only valid over a connection that negotiated `turn_cancel`: this
+            // Controller could neither read the events it causes nor take the session over
+            // again. It is refused before durable admission, like an unknown field would be.
+            if needs_turn_cancel(&message) && !turn_cancel {
+                return Err(Failure::local(
+                    CloseReason::ProtocolViolation,
+                    "a turn_cancel message or keep choice without negotiating turn_cancel",
+                ));
+            }
             // Enqueueing in read order keeps the worker's FIFO equal to the Controller's order.
             let ack = match &message {
                 ControllerToNodeMessage::EventAck(ack) => Some(ack.clone()),
@@ -566,4 +595,16 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
         result = write => result,
         result = replay => result,
     }
+}
+
+/// Whether a message is only valid over a connection that negotiated `turn_cancel`: a
+/// `CancelTurn`, or a session start through either entry that chose a keep behaviour.
+pub(super) fn needs_turn_cancel(message: &ControllerToNodeMessage) -> bool {
+    let spec = match message {
+        ControllerToNodeMessage::CancelTurn(_) => return true,
+        ControllerToNodeMessage::StartAgentSession(start) => &start.payload.spec,
+        ControllerToNodeMessage::ControlledStartAgentSession(start) => &start.command.payload.spec,
+        _ => return false,
+    };
+    spec.keep_session_on_cancel || spec.keep_session_on_failure
 }

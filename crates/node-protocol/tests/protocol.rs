@@ -26,6 +26,8 @@ mod session;
 mod support;
 #[path = "protocol/thread_preview.rs"]
 mod thread_preview;
+#[path = "protocol/turn_cancel.rs"]
+mod turn_cancel;
 #[path = "protocol/worktree.rs"]
 mod worktree;
 

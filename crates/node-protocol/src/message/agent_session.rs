@@ -65,6 +65,8 @@ pub enum SessionCommandRejection {
     SessionEnded,
     /// Retry the unchanged command after delivering its required configuration generation.
     McpUpdateRequired,
+    /// `CancelTurn` for a session that did not choose `keep_session_on_cancel`; nothing changed.
+    TurnCancelUnsupported,
 }
 
 /// Only terminal refusals are delivered; MCP update requirements leave the command retryable.

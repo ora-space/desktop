@@ -75,3 +75,26 @@ fn agent_failures_are_terminal_while_typed_mcp_and_busy_results_wait() {
         "busy"
     )));
 }
+
+/// A queued turn whose MCP wait reached its deadline counts as timed out for whoever settles it
+/// first; one that has not, or was never blocked, does not.
+#[tokio::test(start_paused = true)]
+async fn an_expired_queued_wait_is_timed_out_before_a_cancel_decides_it() {
+    let first = Instant::now();
+    let blocked = std::collections::HashMap::from([
+        (ora_node_protocol::TurnId::new("a"), first),
+        (
+            ora_node_protocol::TurnId::new("b"),
+            first + std::time::Duration::from_secs(1),
+        ),
+    ]);
+    let at_deadline = first + MCP_WAIT;
+    assert_eq!(
+        (
+            mcp_wait_expired(&blocked, &ora_node_protocol::TurnId::new("a"), at_deadline),
+            mcp_wait_expired(&blocked, &ora_node_protocol::TurnId::new("b"), at_deadline),
+            mcp_wait_expired(&blocked, &ora_node_protocol::TurnId::new("c"), at_deadline),
+        ),
+        (true, false, false)
+    );
+}

@@ -255,7 +255,13 @@ fn a_live_actor_answers_its_own_load() {
                     .actors
                     .write()
                     .expect("actor registry")
-                    .insert(SessionId::new(SESSION_ID), RuntimeActorHandle { commands });
+                    .insert(
+                        SessionId::new(SESSION_ID),
+                        RuntimeActorHandle {
+                            commands,
+                            turn_cancel: Default::default(),
+                        },
+                    );
 
                 let loading = tokio::spawn({
                     let manager = manager.clone();

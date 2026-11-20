@@ -9,7 +9,7 @@ use agent_client_protocol_schema::v1::{
     CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk, Implementation,
     InitializeRequest, InitializeResponse, McpCapabilities, NewSessionRequest, NewSessionResponse,
     PromptRequest, PromptResponse, SessionCapabilities, SessionCloseCapabilities,
-    SessionNotification, SessionUpdate, StopReason, TextContent,
+    SessionNotification, SessionUpdate, StopReason, TextContent, ToolCallStatus,
 };
 use ora_plugin_protocol::{
     AGENT_ACP_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_START_METHOD, AGENT_STOP_METHOD,
@@ -24,6 +24,8 @@ use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
+
+use crate::mcp_checks::{record_host_mcp, verify_mcp_frame};
 use tokio::io::{Stdout, stdin, stdout};
 
 /// Identity of the one host request this fixture sends.
@@ -36,6 +38,23 @@ const LARGE_ANSWER_BYTES: usize = 300 * 1024;
 struct PendingPrompt {
     request_id: Value,
     session_id: String,
+    /// What the fixture sends right after it answers a cancel of this prompt.
+    after_cancel: AfterCancel,
+    /// Answers a cancel with `end_turn`, as an Agent that finished first would.
+    finishing: bool,
+}
+
+/// Traffic a held prompt sends after it answered a cancel.
+#[derive(Clone, Copy, Default)]
+enum AfterCancel {
+    #[default]
+    Nothing,
+    /// One more message chunk: turn traffic after the response fence.
+    Message,
+    /// A session title: a session-level notification, which belongs to no turn.
+    Title,
+    /// Some providers discard their session while returning an error to the cancelled prompt.
+    SessionClosed,
 }
 
 /// Everything the fixture remembers between frames.
@@ -149,12 +168,43 @@ impl EchoAgent {
                     .held
                     .take_if(|held| held.session_id == cancel.session_id.to_string())
                 {
-                    respond(
-                        output,
-                        held.request_id,
-                        &PromptResponse::new(StopReason::Cancelled),
-                    )
-                    .await?;
+                    // A `[hold-finishing]` turn finished on its own just as the cancel arrived.
+                    let stop_reason = if held.finishing {
+                        StopReason::EndTurn
+                    } else {
+                        StopReason::Cancelled
+                    };
+                    if matches!(held.after_cancel, AfterCancel::SessionClosed) {
+                        self.sessions.remove(&held.session_id);
+                        acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":held.request_id,"error":{"code":-32603,"message":"Session is closed"}})).await?;
+                    } else {
+                        respond(output, held.request_id, &PromptResponse::new(stop_reason)).await?;
+                    }
+                    // Traffic that follows the answer is sent a little later, as an Agent's late
+                    // output would be, so the host has settled the answer before it arrives.
+                    if !matches!(
+                        held.after_cancel,
+                        AfterCancel::Nothing | AfterCancel::SessionClosed
+                    ) {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    match held.after_cancel {
+                        AfterCancel::Nothing | AfterCancel::SessionClosed => {}
+                        AfterCancel::Message => {
+                            message(output, &held.session_id, "still talking").await?;
+                        }
+                        AfterCancel::Title => {
+                            update(
+                                output,
+                                &held.session_id,
+                                SessionUpdate::SessionInfoUpdate(
+                                    agent_client_protocol_schema::v1::SessionInfoUpdate::new()
+                                        .title("Echo title"),
+                                ),
+                            )
+                            .await?;
+                        }
+                    }
                 }
             }
             return Ok(());
@@ -214,6 +264,9 @@ impl EchoAgent {
         if method == AGENT_METHOD_NAMES.session_load {
             record_acp_method("session/load");
             record_host_mcp(AGENT_METHOD_NAMES.session_load, &params);
+            if std::path::Path::new("fail-load").exists() {
+                return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32602,"message":"unknown provider session"}})).await;
+            }
             if let Some(delay) = std::fs::read_to_string("load-delay-ms")
                 .ok()
                 .and_then(|value| value.trim().parse::<u64>().ok())
@@ -262,6 +315,10 @@ impl EchoAgent {
         request: PromptRequest,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let session_id = request.session_id.to_string();
+        record_acp_method("session/prompt");
+        if !self.sessions.contains_key(&session_id) {
+            return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32602,"message":"unknown provider session"}})).await;
+        }
         if let Ok(delay) = std::fs::read_to_string("prompt-delay-ms") {
             std::fs::remove_file("prompt-delay-ms")?;
             let until = tokio::time::Instant::now()
@@ -284,6 +341,10 @@ impl EchoAgent {
             .collect::<Vec<_>>()
             .join("\n");
         let cwd = self.sessions.get(&session_id).cloned().unwrap_or_default();
+        if text.contains("[session-closed]") {
+            self.sessions.remove(&session_id);
+            return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32603,"message":"Session is closed"}})).await;
+        }
         if text.contains("[mcp]") {
             message(
                 output,
@@ -313,11 +374,62 @@ impl EchoAgent {
             )
             .await;
         }
-        if text.contains("[hold]") {
-            message(output, &session_id, "holding").await?;
+        if text.contains("[ignore-cancel]") {
+            // Never answers, not even a cancel: the host's cancel deadline must end the session.
+            message(output, &session_id, "ignoring").await?;
+            return Ok(());
+        }
+        if text.contains("[leak-running]") {
+            // Names the `[hold-done-tool]` turn's tool call with a status that keeps the record
+            // pending, so it would reach only the live preview, then holds.
+            tool(output, &session_id, "echo-tool", ToolCallStatus::InProgress).await?;
             self.held = Some(PendingPrompt {
                 request_id: id,
                 session_id,
+                after_cancel: AfterCancel::Nothing,
+                finishing: false,
+            });
+            return Ok(());
+        }
+        if text.contains("[leak]") {
+            // Names the tool call a `[hold-done-tool]` turn ran, as if that turn still produced.
+            tool(output, &session_id, "echo-tool", ToolCallStatus::Completed).await?;
+            return respond(output, id, &PromptResponse::new(StopReason::EndTurn)).await;
+        }
+        if text.contains("[hold") {
+            message(output, &session_id, "holding").await?;
+            if text.contains("[hold-many]") {
+                for number in 0..300 {
+                    tool(
+                        output,
+                        &session_id,
+                        &format!("tool-{number}"),
+                        ToolCallStatus::Completed,
+                    )
+                    .await?;
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            }
+            if text.contains("[hold-running-tool]") {
+                tool(output, &session_id, "echo-tool", ToolCallStatus::InProgress).await?;
+            }
+            if text.contains("[hold-done-tool]") {
+                tool(output, &session_id, "echo-tool", ToolCallStatus::Completed).await?;
+            }
+            let after_cancel = if text.contains("[hold-chatty]") {
+                AfterCancel::Message
+            } else if text.contains("[hold-titled]") {
+                AfterCancel::Title
+            } else if text.contains("[hold-close]") {
+                AfterCancel::SessionClosed
+            } else {
+                AfterCancel::Nothing
+            };
+            self.held = Some(PendingPrompt {
+                request_id: id,
+                session_id,
+                after_cancel,
+                finishing: text.contains("[hold-finishing]"),
             });
             return Ok(());
         }
@@ -349,6 +461,8 @@ impl EchoAgent {
             self.committing = Some(PendingPrompt {
                 request_id: id,
                 session_id,
+                after_cancel: AfterCancel::Nothing,
+                finishing: false,
             });
             return Ok(());
         }
@@ -404,6 +518,42 @@ impl EchoAgent {
         }
         Ok(())
     }
+}
+
+/// Streams one session update.
+async fn update(
+    output: &mut Stdout,
+    session_id: &str,
+    update: SessionUpdate,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let notification = SessionNotification::new(session_id.to_string(), update);
+    acp(
+        output,
+        json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "method": CLIENT_METHOD_NAMES.session_update,
+            "params": notification,
+        }),
+    )
+    .await
+}
+
+/// Reports one tool call with the given status.
+async fn tool(
+    output: &mut Stdout,
+    session_id: &str,
+    tool_call_id: &str,
+    status: ToolCallStatus,
+) -> Result<(), Box<dyn std::error::Error>> {
+    update(
+        output,
+        session_id,
+        SessionUpdate::ToolCall(
+            agent_client_protocol_schema::v1::ToolCall::new(tool_call_id.to_owned(), "Echo tool")
+                .status(status),
+        ),
+    )
+    .await
 }
 
 /// Streams one agent message chunk to the session.
@@ -578,116 +728,4 @@ fn record_acp_method(method: &str) {
     {
         let _ = writeln!(file, "{method}");
     }
-}
-
-/// Host MCP secret a test sends; it appears only here and in the test's in-memory input.
-const HOST_MCP_SECRET: &str = "m1264-host-secret";
-
-/// Records, per setup request, whether the host part of `mcpServers` is exactly the one test input
-/// and follows every plugin server. Only the verdict reaches the file, never a host value.
-fn record_host_mcp(method: &str, params: &Value) {
-    let Ok(port) = std::fs::read_to_string("host-mcp-port") else {
-        return;
-    };
-    let servers = params["mcpServers"].as_array().cloned().unwrap_or_default();
-    let split = servers
-        .iter()
-        .position(|server| {
-            server["name"]
-                .as_str()
-                .is_some_and(|name| name.starts_with("ora-"))
-        })
-        .unwrap_or(servers.len());
-    let (plugins, hosts) = servers.split_at(split);
-    let header = |value: String| {
-        vec![agent_client_protocol_schema::v1::HttpHeader::new(
-            "authorization",
-            value,
-        )]
-    };
-    let expected = [
-        agent_client_protocol_schema::v1::McpServerHttp::new(
-            "ora-alpha",
-            format!("http://127.0.0.1:{}/mcp/{HOST_MCP_SECRET}", port.trim()),
-        )
-        .headers(header(format!("Bearer {HOST_MCP_SECRET}"))),
-        agent_client_protocol_schema::v1::McpServerHttp::new("ora-beta", "http://[::1]:41235/mcp"),
-    ]
-    .into_iter()
-    .map(|server| {
-        serde_json::to_value(agent_client_protocol_schema::v1::McpServer::Http(server))
-            .unwrap_or(Value::Null)
-    })
-    .collect::<Vec<_>>();
-    let verdict = if hosts.is_empty() {
-        "none"
-    } else if hosts == expected.as_slice()
-        && plugins.iter().all(|server| {
-            !server["name"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("ora-")
-        })
-    {
-        "verified"
-    } else {
-        "mismatch"
-    };
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("echo-host-mcp")
-    {
-        let _ = writeln!(file, "{method} plugins={} host={verdict}", plugins.len());
-    }
-}
-
-/// Asserts the actual ACP frame entirely in memory; fixture secrets never enter transcript/files.
-fn verify_mcp_frame(params: &Value) -> bool {
-    let Some(command) = params
-        .pointer("/mcpServers/0/command")
-        .and_then(Value::as_str)
-    else {
-        return false;
-    };
-    // Host servers (`ora-` names) follow the plugin servers and are checked by `record_host_mcp`.
-    let plugins = params["mcpServers"]
-        .as_array()
-        .map(|servers| {
-            servers
-                .iter()
-                .filter(|server| {
-                    !server["name"]
-                        .as_str()
-                        .is_some_and(|name| name.starts_with("ora-"))
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    std::path::Path::new(command).is_file()
-        && command_is_in_required_view(std::path::Path::new(command))
-        && Value::Array(plugins)
-            == json!([
-                {"name":"official/acme.stdio", "command":command,
-                 "args":[params["cwd"], "arg-m938-runtime-secret"],
-                 "env":[{"name":"TOKEN", "value":"m938-runtime-secret"}]},
-                {"type":"http", "name":"official/acme.web", "url":"https://mcp.example.test/mcp",
-                 "headers":[{"name":"Authorization", "value":"Bearer m938-runtime-secret"}]}
-            ])
-}
-
-/// Separate workloads must receive the command through their view, never the private Node home.
-fn command_is_in_required_view(command: &std::path::Path) -> bool {
-    let Ok(bytes) = std::fs::read("mcp-command-view.json") else {
-        return true;
-    };
-    let Ok(bounds) = serde_json::from_slice::<Value>(&bytes) else {
-        return false;
-    };
-    let (Some(workload), Some(home)) = (bounds["workload"].as_str(), bounds["home"].as_str())
-    else {
-        return false;
-    };
-    command.starts_with(workload) && !command.starts_with(home)
 }

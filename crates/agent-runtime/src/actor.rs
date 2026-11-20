@@ -49,12 +49,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 Some(channel) => {
                     // Residual events belong to the previous provider turn. Consume the current
                     // queue snapshot before accepting a new command so they cannot cross turns.
-                    drain_idle_events(
+                    // Turn traffic among them is remembered for a caller judging a stopped turn.
+                    if drain_idle_events(
                         &channel.connection.client,
                         &mut channel.events,
                         &command_sender,
                     )
-                    .await;
+                    .await
+                    {
+                        self.turn_cancel.note_idle_traffic();
+                    }
                     if let Ok(control) = channel.controls.try_recv() {
                         self.handle_idle_control(Some(control)).await;
                         continue;
@@ -66,12 +70,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             continue;
                         }
                         command = self.commands.recv() => {
-                            drain_idle_events(
+                            if drain_idle_events(
                                 &channel.connection.client,
                                 &mut channel.events,
                                 &command_sender,
                             )
-                            .await;
+                            .await
+                            {
+                                self.turn_cancel.note_idle_traffic();
+                            }
                             command
                         }
                         event = channel.events.recv() => {
@@ -79,6 +86,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                 self.mark_stopped();
                                 continue;
                             };
+                            if super::events::is_turn_traffic(&event) {
+                                self.turn_cancel.note_idle_traffic();
+                            }
                             if let SessionEvent::Update(update) = &event
                                 && let Some(command_sender) = command_sender.upgrade()
                             {
@@ -124,6 +134,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     events,
                     accepted,
                 } => {
+                    // A turn cancel addressed to an earlier prompt must not stop this one; one
+                    // requested from here on, even before the write, does.
+                    self.turn_cancel.clear();
                     // Conversations are opened without a provider, so a send is where one is
                     // acquired. Admission waits on that: a prompt that cannot reach an agent, or
                     // that cannot be given the MCP set configured right now, has to fail as the
@@ -179,6 +192,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     }));
                 }
                 RuntimeCommand::CancelActivePrompt => {}
+                RuntimeCommand::TakeIdleTurnTraffic { response } => {
+                    // The idle loop drained the queue before dispatching this command.
+                    let _ = response.send(self.turn_cancel.take_idle_traffic());
+                }
                 RuntimeCommand::Cancel {
                     operation_id,
                     completion,
@@ -466,6 +483,7 @@ mod tests {
             session_mcp: NoSessionMcp::default(),
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
+            turn_cancel: Default::default(),
             #[cfg(feature = "test-support")]
             test_prompt_inactivity_windows: None,
             exit_probe: Some(exit_sender),
@@ -547,6 +565,7 @@ mod tests {
             session_mcp: NoSessionMcp::default(),
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
+            turn_cancel: Default::default(),
             #[cfg(feature = "test-support")]
             test_prompt_inactivity_windows: None,
             exit_probe: None,

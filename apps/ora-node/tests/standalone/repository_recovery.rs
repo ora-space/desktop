@@ -339,7 +339,7 @@ fn upgrade_settles_the_retired_hosts_attempt_and_removes_its_directory() {
         rusqlite::Connection::open(&database)
             .unwrap()
             .execute_batch(
-                "DROP TABLE session_stop_audit; DROP TABLE session_stop_ends;
+                "DROP TABLE session_turn_cancels; DROP TABLE session_stop_audit; DROP TABLE session_stop_ends;
                  DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
 DROP INDEX queued_session_commands;
 ALTER TABLE session_commands RENAME TO new_session_commands;

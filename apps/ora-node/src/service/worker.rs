@@ -167,6 +167,11 @@ pub(super) fn run(
     }
     let model_adapter = agents.as_ref().and_then(agents::SessionHost::model_adapter);
     let info = SessionInfo {
+        keep_sessions: agents
+            .is_some()
+            .then(|| node.database.session_journal())
+            .transpose()
+            .map_err(|e| e.to_string())?,
         model_adapter,
         agents: agents.clone(),
         grants,
@@ -407,6 +412,26 @@ fn handle(
                 controller,
                 ora_node_db::SessionCommandInput::SubmitUserTurn(input),
             )
+        }
+        Request::Message(ControllerToNodeMessage::CancelTurn(input)) => {
+            let host = agents.ok_or(crate::Error::UnsupportedMessage)?;
+            let execution = input.execution_id.clone();
+            let command = input.payload.command_id.clone();
+            let replies = agents::command(
+                node,
+                host,
+                controller,
+                ora_node_db::SessionCommandInput::CancelTurn(input),
+            )?;
+            // The settlement is due from acceptance (D1, D4), so the session is woken here, by the
+            // durable acceptance itself, rather than once the reply reached the Controller.
+            if replies
+                .iter()
+                .any(|reply| matches!(reply, NodeToControllerMessage::SessionCommandAccepted(_)))
+            {
+                host.turn_cancel_accepted(&execution, &command, tokio::time::Instant::now());
+            }
+            Ok(replies)
         }
         Request::Message(ControllerToNodeMessage::EndSession(input)) => {
             agents.ok_or(crate::Error::UnsupportedMessage)?;

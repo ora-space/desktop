@@ -42,6 +42,7 @@ a response to an earlier Hello and enforcing handshake order belong to the sessi
 | `runtime_control` | `bind_runtime` and the `controlled_*` envelopes | `runtime_control_state` |
 | `plugin_install` | `install_plugins`, `remove_plugins` | `plugins_result` |
 | `agent_session` | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected` |
+| `turn_cancel` | `cancel_turn`; `keep_session_on_cancel` / `keep_session_on_failure` in a session start | `turn_cancel_settled`, `session_command_rejected{turn_cancel_unsupported}` |
 | `shared_checkout_sessions` | Up to 8 unfinished Agent sessions per checkout, with restore fencing | Refused starts end as `agent_failed{checkout_busy}` or `agent_failed{checkout_session_limit}` without closing the connection |
 | `model_proxy` | Model-bound session starts | `model_adapter` in `hello_accepted` (see below) |
 | `revision_delivery` | `deliver_revision`, `upload_grant` | `revision_result`, `upload_grant_needed` |
@@ -96,6 +97,19 @@ fact). See [Runtime control](../controller/runtime-control.md).
   marks a shortened one) and shares the execution's gap-free sequence with the terminal
   `agent_session_ended`, whose `detail` is a short snake_case code. Commands carry a `command_id`;
   their replies have no sequence and need no acknowledgement, and a lost reply is recovered by resending.
+- **Turn cancel.** A Controller asks for it with `turn_cancel: true` in `hello`; only then does the
+  Node answer `turn_cancel: true` and add the `turn_cancel` capability, so an older Controller, which
+  decodes capabilities as a closed set, sees the handshake unchanged. Over such a connection a session
+  start may set `keep_session_on_cancel` and `keep_session_on_failure` (omitted means `false`; they
+  are part of the compared input); a start that sets either over a connection that did not negotiate
+  `turn_cancel` is a protocol violation and is refused before admission. `cancel_turn { node_id, command_id, turn_id }` is accepted like
+  any session command, refused with `turn_cancel_unsupported` when the session did not choose
+  `keep_session_on_cancel`, and gets exactly one sequenced, acknowledged `turn_cancel_settled
+  { command_id, turn_id, outcome }`, where `outcome` is `stopped`, `not_started`, `already_ended`,
+  `unknown` or `session_ending` (the session will not be kept; not a terminal and not proof that the
+  Agent stopped). While a session that chose either behaviour is unfinished or has unacknowledged
+  events, a Controller that did not negotiate `turn_cancel` is refused with `4403` before
+  `hello_accepted`. See [Agent sessions](agent-sessions.md#cancelling-one-turn).
 - **Revisions.** A delivery names the ended session, the clone, the base commit, a ref under
   `refs/ora/revisions/`, the Git Server `git_repository_url`, a `delivery_ref` under
   `refs/ora/deliveries/`, the `workspace_ref` and one history object key. `revision_delivered`

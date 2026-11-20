@@ -8,6 +8,7 @@ mod mcp;
 mod recovery;
 mod restore;
 mod stop;
+mod turn_cancel;
 
 /// Supplies valid immutable input independently of the agent runtime.
 pub(super) fn command() -> StartAgentSessionMessage {
@@ -19,6 +20,8 @@ pub(super) fn command() -> StartAgentSessionMessage {
             spec: AgentSessionSpec {
                 host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
+                keep_session_on_cancel: false,
+                keep_session_on_failure: false,
                 mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("node"),

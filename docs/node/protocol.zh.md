@@ -41,6 +41,7 @@ ADR。
 | `shared_checkout_sessions` | 每个 checkout 最多 8 个未结束 Agent 会话，恢复围栏不变 | 拒绝的启动以 `agent_failed{checkout_busy}` 或 `agent_failed{checkout_session_limit}` 结束，不关闭连接 |
 | `model_proxy` | 绑定了模型的会话启动 | `hello_accepted` 中的 `model_adapter`（见下文） |
 | `revision_delivery` | `deliver_revision`、`upload_grant` | `revision_result`、`upload_grant_needed` |
+| `turn_cancel` | `cancel_turn`；会话启动中的 `keep_session_on_cancel` / `keep_session_on_failure` | `turn_cancel_settled`、`session_command_rejected{turn_cancel_unsupported}` |
 | `revision_restore` | 带 `prior_revision` 的 `start_agent_session` | `agent_session_ended` 中的恢复失败代码 |
 
 始终可用：`hello`、`heartbeat`、`get_execution_status` / `execution_status` 和 `event_ack`。编解码器只校验声明；
@@ -78,6 +79,16 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
   `thread_event` 携带一条已定稿的 `ora-history` 记录，作为最多 256 KiB 的不透明 JSON 对象（`truncated` 标记被截短的
   记录），并与终止的 `agent_session_ended` 共享该执行无间隙的序号，后者的 `detail` 是一个简短的 snake_case 代码。
   命令带 `command_id`；它们的回复没有序号，不需要确认，丢失的回复靠重发找回。
+- **取消一轮。** Controller 在 `hello` 中以 `turn_cancel: true` 声明；只有这样，Node 才回 `turn_cancel: true` 并
+  加上 `turn_cancel` 能力。旧 Controller 把能力当作封闭集合解码，看到的握手与之前相同。在这样的连接上，会话启动
+  可以设置 `keep_session_on_cancel` 和 `keep_session_on_failure`（省略即 `false`，参与输入比较）；在没有协商
+  `turn_cancel` 的连接上设置其中任一项属于协议违规，在受理之前就被拒绝。
+  `cancel_turn { node_id, command_id, turn_id }` 与其他会话命令一样受理；会话没有选择 `keep_session_on_cancel` 时以
+  `turn_cancel_unsupported` 拒绝。每个受理的取消恰好得到一条带序号、需确认的 `turn_cancel_settled
+  { command_id, turn_id, outcome }`，`outcome` 为 `stopped`、`not_started`、`already_ended`、`unknown` 或
+  `session_ending`（会话不会保留；不是终态，也不证明 Agent 已停止）。只要还有选择了任一行为、尚未结束或仍有未确认
+  事件的会话，没有协商 `turn_cancel` 的 Controller 就在 `hello_accepted` 之前被以 `4403` 拒绝。见
+  [Agent 会话](agent-sessions.zh.md#取消一轮)。
 - **Revision。** 交付指明已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的一个 ref、Git Server 的
   `git_repository_url`、`refs/ora/deliveries/` 下的 `delivery_ref`、`workspace_ref` 和一个会话历史对象 key。
   `revision_delivered` 要求最终 commit 与基础 commit 不同；`revision_unchanged` 允许等于基础 commit，或在有

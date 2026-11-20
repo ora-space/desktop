@@ -42,6 +42,7 @@ mod support;
 mod suspend;
 mod title_acquisition;
 mod tool_timing;
+mod turn_cancel;
 
 #[cfg(feature = "test-support")]
 mod test_support;
@@ -162,6 +163,8 @@ struct ManagerInner<H: AgentRuntimeHost> {
 #[derive(Clone)]
 struct RuntimeActorHandle {
     commands: mpsc::UnboundedSender<RuntimeCommand>,
+    /// Shared with the actor so a turn cancel is seen before the prompt write and by the watchdog.
+    turn_cancel: Arc<turn_cancel::TurnCancelState>,
 }
 
 struct RuntimeActor<H: AgentRuntimeHost> {
@@ -201,6 +204,7 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     session_mcp: H::Setup,
     barriers: Arc<AgentSessionBarriers>,
     live_mcp: LiveMcpState,
+    turn_cancel: Arc<turn_cancel::TurnCancelState>,
     /// E2E-only schedule copied from the manager; production uses the shared constant.
     #[cfg(feature = "test-support")]
     test_prompt_inactivity_windows: Option<&'static [Duration]>,
@@ -585,6 +589,45 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         Ok(CancelSessionPromptResponse {})
     }
 
+    /// Cancels the session's current prompt for a caller that must know whether the Agent
+    /// answered by `deadline`. Unlike [`Self::cancel_session_prompt`], an unanswered cancel ends
+    /// the prompt stream with an error instead of a cancelled completion, a prompt admitted but
+    /// not yet written is never written, and a watchdog cancel already in progress is not resent.
+    /// The first request of a prompt fixes the deadline.
+    pub fn cancel_turn_prompt(
+        &self,
+        session_id: &str,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), RuntimeError> {
+        let session = self.find_session(session_id)?;
+        if let Some(handle) = self.lookup_actor(&session.id)? {
+            handle.turn_cancel.request(deadline);
+            handle
+                .commands
+                .send(RuntimeCommand::CancelActivePrompt)
+                .map_err(runtime_unavailable_with)?;
+        }
+        Ok(())
+    }
+
+    /// Reports whether turn traffic arrived on the idle session since its last prompt was
+    /// admitted: anything but session-level notifications, including permission requests, which
+    /// the idle actor answers cancelled. The idle actor settles such traffic as it arrives, so it
+    /// never reaches the next prompt; reading the report forgets it. A busy actor answers `true`,
+    /// because it cannot prove the session quiet.
+    pub async fn take_idle_turn_traffic(&self, session_id: &str) -> Result<bool, RuntimeError> {
+        let session = self.find_session(session_id)?;
+        let Some(handle) = self.lookup_actor(&session.id)? else {
+            return Ok(false);
+        };
+        let (response, received) = oneshot::channel();
+        handle
+            .commands
+            .send(RuntimeCommand::TakeIdleTurnTraffic { response })
+            .map_err(runtime_unavailable_with)?;
+        received.await.map_err(runtime_unavailable_with)
+    }
+
     /// Stops one logical session without terminating its shared CLI process.
     pub async fn stop_session(
         &self,
@@ -723,6 +766,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         let (commands, receiver) = mpsc::unbounded_channel();
         let handle = RuntimeActorHandle {
             commands: commands.clone(),
+            turn_cancel: Arc::default(),
         };
         actors.insert(session.id.clone(), handle.clone());
         #[cfg(feature = "test-support")]
@@ -755,6 +799,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 session_mcp: setup.session_mcp,
                 barriers: self.inner.barriers.clone(),
                 live_mcp: setup.live_mcp,
+                turn_cancel: Arc::clone(&handle.turn_cancel),
                 #[cfg(feature = "test-support")]
                 test_prompt_inactivity_windows,
                 #[cfg(test)]

@@ -8,6 +8,7 @@
 
 mod driver;
 mod end;
+mod fence;
 mod host;
 mod ledger;
 mod mcp;
@@ -34,8 +35,8 @@ pub(crate) use workload::purge_workload_directory;
 
 use chrono_tz::Tz;
 use ora_node_protocol::{
-    AgentSessionEndReason, AgentSessionEnded, AgentSessionSpec, ExecutionId, NodeRuntimeIdentity,
-    OperationId,
+    AgentSessionEndReason, AgentSessionEnded, AgentSessionSpec, CommandId, ExecutionId,
+    NodeRuntimeIdentity, OperationId,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -60,6 +61,35 @@ pub struct SessionConfig {
     pub model_proxy: Option<crate::ModelProxyConfig>,
     /// Which OS identity agents run as, and where their per-session directories live.
     pub workload: SessionWorkload,
+    /// Timing and Agent eligibility for keeping a session after a turn is cancelled or fails.
+    pub turn_cancel: TurnCancelConfig,
+}
+
+/// Parameters of D2 in the cancel-turn decision; both durations are provisional until measured.
+#[derive(Clone, Debug)]
+pub struct TurnCancelConfig {
+    /// G: how long a `CancelTurn` waits for the Agent to answer, from its acceptance.
+    pub grace: Duration,
+    /// Q: how long a stopped turn must stay silent before the next turn is sent.
+    pub quiet: Duration,
+    /// Agent plugin versions whose turn boundary a conformance run verified. A cancelled or
+    /// failed turn of any other Agent ends the session with `turn_boundary_unverified`.
+    pub turn_boundary: Vec<(
+        ora_node_protocol::PluginId,
+        ora_node_protocol::PluginVersion,
+    )>,
+}
+
+impl Default for TurnCancelConfig {
+    /// G 15 s and Q 2 s as first set by the decision; no Agent is verified yet, so every stop of
+    /// a running turn ends the session until conformance runs add versions.
+    fn default() -> Self {
+        Self {
+            grace: Duration::from_secs(15),
+            quiet: Duration::from_secs(2),
+            turn_boundary: Vec::new(),
+        }
+    }
 }
 
 /// State shared by every session execution of one Node.
@@ -75,6 +105,9 @@ pub(crate) struct Shared<L, C, P: PluginCatalog, R> {
     ora_git: Option<crate::ora_git::Availability>,
     /// Wake handles of the sessions running in this process, by execution.
     live: Mutex<HashMap<ExecutionId, Arc<Notify>>>,
+    /// When each pending `CancelTurn` was durably accepted: a stop's deadline counts from the
+    /// first cancel's acceptance, not from when the conversation got to it (D1).
+    cancel_acceptance: Mutex<HashMap<(ExecutionId, CommandId), tokio::time::Instant>>,
     stopping: tokio::sync::watch::Sender<bool>,
     finished: Notify,
     failed: std::sync::atomic::AtomicBool,
@@ -194,6 +227,7 @@ where
                 restorer,
                 ora_git: None,
                 live: Mutex::new(HashMap::new()),
+                cancel_acceptance: Mutex::new(HashMap::new()),
                 stopping: tokio::sync::watch::channel(/*init*/ false).0,
                 finished: Notify::new(),
                 failed: std::sync::atomic::AtomicBool::new(/*v*/ false),
@@ -281,7 +315,7 @@ impl<L, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
     }
 
     /// The transport flushes replacements independently of durable event replay and Ack.
-    pub(crate) fn preview_snapshots(&self) -> Vec<ora_node_protocol::ThreadPreviewMessage> {
+    pub fn preview_snapshots(&self) -> Vec<ora_node_protocol::ThreadPreviewMessage> {
         self.shared.previews.snapshots()
     }
     /// Model-bound sessions require this additional negotiated capability.
@@ -329,6 +363,60 @@ impl<L, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
             }
             finished.await;
         }
+    }
+}
+
+impl<L: SessionLedger, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
+    /// Records that a `CancelTurn` was durably accepted at `accepted_at` and wakes the session at
+    /// once. The protocol side calls this right after the ledger commit, before any reply is
+    /// written, so a reply that cannot be delivered never delays the settlement.
+    ///
+    /// The time is kept only while the cancel is still queued: a duplicate of a settled cancel,
+    /// or one the ledger settled while accepting it, leaves nothing behind. The session removes
+    /// the entry when it settles the cancel and clears whatever is left when it ends.
+    pub fn turn_cancel_accepted(
+        &self,
+        execution: &ExecutionId,
+        command: &CommandId,
+        accepted_at: tokio::time::Instant,
+    ) {
+        let queued = self
+            .shared
+            .ledger
+            .queued_commands(execution)
+            .is_ok_and(|queued| {
+                queued.iter().any(|queued| {
+                    &queued.command_id == command
+                        && matches!(queued.command, SessionCommand::CancelTurn(_))
+                })
+            });
+        if queued {
+            self.shared
+                .cancel_acceptance
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry((execution.clone(), command.clone()))
+                .or_insert(accepted_at);
+        }
+        if let Some(wake) = self
+            .shared
+            .live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(execution)
+        {
+            wake.notify_one();
+        }
+    }
+
+    /// How many cancel acceptance times are held, for diagnostics and tests: each belongs to a
+    /// cancel that is accepted and not yet settled.
+    pub fn pending_cancel_acceptances(&self) -> usize {
+        self.shared
+            .cancel_acceptance
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 }
 

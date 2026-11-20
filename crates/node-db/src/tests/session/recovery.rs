@@ -192,7 +192,9 @@ fn terminal_write_serializes_with_command_admission() {
     actor.join().unwrap();
     let expected = match admission {
         CommandAdmission::Accepted => Some(SessionCommandState::Discarded),
-        CommandAdmission::SessionEnded | CommandAdmission::McpUpdateRequired => None,
+        CommandAdmission::SessionEnded
+        | CommandAdmission::McpUpdateRequired
+        | CommandAdmission::TurnCancelUnsupported => None,
     };
     assert_eq!(
         observer

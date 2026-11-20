@@ -129,7 +129,8 @@ fn stop_reason<L: super::ports::SessionLedger>(
         .into_iter()
         .find_map(|entry| match entry.command {
             super::ports::SessionCommand::EndSession(reason) => Some(reason),
-            super::ports::SessionCommand::SubmitUserTurn(_) => None,
+            super::ports::SessionCommand::SubmitUserTurn(_)
+            | super::ports::SessionCommand::CancelTurn(_) => None,
         })
 }
 

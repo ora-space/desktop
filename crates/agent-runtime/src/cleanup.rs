@@ -4,7 +4,7 @@ use crate::AgentRuntimeHost;
 
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Bounds retained evidence; an evicted receipt becomes unconfirmed rather than successful.
-    pub(super) fn record_cleanup(&mut self, operation_id: u64, result: Result<(), RuntimeError>) {
+    pub(crate) fn record_cleanup(&mut self, operation_id: u64, result: Result<(), RuntimeError>) {
         if self.cleanup_outcomes.len() >= 256
             && !self.cleanup_outcomes.contains_key(&operation_id)
             && let Some(oldest) = self.cleanup_outcomes.keys().min().copied()
@@ -71,7 +71,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     }
 
     /// Detaches one routed session while leaving the shared CLI process available.
-    pub(super) async fn isolate_channel(&mut self, channel: SessionChannel) {
+    pub(crate) async fn isolate_channel(&mut self, channel: SessionChannel) {
         self.title_acquisition.close();
         self.close_provider_session(&channel).await;
         self.mark_stopped();

@@ -1,6 +1,8 @@
 //! One session execution from start to its terminal result.
 mod conversation;
-use conversation::Conversation;
+mod pre_start;
+use conversation::{Conversation, TurnBook, pending_cancel_bound, settle_before_start};
+use pre_start::{EndDecision, ForgetAcceptances, PreStart, ended_before_start, settling_cancels};
 
 use super::end::SessionEnd;
 use super::host::{
@@ -8,7 +10,8 @@ use super::host::{
     SessionPlugin, ThreadMirror,
 };
 use super::ports::{
-    CheckoutResolver, CommandSettlement, PluginCatalog, PriorRevisionRestore, SessionLedger,
+    CheckoutResolver, CommandSettlement, PluginCatalog, PriorRevisionRestore, SessionCommand,
+    SessionLedger,
 };
 use super::queue::{Plan, plan};
 use super::resume;
@@ -61,6 +64,12 @@ where
         .checkouts
         .checkout(&spec.checkout_execution_id)
         .map(|checkout| checkout.path);
+    // Whatever acceptance times are left go with the session, on every way out of this run,
+    // including cancels the ledger settles while the stop waits for evidence.
+    let _acceptance = ForgetAcceptances {
+        acceptance: &shared.cancel_acceptance,
+        execution: &execution,
+    };
     let mut end = prepare_and_converse(&shared, &operation, &execution, spec, &wake).await;
     let ended = end.terminal(shared.node.clone());
     if super::model::seal_unstarted_history(&shared.sessions_root(), &execution).is_err() {
@@ -69,10 +78,7 @@ where
     if shared.ledger.defer_restore_end(&execution, &ended).is_err() {
         return false;
     }
-    if shared
-        .ledger
-        .defer_session_stop_end(&execution, &ended)
-        .is_err()
+    if super::stop::decide(&shared.ledger, &execution, &ended, &shared.config.stop).is_err()
         || super::stop::request(&shared.ledger, &execution, &shared.config.stop).is_err()
     {
         return false;
@@ -123,7 +129,12 @@ where
     let ended = end.terminal(shared.node.clone());
     match shared.ledger.queued_commands(&execution) {
         Ok(queued) => {
-            for queued in queued {
+            // A still-queued cancel is settled as `session_ending` by the terminal write itself,
+            // before the terminal event; discarding it would leave it without a settlement.
+            for queued in queued
+                .into_iter()
+                .filter(|queued| !matches!(queued.command, SessionCommand::CancelTurn(_)))
+            {
                 settle(
                     &shared.ledger,
                     &execution,
@@ -224,6 +235,8 @@ where
     let session_setup = session_setup.with_host_servers(std::mem::take(&mut spec.host_mcp_servers));
     let host_refused = session_setup.host_refused();
     // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
+    let turns = TurnBook::default();
+    let initial = spec.initial_turn.turn_id.clone();
     let stopping = shared.stopping.subscribe();
     let restored = resume::restore_prior(
         &shared.restorer,
@@ -234,7 +247,18 @@ where
         &mut spec,
         resume::EndSignals {
             stopping,
-            ended: ended_before_start(&shared.ledger, execution, wake),
+            ended: ended_before_start(
+                &shared.ledger,
+                execution,
+                wake,
+                &initial,
+                &turns,
+                &shared.cancel_acceptance,
+                EndDecision {
+                    node: &shared.node,
+                    stop: &shared.config.stop,
+                },
+            ),
         },
     );
     if let Err(end) = restored.await {
@@ -247,14 +271,28 @@ where
     // removed) only after the lifecycle and the plugin it ran are gone.
     let placement = {
         let workload = shared.config.workload.clone();
+        let execution_id = execution.clone();
         let execution = execution.clone();
         let package_root = package_root.clone();
-        tokio::task::spawn_blocking(move || {
-            SessionPlacement::prepare(&workload, &execution, &package_root, &checkout)
-                .map(|placement| (placement, checkout))
-        })
-        .await
-        .unwrap_or_else(|error| Err(std::io::Error::other(error).into()))
+        let prepared = settling_cancels(
+            tokio::task::spawn_blocking(move || {
+                SessionPlacement::prepare(&workload, &execution, &package_root, &checkout)
+                    .map(|placement| (placement, checkout))
+            }),
+            PreStart {
+                ledger: &shared.ledger,
+                execution: &execution_id,
+                wake,
+                initial: &initial,
+                turns: &turns,
+                acceptance: &shared.cancel_acceptance,
+            },
+        )
+        .await;
+        match prepared {
+            Ok(joined) => joined.unwrap_or_else(|error| Err(std::io::Error::other(error).into())),
+            Err(end) => return end,
+        }
     };
     let (mut placement, checkout) = match placement {
         Ok(prepared) => prepared,
@@ -288,7 +326,24 @@ where
                 None => return SessionEnd::agent_failed("agent_model_configuration_required"),
             };
             let home = &shared.config.home_directory;
-            match ModelAccess::open(config, binding, execution, home, route).await {
+            let pre_start = PreStart {
+                ledger: &shared.ledger,
+                execution,
+                wake,
+                initial: &initial,
+                turns: &turns,
+                acceptance: &shared.cancel_acceptance,
+            };
+            let opened = match settling_cancels(
+                ModelAccess::open(config, binding, execution, home, route),
+                pre_start,
+            )
+            .await
+            {
+                Ok(opened) => opened,
+                Err(end) => return end,
+            };
+            match opened {
                 Ok(access) => Some(access),
                 Err(error) if error.0 == "model_session_ending" => {
                     return match super::model::reconcile(
@@ -297,6 +352,18 @@ where
                         wake,
                         shared.stopping.subscribe(),
                         super::model::END_RECONCILE_WAIT,
+                        &mut || {
+                            // Nothing is admitted yet: every cancel settles without a decision.
+                            settle_before_start(
+                                &shared.ledger,
+                                execution,
+                                &initial,
+                                &turns,
+                                &shared.cancel_acceptance,
+                            )
+                            .map(|()| None)
+                            .map_err(|_| "ledger_unavailable")
+                        },
                     )
                     .await
                     {
@@ -542,6 +609,20 @@ where
                 control: control.as_ref(),
                 started: std::sync::atomic::AtomicBool::new(false),
                 blocked: std::sync::Mutex::new(std::collections::HashMap::new()),
+                node: shared.node.clone(),
+                keep: conversation::Keep {
+                    on_cancel: spec.keep_session_on_cancel,
+                    on_failure: spec.keep_session_on_failure,
+                },
+                boundary_verified: shared.config.turn_cancel.turn_boundary.iter().any(
+                    |(plugin, version)| {
+                        plugin == &spec.agent_plugin_id && version == &spec.agent_plugin_version
+                    },
+                ),
+                turn_cancel: &shared.config.turn_cancel,
+                stop_config: &shared.config.stop,
+                cancel_acceptance: &shared.cancel_acceptance,
+                turns: &turns,
             };
             let mut stopping = shared.stopping.subscribe();
             let mut model_status = model_access.as_ref().map(|access| access.status.clone());
@@ -564,19 +645,41 @@ where
                         None => std::future::pending::<ModelAccessStatus>().await,
                     }
                 } => {
-                    let failed = conversation.stop(SessionEnd::agent_failed("model_access_revoked")).await;
                     match status {
+                        // The real reason arrives with the Controller's `EndSession`; recording
+                        // the provisional `model_access_revoked` first would let a restart publish
+                        // it, so the decision waits for the reconciled reason.
                         ModelAccessStatus::Ending => {
-                            if let Some(access) = &mut model_access {
-                                access.close().await;
-                            }
-                            match super::model::reconcile(&shared.ledger, execution, wake,
-                                shared.stopping.subscribe(), super::model::END_RECONCILE_WAIT).await {
-                                Ok(reason) => SessionEnd::requested(reason),
-                                Err(detail) => SessionEnd::agent_failed(detail),
-                            }
+                            // Stopping the runtime and revoking the grant can each take long, so
+                            // they run beside the wait for the reason: the decision, with every
+                            // pending cancel's settlement, is recorded by the cancels' deadline
+                            // whatever the cleanup is doing (D1, D3).
+                            let cleanup = async {
+                                conversation.stop_undecided().await;
+                                if let Some(access) = &mut model_access {
+                                    access.close().await;
+                                }
+                            };
+                            let decided = async {
+                                let end = match super::model::reconcile(&shared.ledger, execution, wake,
+                                    shared.stopping.subscribe(), super::model::END_RECONCILE_WAIT,
+                                    &mut || pending_cancel_bound(&shared.ledger, execution,
+                                        &shared.cancel_acceptance, shared.config.turn_cancel.grace)).await {
+                                    Ok(reason) => SessionEnd::requested(reason),
+                                    Err(detail) => SessionEnd::agent_failed(detail),
+                                };
+                                match super::stop::decide(&shared.ledger, execution,
+                                    &end.terminal(shared.node.clone()), &shared.config.stop) {
+                                    Ok(()) => end,
+                                    Err(_) => SessionEnd::agent_failed("ledger_unavailable"),
+                                }
+                            };
+                            let ((), end) = tokio::join!(cleanup, decided);
+                            end
                         }
-                        ModelAccessStatus::Active | ModelAccessStatus::Revoked => failed,
+                        ModelAccessStatus::Active | ModelAccessStatus::Revoked => {
+                            conversation.stop(SessionEnd::agent_failed("model_access_revoked")).await
+                        }
                     }
                 },
                 end = conversation.run(&agent_ref, spec, shared.config.agent_ready_timeout) => end,
@@ -598,10 +701,13 @@ where
         }
     };
     // The first deadline and terminal intention precede process cleanup; proof is checked by run.
-    if shared
-        .ledger
-        .defer_session_stop_end(execution, &end.terminal(shared.node.clone()))
-        .is_err()
+    if super::stop::decide(
+        &shared.ledger,
+        execution,
+        &end.terminal(shared.node.clone()),
+        &shared.config.stop,
+    )
+    .is_err()
         || super::stop::request(&shared.ledger, execution, &shared.config.stop).is_err()
     {
         return SessionEnd::agent_failed("ledger_unavailable");
@@ -671,36 +777,6 @@ fn settle<L: SessionLedger>(
         Err(error) => {
             ora_warn!(execution_id = %execution, command_id = %command_id, error = %error, "session command was not settled");
             false
-        }
-    }
-}
-
-/// Resolves once an `EndSession` is queued for a session whose agent has not started: turns
-/// queued ahead of it are discarded, and the command is executed by ending the session.
-async fn ended_before_start<L: SessionLedger>(
-    ledger: &L,
-    execution: &ExecutionId,
-    wake: &Notify,
-) -> SessionEnd {
-    loop {
-        match ledger.queued_commands(execution).map(plan) {
-            Ok(Plan::End {
-                command_id,
-                reason,
-                discarded,
-            }) => {
-                for discarded in &discarded {
-                    settle(ledger, execution, discarded, CommandSettlement::Discarded);
-                }
-                settle(ledger, execution, &command_id, CommandSettlement::Executed);
-                return SessionEnd::requested(reason);
-            }
-            // A turn waits for the agent; the conversation reads the queue again once it starts.
-            Ok(Plan::Turn { .. } | Plan::Wait) => wake.notified().await,
-            Err(error) => {
-                ora_warn!(execution_id = %execution, error = %error, "session queue unreadable");
-                return SessionEnd::agent_failed("ledger_unavailable");
-            }
         }
     }
 }

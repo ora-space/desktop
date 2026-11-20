@@ -300,6 +300,25 @@ pub(super) fn map_prompt_error(error: ora_acp::AcpError) -> RuntimeError {
     map_acp_error(error)
 }
 
+/// A provider can reject a prompt after dropping its session while keeping the ACP transport
+/// alive. Detach that registration so the next turn restores it before sending another prompt.
+/// Ordinary request failures (rate limits, model errors, authentication) keep the live channel.
+pub(super) fn provider_session_invalid(error: &ora_acp::AcpError) -> bool {
+    let ora_acp::AcpError::RequestFailed(message) = error else {
+        return false;
+    };
+    let message = message.trim().to_ascii_lowercase();
+    matches!(
+        message.as_str(),
+        "session is closed"
+            | "session closed"
+            | "session has ended"
+            | "session not found"
+            | "unknown session"
+            | "unknown provider session"
+    )
+}
+
 /// Builds the refusal returned while a session's history cannot be extended.
 pub(super) fn history_degraded() -> RuntimeError {
     RuntimeError::new(

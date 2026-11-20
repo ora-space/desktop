@@ -129,6 +129,23 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             // it is not a cancellation of the independent title fallback.
                         }
                         RuntimeCommand::CancelActivePrompt => {}
+                        RuntimeCommand::TakeIdleTurnTraffic { response } => {
+                            // A title poll only borrows the idle channel; hand it back and drain
+                            // as an idle actor would, so the answer is not lost to the poll.
+                            if super::events::drain_idle_events(
+                                &channel.connection.client.clone(),
+                                &mut channel.events,
+                                &self.command_sender,
+                            )
+                            .await
+                            {
+                                self.turn_cancel.note_idle_traffic();
+                            }
+                            self.channel = Some(channel);
+                            self.title_acquisition.preempt_attempt(attempt);
+                            let _ = response.send(self.turn_cancel.take_idle_traffic());
+                            return;
+                        }
                         RuntimeCommand::ClaimDirectProviderCall { response } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
