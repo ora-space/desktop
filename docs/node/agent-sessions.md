@@ -209,6 +209,22 @@ original provider ID, remain blocked if loading fails, and count these loads tow
 replacement budget. Replacing that process does not end the Ora session or create a new provider ID.
 Ordinary model or authentication errors keep their existing provider registration.
 
+The opt-in Linux probe at `apps/ora-node/tests/turn_boundary/probe.py` exercises an extracted,
+unmodified agent package through Deno and the plugin's real framed ACP bridge. Python 3.10+ and
+Deno must be on `PATH`. Its loopback model fixture drives the real Agent's tools; it uses no model
+credentials or external inference. Run each of `shell`, `subagent`, `background`, and `error`:
+
+```sh
+python3 apps/ora-node/tests/turn_boundary/probe.py --agent opencode \
+  --package /tmp/extracted-agent-package --scenario background --output /tmp/new-probe-output
+```
+
+Use `--agent claude` for a Claude package. Each invocation requires a new output directory and
+records package hashes, ACP traffic, model requests and its summary there. Exit status 1 means a
+violation was observed or the probe could not exercise its target. A successful finite observation
+does not automatically register a version: evaluate the complete scenario set, tool cleanup and
+background work before changing the turn-boundary list. Keep measurements in the circus run issue.
+
 Whenever the session's end is decided, the decision and a `session_ending` settlement for every
 pending cancel are written in one transaction before the agent is signalled; a terminal written
 without a prior decision, such as restart settlement, settles them first as well, so no cancel is left

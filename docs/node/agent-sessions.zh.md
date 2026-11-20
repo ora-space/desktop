@@ -153,6 +153,19 @@ ACP 请求报错时，Agent 进程可能仍在，但 provider 会话已经失效
 保持 blocked，这些 load 同样计入 Agent 进程替换预算。替换进程不结束 Ora 会话，也不新建 provider ID。
 普通模型错误和认证错误仍保留既有的 provider 连接。
 
+`apps/ora-node/tests/turn_boundary/probe.py` 是手动运行的 Linux 一致性探针，通过 Deno 和插件真实的 framed ACP
+桥接调用解包后未修改的 Agent 包。`PATH` 需要 Python 3.10+ 和 Deno。本地模型 fixture 驱动真实 Agent 的工具，
+不需要模型凭据，也不调用外部模型。逐项运行 `shell`、`subagent`、`background`、`error`：
+
+```sh
+python3 apps/ora-node/tests/turn_boundary/probe.py --agent opencode \
+  --package /tmp/extracted-agent-package --scenario background --output /tmp/new-probe-output
+```
+
+Claude 包使用 `--agent claude`。每次指定新的输出目录，保存包文件哈希、ACP 流量、模型请求和总结。退出码 1
+表示发现违约，或探针没能实际触发目标场景。有限时间内没有观察到违约，不自动登记版本：修改轮次边界清单前要
+综合所有场景、工具收尾与后台工作。实测数据写入 circus 运行 issue。
+
 每当会话决定结束，这份结束决定和所有待结算取消的 `session_ending` 在一个事务中写入，然后才向 Agent 发停止信号；
 没有事先决定就写入的终态（例如重启收口）同样先结算它们，所以没有取消会缺少结论，也没有结论排在终态之后。
 
