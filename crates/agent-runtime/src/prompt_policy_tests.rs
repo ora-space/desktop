@@ -1294,7 +1294,8 @@ fn inactivity_diagnostics_record_the_window_tools_and_cancellation_result() {
     );
 }
 
-mod review_771_drain_repro {
+mod restored_sessions {
+    mod follower_retry_tests;
     use super::*;
     use pretty_assertions::assert_eq;
     /// Holds two or more sessions on one real routed ACP peer with a controllable provider.
@@ -1312,6 +1313,22 @@ mod review_771_drain_repro {
     impl ReviewDrainFixture {
         /// Composes the production peer, generation router, and actors over controlled pipes.
         async fn new() -> Self {
+            Self::new_with(review_drain_agent).await
+        }
+
+        /// Shares the real actor and router across tests with different provider response scripts.
+        async fn new_with<Fut>(
+            agent: impl FnOnce(
+                DuplexStream,
+                DuplexStream,
+                mpsc::UnboundedReceiver<AgentInput>,
+                mpsc::UnboundedSender<Value>,
+                watch::Sender<bool>,
+            ) -> Fut,
+        ) -> Self
+        where
+            Fut: Future<Output = ()> + Send + 'static,
+        {
             let directory = TempDir::new().unwrap();
             let entrypoint = directory.path().join("agent.ts");
             std::fs::write(&entrypoint, "").unwrap();
@@ -1325,13 +1342,7 @@ mod review_771_drain_repro {
             })));
             let (_agent, input) = mpsc::unbounded_channel();
             let (sent, frames) = mpsc::unbounded_channel();
-            tokio::spawn(review_drain_agent(
-                agent_reader,
-                agent_writer,
-                input,
-                sent,
-                exited,
-            ));
+            tokio::spawn(agent(agent_reader, agent_writer, input, sent, exited));
             let (_level, level) = watch::channel(ora_logging::LogLevel::Info);
             let (plugin, mut notifications) = PluginRuntime::launch(
                 &spawner,
