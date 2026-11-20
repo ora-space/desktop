@@ -48,7 +48,8 @@ export type WorkflowUninstallImpactState =
       dependencyImpactUnknown: boolean;
       /**
        * The retained-copy list stays unknown: the workflow library failed while the uninstall
-       * includes a workflow plugin, so "no imported workflows" must never be implied.
+       * includes a workflow plugin. When the plugin catalog fails, dependencyImpactUnknown
+       * covers the whole check and retentionUnknown is false because the source kind is unknown.
        */
       retentionUnknown: boolean;
     }

@@ -2453,6 +2453,7 @@ it("allows uninstall with an explicit warning when workflow catalogs fail to loa
       /无法读取工作流或插件目录，暂时无法确认卸载影响；现在卸载会跳过这项检查/,
     ),
   ).toBeVisible();
+  expect(within(dialog).queryByText(/无法读取工作流库/)).toBeNull();
   expect(within(dialog).getByRole("button", { name: "卸载" })).toBeEnabled();
 });
 
@@ -2880,7 +2881,7 @@ it("warns that retained imported workflows are unknown when the library fails du
   const dialog = await screen.findByRole("alertdialog");
   expect(
     await within(dialog).findByText(
-      /无法读取工作流库，暂时无法确认会保留哪些已导入的工作流/,
+      /无法读取工作流库.*已导入的工作流都不会被删除/,
     ),
   ).toBeVisible();
   expect(within(dialog).queryByText(/工作流会保留/)).toBeNull();
