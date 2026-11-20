@@ -1,7 +1,11 @@
 import { act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { InstalledPlugin, WorkflowSummary } from "@ora/contracts";
-import { pluginKeys } from "../data/plugins";
+import type {
+  InstalledPlugin,
+  PluginConfigurationDetails,
+  WorkflowSummary,
+} from "@ora/contracts";
+import { cachePluginConfiguration, pluginKeys } from "../data/plugins";
 import { createTestClient } from "../../test/contracts-transport";
 import { renderHookWithClient } from "../../test/hook-harness";
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
@@ -122,6 +126,32 @@ describe("useUninstalledWorkflowSources", () => {
       ).toBe("error"),
     );
     await waitFor(() => expect(result.current.size).toBe(0));
+
+    // Saving settings for one plugin cannot confirm which other plugins are installed.
+    const configuration: PluginConfigurationDetails = {
+      pluginId: "official/settings",
+      schemaVersion: 1,
+      revision: 1n,
+      declarationFingerprint: "settings-v1",
+      settings: [],
+      summary: { state: "not_declared" },
+    };
+    act(() =>
+      cachePluginConfiguration(
+        queryClient,
+        configuration.pluginId,
+        configuration,
+      ),
+    );
+    expect(
+      queryClient.getQueryData(
+        pluginKeys.pluginConfiguration(configuration.pluginId),
+      ),
+    ).toEqual(configuration);
+    expect(queryClient.getQueryState(pluginKeys.installedPlugins)?.status).toBe(
+      "error",
+    );
+    expect(result.current.size).toBe(0);
 
     // A successful refresh restores the absence marker, even if the catalog is still empty.
     await act(async () => {

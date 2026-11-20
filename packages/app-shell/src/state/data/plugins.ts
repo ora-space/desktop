@@ -91,6 +91,11 @@ export function cachePluginConfiguration(
     pluginKeys.pluginConfiguration(pluginId),
     configuration,
   );
+  // A configuration response confirms this plugin’s settings, not the membership of a stale catalog.
+  if (
+    queryClient.getQueryState(pluginKeys.installedPlugins)?.status === "error"
+  )
+    return;
   queryClient.setQueryData<InstalledPlugin[]>(
     pluginKeys.installedPlugins,
     (plugins) =>
