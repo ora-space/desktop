@@ -469,10 +469,10 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             // A keep choice is only valid over a connection that negotiated `turn_cancel`: this
             // Controller could neither read the events it causes nor take the session over
             // again. It is refused before durable admission, like an unknown field would be.
-            if chooses_keep(&message) && !turn_cancel {
+            if needs_turn_cancel(&message) && !turn_cancel {
                 return Err(Failure::local(
                     CloseReason::ProtocolViolation,
-                    "a session start chose a keep behaviour without negotiating turn_cancel",
+                    "a turn_cancel message or keep choice without negotiating turn_cancel",
                 ));
             }
             // Enqueueing in read order keeps the worker's FIFO equal to the Controller's order.
@@ -597,9 +597,11 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
     }
 }
 
-/// Whether a message starts a session that chose a keep behaviour, through either start entry.
-pub(super) fn chooses_keep(message: &ControllerToNodeMessage) -> bool {
+/// Whether a message is only valid over a connection that negotiated `turn_cancel`: a
+/// `CancelTurn`, or a session start through either entry that chose a keep behaviour.
+pub(super) fn needs_turn_cancel(message: &ControllerToNodeMessage) -> bool {
     let spec = match message {
+        ControllerToNodeMessage::CancelTurn(_) => return true,
         ControllerToNodeMessage::StartAgentSession(start) => &start.payload.spec,
         ControllerToNodeMessage::ControlledStartAgentSession(start) => &start.command.payload.spec,
         _ => return false,

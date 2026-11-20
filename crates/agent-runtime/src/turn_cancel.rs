@@ -6,9 +6,23 @@
 //! than only a command because three places must see it without waiting for the actor's command
 //! loop: the gap between admission and the prompt write, the watchdog's cancel wait, and its
 //! resend. The first request of a prompt fixes the deadline; later ones never move it.
+use crate::actor::actor_prompt::produced_output;
+use crate::connection::AgentAcpClient;
+use crate::events::{drain_queued_prompt_events, settle_cancelled_prompt};
+use crate::limits::CANCELLATION_GRACE;
+use crate::routing::{SessionChannel, SessionEvent};
+use crate::session_followers::SessionFollowers;
+use crate::support::provider_session_invalid;
+use crate::tool_timing::ToolTimings;
+use crate::{AgentRuntimeHost, PromptEndCause, PromptEndReport, RuntimeActor, RuntimeError};
+use agent_client_protocol_schema::v1::{
+    PromptResponse, RequestId, RequestPermissionOutcome, RequestPermissionResponse, StopReason,
+};
+use ora_contracts::PromptSessionEvent;
+use std::collections::HashMap;
 use std::sync::Mutex;
-use tokio::sync::Notify;
-use tokio::time::Instant;
+use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::time::{Instant, timeout_at};
 
 /// The pending turn cancel of one session actor.
 #[derive(Debug, Default)]
@@ -76,6 +90,210 @@ impl TurnCancelState {
     }
 }
 
+/// One prompt's state a cancel needs, borrowed from the prompt loop.
+pub(crate) struct PromptStop<'a> {
+    pub(crate) operation_id: u64,
+    pub(crate) client: &'a AgentAcpClient,
+    pub(crate) permissions: &'a HashMap<String, (RequestId, Vec<String>)>,
+    pub(crate) events: &'a mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+    pub(crate) end_report: &'a PromptEndReport,
+    pub(crate) followers: &'a mut SessionFollowers,
+    pub(crate) tool_timings: &'a ToolTimings,
+    pub(crate) saw_output: &'a mut bool,
+}
+
+impl<H: AgentRuntimeHost> RuntimeActor<H> {
+    /// Ends a prompt that a turn cancel stopped after admission but before it was written: the
+    /// Agent never receives this turn, its end is recorded as cancelled, and the provider session
+    /// is untouched, so it stays reusable without any quiescence check.
+    pub(crate) fn finish_unsent_prompt(
+        &mut self,
+        channel: SessionChannel,
+        end_report: &PromptEndReport,
+        events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+        followers: &mut SessionFollowers,
+    ) {
+        end_report.record(PromptEndCause::UserStopped);
+        end_report.mark_unsent();
+        self.end_turn(StopReason::Cancelled);
+        followers.finish(StopReason::Cancelled);
+        let _ = events.try_send(Ok(PromptSessionEvent::Completed {
+            stop_reason: StopReason::Cancelled,
+            token_usage: None,
+        }));
+        self.channel = Some(channel);
+    }
+
+    /// Cancels the running prompt for the stop button (`notify_owner` with no turn cancel), a
+    /// turn cancel with its own deadline, or an owner that stopped reading, and reports the end.
+    ///
+    /// A turn cancel first looks, without waiting, for an answer that is already readable: only
+    /// that is a real race the Agent won, and its stop reason is kept. Any answer that arrives
+    /// once `session/cancel` is written is the cancel's answer and is reported as `cancelled`,
+    /// so the caller judges the stop (D2) instead of trusting the Agent's own `end_turn`.
+    pub(crate) async fn settle_prompt_cancel(
+        &mut self,
+        mut channel: SessionChannel,
+        pending: ora_acp::PendingSessionRequest<PromptResponse>,
+        stop: PromptStop<'_>,
+        notify_owner: bool,
+        completion: Option<oneshot::Sender<Result<(), RuntimeError>>>,
+    ) {
+        let PromptStop {
+            operation_id,
+            client,
+            permissions,
+            events,
+            end_report,
+            followers,
+            tool_timings,
+            saw_output,
+        } = stop;
+        // `cancel_prompt` is the user pressing stop, while the owner-addressed cancel is a
+        // consumer that stopped reading; the two must not be reported alike.
+        end_report.record(if notify_owner {
+            PromptEndCause::UserStopped
+        } else {
+            PromptEndCause::StreamDropped
+        });
+        // A turn cancel waits until its own deadline and must report an unanswered cancel; the
+        // stop button keeps the runtime's short grace.
+        let turn_deadline = self.turn_cancel.deadline().filter(|_| notify_owner);
+        let ready = match turn_deadline {
+            Some(_) => {
+                ready_response(self, &mut channel, client, &pending, events, saw_output).await
+            }
+            None => None,
+        };
+        let raced = ready.is_some();
+        let settled = match ready {
+            Some(response) => Ok(Some(pending.finish(response))),
+            None => {
+                self.cancel(client, permissions).await;
+                timeout_at(
+                    turn_deadline.unwrap_or_else(|| Instant::now() + CANCELLATION_GRACE),
+                    settle_cancelled_prompt(
+                        self,
+                        &mut channel,
+                        client,
+                        pending,
+                        events,
+                        saw_output,
+                    ),
+                )
+                .await
+            }
+        };
+        let reusable = matches!(
+            settled,
+            Ok(Some(Ok(_))) | Ok(Some(Err(ora_acp::AcpError::RequestFailed(_))))
+        );
+        let session_invalid =
+            matches!(&settled, Ok(Some(Err(error))) if provider_session_invalid(error));
+        if !reusable {
+            drain_queued_prompt_events(self, &mut channel, client, events, saw_output).await;
+        }
+        let stop_reason = match &settled {
+            Ok(Some(Ok(response))) if raced => response.stop_reason,
+            _ => StopReason::Cancelled,
+        };
+        self.end_timed_turn(stop_reason, tool_timings);
+        followers.finish(stop_reason);
+        let owner_notified = !notify_owner
+            || if turn_deadline.is_some() && !reusable {
+                events
+                    .try_send(Err(RuntimeError::turn_cancel_unanswered()))
+                    .is_ok()
+            } else {
+                events
+                    .try_send(Ok(PromptSessionEvent::Completed {
+                        stop_reason,
+                        token_usage: None,
+                    }))
+                    .is_ok()
+            };
+        if reusable && owner_notified && !session_invalid {
+            self.channel = Some(channel);
+        } else {
+            self.isolate_channel(channel).await;
+        }
+        let result = if reusable {
+            Ok(())
+        } else {
+            Err(RuntimeError::internal(
+                "provider did not confirm cancelled operation stopped",
+                std::io::Error::other("cancellation grace expired or provider failed"),
+            ))
+        };
+        self.record_cleanup(operation_id, result.clone());
+        if let Some(completion) = completion {
+            let _ = completion.send(result);
+        }
+    }
+}
+
+/// Consumes the events already queued for the prompt, recording them as the prompt loop would,
+/// and returns its answer if one is among them. Nothing is awaited from the Agent.
+async fn ready_response<H: AgentRuntimeHost>(
+    actor: &mut RuntimeActor<H>,
+    channel: &mut SessionChannel,
+    client: &AgentAcpClient,
+    pending: &ora_acp::PendingSessionRequest<PromptResponse>,
+    events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+    saw_output: &mut bool,
+) -> Option<ora_acp::SessionResponse> {
+    let (before, response) = take_ready_response(&mut channel.events, |response| {
+        pending.matches_response(response)
+    });
+    for event in before {
+        match event {
+            SessionEvent::Update(update) => {
+                *saw_output |= produced_output(&update.update);
+                actor.observe_session_update(&update.update);
+                let outcome = actor.recorder.record_update(&update.update);
+                actor.settle_record(outcome);
+                let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                    update: update.update,
+                    tool_timing: None,
+                }));
+            }
+            // A request still open when the turn is being stopped is answered as the cancel
+            // would answer it.
+            SessionEvent::Permission(permission) => {
+                let _ = client
+                    .respond(
+                        &permission.request_id,
+                        &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+                    )
+                    .await;
+            }
+            SessionEvent::Response(_) => {}
+        }
+    }
+    response
+}
+
+/// Takes the queued snapshot up to the prompt's own answer, without waiting: the events before
+/// it, and the answer if it is already readable. Events after the answer stay queued.
+fn take_ready_response(
+    events: &mut mpsc::Receiver<SessionEvent>,
+    answers: impl Fn(&ora_acp::SessionResponse) -> bool,
+) -> (Vec<SessionEvent>, Option<ora_acp::SessionResponse>) {
+    let mut before = Vec::new();
+    for _ in 0..events.len() {
+        let Ok(event) = events.try_recv() else {
+            break;
+        };
+        match event {
+            SessionEvent::Response(response) if answers(&response) => {
+                return (before, Some(response));
+            }
+            event => before.push(event),
+        }
+    }
+    (before, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::TurnCancelState;
@@ -94,5 +312,38 @@ mod tests {
         state.requested().await;
         state.clear();
         assert_eq!(state.deadline(), None);
+    }
+
+    /// Only an answer already queued counts as having won the race; events before it are
+    /// returned for recording, and events after it stay queued.
+    #[tokio::test]
+    async fn only_an_already_queued_answer_is_taken() {
+        use super::take_ready_response;
+        use crate::routing::SessionEvent;
+        use agent_client_protocol_schema::v1::{
+            SessionInfoUpdate, SessionNotification, SessionUpdate,
+        };
+        let (sender, mut events) = tokio::sync::mpsc::channel(4);
+        let update = || {
+            SessionEvent::Update(SessionNotification::new(
+                "session-1",
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+            ))
+        };
+        assert!(matches!(
+            take_ready_response(&mut events, |_| true),
+            (before, None) if before.is_empty()
+        ));
+        sender.try_send(update()).unwrap();
+        sender
+            .try_send(SessionEvent::Response(
+                crate::routing::tests::session_response("session-1").await,
+            ))
+            .unwrap();
+        sender.try_send(update()).unwrap();
+        let (before, answer) = take_ready_response(&mut events, |_| true);
+        assert_eq!((before.len(), answer.is_some(), events.len()), (1, true, 1));
+        let (before, answer) = take_ready_response(&mut events, |_| false);
+        assert_eq!((before.len(), answer.is_none()), (1, true));
     }
 }

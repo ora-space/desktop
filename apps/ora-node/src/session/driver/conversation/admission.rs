@@ -340,6 +340,10 @@ impl<L: SessionLedger> Conversation<'_, L> {
         let execution = self.execution.clone();
         let command = command.cloned();
         let control = self.control.cloned();
+        let turn_id = turn.turn_id.clone();
+        let manager = self.manager.clone();
+        let session = self.session_id.to_string();
+        let grace = self.turn_cancel.grace;
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let commit_failed = Arc::clone(&failed);
         self.mirror.set_turn(Some(turn.turn_id.clone()));
@@ -388,9 +392,23 @@ impl<L: SessionLedger> Conversation<'_, L> {
                     match control {
                         Some(control) => control.admit(commit).map_err(|error| {
                             RuntimeError::internal("MCP admission changed", error)
-                        })?,
-                        None => commit(),
+                        })??,
+                        None => commit()?,
                     }
+                    // A cancel accepted while admission committed reaches the runtime before the
+                    // prompt is written, so the Agent never receives the turn (D1, admitted but
+                    // not yet written); the conversation settles it once the stream ends.
+                    if ledger.queued_commands(&execution).is_ok_and(|queued| {
+                        queued.iter().any(|queued| {
+                            matches!(&queued.command, SessionCommand::CancelTurn(target) if target == &turn_id)
+                        })
+                    }) && let Err(error) = manager.cancel_turn_prompt(
+                        &session,
+                        tokio::time::Instant::now() + grace,
+                    ) {
+                        ora_warn!(execution_id = %execution, error = %error, "turn cancel could not reach the runtime");
+                    }
+                    Ok(())
                 },
             )
             .await;

@@ -138,9 +138,10 @@ Completed 状态。actor、插件和恢复都不会启动，也不存在会话�
 - **排队中的轮次**（包括正在等 Agent 或 MCP 门禁的）：立即丢弃，命令结算为 `discarded`，结论 `not_started`。
   等候已过截止时刻的，先按超时结算，取消随后得到 `already_ended`。
 - **已准入、prompt 还没写出**：不再写出 prompt；`TurnEnded{cancelled}`，然后 `stopped`，会话保留。
-- **正在执行**：运行时以 `cancelled` 应答挂起的权限请求，发 `session/cancel`，等到第一个取消的受理时刻加 G
-  （暂定 15 秒）。之后的取消和正在进行的看门狗停止并入同一次停止和截止时刻，看门狗不再重发。得到回应时写
-  `TurnEnded{cancelled}`，再判定这次停止；没有回应时以 `turn_cancel_unanswered` 结束会话。
+- **正在执行**：运行时先不等待地看这次 prompt 的回应是否已经可读。已经可读说明 Agent 赢了竞争：这一轮保留 Agent
+  自己的停止原因，取消得到 `already_ended`。否则以 `cancelled` 应答挂起的权限请求，发 `session/cancel`，等到第一个取消的受理时刻加 G
+  （暂定 15 秒）。之后的取消和正在进行的看门狗停止并入同一次停止和截止时刻，看门狗不再重发。`session/cancel`
+  写出之后的任何回应（即使是 `end_turn`）都是对取消的回应：写 `TurnEnded{cancelled}`，再判定这次停止；没有回应时以 `turn_cancel_unanswered` 结束会话。
 - **已结束、已被丢弃、已超时失败或不存在**：`already_ended` 或 `unknown`，不做其他事。
 
 停下的一轮只有同时满足下列条件才保留会话：会话选择了对应的结束方式；Agent 插件版本在 Node 已验证的轮次边界

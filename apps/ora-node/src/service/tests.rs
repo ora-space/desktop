@@ -124,7 +124,7 @@ fn protected_hardlinks_is_required_only_for_a_separate_workload() {
 /// Both session start entries are checked for a keep choice before admission; other messages,
 /// and starts that choose nothing, never are.
 #[test]
-fn both_start_entries_report_a_keep_choice() {
+fn turn_cancel_messages_and_both_start_entries_need_negotiation() {
     use ora_node_protocol::*;
     let start = |cancel: bool, failure: bool| StartAgentSessionMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
@@ -188,11 +188,22 @@ fn both_start_entries_report_a_keep_choice() {
     };
     let chosen = [(true, false), (false, true), (false, false)].map(|(cancel, failure)| {
         (
-            super::session::chooses_keep(&ControllerToNodeMessage::StartAgentSession(start(
+            super::session::needs_turn_cancel(&ControllerToNodeMessage::StartAgentSession(start(
                 cancel, failure,
             ))),
-            super::session::chooses_keep(&controlled(start(cancel, failure))),
+            super::session::needs_turn_cancel(&controlled(start(cancel, failure))),
         )
     });
     assert_eq!(chosen, [(true, true), (true, true), (false, false)]);
+    let cancel = ControllerToNodeMessage::CancelTurn(CancelTurnMessage {
+        protocol_version: CURRENT_PROTOCOL_VERSION,
+        operation_id: OperationId::new("operation"),
+        execution_id: ExecutionId::new("execution"),
+        payload: CancelTurn {
+            node_id: NodeId::new("node"),
+            command_id: CommandId::new("cancel"),
+            turn_id: TurnId::new("turn-1"),
+        },
+    });
+    assert!(super::session::needs_turn_cancel(&cancel));
 }

@@ -3,7 +3,6 @@
 //! Kept apart from the actor's command loop so the turn's many termination paths stay readable
 //! together: each one records why the turn ended before its owner can observe it settled.
 
-use super::events::{drain_queued_prompt_events, settle_cancelled_prompt};
 use super::handoff::{AgentPrompt, prompt_for_agent, rebuild_prompt};
 use super::prompt_liveness::PromptLiveness;
 use super::prompt_retry::{StalledPrompt, retry_stalled_prompt};
@@ -19,7 +18,6 @@ use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
 use ora_logging::{ora_debug, ora_warn};
-use tokio::time::timeout_at;
 
 /// Whether one provider update is work the user would see or a tool already ran.
 ///
@@ -199,17 +197,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             return;
         }
         if self.turn_cancel.deadline().is_some() && !attempt.skip_record {
-            // Admitted and recorded, but a turn cancel arrived before the write: the Agent never
-            // receives this turn, its end is recorded as cancelled, and the provider session is
-            // untouched, so it stays reusable without any quiescence check.
-            end_report.record(PromptEndCause::UserStopped);
-            end_report.mark_unsent();
-            self.end_turn(StopReason::Cancelled);
-            let _ = events.try_send(Ok(PromptSessionEvent::Completed {
-                stop_reason: StopReason::Cancelled,
-                token_usage: None,
-            }));
-            self.channel = Some(channel);
+            self.finish_unsent_prompt(channel, &end_report, &events, &mut followers);
             return;
         }
         let agent_session_id = self.provider_session_id().to_string();
@@ -599,83 +587,23 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         RuntimeCommand::Cancel { completion, .. } => completion,
                         _ => None,
                     };
-                    // `cancel_prompt` is the user pressing stop, while the owner-addressed cancel
-                    // is a consumer that stopped reading; the two must not be reported alike.
-                    end_report.record(if notify_owner {
-                        PromptEndCause::UserStopped
-                    } else {
-                        PromptEndCause::StreamDropped
-                    });
-                    // A turn cancel waits until its own deadline and must report an unanswered
-                    // cancel; the stop button keeps the runtime's short grace.
-                    let turn_deadline = self.turn_cancel.deadline().filter(|_| notify_owner);
-                    self.cancel(&client, &permissions).await;
-                    let settled = timeout_at(
-                        turn_deadline
-                            .unwrap_or_else(|| tokio::time::Instant::now() + CANCELLATION_GRACE),
-                        settle_cancelled_prompt(
-                            self,
-                            &mut channel,
-                            &client,
-                            pending,
-                            &events,
-                            &mut saw_output,
-                        ),
+                    self.settle_prompt_cancel(
+                        channel,
+                        pending,
+                        crate::turn_cancel::PromptStop {
+                            operation_id,
+                            client: &client,
+                            permissions: &permissions,
+                            events: &events,
+                            end_report: &end_report,
+                            followers: &mut followers,
+                            tool_timings: &tool_timings,
+                            saw_output: &mut saw_output,
+                        },
+                        notify_owner,
+                        completion,
                     )
                     .await;
-                    let reusable = matches!(
-                        settled,
-                        Ok(Some(Ok(_))) | Ok(Some(Err(ora_acp::AcpError::RequestFailed(_))))
-                    );
-                    let session_invalid = matches!(&settled, Ok(Some(Err(error))) if super::support::provider_session_invalid(error));
-                    if !reusable {
-                        drain_queued_prompt_events(
-                            self,
-                            &mut channel,
-                            &client,
-                            &events,
-                            &mut saw_output,
-                        )
-                        .await;
-                    }
-                    // A turn cancel that met an Agent finishing at the boundary keeps the Agent's
-                    // own stop reason: its caller then knows the cancel did nothing.
-                    let stop_reason = match &settled {
-                        Ok(Some(Ok(response))) if turn_deadline.is_some() => response.stop_reason,
-                        _ => StopReason::Cancelled,
-                    };
-                    self.end_timed_turn(stop_reason, &tool_timings);
-                    followers.finish(stop_reason);
-                    let owner_notified = !notify_owner
-                        || if turn_deadline.is_some() && !reusable {
-                            events
-                                .try_send(Err(RuntimeError::turn_cancel_unanswered()))
-                                .is_ok()
-                        } else {
-                            events
-                                .try_send(Ok(PromptSessionEvent::Completed {
-                                    stop_reason,
-                                    token_usage: None,
-                                }))
-                                .is_ok()
-                        };
-                    if reusable && owner_notified && !session_invalid {
-                        self.channel = Some(channel);
-                    } else {
-                        self.isolate_channel(channel).await;
-                    }
-                    let result = if reusable {
-                        Ok(())
-                    } else {
-                        Err(RuntimeError::internal(
-                            "provider did not confirm cancelled operation stopped",
-                            std::io::Error::other("cancellation grace expired or provider failed"),
-                        ))
-                    };
-                    self.record_cleanup(operation_id, result.clone());
-                    if let Some(completion) = completion {
-                        let _ = completion.send(result);
-                    }
                     return;
                 }
                 ActiveInput::Command(RuntimeCommand::Stop { response }) => {

@@ -585,3 +585,43 @@ fn a_cancel_of_a_timed_out_queued_turn_is_already_ended() {
         (TurnCancelOutcome::AlreadyEnded, TurnCancelOutcome::Unknown)
     );
 }
+
+/// A cancel whose acceptance write fails is not stored and gets no settlement, even when the
+/// end is already decided and acceptance would have settled it in the same transaction; the
+/// protocol side therefore never replies that it was accepted.
+#[test]
+fn a_failed_acceptance_stores_and_settles_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let fault = std::rc::Rc::new(std::cell::Cell::new(/*value*/ None));
+    let mut db = NodeDatabase::open_with_guard(
+        &dir.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+        crate::tests::Fault(fault.clone()),
+    )
+    .unwrap();
+    let mut start = command();
+    start.payload.spec.keep_session_on_cancel = true;
+    db.accept_session(&start).unwrap();
+    db.start_session(&start, &NodeIncarnationId::new("first"))
+        .unwrap();
+    let journal = db.session_journal().unwrap();
+    let execution = start.execution_id.clone();
+    journal
+        .decide_session_end(&execution, &unanswered(), 1_000, 2_000)
+        .unwrap();
+    fault.set(Some(WritePoint::Accept));
+    assert!(matches!(
+        db.accept_session_command(&cancel("cancel-1", "initial")),
+        Err(Error::Injected(WritePoint::Accept))
+    ));
+    fault.set(/*val*/ None);
+    assert_eq!(
+        (
+            journal
+                .command_state(&execution, &CommandId::new("cancel-1"))
+                .unwrap(),
+            settlements(&db)
+        ),
+        (None, vec![])
+    );
+}

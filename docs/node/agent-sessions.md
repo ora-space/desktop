@@ -188,10 +188,14 @@ effect while the session prepares, for example during a prior Revision restore.
   timeout first, and the cancel finds the turn `already_ended`.
 - **Admitted, prompt not yet written**: the prompt is never written; `TurnEnded{cancelled}`, then
   `stopped`, and the session stays.
-- **Running turn**: the runtime answers pending permissions `cancelled`, sends `session/cancel`, and
+- **Running turn**: the runtime first looks, without waiting, for the prompt's answer. An answer
+  already readable is a race the Agent won: the turn keeps the Agent's own stop reason and the
+  cancel is `already_ended`. Otherwise the runtime answers pending permissions `cancelled`, sends
+  `session/cancel`, and
   waits until the first cancel's acceptance plus G (15 s for now); later cancels and a running
-  watchdog stop merge into the same stop and deadline, and the watchdog does not resend. An answer
-  writes `TurnEnded{cancelled}` and then the stop is judged; no answer ends the session with
+  watchdog stop merge into the same stop and deadline, and the watchdog does not resend. Any
+  answer after `session/cancel`, even `end_turn`, answers the cancel: it writes
+  `TurnEnded{cancelled}` and then the stop is judged; no answer ends the session with
   `turn_cancel_unanswered`.
 - **Finished, already dropped, failed by timeout, or unknown**: `already_ended` or `unknown`, nothing
   else changes.

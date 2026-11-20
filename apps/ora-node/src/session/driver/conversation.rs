@@ -337,14 +337,20 @@ impl<L: SessionLedger> Conversation<'_, L> {
     /// recoverable decision (D3). A ledger that cannot write still lets the stop proceed, because
     /// stopping is always safe; the decision is written by the driver or after recovery.
     pub(super) async fn stop(&self, end: SessionEnd) -> SessionEnd {
-        if let Err(error) = crate::session::stop::decide(
+        let end = match crate::session::stop::decide(
             self.ledger,
             self.execution,
             &end.terminal(self.node.clone()),
             self.stop_config,
         ) {
-            ora_warn!(execution_id = %self.execution, error = %error, "session end decision was not recorded before stopping");
-        }
+            Ok(()) => end,
+            // The intended reason never became durable, so the session ends as the ledger's
+            // failure (D3, D4 recovery): the later decision records that instead.
+            Err(error) => {
+                ora_warn!(execution_id = %self.execution, error = %error, "session end decision was not recorded before stopping");
+                SessionEnd::agent_failed("ledger_unavailable")
+            }
+        };
         self.stop_undecided().await;
         end
     }

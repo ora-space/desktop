@@ -170,6 +170,15 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         // otherwise the abandoned send's pending completion could authorize its replacement.
         *block = instruction();
     }
+    // A turn cancel that arrived while the retry was being prepared still wins: the Agent
+    // confirmed the stalled attempt cancelled, so nothing is resent and the session stays usable.
+    // This check is the last step before the write, as for a first prompt.
+    if turn_cancel.deadline().is_some() {
+        return StalledPrompt::Cancelled {
+            reusable: true,
+            session_invalid: false,
+        };
+    }
     match client
         .start_session_request::<_, PromptResponse>(
             AcpSessionId::new(actor.provider_session_id().to_string()),

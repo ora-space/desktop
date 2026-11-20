@@ -106,3 +106,36 @@ fn a_cancel_merged_into_a_watchdog_stop_owns_its_deadline() {
         }
     });
 }
+
+/// An answer that arrives once `session/cancel` is written answers the cancel, even if the Agent
+/// calls it `end_turn`: the turn is reported `cancelled` so its owner judges the stop.
+#[test]
+fn an_end_turn_answer_to_a_written_cancel_is_reported_cancelled() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("default");
+        let (configured, confirmed) = oneshot::channel();
+        fixture
+            .agent
+            .send(AgentInput::CancelReply {
+                session_id: "default".to_string(),
+                reply: CancelReply::EndTurn,
+                configured,
+            })
+            .unwrap();
+        confirmed.await.unwrap();
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("default"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture
+            .manager
+            .cancel_turn_prompt("default", Instant::now() + Duration::from_secs(15))
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(completion(&mut stream).await, StopReason::Cancelled);
+        fixture.shutdown().await;
+    });
+}

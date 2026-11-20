@@ -395,48 +395,57 @@ async fn a_failed_turn_keeps_only_a_session_that_chose_it() {
     );
 }
 
-/// Case 4: a cancel that meets the Agent finishing on its own keeps the Agent's stop reason, is
-/// `already_ended`, and does not touch the turn submitted next.
+/// An Agent that answers a written cancel with `end_turn` still answered the cancel: the turn is
+/// reported `cancelled` and judged by D2, so with the empty turn-boundary list the session ends,
+/// and only a verified version keeps it. Only an answer already readable before the cancel is a
+/// race the Agent won; the runtime covers that case.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_cancel_racing_a_natural_end_does_nothing() {
-    let mut fixture = Fixture::new();
-    fixture.verify_turn_boundary();
-    let sessions = fixture.sessions(PLUGIN_VERSION);
-    fixture.start_keeping(&sessions, "[hold-finishing]", CANCEL);
-    running(&fixture, 0).await;
-    fixture.command(
-        &sessions,
-        "cancel-1",
-        SessionCommand::CancelTurn(TurnId::new("turn-1")),
-    );
-    let outcome = settled(&fixture, "cancel-1").await;
-    fixture.command(
-        &sessions,
-        "command-2",
-        SessionCommand::SubmitUserTurn(turn("turn-2", "hello")),
-    );
-    until(|| (turn_ends(&fixture) == 2).then_some(())).await;
-    let stop_reasons: Vec<_> = fixture
-        .ledger
-        .events()
-        .iter()
-        .filter(|event| event.record.get("type").and_then(|t| t.as_str()) == Some("turnEnded"))
-        .map(|event| {
-            event
-                .record
-                .get("stop_reason")
-                .and_then(|reason| reason.as_str())
-                .unwrap_or_default()
-                .to_owned()
-        })
-        .collect();
+async fn an_end_turn_answer_to_a_cancel_counts_as_cancelled() {
+    let mut results = Vec::new();
+    for verified in [false, true] {
+        let mut fixture = Fixture::new();
+        if verified {
+            fixture.verify_turn_boundary();
+        }
+        let sessions = fixture.sessions(PLUGIN_VERSION);
+        fixture.start_keeping(&sessions, "[hold-finishing]", CANCEL);
+        running(&fixture, 0).await;
+        fixture.command(
+            &sessions,
+            "cancel-1",
+            SessionCommand::CancelTurn(TurnId::new("turn-1")),
+        );
+        let outcome = settled(&fixture, "cancel-1").await;
+        let stop_reason = fixture
+            .ledger
+            .events()
+            .iter()
+            .find(|event| event.record.get("type").and_then(|t| t.as_str()) == Some("turnEnded"))
+            .and_then(|event| event.record.get("stop_reason").cloned());
+        let detail = if outcome == TurnCancelOutcome::SessionEnding {
+            fixture.ended().await.detail
+        } else {
+            end(&fixture, &sessions).await;
+            None
+        };
+        results.push((verified, outcome, stop_reason, detail));
+    }
     assert_eq!(
-        (outcome, stop_reasons, end(&fixture, &sessions).await),
-        (
-            TurnCancelOutcome::AlreadyEnded,
-            vec!["end_turn".to_string(), "end_turn".to_string()],
-            AgentSessionEndReason::UserEnded
-        )
+        results,
+        vec![
+            (
+                false,
+                TurnCancelOutcome::SessionEnding,
+                Some(serde_json::json!("cancelled")),
+                Some("turn_boundary_unverified".to_string())
+            ),
+            (
+                true,
+                TurnCancelOutcome::Stopped,
+                Some(serde_json::json!("cancelled")),
+                None
+            ),
+        ]
     );
 }
 
@@ -599,5 +608,113 @@ async fn the_cancel_deadline_counts_from_acceptance() {
     assert!(
         elapsed < std::time::Duration::from_millis(1700),
         "settled {elapsed:?} after the wake, beyond what remained of G"
+    );
+}
+
+/// Case 24 at the Node: a cancel accepted while the turn's admission commits stops the prompt
+/// before it is written, so even with the empty turn-boundary list the turn ends `cancelled`,
+/// then `stopped`, and the session takes the next turn.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancel_during_admission_keeps_the_session_with_the_empty_list() {
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping(&sessions, "hello", CANCEL);
+    until(|| (turn_ends(&fixture) == 1).then_some(())).await;
+    let ledger = fixture.ledger.clone();
+    fixture.ledger.on_executed("command-2", move || {
+        ledger.accept(
+            "cancel-2",
+            SessionCommand::CancelTurn(TurnId::new("turn-2")),
+        );
+    });
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::SubmitUserTurn(turn("turn-2", "never answered")),
+    );
+    let outcome = settled(&fixture, "cancel-2").await;
+    let journal = fixture.ledger.journal();
+    let turn_end = journal
+        .iter()
+        .rposition(|entry| *entry == Entry::Thread("turnEnded".into()))
+        .expect("the cancelled turn ended");
+    let settlement = journal
+        .iter()
+        .position(|entry| matches!(entry, Entry::Cancel(..)))
+        .expect("the cancel settled");
+    fixture.command(
+        &sessions,
+        "command-3",
+        SessionCommand::SubmitUserTurn(turn("turn-3", "hello again")),
+    );
+    until(|| (turn_ends(&fixture) == 3).then_some(())).await;
+    let answered = fixture.history_lines().iter().any(|line| {
+        serde_json::to_string(line)
+            .unwrap()
+            .contains("echo: never answered")
+    });
+    assert_eq!(
+        (
+            outcome,
+            turn_end < settlement,
+            answered,
+            fixture.ledger.ended(),
+            end(&fixture, &sessions).await
+        ),
+        (
+            TurnCancelOutcome::Stopped,
+            true,
+            false,
+            None,
+            AgentSessionEndReason::UserEnded
+        )
+    );
+}
+
+/// The turn-boundary list matches the exact plugin version: another version of the same plugin
+/// is not verified, so a cancel ends the session.
+#[tokio::test(flavor = "multi_thread")]
+async fn another_version_of_a_listed_plugin_is_not_verified() {
+    let mut fixture = Fixture::new();
+    fixture.verify_turn_boundary();
+    fixture.turn_cancel.turn_boundary = vec![(
+        ora_node_protocol::PluginId::new(PLUGIN_ID),
+        ora_node_protocol::PluginVersion::new("9.9.9"),
+    )];
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping(&sessions, "[hold]", CANCEL);
+    running(&fixture, 0).await;
+    fixture.command(
+        &sessions,
+        "cancel-1",
+        SessionCommand::CancelTurn(TurnId::new("turn-1")),
+    );
+    assert_eq!(
+        fixture.ended().await.detail,
+        Some("turn_boundary_unverified".to_string())
+    );
+}
+
+/// An end decision that cannot be written ends the session as the ledger's failure, and the
+/// cancel is settled by the decision written once the ledger works again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_end_decision_ends_with_ledger_unavailable() {
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping(&sessions, "[hold]", CANCEL);
+    running(&fixture, 0).await;
+    fixture.ledger.fail_next_decision();
+    fixture.command(
+        &sessions,
+        "cancel-1",
+        SessionCommand::CancelTurn(TurnId::new("turn-1")),
+    );
+    let ended = fixture.ended().await;
+    assert_eq!(
+        (ended.detail, fixture.ledger.cancels()),
+        (
+            Some("ledger_unavailable".to_string()),
+            vec![("cancel-1".to_string(), TurnCancelOutcome::SessionEnding)]
+        )
     );
 }

@@ -67,6 +67,10 @@ struct LedgerState {
     reject_execution: bool,
     /// Cancel settlements and Thread events in the order they were written.
     journal: Vec<Entry>,
+    /// Fails the next end decision once, as a ledger that cannot write would.
+    fail_next_decision: bool,
+    /// Runs when the named command is settled executed, inside the admission commit.
+    on_executed: Option<(CommandId, Box<dyn FnOnce() + Send>)>,
 }
 
 /// The keep choices a session starts with.
@@ -113,6 +117,16 @@ impl MemoryLedger {
     /// The end decision recorded for the execution, the one a restart would publish.
     pub fn decision(&self) -> Option<AgentSessionEnded> {
         self.stops.decision(&ExecutionId::new(EXECUTION))
+    }
+
+    /// Makes the next end decision fail once.
+    pub fn fail_next_decision(&self) {
+        self.state().fail_next_decision = true;
+    }
+
+    /// Runs `action` when `command` is settled executed, which happens inside the admission commit.
+    pub fn on_executed(&self, command: &str, action: impl FnOnce() + Send + 'static) {
+        self.state().on_executed = Some((CommandId::new(command), Box::new(action)));
     }
 
     /// Returns Thread events and cancel settlements in write order.
@@ -302,6 +316,9 @@ impl SessionLedger for MemoryLedger {
         at_ms: i64,
         bound_at_ms: i64,
     ) -> Result<(), Self::Error> {
+        if std::mem::take(&mut self.state().fail_next_decision) {
+            return Err(LedgerError("decision write failed".into()));
+        }
         self.stops
             .decide(execution, ended, at_ms, bound_at_ms)
             .map_err(|e| LedgerError(e.to_string()))?;
@@ -390,6 +407,21 @@ impl SessionLedger for MemoryLedger {
             .find(|command| command.command_id == *command_id)
             .ok_or_else(|| LedgerError(format!("unknown command {command_id}")))?;
         command.settlements.push(settlement);
+        let hook = match state.on_executed.take() {
+            Some((hooked, action))
+                if &hooked == command_id && matches!(settlement, CommandSettlement::Executed) =>
+            {
+                Some(action)
+            }
+            other => {
+                state.on_executed = other;
+                None
+            }
+        };
+        drop(state);
+        if let Some(action) = hook {
+            action();
+        }
         Ok(())
     }
 }
