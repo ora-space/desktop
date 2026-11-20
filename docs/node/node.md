@@ -60,7 +60,9 @@ touches a checkout drops to that user between fork and exec. Every command carri
 `-c gc.auto=0 -c maintenance.auto=false`, so Git detaches no background maintenance.
 
 At startup the Node starts one `ora-reaper` sidecar and registers every Git it runs with it; if the
-Node dies, the reaper kills the registered process groups. A Node that cannot start the reaper does
+Node dies, the reaper kills the registered process groups. The reaper kills them as well before it
+exits on SIGTERM, SIGINT or SIGHUP, so stopping it by PID with SIGTERM is safe; only SIGKILL leaves
+them running. A Node that cannot start the reaper does
 not start, and when the reaper exits while the Node runs, the Node starts no further Git and exits
 with an error. Agent session and plugin processes are not registered with the reaper, see
 [Agent sessions](agent-sessions.md#record-order-and-crashes).
