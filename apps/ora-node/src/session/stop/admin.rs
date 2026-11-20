@@ -195,7 +195,7 @@ async fn reconcile(
         .find(|record| record.identity.attempt == request.attempt)
         .ok_or(Error::InvalidTransition)?;
     let bound = tokio::time::Instant::now() + Duration::from_secs(10);
-    let mut pause = Duration::from_millis(25);
+    let mut pause = super::FIRST_RECHECK;
     let (evidence, proof) = loop {
         if record.state == SessionStopState::Confirmed {
             break (StopEvidence::Stopped, record.proof);
@@ -232,7 +232,7 @@ async fn reconcile(
             .terminate_off_runtime(&record.identity, &config.host())
             .await;
         tokio::time::sleep(pause).await;
-        pause = (pause * 2).min(Duration::from_secs(1));
+        pause = super::next_recheck(pause);
     };
     let result = SessionStopAuditResult {
         observation: match evidence {

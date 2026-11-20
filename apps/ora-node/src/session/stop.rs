@@ -165,16 +165,22 @@ pub(crate) async fn confirm<L: SessionLedger>(
             return Ok(false);
         }
         tokio::time::sleep(pause).await;
-        pause = (pause * 2).min(LAST_RECHECK);
+        pause = next_recheck(pause);
     }
 }
 
 /// The first wait between stop observations; a stop that settles at once is confirmed quickly.
-const FIRST_RECHECK: Duration = Duration::from_millis(25);
+pub(crate) const FIRST_RECHECK: Duration = Duration::from_millis(25);
 
 /// The longest wait between stop observations. Every observation terminates and scans procfs,
 /// so a process that refuses to die costs at most one round per second until the bound.
 const LAST_RECHECK: Duration = Duration::from_secs(1);
+
+/// The wait after `pause` between observations of an attempt that has not settled: doubling,
+/// capped at [`LAST_RECHECK`]. Every stop loop of the Node shares this sequence.
+pub(crate) fn next_recheck(pause: Duration) -> Duration {
+    (pause * 2).min(LAST_RECHECK)
+}
 
 /// Resource release is a second durable boundary, after proof and actual removal of local views.
 pub(crate) fn released<L: SessionLedger>(

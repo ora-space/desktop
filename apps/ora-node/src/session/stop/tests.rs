@@ -401,3 +401,15 @@ async fn a_hung_observation_costs_its_budget_and_holds_the_worker() {
     assert_eq!((hung, behind, after), (None, None, Some("served")));
     assert!(elapsed < Duration::from_millis(300), "{elapsed:?}");
 }
+
+/// Stop loops wait 25 ms after the first observation and double the wait up to one second, so
+/// an attempt that refuses to stop costs at most one observation a second until its bound.
+#[test]
+fn rechecks_back_off_from_25_ms_to_one_second() {
+    let waits: Vec<_> =
+        std::iter::successors(Some(FIRST_RECHECK), |pause| Some(next_recheck(*pause)))
+            .take(9)
+            .map(|pause| pause.as_millis())
+            .collect();
+    assert_eq!(waits, vec![25, 50, 100, 200, 400, 800, 1000, 1000, 1000]);
+}

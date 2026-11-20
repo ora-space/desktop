@@ -5,7 +5,7 @@ use crate::session::{
     host::SessionLifecycle, stop,
 };
 use ora_node_db::{SessionStopChange, SessionStopPackage};
-use std::{sync::PoisonError, time::Duration};
+use std::sync::PoisonError;
 
 /// The callback captures ownership handles, never a second copy of the desired settings.
 pub(in crate::session) fn configure<L, C, P, R>(
@@ -113,7 +113,7 @@ where
                 .await
         })
         .await;
-    let mut pause = Duration::from_millis(25);
+    let mut pause = stop::FIRST_RECHECK;
     loop {
         if control.snapshot(false).convergence == ora_node_protocol::SessionMcpConvergence::Stopping
         {
@@ -151,7 +151,7 @@ where
             return Err(blocked());
         }
         tokio::time::sleep(pause).await;
-        pause = (pause * 2).min(Duration::from_secs(1));
+        pause = stop::next_recheck(pause);
     }
     let control = shared
         .controls
