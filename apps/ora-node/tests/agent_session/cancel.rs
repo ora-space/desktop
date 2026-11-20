@@ -718,3 +718,60 @@ async fn a_failed_end_decision_ends_with_ledger_unavailable() {
         )
     );
 }
+
+/// Case 5 (quiet window edge): a cancel accepted within the quiet window whose wake the stop
+/// never saw still merges into the stop when it settles, so both cancels share `stopped`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancel_accepted_as_the_quiet_window_ends_shares_the_conclusion() {
+    let mut fixture = Fixture::new();
+    fixture.verify_turn_boundary();
+    fixture.turn_cancel.quiet = std::time::Duration::from_secs(1);
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping(&sessions, "[hold]", CANCEL);
+    running(&fixture, 0).await;
+    fixture.command(
+        &sessions,
+        "cancel-1",
+        SessionCommand::CancelTurn(TurnId::new("turn-1")),
+    );
+    until(|| (turn_ends(&fixture) == 1).then_some(())).await;
+    // Accepted, but its wake is lost: only the stop's own settlement boundary can find it.
+    fixture.ledger.accept(
+        "cancel-2",
+        SessionCommand::CancelTurn(TurnId::new("turn-1")),
+    );
+    let first = settled(&fixture, "cancel-1").await;
+    let second = settled(&fixture, "cancel-2").await;
+    end(&fixture, &sessions).await;
+    assert_eq!(
+        (first, second),
+        (TurnCancelOutcome::Stopped, TurnCancelOutcome::Stopped)
+    );
+}
+
+/// An acceptance time lives exactly as long as its cancel is pending: it goes once the cancel is
+/// settled, whatever the outcome, and a duplicate of a settled cancel never adds one again.
+#[tokio::test(flavor = "multi_thread")]
+async fn acceptance_times_live_only_while_their_cancel_is_pending() {
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping(&sessions, "hello", CANCEL);
+    until(|| (turn_ends(&fixture) == 1).then_some(())).await;
+    let execution = ExecutionId::new(EXECUTION);
+    let command = ora_node_protocol::CommandId::new("cancel-x");
+    fixture.ledger.accept(
+        "cancel-x",
+        SessionCommand::CancelTurn(TurnId::new("turn-x")),
+    );
+    sessions.turn_cancel_accepted(&execution, &command, tokio::time::Instant::now());
+    assert_eq!(
+        settled(&fixture, "cancel-x").await,
+        TurnCancelOutcome::Unknown
+    );
+    let after_settlement = sessions.pending_cancel_acceptances();
+    // The Controller resends the settled command; the ledger answers it as a duplicate.
+    sessions.turn_cancel_accepted(&execution, &command, tokio::time::Instant::now());
+    let after_duplicate = sessions.pending_cancel_acceptances();
+    end(&fixture, &sessions).await;
+    assert_eq!((after_settlement, after_duplicate), (0, 0));
+}

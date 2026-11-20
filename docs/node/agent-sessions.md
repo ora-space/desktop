@@ -181,7 +181,11 @@ with `keep_session_on_failure` may also outlive a failed turn. A cancel takes ef
 which is the one serial boundary for a cancel, the turn's admission and its MCP wait timeout: whichever
 commits first decides the turn. The durable acceptance itself wakes the session, before the accepted
 reply is written, and a stop's deadline counts from the first cancel's acceptance. Cancels also take
-effect while the session prepares, for example during a prior Revision restore.
+effect throughout the preparation before admission: during a prior Revision restore, the workload
+placement and model authorization. While model access is ending and the session waits for the
+Controller's `EndSession`, a pending cancel bounds that wait to its own deadline; the decision then
+records the reason known at that point. A restart records the end decision and settles pending
+cancels before it waits for stop evidence.
 
 - **Queued turn**, including one waiting for the agent or an MCP gate: dropped, its command settled
   `discarded`, settlement `not_started`, at once. A wait already past its deadline is settled as the
@@ -189,8 +193,8 @@ effect while the session prepares, for example during a prior Revision restore.
 - **Admitted, prompt not yet written**: the prompt is never written; `TurnEnded{cancelled}`, then
   `stopped`, and the session stays.
 - **Running turn**: the runtime first looks, without waiting, for the prompt's answer. An answer
-  already readable is a race the Agent won: the turn keeps the Agent's own stop reason and the
-  cancel is `already_ended`. Otherwise the runtime answers pending permissions `cancelled`, sends
+  already readable is a race the Agent won: the turn keeps its own result, a stop reason or a
+  failure, and the cancel is `already_ended`. Otherwise the runtime answers pending permissions `cancelled`, sends
   `session/cancel`, and
   waits until the first cancel's acceptance plus G (15 s for now); later cancels and a running
   watchdog stop merge into the same stop and deadline, and the watchdog does not resend. Any

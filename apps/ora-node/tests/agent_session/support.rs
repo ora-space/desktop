@@ -828,14 +828,33 @@ impl Fixture {
 
     /// Starts a session whose adapter receives `settings_json` with the gateway fixture's model.
     pub fn start_configured(&self, sessions: &Sessions, initial: &str, settings_json: &str) {
+        self.start_configured_keeping(
+            sessions,
+            initial,
+            settings_json,
+            Keep {
+                on_cancel: false,
+                on_failure: false,
+            },
+        );
+    }
+
+    /// Starts a model-bound session with keep choices.
+    pub fn start_configured_keeping(
+        &self,
+        sessions: &Sessions,
+        initial: &str,
+        settings_json: &str,
+        keep: Keep,
+    ) {
         sessions.start(
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
                 host_mcp_servers: Vec::new(),
                 mcp_lifecycle: false,
-                keep_session_on_cancel: false,
-                keep_session_on_failure: false,
+                keep_session_on_cancel: keep.on_cancel,
+                keep_session_on_failure: keep.on_failure,
                 mcp: Vec::new(),
                 agent_configuration: Some(FrozenAgentConfiguration {
                     plugin_id: PluginId::new(PLUGIN_ID),

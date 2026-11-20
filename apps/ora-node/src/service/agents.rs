@@ -107,6 +107,19 @@ pub(super) async fn reconcile(
             ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore end could not be deferred");
             continue;
         }
+        // The full decision, its stop clock and the settlement of every pending cancel come first;
+        // only the terminal waits for stop evidence, which may never arrive (cancel-turn D3, D4).
+        // An earlier decision is kept unchanged.
+        let at_ms = crate::session::stop::now_ms();
+        if let Err(error) = journal.decide_session_end(
+            execution,
+            &ended,
+            at_ms,
+            at_ms.saturating_add(node.session_stop.confirmation_timeout_ms as i64),
+        ) {
+            ora_logging::ora_warn!(execution_id = %execution, error = %error, "session end decision could not be recorded");
+            continue;
+        }
         let confirmed = match stops.poll(execution, check).await {
             Ok(confirmed) => confirmed,
             Err(error) => {

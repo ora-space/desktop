@@ -157,7 +157,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 outcome,
                 command.filter(|_| outcome == TurnCancelOutcome::NotStarted),
             ) {
-                Ok(_) => {}
+                Ok(_) => {
+                    forget_acceptance(self.cancel_acceptance, self.execution, &cancel.command_id)
+                }
                 Err(_) if self.queued_end()?.is_some() => return Ok(WaitingCancel::None),
                 Err(_) => return Err(SessionEnd::agent_failed("ledger_unavailable")),
             }
@@ -178,11 +180,14 @@ impl<L: SessionLedger> Conversation<'_, L> {
             if merged.contains(&cancel.command_id) {
                 continue;
             }
+            // Read, not taken: the time stays until the cancel is settled, so an end decided
+            // before then still knows when the cancel's deadline falls.
             let accepted_at = self
                 .cancel_acceptance
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .remove(&(self.execution.clone(), cancel.command_id.clone()));
+                .get(&(self.execution.clone(), cancel.command_id.clone()))
+                .copied();
             if merged.is_empty() {
                 // The deadline counts from the first cancel's durable acceptance and never
                 // moves; the runtime keeps the first deadline it is given. A cancel accepted
@@ -236,9 +241,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         return Judged::End(SessionEnd::agent_failed("thread_unavailable"));
                     }
                     match self.settle_cancels(Some(&stopped.turn_id)) {
-                        Ok(cancels) => stopped
-                            .merged
-                            .extend(cancels.into_iter().map(|cancel| cancel.command_id)),
+                        Ok(cancels) => merge(&mut stopped.merged, cancels),
                         Err(end) => return Judged::End(end),
                     }
                 }
@@ -255,6 +258,12 @@ impl<L: SessionLedger> Conversation<'_, L> {
             }
         }
         self.mirror.fence().fence_turn();
+        // The quiet window may have ended just as a cancel's wake arrived: every cancel of this
+        // turn accepted by now merges into this stop and shares its conclusion.
+        match self.settle_cancels(Some(&stopped.turn_id)) {
+            Ok(cancels) => merge(&mut stopped.merged, cancels),
+            Err(end) => return Judged::End(end),
+        }
         // A turn stopped by failure already had its own result when a cancel merged into it.
         let outcome = match stopped.cause {
             StopCause::Cancel => TurnCancelOutcome::Stopped,
@@ -291,7 +300,10 @@ impl<L: SessionLedger> Conversation<'_, L> {
             .ledger
             .settle_turn_cancel(self.execution, command, outcome, target)
         {
-            Ok(recorded) => Ok(recorded),
+            Ok(recorded) => {
+                forget_acceptance(self.cancel_acceptance, self.execution, command);
+                Ok(recorded)
+            }
             Err(error) => {
                 if self.queued_end()?.is_some() {
                     return Ok(TurnCancelOutcome::SessionEnding);
@@ -355,6 +367,7 @@ pub(in crate::session::driver) fn settle_before_start<L: SessionLedger>(
     execution: &ExecutionId,
     initial: &TurnId,
     turns: &TurnBook,
+    acceptance: &Acceptance,
 ) -> Result<(), SessionEnd> {
     let unavailable = || SessionEnd::agent_failed("ledger_unavailable");
     let queued = ledger
@@ -397,6 +410,7 @@ pub(in crate::session::driver) fn settle_before_start<L: SessionLedger>(
             target.as_ref(),
         ) {
             Ok(TurnCancelOutcome::NotStarted) => {
+                forget_acceptance(acceptance, execution, &queued_cancel.command_id);
                 turns.ended(turn_id);
                 if initial_waiting {
                     turns
@@ -404,12 +418,61 @@ pub(in crate::session::driver) fn settle_before_start<L: SessionLedger>(
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
             }
-            Ok(_) => {}
+            Ok(_) => forget_acceptance(acceptance, execution, &queued_cancel.command_id),
             Err(_) if ending(ledger) => return Ok(()),
             Err(_) => return Err(unavailable()),
         }
     }
     Ok(())
+}
+
+/// Acceptance times of pending cancels, by execution and command.
+pub(in crate::session) type Acceptance =
+    std::sync::Mutex<std::collections::HashMap<(ExecutionId, CommandId), tokio::time::Instant>>;
+
+/// Drops the acceptance time of a cancel that has its settlement.
+fn forget_acceptance(acceptance: &Acceptance, execution: &ExecutionId, command: &CommandId) {
+    acceptance
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&(execution.clone(), command.clone()));
+}
+
+/// The latest moment by which the pending cancels need an end decision: the earliest
+/// acceptance plus G. A cancel accepted before a restart has no recorded time and counts from
+/// now.
+pub(in crate::session::driver) fn pending_cancel_bound<L: SessionLedger>(
+    ledger: &L,
+    execution: &ExecutionId,
+    acceptance: &Acceptance,
+    grace: std::time::Duration,
+) -> Result<Option<tokio::time::Instant>, &'static str> {
+    let queued = ledger
+        .queued_commands(execution)
+        .map_err(|_| "ledger_unavailable")?;
+    let times = acceptance
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(queued
+        .iter()
+        .filter(|queued| matches!(queued.command, SessionCommand::CancelTurn(_)))
+        .map(|queued| {
+            times
+                .get(&(execution.clone(), queued.command_id.clone()))
+                .copied()
+                .unwrap_or_else(tokio::time::Instant::now)
+                + grace
+        })
+        .min())
+}
+
+/// Adds the cancels not yet merged into a stop, keeping acceptance order.
+fn merge(merged: &mut Vec<CommandId>, cancels: Vec<PendingCancel>) {
+    for cancel in cancels {
+        if !merged.contains(&cancel.command_id) {
+            merged.push(cancel.command_id);
+        }
+    }
 }
 
 /// What a cancel of the turn waiting for admission did.

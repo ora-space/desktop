@@ -730,3 +730,103 @@ fn startup_cleanup_keeps_restore_inputs_until_original_stop_is_confirmed()
     assert!(!transport.exists());
     Ok(())
 }
+
+/// A restart with a pending cancel and an Agent stop whose evidence is missing records the end
+/// decision with the cancel's `session_ending` at once; only the terminal keeps waiting for the
+/// evidence, and later passes add no second settlement (cancel-turn D3, D4).
+#[test]
+fn restart_settles_a_pending_cancel_while_stop_evidence_is_missing()
+-> Result<(), Box<dyn std::error::Error>> {
+    use ora_node_db::{AttemptId, SessionStopHost, SessionStopIdentity, SessionStopKind};
+    use ora_node_protocol::*;
+    ora_logging::initialize_test_clock();
+    let root = tempfile::tempdir()?;
+    let (deployment, _clone) = restored_deployment(root.path())?;
+    let mut node = crate::Node::open(
+        node_config(&deployment),
+        deployment.process.clone(),
+        Shutdown::default(),
+    )?;
+    let mut input = resumed();
+    input.payload.spec.prior_revision = None;
+    input.payload.spec.keep_session_on_cancel = true;
+    node.database.accept_session(&input)?;
+    assert!(
+        node.database
+            .start_session(&input, &NodeIncarnationId::new("original"))?
+    );
+    let journal = node.database.session_journal()?;
+    // The Agent's stop responsibility has no lock file, so no evidence can confirm it.
+    journal.record_session_stop(
+        &SessionStopIdentity {
+            attempt: AttemptId::generate(),
+            execution: input.execution_id.clone(),
+            checkout: input.payload.spec.checkout_execution_id.clone(),
+            node: NodeRuntimeIdentity {
+                node_id: input.payload.spec.node_id.clone(),
+                incarnation_id: NodeIncarnationId::new("original"),
+            },
+            host: SessionStopHost {
+                boot_id: "boot-before".into(),
+                trusted_host_id: Some("physical-host".into()),
+            },
+            kind: SessionStopKind::Agent,
+            packages: Vec::new(),
+        },
+        1,
+    )?;
+    node.database
+        .accept_session_command(&ora_node_db::SessionCommandInput::CancelTurn(
+            CancelTurnMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                operation_id: input.operation_id.clone(),
+                execution_id: input.execution_id.clone(),
+                payload: CancelTurn {
+                    node_id: input.payload.spec.node_id.clone(),
+                    command_id: CommandId::new("cancel-1"),
+                    turn_id: TurnId::new("initial"),
+                },
+            },
+        ))?;
+    let stops = crate::managed::RestoreStops::new(
+        journal.clone(),
+        deployment.process,
+        Duration::from_secs(/*secs*/ 60),
+        node.git.runner().direct_git().locks().clone(),
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    for _ in 0..2 {
+        runtime.block_on(super::reconcile(
+            &mut node,
+            None,
+            &stops,
+            crate::managed::StopCheck::Handover,
+            None,
+        ))?;
+    }
+    let events = node.database.pending_events()?;
+    let settlements: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            NodeToControllerMessage::TurnCancelSettled(message) => Some(message.payload.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        settlements,
+        vec![TurnCancelSettled {
+            command_id: CommandId::new("cancel-1"),
+            turn_id: TurnId::new("initial"),
+            outcome: TurnCancelOutcome::SessionEnding,
+        }]
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, NodeToControllerMessage::AgentSessionEnded(_))),
+        "the terminal waits for stop evidence"
+    );
+    Ok(())
+}

@@ -132,14 +132,16 @@ Completed 状态。actor、插件和恢复都不会启动，也不存在会话�
 
 以 `keep_session_on_cancel` 启动的会话受理针对它任一轮次的 `CancelTurn`；以 `keep_session_on_failure` 启动的会话
 在一轮失败后也可能保留。取消在账本处生效：取消、这一轮的准入和它的 MCP 等候超时共用这一个串行边界，先提交的
-决定这一轮。持久受理本身就会唤醒会话，不等受理回复写出；一次停止的截止时刻从第一个取消的受理时刻起算。会话还在
-准备时（例如恢复 prior Revision 期间），取消同样立即生效。
+决定这一轮。持久受理本身就会唤醒会话，不等受理回复写出；一次停止的截止时刻从第一个取消的受理时刻起算。在准入之前的
+整个准备阶段（恢复 prior Revision、布置工作负载、模型授权），取消同样立即生效。模型授权进入结束、会话在等
+Controller 的 `EndSession` 时，待结算的取消把这段等待限制在它自己的截止时刻之内，到时按当时已知的原因写结束
+决定。重启时先写结束决定、结算待结算的取消，再等停止证据。
 
 - **排队中的轮次**（包括正在等 Agent 或 MCP 门禁的）：立即丢弃，命令结算为 `discarded`，结论 `not_started`。
   等候已过截止时刻的，先按超时结算，取消随后得到 `already_ended`。
 - **已准入、prompt 还没写出**：不再写出 prompt；`TurnEnded{cancelled}`，然后 `stopped`，会话保留。
-- **正在执行**：运行时先不等待地看这次 prompt 的回应是否已经可读。已经可读说明 Agent 赢了竞争：这一轮保留 Agent
-  自己的停止原因，取消得到 `already_ended`。否则以 `cancelled` 应答挂起的权限请求，发 `session/cancel`，等到第一个取消的受理时刻加 G
+- **正在执行**：运行时先不等待地看这次 prompt 的回应是否已经可读。已经可读说明 Agent 赢了竞争：这一轮保留它
+  自己的结果（停止原因或失败），取消得到 `already_ended`。否则以 `cancelled` 应答挂起的权限请求，发 `session/cancel`，等到第一个取消的受理时刻加 G
   （暂定 15 秒）。之后的取消和正在进行的看门狗停止并入同一次停止和截止时刻，看门狗不再重发。`session/cancel`
   写出之后的任何回应（即使是 `end_turn`）都是对取消的回应：写 `TurnEnded{cancelled}`，再判定这次停止；没有回应时以 `turn_cancel_unanswered` 结束会话。
 - **已结束、已被丢弃、已超时失败或不存在**：`already_ended` 或 `unknown`，不做其他事。

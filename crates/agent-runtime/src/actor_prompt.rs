@@ -304,6 +304,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         // user's cancel, never resent, and only an answered cancel keeps the
                         // provider session.
                         end_report.record(PromptEndCause::UserStopped);
+                        end_report.mark_cancel_applied();
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
                         if reusable {

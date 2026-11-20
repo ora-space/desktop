@@ -24,6 +24,11 @@ fn a_cancel_before_the_prompt_write_never_reaches_the_agent() {
             .unwrap();
         assert_eq!(completion(&mut stream).await, StopReason::Cancelled);
         assert!(stream.end_report().is_some_and(|report| report.unsent()));
+        assert!(
+            stream
+                .end_report()
+                .is_some_and(|report| report.cancel_applied())
+        );
         assert!(fixture.frames.try_recv().is_err(), "no prompt was written");
         drop(stream);
         let mut next = fixture
@@ -136,6 +141,45 @@ fn an_end_turn_answer_to_a_written_cancel_is_reported_cancelled() {
             .unwrap();
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");
         assert_eq!(completion(&mut stream).await, StopReason::Cancelled);
+        assert!(
+            stream
+                .end_report()
+                .is_some_and(|report| report.cancel_applied())
+        );
+        fixture.shutdown().await;
+    });
+}
+
+/// A prompt that ends on its own reports that no cancel acted on it, even when its own stop
+/// reason is `cancelled` and a cancel was requested right after: its owner must not judge it as
+/// a stop the cancel caused.
+#[test]
+fn a_prompt_that_ended_on_its_own_reports_no_applied_cancel() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("default");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("default"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture
+            .agent
+            .send(AgentInput::Finish("default".into(), StopReason::Cancelled))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::Cancelled);
+        fixture
+            .manager
+            .cancel_turn_prompt("default", Instant::now() + Duration::from_secs(15))
+            .unwrap();
+        tokio::task::yield_now().await;
+        assert!(
+            !stream
+                .end_report()
+                .is_some_and(|report| report.cancel_applied())
+        );
+        assert!(fixture.frames.try_recv().is_err(), "no cancel is written");
         fixture.shutdown().await;
     });
 }

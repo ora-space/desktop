@@ -261,30 +261,54 @@ fn a_cancel_is_settled_even_when_its_reply_is_lost() {
                         break;
                     }
                 }
-                let cancel = ControllerToNodeMessage::CancelTurn(CancelTurnMessage {
-                    protocol_version: CURRENT_PROTOCOL_VERSION,
-                    operation_id: start("").operation_id,
-                    execution_id: ExecutionId::new(EXECUTION),
-                    payload: CancelTurn {
-                        node_id: NodeId::new("test-node"),
-                        command_id: CommandId::new("cancel-unknown"),
-                        turn_id: TurnId::new("never-submitted"),
-                    },
-                });
-                send(&mut stream, cancel).await;
-                // Gone before the Node can write the accepted reply.
                 drop(stream);
-                let (mut stream, _) = greet(&fixture, /*turn_cancel*/ true).await;
-                let settled = loop {
-                    if let NodeToControllerMessage::TurnCancelSettled(settled) =
-                        receive(&mut stream).await
-                    {
-                        break settled.payload;
+                // Each attempt sends a fresh cancel and disconnects at once, so the accepted reply
+                // cannot be written. A disconnect can also win before the Node reads the frame, and
+                // then nothing was accepted; only then is the next attempt needed. Before the fix no
+                // attempt is ever settled, because only a delivered reply woke the idle session.
+                let mut settled = None;
+                let mut stream = None;
+                for attempt in 0..5 {
+                    let (mut sending, _) = greet(&fixture, /*turn_cancel*/ true).await;
+                    let command = CommandId::new(format!("cancel-unknown-{attempt}"));
+                    send(
+                        &mut sending,
+                        ControllerToNodeMessage::CancelTurn(CancelTurnMessage {
+                            protocol_version: CURRENT_PROTOCOL_VERSION,
+                            operation_id: start("").operation_id,
+                            execution_id: ExecutionId::new(EXECUTION),
+                            payload: CancelTurn {
+                                node_id: NodeId::new("test-node"),
+                                command_id: command.clone(),
+                                turn_id: TurnId::new("never-submitted"),
+                            },
+                        }),
+                    )
+                    .await;
+                    drop(sending);
+                    let (mut reading, _) = greet(&fixture, /*turn_cancel*/ true).await;
+                    let found = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                        loop {
+                            if let NodeToControllerMessage::TurnCancelSettled(message) =
+                                receive(&mut reading).await
+                            {
+                                break message.payload;
+                            }
+                        }
+                    })
+                    .await;
+                    if let Ok(payload) = found {
+                        settled = Some(payload);
+                        stream = Some(reading);
+                        break;
                     }
-                };
+                    drop(reading);
+                }
+                let settled = settled.expect("an accepted cancel whose reply was lost is settled");
+                let mut stream = stream.expect("the reading connection");
                 assert_eq!(
-                    (settled.command_id, settled.outcome),
-                    (CommandId::new("cancel-unknown"), TurnCancelOutcome::Unknown)
+                    (settled.turn_id, settled.outcome),
+                    (TurnId::new("never-submitted"), TurnCancelOutcome::Unknown)
                 );
                 send(&mut stream, end()).await;
                 loop {

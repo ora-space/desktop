@@ -1,6 +1,6 @@
 //! One session execution from start to its terminal result.
 mod conversation;
-use conversation::{Conversation, TurnBook, settle_before_start};
+use conversation::{Acceptance, Conversation, TurnBook, pending_cancel_bound, settle_before_start};
 
 use super::end::SessionEnd;
 use super::host::{
@@ -62,13 +62,13 @@ where
         .checkouts
         .checkout(&spec.checkout_execution_id)
         .map(|checkout| checkout.path);
+    // Whatever acceptance times are left go with the session, on every way out of this run,
+    // including cancels the ledger settles while the stop waits for evidence.
+    let _acceptance = ForgetAcceptances {
+        acceptance: &shared.cancel_acceptance,
+        execution: &execution,
+    };
     let mut end = prepare_and_converse(&shared, &operation, &execution, spec, &wake).await;
-    // Acceptance times matter only while the conversation can still stop a turn.
-    shared
-        .cancel_acceptance
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .retain(|(accepted, _), _| accepted != &execution);
     let ended = end.terminal(shared.node.clone());
     if super::model::seal_unstarted_history(&shared.sessions_root(), &execution).is_err() {
         return false;
@@ -245,7 +245,14 @@ where
         &mut spec,
         resume::EndSignals {
             stopping,
-            ended: ended_before_start(&shared.ledger, execution, wake, &initial, &turns),
+            ended: ended_before_start(
+                &shared.ledger,
+                execution,
+                wake,
+                &initial,
+                &turns,
+                &shared.cancel_acceptance,
+            ),
         },
     );
     if let Err(end) = restored.await {
@@ -258,14 +265,28 @@ where
     // removed) only after the lifecycle and the plugin it ran are gone.
     let placement = {
         let workload = shared.config.workload.clone();
+        let execution_id = execution.clone();
         let execution = execution.clone();
         let package_root = package_root.clone();
-        tokio::task::spawn_blocking(move || {
-            SessionPlacement::prepare(&workload, &execution, &package_root, &checkout)
-                .map(|placement| (placement, checkout))
-        })
-        .await
-        .unwrap_or_else(|error| Err(std::io::Error::other(error).into()))
+        let prepared = settling_cancels(
+            tokio::task::spawn_blocking(move || {
+                SessionPlacement::prepare(&workload, &execution, &package_root, &checkout)
+                    .map(|placement| (placement, checkout))
+            }),
+            PreStart {
+                ledger: &shared.ledger,
+                execution: &execution_id,
+                wake,
+                initial: &initial,
+                turns: &turns,
+                acceptance: &shared.cancel_acceptance,
+            },
+        )
+        .await;
+        match prepared {
+            Ok(joined) => joined.unwrap_or_else(|error| Err(std::io::Error::other(error).into())),
+            Err(end) => return end,
+        }
     };
     let (mut placement, checkout) = match placement {
         Ok(prepared) => prepared,
@@ -299,7 +320,24 @@ where
                 None => return SessionEnd::agent_failed("agent_model_configuration_required"),
             };
             let home = &shared.config.home_directory;
-            match ModelAccess::open(config, binding, execution, home, route).await {
+            let pre_start = PreStart {
+                ledger: &shared.ledger,
+                execution,
+                wake,
+                initial: &initial,
+                turns: &turns,
+                acceptance: &shared.cancel_acceptance,
+            };
+            let opened = match settling_cancels(
+                ModelAccess::open(config, binding, execution, home, route),
+                pre_start,
+            )
+            .await
+            {
+                Ok(opened) => opened,
+                Err(end) => return end,
+            };
+            match opened {
                 Ok(access) => Some(access),
                 Err(error) if error.0 == "model_session_ending" => {
                     return match super::model::reconcile(
@@ -308,6 +346,18 @@ where
                         wake,
                         shared.stopping.subscribe(),
                         super::model::END_RECONCILE_WAIT,
+                        &mut || {
+                            // Nothing is admitted yet: every cancel settles without a decision.
+                            settle_before_start(
+                                &shared.ledger,
+                                execution,
+                                &initial,
+                                &turns,
+                                &shared.cancel_acceptance,
+                            )
+                            .map(|()| None)
+                            .map_err(|_| "ledger_unavailable")
+                        },
                     )
                     .await
                     {
@@ -598,8 +648,12 @@ where
                             if let Some(access) = &mut model_access {
                                 access.close().await;
                             }
+                            // Pending cancels need the decision within their deadline, so the
+                            // wait for the reason ends by then.
                             match super::model::reconcile(&shared.ledger, execution, wake,
-                                shared.stopping.subscribe(), super::model::END_RECONCILE_WAIT).await {
+                                shared.stopping.subscribe(), super::model::END_RECONCILE_WAIT,
+                                &mut || pending_cancel_bound(&shared.ledger, execution,
+                                    &shared.cancel_acceptance, shared.config.turn_cancel.grace)).await {
                                 Ok(reason) => SessionEnd::requested(reason),
                                 Err(detail) => SessionEnd::agent_failed(detail),
                             }
@@ -718,9 +772,10 @@ async fn ended_before_start<L: SessionLedger>(
     wake: &Notify,
     initial: &ora_node_protocol::TurnId,
     turns: &TurnBook,
+    acceptance: &Acceptance,
 ) -> SessionEnd {
     loop {
-        if let Err(end) = settle_before_start(ledger, execution, initial, turns) {
+        if let Err(end) = settle_before_start(ledger, execution, initial, turns, acceptance) {
             return end;
         }
         match ledger.queued_commands(execution).map(plan) {
@@ -741,6 +796,56 @@ async fn ended_before_start<L: SessionLedger>(
                 ora_warn!(execution_id = %execution, error = %error, "session queue unreadable");
                 return SessionEnd::agent_failed("ledger_unavailable");
             }
+        }
+    }
+}
+
+/// Clears the acceptance times an execution left behind when its run ends.
+struct ForgetAcceptances<'a> {
+    acceptance: &'a Acceptance,
+    execution: &'a ExecutionId,
+}
+
+impl Drop for ForgetAcceptances<'_> {
+    fn drop(&mut self) {
+        self.acceptance
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|(accepted, _), _| accepted != self.execution);
+    }
+}
+
+/// What settling cancels before admission needs.
+struct PreStart<'a, L> {
+    ledger: &'a L,
+    execution: &'a ExecutionId,
+    wake: &'a Notify,
+    initial: &'a ora_node_protocol::TurnId,
+    turns: &'a TurnBook,
+    acceptance: &'a Acceptance,
+}
+
+/// Runs one preparation step while cancels keep taking effect: no turn is admitted yet, so each
+/// one settles at once instead of waiting for the step (D1).
+async fn settling_cancels<L: SessionLedger, F: std::future::Future>(
+    step: F,
+    pre_start: PreStart<'_, L>,
+) -> Result<F::Output, SessionEnd> {
+    tokio::pin!(step);
+    loop {
+        let notified = pre_start.wake.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        settle_before_start(
+            pre_start.ledger,
+            pre_start.execution,
+            pre_start.initial,
+            pre_start.turns,
+            pre_start.acceptance,
+        )?;
+        tokio::select! {
+            output = &mut step => return Ok(output),
+            () = &mut notified => {}
         }
     }
 }

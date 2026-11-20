@@ -220,6 +220,7 @@ async fn delayed_end(
             &actor_wake,
             stopping,
             END_RECONCILE_WAIT,
+            &mut || Ok(None),
         )
         .await
     });
@@ -421,7 +422,8 @@ async fn missing_durable_end_and_node_shutdown_have_bounded_outcomes() {
             &execution,
             &Notify::new(),
             stopping.clone(),
-            Duration::ZERO
+            Duration::ZERO,
+            &mut || Ok(None),
         )
         .await,
         Err("model_access_revoked")
@@ -433,7 +435,8 @@ async fn missing_durable_end_and_node_shutdown_have_bounded_outcomes() {
             &execution,
             &Notify::new(),
             stopping,
-            END_RECONCILE_WAIT
+            END_RECONCILE_WAIT,
+            &mut || Ok(None),
         )
         .await,
         Ok(EndSessionReason::Cancelled)
@@ -567,4 +570,27 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                 );
             })
     });
+}
+
+/// A pending cancel bounds the wait for the durable end: the reconciliation ends by the cancel's
+/// deadline even though the Controller's `EndSession` has not arrived.
+#[tokio::test(start_paused = true)]
+async fn a_pending_cancel_bounds_the_wait_for_the_end_command() {
+    let ledger = Ledger::default();
+    let (_stop, stopping) = watch::channel(/*init*/ false);
+    let started = tokio::time::Instant::now();
+    let bound = started + Duration::from_secs(/*secs*/ 15);
+    assert_eq!(
+        reconcile(
+            &ledger,
+            &ExecutionId::new("execution-1"),
+            &Notify::new(),
+            stopping,
+            END_RECONCILE_WAIT,
+            &mut || Ok(Some(bound)),
+        )
+        .await,
+        Err("model_access_revoked")
+    );
+    assert_eq!(tokio::time::Instant::now(), bound);
 }

@@ -314,32 +314,6 @@ impl<L, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
         self.shared.is_live(execution)
     }
 
-    /// Records that a `CancelTurn` was durably accepted at `accepted_at` and wakes the session at
-    /// once. The protocol side calls this right after the ledger commit, before any reply is
-    /// written, so a reply that cannot be delivered never delays the settlement.
-    pub fn turn_cancel_accepted(
-        &self,
-        execution: &ExecutionId,
-        command: &CommandId,
-        accepted_at: tokio::time::Instant,
-    ) {
-        self.shared
-            .cancel_acceptance
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entry((execution.clone(), command.clone()))
-            .or_insert(accepted_at);
-        if let Some(wake) = self
-            .shared
-            .live
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(execution)
-        {
-            wake.notify_one();
-        }
-    }
-
     /// The transport flushes replacements independently of durable event replay and Ack.
     pub fn preview_snapshots(&self) -> Vec<ora_node_protocol::ThreadPreviewMessage> {
         self.shared.previews.snapshots()
@@ -389,6 +363,60 @@ impl<L, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
             }
             finished.await;
         }
+    }
+}
+
+impl<L: SessionLedger, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
+    /// Records that a `CancelTurn` was durably accepted at `accepted_at` and wakes the session at
+    /// once. The protocol side calls this right after the ledger commit, before any reply is
+    /// written, so a reply that cannot be delivered never delays the settlement.
+    ///
+    /// The time is kept only while the cancel is still queued: a duplicate of a settled cancel,
+    /// or one the ledger settled while accepting it, leaves nothing behind. The session removes
+    /// the entry when it settles the cancel and clears whatever is left when it ends.
+    pub fn turn_cancel_accepted(
+        &self,
+        execution: &ExecutionId,
+        command: &CommandId,
+        accepted_at: tokio::time::Instant,
+    ) {
+        let queued = self
+            .shared
+            .ledger
+            .queued_commands(execution)
+            .is_ok_and(|queued| {
+                queued.iter().any(|queued| {
+                    &queued.command_id == command
+                        && matches!(queued.command, SessionCommand::CancelTurn(_))
+                })
+            });
+        if queued {
+            self.shared
+                .cancel_acceptance
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry((execution.clone(), command.clone()))
+                .or_insert(accepted_at);
+        }
+        if let Some(wake) = self
+            .shared
+            .live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(execution)
+        {
+            wake.notify_one();
+        }
+    }
+
+    /// How many cancel acceptance times are held, for diagnostics and tests: each belongs to a
+    /// cancel that is accepted and not yet settled.
+    pub fn pending_cancel_acceptances(&self) -> usize {
+        self.shared
+            .cancel_acceptance
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 }
 

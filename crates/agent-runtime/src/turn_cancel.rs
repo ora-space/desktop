@@ -12,7 +12,7 @@ use crate::events::{drain_queued_prompt_events, settle_cancelled_prompt};
 use crate::limits::CANCELLATION_GRACE;
 use crate::routing::{SessionChannel, SessionEvent};
 use crate::session_followers::SessionFollowers;
-use crate::support::provider_session_invalid;
+use crate::support::{map_prompt_error, provider_session_invalid};
 use crate::tool_timing::ToolTimings;
 use crate::{AgentRuntimeHost, PromptEndCause, PromptEndReport, RuntimeActor, RuntimeError};
 use agent_client_protocol_schema::v1::{
@@ -115,6 +115,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     ) {
         end_report.record(PromptEndCause::UserStopped);
         end_report.mark_unsent();
+        end_report.mark_cancel_applied();
         self.end_turn(StopReason::Cancelled);
         followers.finish(StopReason::Cancelled);
         let _ = events.try_send(Ok(PromptSessionEvent::Completed {
@@ -149,6 +150,24 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             tool_timings,
             saw_output,
         } = stop;
+        // A turn cancel waits until its own deadline and must report an unanswered cancel; the
+        // stop button keeps the runtime's short grace.
+        let turn_deadline = self.turn_cancel.deadline().filter(|_| notify_owner);
+        if turn_deadline.is_some()
+            && let Some(response) =
+                ready_response(self, &mut channel, client, &pending, events, saw_output).await
+        {
+            // The prompt had already ended on its own: the cancel did not act on it, and the
+            // answer keeps its own meaning, success or failure.
+            self.finish_answered_prompt(
+                channel,
+                pending.finish(response),
+                operation_id,
+                stop_rest(events, end_report, followers, tool_timings),
+            )
+            .await;
+            return;
+        }
         // `cancel_prompt` is the user pressing stop, while the owner-addressed cancel is a
         // consumer that stopped reading; the two must not be reported alike.
         end_report.record(if notify_owner {
@@ -156,34 +175,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         } else {
             PromptEndCause::StreamDropped
         });
-        // A turn cancel waits until its own deadline and must report an unanswered cancel; the
-        // stop button keeps the runtime's short grace.
-        let turn_deadline = self.turn_cancel.deadline().filter(|_| notify_owner);
-        let ready = match turn_deadline {
-            Some(_) => {
-                ready_response(self, &mut channel, client, &pending, events, saw_output).await
-            }
-            None => None,
-        };
-        let raced = ready.is_some();
-        let settled = match ready {
-            Some(response) => Ok(Some(pending.finish(response))),
-            None => {
-                self.cancel(client, permissions).await;
-                timeout_at(
-                    turn_deadline.unwrap_or_else(|| Instant::now() + CANCELLATION_GRACE),
-                    settle_cancelled_prompt(
-                        self,
-                        &mut channel,
-                        client,
-                        pending,
-                        events,
-                        saw_output,
-                    ),
-                )
-                .await
-            }
-        };
+        if turn_deadline.is_some() {
+            end_report.mark_cancel_applied();
+        }
+        self.cancel(client, permissions).await;
+        let settled = timeout_at(
+            turn_deadline.unwrap_or_else(|| Instant::now() + CANCELLATION_GRACE),
+            settle_cancelled_prompt(self, &mut channel, client, pending, events, saw_output),
+        )
+        .await;
         let reusable = matches!(
             settled,
             Ok(Some(Ok(_))) | Ok(Some(Err(ora_acp::AcpError::RequestFailed(_))))
@@ -193,10 +193,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         if !reusable {
             drain_queued_prompt_events(self, &mut channel, client, events, saw_output).await;
         }
-        let stop_reason = match &settled {
-            Ok(Some(Ok(response))) if raced => response.stop_reason,
-            _ => StopReason::Cancelled,
-        };
+        // Every answer once `session/cancel` is written answers the cancel.
+        let stop_reason = StopReason::Cancelled;
         self.end_timed_turn(stop_reason, tool_timings);
         followers.finish(stop_reason);
         let owner_notified = !notify_owner
@@ -228,6 +226,91 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.record_cleanup(operation_id, result.clone());
         if let Some(completion) = completion {
             let _ = completion.send(result);
+        }
+    }
+}
+
+/// The part of a prompt's state its own end reports into.
+pub(crate) struct PromptEnd<'a> {
+    events: &'a mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+    end_report: &'a PromptEndReport,
+    followers: &'a mut SessionFollowers,
+    tool_timings: &'a ToolTimings,
+}
+
+/// Groups the state a prompt's own end reports into.
+fn stop_rest<'a>(
+    events: &'a mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+    end_report: &'a PromptEndReport,
+    followers: &'a mut SessionFollowers,
+    tool_timings: &'a ToolTimings,
+) -> PromptEnd<'a> {
+    PromptEnd {
+        events,
+        end_report,
+        followers,
+        tool_timings,
+    }
+}
+
+impl<H: AgentRuntimeHost> RuntimeActor<H> {
+    /// Ends a prompt whose answer was already readable when a turn cancel was about to be
+    /// written, exactly as the prompt loop ends an answered prompt: a result keeps its stop
+    /// reason, an ACP error is the prompt's failure (marked answered when it is a request error).
+    async fn finish_answered_prompt(
+        &mut self,
+        channel: SessionChannel,
+        answer: Result<PromptResponse, ora_acp::AcpError>,
+        operation_id: u64,
+        end: PromptEnd<'_>,
+    ) {
+        let PromptEnd {
+            events,
+            end_report,
+            followers,
+            tool_timings,
+        } = end;
+        self.load_restoration = crate::attach::LoadRestoration::NotRestored;
+        match answer {
+            Ok(response) => {
+                self.record_cleanup(operation_id, Ok(()));
+                end_report.record(PromptEndCause::Settled);
+                self.end_timed_turn(response.stop_reason, tool_timings);
+                followers.finish(response.stop_reason);
+                if events
+                    .try_send(Ok(PromptSessionEvent::Completed {
+                        stop_reason: response.stop_reason,
+                        token_usage: None,
+                    }))
+                    .is_ok()
+                {
+                    self.channel = Some(channel);
+                } else {
+                    self.isolate_channel(channel).await;
+                }
+            }
+            Err(error) => {
+                let reusable = matches!(&error, ora_acp::AcpError::RequestFailed(_));
+                let session_invalid = provider_session_invalid(&error);
+                if reusable {
+                    self.record_cleanup(operation_id, Ok(()));
+                }
+                end_report.record(PromptEndCause::Unknown);
+                self.end_timed_turn(StopReason::Cancelled, tool_timings);
+                followers.finish(StopReason::Cancelled);
+                let failure = map_prompt_error(error);
+                let failure = if reusable {
+                    failure.answered()
+                } else {
+                    failure
+                };
+                let delivered = events.try_send(Err(failure)).is_ok();
+                if reusable && delivered && !session_invalid {
+                    self.channel = Some(channel);
+                } else {
+                    self.isolate_channel(channel).await;
+                }
+            }
         }
     }
 }

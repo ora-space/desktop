@@ -2,8 +2,7 @@
 use super::*;
 mod admission;
 mod cancel;
-use agent_client_protocol_schema::v1::StopReason;
-pub(super) use cancel::{Keep, TurnBook, settle_before_start};
+pub(super) use cancel::{Acceptance, Keep, TurnBook, pending_cancel_bound, settle_before_start};
 use ora_node_protocol::TurnCancelOutcome;
 
 /// How one running turn stopped.
@@ -47,9 +46,7 @@ pub(super) struct Conversation<'a, L: SessionLedger> {
     pub(super) boundary_verified: bool,
     pub(super) turn_cancel: &'a crate::session::TurnCancelConfig,
     /// Acceptance times of pending cancels, written by the protocol side at durable acceptance.
-    pub(super) cancel_acceptance: &'a std::sync::Mutex<
-        std::collections::HashMap<(ExecutionId, CommandId), tokio::time::Instant>,
-    >,
+    pub(super) cancel_acceptance: &'a cancel::Acceptance,
     /// The stop clock the end decision anchors together with itself.
     pub(super) stop_config: &'a crate::SessionStopConfig,
     /// Turns that already have their own result, so a later cancel of one is `already_ended`,
@@ -222,7 +219,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
         let outcome = loop {
             tokio::select! {
                 event = stream.recv() => match event {
-                    Some(Ok(PromptSessionEvent::Completed { stop_reason, .. })) => {
+                    Some(Ok(PromptSessionEvent::Completed { .. })) => {
                         if merged.is_empty() {
                             break TurnOutcome::Finished;
                         }
@@ -231,7 +228,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
                             self.settle_merged(&merged, TurnCancelOutcome::Stopped)?;
                             break TurnOutcome::Finished;
                         }
-                        if stop_reason == StopReason::Cancelled {
+                        // Only a cancel that acted on the prompt makes this its stop; a prompt
+                        // that ended on its own keeps its end, even a native `cancelled`.
+                        if stream.end_report().is_some_and(|report| report.cancel_applied()) {
                             break TurnOutcome::Stopped(cancel::StoppedTurn {
                                 turn_id: turn_id.clone(),
                                 cause: cancel::StopCause::Cancel,
