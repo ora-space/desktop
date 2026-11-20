@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { TooltipProvider } from "@ora/ui";
+import { TooltipProvider, toast } from "@ora/ui";
 import { PlatformProvider } from "../../platform";
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import {
   createHookWrapper,
@@ -162,6 +162,66 @@ describe("WorkspaceDialogs project creation", () => {
     expect(useWorkspaceSelectionStore.getState().selection.draftId).toEqual(
       expect.any(String),
     );
+  });
+
+  it("keeps the dialog open and toasts when the host rejects the folder", async () => {
+    const user = userEvent.setup();
+    const errorToast = vi.spyOn(toast, "error").mockImplementation(() => "id");
+    const state = createFixtureState();
+    const requestedPaths: string[] = [];
+    const client: ContractsClient = createTestClient({
+      ...createFixtureHandlers(state),
+      createProject: async (request) => {
+        requestedPaths.push(request.mainWorkspacePath);
+        throw new RemoteContractError(
+          {
+            code: "project_workspace_not_directory",
+            params: {},
+            requestId: "550e8400-e29b-41d4-a716-446655440000",
+          },
+          null,
+        );
+      },
+    });
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useUiStore.getState().setDialog({ kind: "project" });
+
+    try {
+      render(
+        <Wrapper>
+          <AppI18nProvider>
+            <PlatformProvider adapter={createStubPlatform()}>
+              <TooltipProvider>
+                <WorkspaceDialogs />
+              </TooltipProvider>
+            </PlatformProvider>
+          </AppI18nProvider>
+        </Wrapper>,
+      );
+
+      await user.type(
+        screen.getByLabelText(/项目文件夹|Project folder/),
+        "  D:\\Projects\\Missing  ",
+      );
+      await user.click(
+        screen.getByRole("button", { name: /添加项目|Add project/ }),
+      );
+
+      const message =
+        /项目文件夹不存在或不是目录|The project folder does not exist or is not a directory/;
+      expect(await screen.findByRole("alert")).toHaveTextContent(message);
+      expect(errorToast).toHaveBeenCalledTimes(1);
+      expect(errorToast.mock.calls[0]?.[0]).toMatch(message);
+      expect(requestedPaths).toEqual(["D:\\Projects\\Missing"]);
+      expect(state.projects).toEqual([]);
+      expect(useUiStore.getState().dialog).toEqual({ kind: "project" });
+    } finally {
+      errorToast.mockRestore();
+    }
   });
 });
 

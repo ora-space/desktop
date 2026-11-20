@@ -49,6 +49,7 @@ is the only source of truth for the schema; there is no checked-in `schema.sql`.
 | `0020`  | Scheduled run business verdict, detail and annotation time                                                                       |
 | `0021`  | Scheduled run artifact manifest and rejected-candidate log                                                                       |
 | `0022`  | Terminal marketplace workflow document source records                                                                            |
+| `0024`  | Releases local Main Workspaces stranded in `provisioning` (data only; downgrade is a no-op)                                      |
 
 Details of individual migrations live in [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md).
 The catalog describes only the current schema; databases whose `migrations` table predates SQL

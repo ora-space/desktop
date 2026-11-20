@@ -39,6 +39,7 @@ Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里
 | `0020` | 定时运行的业务结论、明细与注解时间                                                                  |
 | `0021` | 定时运行的产物清单与被拒绝候选记录                                                                  |
 | `0022` | marketplace 工作流文档的终态来源记录                                                                |
+| `0024` | 释放卡在 `provisioning` 的本地 Main Workspace（仅数据；降级为空操作）                               |
 
 单个迁移的细节见 [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md)。目录只描述当前 schema；`migrations` 表早于 SQL 快照机制的数据库不受支持，需要重建。
 

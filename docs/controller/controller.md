@@ -70,7 +70,10 @@ Invalid flags and configuration fail before any lease is taken.
     "controller_id": "deployment-controller",
     "protected_state_directories": ["/home/node/state", "/home/node/process"],
     "nodes": [
-      { "node_id": "deployment-node", "endpoint": { "kind": "ipc", "path": "/home/node/state/control.sock" } }
+      {
+        "node_id": "deployment-node",
+        "endpoint": { "kind": "ipc", "path": "/home/node/state/control.sock" }
+      }
     ],
     "session": { "io_timeout_ms": 10000, "query_interval_ms": 1000 },
     "reconnect_ms": 1000,
@@ -154,11 +157,11 @@ Node for good, so work registered under a wrong id would wait forever.
 
 While holding the lease the Controller keeps one `Watch` stream open:
 
-| Stream | Entered when | Claims |
-|---|---|---|
-| none | Start; the stream ended with an error; the lease epoch was dropped | Every `claim_interval_ms`, retrying the stream on each tick |
-| live | Cloud sent its response headers | On opening, on every `WorkAvailable`/`OperationAvailable`, and after every renewal |
-| drained | Cloud sent `Drain` or ended the stream cleanly | Never; the lease is kept and sessions continue |
+| Stream  | Entered when                                                       | Claims                                                                             |
+| ------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| none    | Start; the stream ended with an error; the lease epoch was dropped | Every `claim_interval_ms`, retrying the stream on each tick                        |
+| live    | Cloud sent its response headers                                    | On opening, on every `WorkAvailable`/`OperationAvailable`, and after every renewal |
+| drained | Cloud sent `Drain` or ended the stream cleanly                     | Never; the lease is kept and sessions continue                                     |
 
 Signals only accelerate claiming; ownership is decided when `RecordDispatch` commits, and the renewal
 backstop picks up work whose signal was dropped. A drain means the Cloud instance is stopping: the
@@ -173,15 +176,15 @@ It claims one operation at a time with `ClaimOperation` (Cloud hands back the ol
 decides the step order), records each step's effect plan, executes it and advances or defers the
 operation with the claimed version:
 
-| Step | What the Controller does |
-|---|---|
-| sandbox | Executes the ensure effect and advances with its evidence (`sandboxInstanceId`, `nodeId`) |
-| node | Opens a Node session through `router_url` with `ate-target-actor: <atespace>/<externalId>` and waits for Cloud to list it connected |
-| clone | Forwards the snapshot input Cloud froze (`clone_input`) to `RecordDispatch` and the Node verbatim, and advances once it is ready |
-| plugin | Dispatches the frozen plugin install or removal plan, see [Node plugins](../node/plugins.md) |
-| quiesce | Closes the sandbox's dispatch gate and reports idle only when nothing is pending or unresolved |
-| terminate | Stops the Node session, then executes the terminate effect |
-| cleanup | Executes the data-delete effect |
+| Step      | What the Controller does                                                                                                            |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| sandbox   | Executes the ensure effect and advances with its evidence (`sandboxInstanceId`, `nodeId`)                                           |
+| node      | Opens a Node session through `router_url` with `ate-target-actor: <atespace>/<externalId>` and waits for Cloud to list it connected |
+| clone     | Forwards the snapshot input Cloud froze (`clone_input`) to `RecordDispatch` and the Node verbatim, and advances once it is ready    |
+| plugin    | Dispatches the frozen plugin install or removal plan, see [Node plugins](../node/plugins.md)                                        |
+| quiesce   | Closes the sandbox's dispatch gate and reports idle only when nothing is pending or unresolved                                      |
+| terminate | Stops the Node session, then executes the terminate effect                                                                          |
+| cleanup   | Executes the data-delete effect                                                                                                     |
 
 `effects_url` is the Substrate effect API (`GET`/`PUT /effects/{id}`). The Controller reads an effect
 before writing it and re-reads the same id after a timeout or server error, so an effect whose reply
