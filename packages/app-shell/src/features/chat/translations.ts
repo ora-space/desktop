@@ -176,6 +176,9 @@ export const chatTranslations = {
     "chat.modelSelector.model": "模型",
     "chat.modelSelector.updating": "更新中…",
     "chat.modelSelector.empty": "该 Agent 未提供可选模型",
+    "chat.modelSelector.workspaceDirectoryMissing":
+      "项目目录不存在，无法获取模型",
+    "chat.modelSelector.discoveryFailed": "获取模型列表失败",
     "chat.modelSelector.search": "搜索模型",
     "chat.modelSelector.noResults": "未找到匹配的模型",
     "chat.modelSelector.noAgentPackage": "从插件市场安装 Agent",
@@ -366,6 +369,7 @@ export const chatTranslations = {
     "chat.pickAgent": "请先选择一个 Agent，然后开始对话",
     "chat.pickAvailableAgent": "请先选择一个可用的Agent模型",
     "chat.agentEffectsNotReady": "Agent 正在同步项目技能，完成后即可发送",
+    "chat.workspaceDirectoryMissing": "项目目录不存在，恢复目录后才能发送",
     "chat.agentEffectsFailed": "Agent 技能同步失败，需要恢复：{{message}}",
     "chat.agentEffectRecovery.title": "Agent 技能同步需要手动恢复",
     "chat.agentEffectRecovery.action": "恢复",
@@ -599,6 +603,9 @@ export const chatTranslations = {
     "chat.modelSelector.model": "Model",
     "chat.modelSelector.updating": "Updating…",
     "chat.modelSelector.empty": "This agent offers no model choice",
+    "chat.modelSelector.workspaceDirectoryMissing":
+      "The project folder is missing, so models cannot be listed",
+    "chat.modelSelector.discoveryFailed": "Could not load the model list",
     "chat.modelSelector.search": "Search models",
     "chat.modelSelector.noResults": "No matching models",
     "chat.modelSelector.noAgentPackage":
@@ -825,6 +832,8 @@ export const chatTranslations = {
     "chat.pickAvailableAgent":
       "Pick an available agent and model before starting a chat",
     "chat.agentEffectsNotReady": "The agent is syncing project Skills",
+    "chat.workspaceDirectoryMissing":
+      "The project folder is missing; restore it to send",
     "chat.agentEffectsFailed":
       "Agent Skill sync failed and needs recovery: {{message}}",
     "chat.agentEffectRecovery.title": "Agent Skill sync needs manual recovery",

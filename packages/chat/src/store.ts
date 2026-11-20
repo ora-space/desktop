@@ -151,6 +151,13 @@ export interface ChatState {
 export interface ChatStoreOptions {
   createId?: () => string;
   now?: () => number;
+  /**
+   * Turns a failed request into the sentence shown in the conversation.
+   *
+   * The store is locale-agnostic, so the host supplies the translation of contract errors;
+   * without one the store falls back to the raw `Error.message`.
+   */
+  describeError?: (error: unknown) => string;
 }
 
 export type ChatStore = StoreApi<ChatState>;
@@ -199,6 +206,7 @@ export function createChatStore(
 ): ChatStore {
   const createId = options.createId ?? (() => crypto.randomUUID());
   const now = options.now ?? Date.now;
+  const describeError = options.describeError ?? errorMessage;
   const operations = new Map<string, AbortController>();
 
   const store = createStore<ChatState>((set, get) => ({
@@ -266,7 +274,7 @@ export function createChatStore(
         // every other session action that could not reach the agent.
         updateConversation(set, oraSessionId, (conversation) => ({
           ...conversation,
-          error: errorMessage(error),
+          error: describeError(error),
         }));
         throw error;
       }
@@ -386,7 +394,7 @@ export function createChatStore(
           ...previous,
           usage: reloadedUsage,
           ...(previous.diagnostics ? { diagnostics: undefined } : {}),
-          error: isAbortError(error) ? previous.error : errorMessage(error),
+          error: isAbortError(error) ? previous.error : describeError(error),
         }));
         if (!isAbortError(error)) throw error;
       } finally {
@@ -580,7 +588,7 @@ export function createChatStore(
           prepared = await prepare();
         } catch (error) {
           // Preparation failed before the prompt phase began, so there is no response duration.
-          const message = errorMessage(error);
+          const message = describeError(error);
           updateTurn(set, key, turnId, (current) => ({
             ...current,
             status: "failed",
@@ -810,7 +818,7 @@ export function createChatStore(
           );
           clearPendingPermissions(set, key);
         } else {
-          const message = errorMessage(error);
+          const message = describeError(error);
           // A timeout after the backend already re-sent the prompt means every
           // retry stalled too; the turn keeps that so the UI can say the agent
           // never came back rather than showing a generic failure.
@@ -913,7 +921,7 @@ export function createChatStore(
       } catch (error) {
         updateConversation(set, oraSessionId, (conversation) => ({
           ...conversation,
-          error: errorMessage(error),
+          error: describeError(error),
         }));
         throw error;
       }

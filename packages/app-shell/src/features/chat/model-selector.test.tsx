@@ -36,7 +36,7 @@ import {
 } from "../../state/stores/settings-store";
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { useAgentModelPreferenceStore } from "../../state/stores/agent-model-preference-store";
-import type { AgentStatus } from "@ora/contracts";
+import { RemoteContractError, type AgentStatus } from "@ora/contracts";
 import { ModelSelector } from "./model-selector";
 import { agentRuntimeKeys } from "../../state/data/agent-runtime";
 import { AGENT_REF } from "../../test/agent-identity";
@@ -104,6 +104,7 @@ function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
     projectId: task.projectId,
     kind: "isolated" as const,
     lifecycle: "active" as const,
+    directory: { kind: "present" as const },
   }));
   seed(state);
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -596,6 +597,74 @@ describe("ModelSelector with no agent package installed", () => {
     await user.click(within(menu).getByText(hint));
     expect(useUiStore.getState().settingsOpen).toBe(true);
     expect(useUiStore.getState().settingsCategory).toBe("plugins");
+  });
+});
+
+describe("ModelSelector when models cannot be discovered", () => {
+  const missingMessage =
+    /项目目录不存在，无法获取模型|The project folder is missing, so models cannot be listed/;
+
+  it("names a missing workspace folder instead of asking the agent", async () => {
+    const user = userEvent.setup();
+    const { discover } = renderModelSelector((state) => {
+      state.workspaces = state.workspaces.map((workspace) =>
+        workspace.id === "workspace-t1"
+          ? { ...workspace, directory: { kind: "missing", path: "/gone/t1" } }
+          : workspace,
+      );
+    });
+
+    act(() => useWorkspaceSelectionStore.getState().selectTask("t1", "p1"));
+    const menu = await openAgentList(user);
+
+    expect(await within(menu).findByText(missingMessage)).toBeVisible();
+    expect(discover).not.toHaveBeenCalled();
+  });
+
+  it("re-probes the folder when discovery finds it gone after the last list", async () => {
+    const user = userEvent.setup();
+    const { discover, state } = renderModelSelector();
+    // The cached list still says present; only the refusal reveals the deletion.
+    discover.mockImplementation(async () => {
+      state.workspaces = state.workspaces.map((workspace) =>
+        workspace.id === "workspace-t1"
+          ? { ...workspace, directory: { kind: "missing", path: "/gone/t1" } }
+          : workspace,
+      );
+      throw new RemoteContractError(
+        {
+          code: "workspace_unavailable",
+          params: {},
+          requestId: "00000000-0000-4000-8000-000000000002",
+        },
+        null,
+      );
+    });
+
+    act(() => useWorkspaceSelectionStore.getState().selectTask("t1", "p1"));
+    const menu = await openAgentList(user);
+
+    expect(await within(menu).findByText(missingMessage)).toBeVisible();
+  });
+
+  it("reports a failed discovery instead of an agent with no models", async () => {
+    const user = userEvent.setup();
+    const { discover } = renderModelSelector();
+    discover.mockRejectedValue(new Error("plugin crashed"));
+
+    act(() => useWorkspaceSelectionStore.getState().selectTask("t1", "p1"));
+    const menu = await openAgentList(user);
+
+    expect(
+      await within(menu).findByText(
+        /获取模型列表失败|Could not load the model list/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(menu).queryByText(
+        /该 Agent 未提供可选模型|offers no model choice/,
+      ),
+    ).toBeNull();
   });
 });
 

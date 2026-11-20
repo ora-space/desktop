@@ -1,7 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@ora/ui";
-import type { Session } from "@ora/contracts";
+import { RemoteContractError, type Session } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
@@ -22,6 +22,8 @@ import { useWorkspaces } from "../../state/hooks/use-workspaces";
 import { useWorkspaceCwd } from "../../state/hooks/use-workspace-cwd";
 import { sessionKeys } from "../../state/data/sessions";
 import { refreshWorkspaceReview } from "../../state/data/workspace-review";
+import { refreshWorkspaceDirectories } from "../../state/data/workspace";
+import { describeChatError } from "../../i18n/contract-error";
 import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
 import {
@@ -30,6 +32,7 @@ import {
 } from "../../state/hooks/use-target-agent-cli";
 import { useTargetAgentReadiness } from "../../state/hooks/use-target-agent-readiness";
 import { useAgentEffectReadiness } from "../../state/hooks/use-agent-effect-readiness";
+import { useMissingWorkspaceDirectory } from "../../state/hooks/use-missing-workspace-directory";
 import {
   pendingModelKey,
   usePendingAgentStore,
@@ -63,6 +66,7 @@ import {
   useSessionSetupStore,
 } from "../chat/session-setup";
 import { LocationActionsButton } from "./location-actions-button";
+import { WorkspaceDirectoryBanner } from "./workspace-directory-banner";
 import { SurfaceLauncher } from "../surface/surface-launcher";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
 import { WorkflowEditor } from "../workflow-editor/workflow-editor";
@@ -84,11 +88,6 @@ function upsertById<T extends { id: string }>(
   entity: T,
 ): T[] {
   return [...(current ?? []).filter((item) => item.id !== entity.id), entity];
-}
-
-/** Reduces a thrown value to the text shown against a turn that never reached the agent. */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -227,6 +226,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     selectedWorkspaceId,
     targetAgentCli,
   );
+  // A deleted project folder still opens here; naming it is what keeps an empty model list
+  // and a refused send from reading as an agent or plugin fault.
+  const missingDirectory = useMissingWorkspaceDirectory(selectedWorkspaceId);
   const workspaceCwdQuery = useWorkspaceCwd(selectedWorkspaceId);
   const session = sessions.find((item) => item.id === selection.sessionId);
   const conversationSessionId = selection.sessionId;
@@ -500,7 +502,15 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     } catch (error) {
       // The message never reached an agent, so it stays on screen carrying the
       // failure rather than disappearing with the composer's optimistic clear.
-      const message = errorMessage(error);
+      const message = describeChatError(error, t);
+      // Start resolves the workspace folder first; a refusal is the earliest evidence that the
+      // folder vanished after the list last probed it, so the banner and send gate catch up.
+      if (
+        error instanceof RemoteContractError &&
+        error.code === "workspace_unavailable"
+      ) {
+        void refreshWorkspaceDirectories(queryClient);
+      }
       const setupDurationMs = Math.max(0, Date.now() - setupStartedAt);
       if (token !== pendingSendToken.current) {
         // Stop already cleared pendingSend; still drop it if a later path only
@@ -742,6 +752,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         </div>
         <SessionAgentBanner session={session} />
         <SessionMcpHealthBanner session={session} />
+        <WorkspaceDirectoryBanner missingPath={missingDirectory} />
         <AgentEffectRecoveryBanner readiness={agentEffectReadiness} />
         <SessionHistoryNotices session={session} />
         <WorkspaceReviewLayout context={reviewContext}>
@@ -761,6 +772,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             roles={agentsQuery.data ?? []}
             targetAgentCli={targetAgentCli}
             projectSelected={project !== undefined}
+            missingDirectory={missingDirectory}
             agentEffectReadiness={agentEffectReadiness}
             targetAgentReadiness={targetAgentReadiness}
             showContextBar={

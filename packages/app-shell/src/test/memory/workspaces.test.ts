@@ -21,12 +21,14 @@ describe("workspace memory adapter through the production client", () => {
           projectId: project.id,
           kind: "main",
           lifecycle: "active",
+          directory: { kind: "present" },
         },
         {
           id: task.workspaceId,
           projectId: project.id,
           kind: "isolated",
           lifecycle: "active",
+          directory: { kind: "present" },
         },
       ],
     });

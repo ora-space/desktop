@@ -37,6 +37,24 @@ export function localizeContractError(error: unknown, t: TFunction): string {
   return t("errors.transport.malformed_response", { lng });
 }
 
+/**
+ * Describes a failed chat request in the active locale for the conversation transcript.
+ *
+ * Contract and transport failures carry a code the user can act on, so they are translated
+ * instead of showing "Remote Ora request failed with <code> (<request id>)". Any other error
+ * (an agent's own failure text, for instance) already reads as a sentence and is kept as is.
+ */
+export function describeChatError(error: unknown, t: TFunction): string {
+  if (
+    error instanceof RemoteContractError ||
+    error instanceof UnknownRemoteError ||
+    error instanceof LocalTransportError
+  ) {
+    return localizeContractError(error, t);
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Identifies failures whose request ID is useful only together with backend diagnostics. */
 export function hasDiagnosticRequestId(error: unknown): boolean {
   return (

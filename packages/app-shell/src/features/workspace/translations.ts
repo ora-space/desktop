@@ -5,6 +5,11 @@ export const workspaceTranslations = {
     "workspace.workflowRenderError.description":
       "工作流数据可能不完整或存在无效配置。请返回工作区后修正草稿；历史运行数据会保留。你仍可通过侧边栏打开其他会话。",
     "workspace.workflowRenderError.close": "返回工作区",
+    "workspace.directoryMissing.title": "项目目录不存在",
+    "workspace.directoryMissing.description":
+      "{{path}} 已被删除或移动，Agent 无法在这里工作，也无法获取模型。恢复该目录后点击“重新检查”；如果不再需要，可以在侧边栏删除这个项目。",
+    "workspace.directoryMissing.recheck": "重新检查",
+    "workspace.directoryMissing.rechecking": "正在检查…",
     "errors.project_not_found": "未找到该项目。",
     "errors.task_not_found": "未找到该任务。",
     "errors.worktree_requires_git_repository":
@@ -12,7 +17,8 @@ export const workspaceTranslations = {
     "errors.task_base_branch_required": "worktree 模式任务必须选择基础分支。",
     "errors.task_base_branch_not_found": "未找到基础分支 {{branchName}}。",
     "errors.worktree_not_found": "未找到该工作树。",
-    "errors.workspace_unavailable": "工作区当前不可用。",
+    "errors.workspace_unavailable":
+      "无法访问项目目录，它可能已被删除或移动。请恢复该目录后重试。",
     "errors.task_worktree_unavailable": "任务工作树当前不可用。",
     "errors.worktree_root_not_absolute": "工作树根目录必须是绝对路径。",
     "errors.worktree_root_not_directory": "工作树根目录必须是已存在的目录。",
@@ -108,6 +114,11 @@ export const workspaceTranslations = {
     "workspace.workflowRenderError.description":
       "The workflow may contain incomplete or invalid configuration. Return to the workspace and correct its draft; historical run data is preserved. You can still open other sessions from the sidebar.",
     "workspace.workflowRenderError.close": "Return to workspace",
+    "workspace.directoryMissing.title": "Project folder not found",
+    "workspace.directoryMissing.description":
+      "{{path}} was deleted or moved, so agents cannot work here or list their models. Restore the folder and check again, or delete this project from the sidebar if you no longer need it.",
+    "workspace.directoryMissing.recheck": "Check again",
+    "workspace.directoryMissing.rechecking": "Checking…",
     "errors.project_not_found": "The project was not found.",
     "errors.task_not_found": "The task was not found.",
     "errors.worktree_requires_git_repository":
@@ -117,7 +128,8 @@ export const workspaceTranslations = {
     "errors.task_base_branch_not_found":
       "The base branch {{branchName}} was not found.",
     "errors.worktree_not_found": "The worktree was not found.",
-    "errors.workspace_unavailable": "The workspace is unavailable.",
+    "errors.workspace_unavailable":
+      "The project folder can't be accessed. It may have been deleted or moved; restore it and try again.",
     "errors.task_worktree_unavailable": "The task worktree is unavailable.",
     "errors.worktree_root_not_absolute":
       "The worktree root must be an absolute path.",

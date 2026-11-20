@@ -11,5 +11,9 @@ export function useWorkspaces() {
     queryFn: () =>
       client.workspace.list({}).then((response) => response.workspaces),
     notifyOnChangeProps: [...WORKSPACE_LIST_NOTIFY_PROPS],
+    // Each entry carries a probe of its folder, which users change outside Ora (deleting or
+    // restoring a project in the file manager). Returning to the window is when that has
+    // usually happened; structural sharing keeps subscribers asleep when nothing changed.
+    refetchOnWindowFocus: true,
   });
 }
