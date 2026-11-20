@@ -66,7 +66,10 @@ A release is either one universal `url` + `sha256` or a set of `[[targets]]`, ea
 Rust target triple. Targeted releases are allowed only for kinds that ship a native binary: `hook`
 (which is that binary) and `agent` (which may bundle its CLI). An installed targeted package carries
 an `[artifact]` section with its target, checked against the host on both online install and local
-import; the target is never part of the identity.
+import; the target is never part of the identity. Ora no longer runs on macOS (v0.6.0 was the last
+macOS release), so the `*-apple-darwin` triples are retired: a listing's darwin entries are skipped
+instead of failing the listing, a listing with only darwin entries has no installable release, and
+an installed `[artifact]` naming a darwin triple is refused.
 
 ## Lifecycle
 

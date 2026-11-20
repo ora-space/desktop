@@ -26,7 +26,7 @@ ACL 是外层边界；命令内部仍然会解析身份，所以即使 workbench
 
 surface 中的 `window.open` 从不创建 Ora webview：允许列表内的远程 URL 交给系统浏览器，所有弹窗请求都被拒绝。workbench 页面从不打开弹窗。
 
-每个插件在数据目录下有一个持久的 web profile（`web-profile/`；macOS 上是由插件 id 派生的 UUID v5 数据存储标识），所以 webview 插件能保持登录，workbench 页面即使在所有 `ora-plugin://` 页面共享同一个 origin 的平台上也有自己独立的 `localStorage`。profile 从不暴露给任何页面或 `ora/storage/*`。
+每个插件在数据目录下有一个持久的 web profile（`web-profile/`），所以 webview 插件能保持登录，workbench 页面即使在所有 `ora-plugin://` 页面共享同一个 origin 的平台上也有自己独立的 `localStorage`。profile 从不暴露给任何页面或 `ora/storage/*`。
 
 ## 打开与关闭
 

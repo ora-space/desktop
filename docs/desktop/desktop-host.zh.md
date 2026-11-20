@@ -73,6 +73,8 @@ worktree 根目录是非敏感配置，在 设置 → 数据与隐私 中选择�
 
 ## Desktop 更新
 
+发布产物只覆盖 Windows（NSIS 安装包）和 Linux（AppImage 和 `deb`）。Ora Desktop 不再支持 macOS：v0.6.0 是最后一个 macOS 版本，更新清单里没有 macOS 条目，所以 macOS 上的安装停留在 v0.6.0。
+
 发布构建在启动一分钟后检查一次已签名的静态清单 `https://github.com/ora-space/desktop/releases/latest/download/latest.json`，之后通过 `ora-scheduler` 任务每六小时检查一次（`0 0 */6 * * *`），并使用用户配置的代理。Tauri 更新器选择当前操作系统和架构并校验签名；Desktop 服务把通过校验的包存入按身份寻址的缓存，所以早先进程下载过的包可以复用（会先用配置的公钥重新校验），无需再次下载。开发构建保留这些命令供测试使用，但不注册任何网络任务。
 
 - 已下载的包在后续检查失败时仍可安装；只有在没有任何可安装的包时才报告 `Failed`，安装失败会恢复到 `Ready`。

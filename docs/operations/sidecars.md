@@ -14,7 +14,7 @@ target, runs `--version`. A stale, corrupt or unexecutable file is replaced only
 passes every check; foreign-target executables are authenticated by digest without running them.
 
 `scripts/sidecar-checksums.json` is the trust source: its keys bind exact official GitHub release URLs
-to archive and executable SHA-256 values for Linux x64 and arm64, macOS arm64 and x64, and Windows x64.
+to archive and executable SHA-256 values for Linux and Windows x64, plus Deno for Linux arm64.
 The Node image installs Deno from the same pins.
 
 - Each installation stages in its own temporary directory inside `binaries`, on the destination

@@ -21,7 +21,7 @@ fallback for the other.
   run on the blocking pool so fsync never blocks the async runtime. The database has application id
   `0x4f524143`, schema version 1 and exact schema and integrity checks, and an OS lease on the sibling
   `ora-controller.sqlite3.lock` (beside the database so SQLite's own locks never collide with it on
-  macOS or Windows). A different ControllerId or an unknown existing file is rejected; there is no
+  Windows). A different ControllerId or an unknown existing file is rejected; there is no
   HOME-derived location, reset or automatic rebinding. It reconciles, takes over and reports the
   clone dispatches its database already holds; it has no intake of new work.
 - **`CloudStore`** opens no database and takes no file lease: every operation is a call on the

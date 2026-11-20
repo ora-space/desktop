@@ -8,7 +8,7 @@
 
 协调逻辑只通过 `CoordinationStore` 访问持久状态：每个方法是一个原子的异步业务操作（`take_over_node_event`、`record_queried_result`、`original_dispatch`、`pending_dispatches`、`result`，以及适配器自己工作用的 `serve`），从不暴露事务、连接或表。部署时选定一个适配器，两者互不作为后备。
 
-- **`SqliteStore`** 在私有的 `home_directory` 中保存 `ora-controller.sqlite3`。它的操作在阻塞线程池上运行，所以 fsync 从不阻塞异步运行时。数据库的 application id 为 `0x4f524143`、schema 版本为 1，有精确的 schema 和完整性检查，并在同级的 `ora-controller.sqlite3.lock` 上持有操作系统租约（放在数据库旁边，这样在 macOS 和 Windows 上不会与 SQLite 自己的锁冲突）。不同的 ControllerId 或未知的已有文件会被拒绝；没有从 HOME 推导的位置，没有重置，也没有自动重新绑定。它对账、接管并报告数据库中已有的 clone 派发；它不受理新的工作。
+- **`SqliteStore`** 在私有的 `home_directory` 中保存 `ora-controller.sqlite3`。它的操作在阻塞线程池上运行，所以 fsync 从不阻塞异步运行时。数据库的 application id 为 `0x4f524143`、schema 版本为 1，有精确的 schema 和完整性检查，并在同级的 `ora-controller.sqlite3.lock` 上持有操作系统租约（放在数据库旁边，这样在 Windows 上不会与 SQLite 自己的锁冲突）。不同的 ControllerId 或未知的已有文件会被拒绝；没有从 HOME 推导的位置，没有重置，也没有自动重新绑定。它对账、接管并报告数据库中已有的 clone 派发；它不受理新的工作。
 - **`CloudStore`** 不打开数据库，也不获取文件租约：每个操作都是对 [Cloud 契约](cloud-contract.zh.md)的一次调用，由 Cloud 在 PostgreSQL 中提交。受理属于 Cloud 的公开 API。
 
 没有本地 clone 入口：Workspace clone 需要只有 Cloud 能固定的 Git Server 快照输入，没有 Cloud 的部署无法产生有效的输入（[快照 clone 输入与执行 ref 授权](https://github.com/ora-space/specs/blob/main/decisions/cloud/controller-integration/20261016-snapshot-clone-input-and-execution-ref-grants.md)）。`result(execution_id)` 读取持久化的终止 `ExecutionOutcome`（`ready { path, commit }` 或 `failed { reason, retained_path }`，加上 Node incarnation）；没有结果不代表失败。`pending_dispatches(node)` 列出没有持久结果的执行，重新连上的会话会持续查询它们。查询完成和事件交付共享一个接管事务，只有收到的事件才会产生 Ack，并且是在它的回执提交之后。重复的内容是幂等的；冲突的内容被拒绝，不予确认。
