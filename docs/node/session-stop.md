@@ -38,15 +38,27 @@ Neither same-boot proof counts for `after-host-reboot` reconciliation or lifts `
 Schema 15 adds the proof value and the flag in one table rebuild that leaves every existing row
 unflagged; older programs refuse a schema 15 database.
 
-**Cost and bounds.** Scans and kills never run on the Node's runtime thread: they run one at a time
-on a single blocking worker, and each stop observation (a termination plus the two evidence scans)
-has a 5 second budget, which includes waiting for the worker. An observation that runs out of
-budget, for example because an `environ` read hangs on a stuck FUSE or NFS mount, counts as
-Unknown; the hung read keeps the worker, so later observations also time out instead of starting
-more threads. Between observations of an unsettled attempt the Node waits 25 ms, doubling up to 1
-second, until the confirmation deadline. A scan opens at most a few descriptors at a time whatever
-the number of processes, and reads environments only of processes that started at or after the
-attempt.
+**Cost and bounds.** Scans and kills never run on the Node's runtime thread. They run on one
+blocking worker per Node, so the stop observations of all its sessions are serialized: a session
+ending while others settle, or a restore poll overlapping a confirmation, waits its turn. Each
+stop observation (a termination plus the two evidence scans) has a 5 second budget that includes
+waiting for the worker. The wait counts on purpose: it is what makes observations behind a hung
+read give up as Unknown instead of queueing forever, and what keeps them from starting more threads.
+An observation that runs out of budget, whether queued or because an `environ` read hangs on a
+stuck FUSE or NFS mount, counts as Unknown and is retried until the confirmation deadline, so a
+busy worker delays stops but never confirms one. Between observations of an unsettled attempt the
+Node waits 25 ms, doubling up to 1 second. A scan opens at most a few descriptors at a time
+whatever the number of processes, and reads environments only of processes that started at or
+after the attempt.
+
+**A hung read.** A read that hangs keeps the worker until it returns: until the mount recovers or
+the process it waits on exits. Until then every stop observation of the Node, for every session,
+is Unknown, and stops reach their deadline as `stop_unconfirmed`; nothing is confirmed falsely. A
+restarted Node scans the same window and can hit the same read again. Processes already frozen
+do not wait for it: no process stays frozen longer than 2 seconds, after which a watchdog kills
+every frozen process even while a scan hangs, and the remaining passes kill instead of freezing.
+Shutdown is bounded as well: once the service has returned, the Node waits at most 5 seconds for
+such an abandoned read and then exits.
 
 **What dies, and when.** When a session ends (EndSession, an Agent failure, a cancel that ends the
 session, graceful shutdown, or restart recovery after a Node crash) and when MCP lifecycle replaces
@@ -84,7 +96,10 @@ limits below.
 with `process.workload_uid` inside the default Docker capability set, the Node cannot read any
 workload environment: it logs a warning at startup and keeps serving, but any live process of the
 workload user in an attempt's window, including one of another session, leaves that attempt's
-evidence Unknown, so stops end as `stop_unconfirmed` and marked jobs are not found.
+evidence Unknown, so stops end as `stop_unconfirmed` and marked jobs are not found. The check runs
+when the Agent configuration is validated at startup and reads only the effective capability set
+(`CapEff`): a Yama `ptrace_scope` or an LSM that still denies the read is not detected, and then
+the evidence is Unknown in the same way, without the warning.
 
 `node.session_stop.confirmation_timeout_ms` defaults to 600000 and must be positive. Its first
 deadline is durable; retries do not extend it. Different-boot proof requires an explicit
@@ -100,7 +115,8 @@ ora-node reconcile-session-stop /absolute/node/home EXECUTION ATTEMPT REQUEST_ID
 
 Reasons are `maintenance`, `probe-capacity`, or `legacy-upgrade`; modes are `recheck` and
 `after-host-reboot`. The private socket authenticates the kernel peer UID. The same request ID and
-input returns the stored result; conflicting reuse is rejected. The request, original identity,
+input returns the stored result; conflicting reuse is rejected. A recheck observes, terminates and
+waits within 10 seconds in total: each step gets only what is left of that bound. The request, original identity,
 observation and result are audited without commands, Settings or credentials. Confirmation does
 not itself report resources as released. Interrupted audits obtain fresh evidence. Confirmed,
 released details retire after seven days without outbox or incomplete-audit references; summaries
