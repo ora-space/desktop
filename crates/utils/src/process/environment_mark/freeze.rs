@@ -108,6 +108,12 @@ fn passes(
 /// Kills every frozen process once. A stopped process cannot exit on its own, so each is pinned
 /// again by PID and start tick: one pidfd is open at a time, and a PID taken over meanwhile
 /// fails the start-tick check.
+///
+/// A process that cannot be pinned again for another reason stays stopped until a later call.
+/// Retrying here would not help: what fails is opening a descriptor, which runs out for the whole
+/// Node, not for one process, and spinning under the lock would hold back the passes too. A
+/// stopped process is still live and still carries its mark, so every scan claims it until a
+/// later call kills it, and evidence never reads it as stopped meanwhile.
 fn close(freeze: &mut Freeze) {
     if freeze.closed {
         return;

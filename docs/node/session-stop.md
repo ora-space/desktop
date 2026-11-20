@@ -58,8 +58,10 @@ is Unknown, and stops reach their deadline as `stop_unconfirmed`; nothing is con
 restarted Node scans the same window and can hit the same read again. Processes already frozen
 do not wait for it: no process stays frozen longer than 2 seconds, after which a watchdog kills
 every frozen process even while a scan hangs, and the remaining passes kill instead of freezing.
-Shutdown is bounded as well: once the service has returned, the Node waits at most 5 seconds for
-such an abandoned read and then exits.
+A frozen process that cannot be pinned again for that kill, though it has not exited (the Node is
+out of descriptors, for instance), stays stopped until the next observation kills it; scans still
+claim it meanwhile, so its attempt stays running. Shutdown is bounded as well: once the service
+has returned, the Node waits at most 5 seconds for such an abandoned read and then exits.
 
 **What dies, and when.** When a session ends (EndSession, an Agent failure, a cancel that ends the
 session, graceful shutdown, or restart recovery after a Node crash) and when MCP lifecycle replaces

@@ -144,8 +144,10 @@ impl MarkScope {
     /// straight away would orphan it first. A process whose pidfd could not be opened is tried
     /// again in the next pass of the same call. No process stays frozen longer than two
     /// seconds: past that a watchdog kills every frozen process even while a scan hangs, and
-    /// later passes kill instead of freezing. Signal failures are not reported: only a later
-    /// scan shows what remains, so callers decide on evidence, never on this call returning.
+    /// later passes kill instead of freezing. A frozen process that cannot be pinned again for
+    /// the final kill, though it has not exited, stays stopped until a later call: scans still
+    /// claim it meanwhile. Signal failures are not reported: only a later scan shows what remains,
+    /// so callers decide on evidence, never on this call returning.
     pub fn kill(&self) -> io::Result<()> {
         freeze::kill_within(freeze::FREEZE_BOUND, || self.scan())
     }
