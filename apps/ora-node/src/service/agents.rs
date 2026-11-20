@@ -393,6 +393,11 @@ pub(super) fn open(
         stops,
     } = recovery;
     let journal = node.database.session_journal()?;
+    if config.is_some() {
+        crate::session::stop::marks::warn_unless_readable(
+            node.git.runner().process_config().workload_uid,
+        );
+    }
     if let SessionWorkload::Separate { directory, .. } = &workload {
         crate::session::validate_workload_storage(node.home_directory(), directory)
             .map_err(|error| crate::Error::Configuration(error.to_string()))?;

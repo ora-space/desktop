@@ -1,7 +1,7 @@
 //! Independent process responsibility outlives conversations, plugin handles, and Node restarts.
 pub(crate) mod admin;
 pub(crate) mod files;
-mod marks;
+pub(crate) mod marks;
 pub(crate) mod spawner;
 #[cfg(test)]
 mod tests;
