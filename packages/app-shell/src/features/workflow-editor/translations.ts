@@ -480,8 +480,9 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.promptInactivity": "长时间未收到进展时",
     "settings.workflow.promptInactivity.timeout": "按默认超时规则处理",
     "settings.workflow.promptInactivity.wait": "持续等待",
+    "settings.workflow.promptInactivity.minutes": "无进展等待上限（分钟）",
     "settings.workflow.promptInactivity.hint":
-      "持续等待时，不会因长时间未收到 Agent 进展而取消当前执行，可手动停止。实际执行错误仍按失败自动重试设置处理。",
+      "持续等待时，收到进展会重新计时。到达无进展上限后本轮失败；节点按失败重试设置处理。",
     "settings.workflow.field.interactiveDescription":
       "开启后节点首轮结束会停在等待人工输入，可在节点内持续对话。",
     "settings.workflow.field.completionSignal": "完成判定",
@@ -1131,8 +1132,9 @@ export const workflowEditorTranslations = {
     "settings.workflow.promptInactivity.timeout":
       "Use default timeout handling",
     "settings.workflow.promptInactivity.wait": "Keep waiting",
+    "settings.workflow.promptInactivity.minutes": "Silence limit (minutes)",
     "settings.workflow.promptInactivity.hint":
-      "Keep waiting prevents cancellation when the agent has not reported progress for a long time. You can stop it manually. Execution errors still follow the retry-on-failure setting.",
+      "Progress renews the wait. The turn fails at the silence limit and the node follows its retry-on-failure setting.",
     "settings.workflow.field.interactiveDescription":
       "When enabled the node pauses for human input after its first turn, so you can keep conversing inside the node.",
     "settings.workflow.field.completionSignal": "Completion rule",

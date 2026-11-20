@@ -239,7 +239,7 @@ export interface WorkflowAgentConfig {
   /** Accept an agent signal after the turn settles without waiting for the user. */
   autoAcceptAgentCompletion?: boolean;
   /** Silence handling for this node's prompts; absent or null keeps the default timeout. */
-  promptInactivity?: "timeout" | "wait" | null;
+  promptInactivity?: "timeout" | "wait" | { waitMinutes: number } | null;
   /**
    * Whether the node's final assistant response becomes its run output. Absent defaults to
    * `"none"`, so a node withholds its output unless opted in.
