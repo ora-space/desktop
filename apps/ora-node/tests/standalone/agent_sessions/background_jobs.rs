@@ -197,7 +197,7 @@ fn end_session_kills_a_detached_tool_job_and_spares_unmarked_processes() {
                 (AgentSessionEndReason::UserEnded, false),
                 vec![true; 3],
                 true,
-                Ok("lock_and_processes".to_owned())
+                Ok("lock_processes_and_marks".to_owned())
             )
         );
         job.assert_never_wrote();
@@ -236,7 +236,7 @@ fn ending_a_running_turn_kills_its_detached_tool_job() {
             (ended, watcher.join().unwrap()),
             (
                 (AgentSessionEndReason::UserEnded, false),
-                Ok("lock_and_processes".to_owned())
+                Ok("lock_processes_and_marks".to_owned())
             )
         );
         job.assert_never_wrote();
@@ -289,7 +289,7 @@ fn restart_recovery_kills_the_job_a_killed_node_left_behind() {
             (
                 true,
                 (AgentSessionEndReason::Interrupted, false),
-                Ok("lock_and_processes".to_owned())
+                Ok("lock_processes_and_marks".to_owned())
             )
         );
         job.assert_never_wrote();
@@ -337,7 +337,7 @@ fn graceful_shutdown_kills_detached_tool_jobs_before_the_node_exits() {
             (
                 false,
                 AgentSessionEndReason::Cancelled,
-                Ok("lock_and_processes".to_owned())
+                Ok("lock_processes_and_marks".to_owned())
             )
         );
         job.assert_never_wrote();
@@ -380,7 +380,7 @@ fn an_unreadable_job_under_a_waiting_tool_shell_is_killed_with_it() {
             (
                 true,
                 (AgentSessionEndReason::UserEnded, false),
-                Ok("lock_and_processes".to_owned())
+                Ok("lock_processes_and_marks".to_owned())
             )
         );
         job.assert_never_wrote();

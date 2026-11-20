@@ -157,21 +157,19 @@ impl StopFiles {
             }
         }
         // Jobs that left the original groups and dropped the inherited descriptor stay visible
-        // only through the mark; a scope that cannot be read proves nothing.
-        match marks::scope(&self.directory, &identity.attempt) {
+        // only through the mark; a scope that cannot be read proves nothing. The proof names
+        // which evidence held, so an audit can tell a marked attempt from a pre-mark one.
+        let proof = match marks::scope(&self.directory, &identity.attempt) {
             Ok(Some(scope)) => match marks::evidence(&scope) {
-                StopEvidence::Stopped => {}
+                StopEvidence::Stopped => SessionStopProof::LockProcessesAndMarks,
                 evidence @ (StopEvidence::Running | StopEvidence::Unknown) => {
                     return (evidence, None);
                 }
             },
-            Ok(None) => {}
+            Ok(None) => SessionStopProof::LockAndProcesses,
             Err(_) => return (StopEvidence::Unknown, None),
-        }
-        (
-            StopEvidence::Stopped,
-            Some(SessionStopProof::LockAndProcesses),
-        )
+        };
+        (StopEvidence::Stopped, Some(proof))
     }
 
     /// Signals only processes of the original attempt: those its mark claims, and the groups

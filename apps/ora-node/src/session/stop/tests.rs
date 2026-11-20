@@ -180,7 +180,7 @@ async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> 
         records,
         vec![ora_node_db::SessionStopRecord {
             state: SessionStopState::Confirmed,
-            proof: Some(SessionStopProof::LockAndProcesses),
+            proof: Some(SessionStopProof::LockProcessesAndMarks),
             confirmed_at_ms: Some(confirmed_at),
             ..original
         }]
@@ -191,7 +191,7 @@ async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> 
         files.probe(&identity, &identity.host, false),
         (
             StopEvidence::Stopped,
-            Some(SessionStopProof::LockAndProcesses)
+            Some(SessionStopProof::LockProcessesAndMarks)
         )
     );
     Ok(())
@@ -253,7 +253,7 @@ async fn plugin_and_each_host_child_share_one_attempt_while_siblings_stay_runnin
         files.probe(&identity, &identity.host, false),
         (
             StopEvidence::Stopped,
-            Some(SessionStopProof::LockAndProcesses)
+            Some(SessionStopProof::LockProcessesAndMarks)
         )
     );
     assert!(

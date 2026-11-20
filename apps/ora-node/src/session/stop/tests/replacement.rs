@@ -133,7 +133,7 @@ async fn replacement_waits_for_retirement_before_registering_the_successor() -> 
     assert!(
         records
             .iter()
-            .any(|r| r.identity == old && r.proof == Some(SessionStopProof::LockAndProcesses))
+            .any(|r| r.identity == old && r.proof == Some(SessionStopProof::LockProcessesAndMarks))
     );
     assert!(
         records

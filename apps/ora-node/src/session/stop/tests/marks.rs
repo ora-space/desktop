@@ -72,7 +72,7 @@ async fn a_detached_job_blocks_proof_until_terminate_kills_it() -> TestResult {
             (StopEvidence::Running, None),
             (
                 StopEvidence::Stopped,
-                Some(SessionStopProof::LockAndProcesses)
+                Some(SessionStopProof::LockProcessesAndMarks)
             )
         )
     );
@@ -115,6 +115,78 @@ async fn a_surviving_job_or_damaged_scope_is_never_proof() -> TestResult {
                 StopEvidence::Stopped,
                 Some(SessionStopProof::LockAndProcesses)
             )
+        )
+    );
+    Ok(())
+}
+
+/// Confirms every attempt of the fixture execution through the production owner and returns the
+/// ledger record of `attempt`.
+async fn confirmed(
+    journal: &ora_node_db::SessionJournal,
+    home: &std::path::Path,
+    attempt: &ora_node_db::AttemptId,
+) -> Result<ora_node_db::SessionStopRecord, Box<dyn std::error::Error>> {
+    let config = crate::SessionStopConfig::default();
+    let execution = ora_node_protocol::ExecutionId::new("session");
+    assert!(stop::confirm(journal, home, &config, &execution, true).await?);
+    Ok(journal
+        .session_stop_records(Some(&execution))?
+        .into_iter()
+        .find(|record| &record.identity.attempt == attempt)
+        .ok_or("missing attempt")?)
+}
+
+/// An attempt with a mark scope is confirmed only after the scan, and the ledger says so.
+#[tokio::test]
+async fn a_marked_attempt_records_lock_processes_and_marks() -> TestResult {
+    let (home, _files, identity) = fixture()?;
+    let journal = journal(home.path())?;
+    let spawner = stop::prepare(
+        &journal,
+        home.path(),
+        identity.clone(),
+        TokioProcessSpawner::new().without_reaper_registration(),
+    )?;
+    let job = detached_job(&spawner).await?;
+    spawner.close();
+    let record = confirmed(&journal, home.path(), &identity.attempt).await?;
+    assert_eq!(
+        (
+            job.has_exited()?,
+            record.state,
+            record.proof,
+            record.confirmed_at_ms.is_some()
+        ),
+        (
+            true,
+            ora_node_db::SessionStopState::Confirmed,
+            Some(SessionStopProof::LockProcessesAndMarks),
+            true
+        )
+    );
+    Ok(())
+}
+
+/// An attempt an older Node registered has no mark scope; it keeps the evidence it had.
+#[tokio::test]
+async fn a_pre_mark_attempt_keeps_lock_and_processes() -> TestResult {
+    let (home, files, identity) = fixture()?;
+    let journal = journal(home.path())?;
+    files.create(&identity.attempt, ora_process::ProcessIdentity::Inherit)?;
+    // The on-disk state an older Node leaves: lock and clues, but no `.mark` scope.
+    std::fs::remove_file(
+        home.path()
+            .join("session-attempts")
+            .join(format!("{}.mark", identity.attempt)),
+    )?;
+    journal.record_session_stop(&identity, stop::now_ms())?;
+    let record = confirmed(&journal, home.path(), &identity.attempt).await?;
+    assert_eq!(
+        (record.state, record.proof),
+        (
+            ora_node_db::SessionStopState::Confirmed,
+            Some(SessionStopProof::LockAndProcesses)
         )
     );
     Ok(())

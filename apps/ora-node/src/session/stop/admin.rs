@@ -210,7 +210,14 @@ async fn reconcile(
         let allowed = match request.mode {
             SessionStopMode::Recheck => proof,
             SessionStopMode::AfterHostReboot => {
-                proof.filter(|proof| *proof != SessionStopProof::LockAndProcesses)
+                // Same-boot proofs, with or without the mark scan, never stand for a reboot.
+                proof.filter(|proof| {
+                    !matches!(
+                        proof,
+                        SessionStopProof::LockAndProcesses
+                            | SessionStopProof::LockProcessesAndMarks
+                    )
+                })
             }
         };
         if allowed.is_some() {
