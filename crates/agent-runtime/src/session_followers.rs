@@ -4,6 +4,7 @@ use crate::RuntimeError;
 use agent_client_protocol_schema::v1::{SessionUpdate, StopReason};
 use ora_contracts::{LoadSessionEvent, ToolCallTiming};
 use ora_history::{AssembledRecord, read_session_history_up_to};
+use ora_logging::ora_warn;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
@@ -79,6 +80,8 @@ impl SessionFollowers {
                 let mut overflow_open = true;
                 loop {
                     tokio::select! {
+                        // Both senders close on drop. A pending overflow must win over event EOF.
+                        biased;
                         signal = overflow_receiver.recv(), if overflow_open => {
                             match signal {
                                 Some(()) => {
@@ -190,15 +193,29 @@ impl Drop for SessionFollowers {
     /// An attempt that ends without handing its followers to the retry must still close them.
     ///
     /// The explicit `finish` calls remain the normal path; this guard covers every early return so
-    /// a follower cannot silently observe EOF instead of a terminal boundary.
+    /// a follower cannot silently observe EOF instead of a terminal boundary. A non-empty set at
+    /// drop time means an explicit `finish` was missed, so warn instead of hiding that defect.
     fn drop(&mut self) {
+        if self.followers.is_empty() {
+            return;
+        }
+        ora_warn!(
+            follower_count = self.followers.len(),
+            "closing prompt followers without an explicit finish"
+        );
         for follower in std::mem::take(&mut self.followers).into_values() {
-            if follower
-                .events
-                .try_send(Ok(LoadSessionEvent::turn_ended(StopReason::Cancelled)))
-                .is_ok()
-            {
-                let _ = follower.events.try_send(Ok(LoadSessionEvent::Completed));
+            match follower.events.try_reserve_many(2) {
+                Ok(mut permits) => {
+                    if let Some(permit) = permits.next() {
+                        permit.send(Ok(LoadSessionEvent::turn_ended(StopReason::Cancelled)));
+                    }
+                    if let Some(permit) = permits.next() {
+                        permit.send(Ok(LoadSessionEvent::Completed));
+                    }
+                }
+                Err(_) => {
+                    let _ = follower.overflow.send(());
+                }
             }
         }
     }
@@ -290,6 +307,25 @@ mod tests {
                 Some(Ok(LoadSessionEvent::Completed)),
             ]
         );
+    }
+
+    /// A single free slot cannot represent the complete two-event terminal sequence.
+    #[tokio::test]
+    async fn dropping_with_one_free_slot_reports_overflow_without_a_partial_terminal() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        let mut followers = SessionFollowers::new();
+        insert_idle(&mut followers, 1, sender);
+        // Holding permits keeps exactly one slot free without depending on relay scheduling.
+        let queue = followers.followers[&1].events.clone();
+        let held = queue.try_reserve_many(FOLLOWER_QUEUE_CAPACITY - 1).unwrap();
+        drop(followers);
+        drop(held);
+        drop(queue);
+        assert_eq!(
+            receiver.recv().await.unwrap().unwrap_err().to_string(),
+            "session load follower fell behind the active prompt"
+        );
+        assert!(receiver.recv().await.is_none());
     }
 
     /// A loaded session receives live updates and the active turn's finite ending.

@@ -128,12 +128,18 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         "session event queue overflowed",
                     )));
                     self.isolate_channel(channel).await;
+                    if attempt.skip_record {
+                        self.end_turn(StopReason::Cancelled);
+                    }
                     followers.finish(StopReason::Cancelled);
                     return;
                 }
                 SessionControl::ConnectionLost(error) => {
                     end_report.record(PromptEndCause::SessionCrashed);
                     self.fail_prompt(&events, error);
+                    if attempt.skip_record {
+                        self.end_turn(StopReason::Cancelled);
+                    }
                     followers.finish(StopReason::Cancelled);
                     return;
                 }
@@ -150,6 +156,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             {
                 end_report.record(PromptEndCause::StreamDropped);
                 self.isolate_channel(channel).await;
+                if attempt.skip_record {
+                    self.end_turn(StopReason::Cancelled);
+                }
                 followers.finish(StopReason::Cancelled);
                 return;
             }
