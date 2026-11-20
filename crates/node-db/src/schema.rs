@@ -42,7 +42,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=15) {
+    if app != APPLICATION_ID || !matches!(version, 1..=16) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -97,6 +97,9 @@ pub(super) fn initialize(
     }
     if version >= 15 {
         expected.execute_batch(include_str!("turn_cancel.sql"))?;
+    }
+    if version >= 16 {
+        expected.execute_batch(include_str!("session_stop_marks.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
@@ -279,6 +282,20 @@ pub(super) fn initialize(
             /*schema_name*/ None,
             "user_version",
             /*pragma_value*/ 15,
+        )?;
+        tx.commit()?;
+    }
+    if version < 16 {
+        // v16 admits the stop proof `lock_processes_and_marks`, recorded once the attempt mark
+        // scan also came back clean. SQLite cannot widen a CHECK in place, so the table is
+        // rebuilt with every row and value unchanged; older programs reject a v16 file instead
+        // of misreading the new proof.
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("session_stop_marks.sql"))?;
+        tx.pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            /*pragma_value*/ 16,
         )?;
         tx.commit()?;
     }

@@ -100,7 +100,7 @@ fn version_two_upgrade_settles_the_host_attempt_and_preserves_legacy_results() {
             |r| r.get(/*idx*/ 0),
         )
         .unwrap();
-    assert_eq!(version, 15);
+    assert_eq!(version, 16);
     // Previous binaries accept only versions 1/2 before touching persistent pragmas or migration.
     assert!(!matches!(version, 1 | 2));
     let violations: i64 = inspect

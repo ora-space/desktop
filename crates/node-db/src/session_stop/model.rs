@@ -67,7 +67,12 @@ pub enum SessionStopState {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStopProof {
+    /// Same boot: the original lock was free and no clue's process or group remained. Recorded
+    /// for attempts registered before the attempt mark existed, whose processes carry none.
     LockAndProcesses,
+    /// Same boot: as `LockAndProcesses`, and two consecutive scans found no live process
+    /// carrying the attempt's environment mark, so jobs that left every original group are gone.
+    LockProcessesAndMarks,
     HostReboot,
     FencedVolume,
 }

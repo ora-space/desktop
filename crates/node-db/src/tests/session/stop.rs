@@ -280,17 +280,20 @@ fn undrained_v13_upgrade_marks_only_running_agents_legacy_unknown() {
         SessionStopState::LegacyUnknown,
         "ordinary stop processing cannot erase the stronger upgrade fence"
     );
-    assert!(
-        journal
-            .change_session_stop(
-                &records[0].identity.attempt,
-                SessionStopChange::Confirm {
-                    at_ms: 1,
-                    proof: SessionStopProof::LockAndProcesses
-                }
-            )
-            .is_err()
-    );
+    for proof in [
+        SessionStopProof::LockAndProcesses,
+        SessionStopProof::LockProcessesAndMarks,
+    ] {
+        assert!(
+            journal
+                .change_session_stop(
+                    &records[0].identity.attempt,
+                    SessionStopChange::Confirm { at_ms: 1, proof }
+                )
+                .is_err(),
+            "same-boot evidence cannot lift the upgrade fence"
+        );
+    }
     journal
         .change_session_stop(
             &records[0].identity.attempt,
@@ -387,5 +390,84 @@ fn gc_requires_age_release_ack_and_completed_audit_and_retains_a_summary() {
                 .get::<_, i64>(0))
             .unwrap(),
         1
+    );
+}
+
+/// A v15 file keeps every stop row through the v16 rebuild, after which the mark-scan proof is
+/// recorded and read back while the older proof stays as it was.
+#[test]
+fn v16_upgrade_keeps_stop_rows_and_admits_the_mark_scan_proof() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db");
+    let (db, journal, input) = running(&path);
+    let [older, marked] = [identity(&input), identity(&input)];
+    journal.record_session_stop(&older, 1).unwrap();
+    for change in [
+        SessionStopChange::Request {
+            at_ms: 10,
+            bound_at_ms: 20,
+        },
+        SessionStopChange::Confirm {
+            at_ms: 11,
+            proof: SessionStopProof::LockAndProcesses,
+        },
+    ] {
+        journal.change_session_stop(&older.attempt, change).unwrap();
+    }
+    let before = journal.session_stop_records(None).unwrap();
+    drop(journal);
+    drop(db);
+    let old = Connection::open(&path).unwrap();
+    remove_session_stop_marks_schema(&old);
+    let rejected = old.execute(
+        "UPDATE session_stop_attempts SET evidence='lock_processes_and_marks'",
+        [],
+    );
+    drop(old);
+    let db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node"))).unwrap();
+    let journal = db.session_journal().unwrap();
+    let migrated = journal.session_stop_records(None).unwrap();
+    journal.record_session_stop(&marked, 2).unwrap();
+    for change in [
+        SessionStopChange::Request {
+            at_ms: 12,
+            bound_at_ms: 22,
+        },
+        SessionStopChange::Confirm {
+            at_ms: 13,
+            proof: SessionStopProof::LockProcessesAndMarks,
+        },
+    ] {
+        journal
+            .change_session_stop(&marked.attempt, change)
+            .unwrap();
+    }
+    let version: i64 = Connection::open(&path)
+        .unwrap()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert!(rejected.is_err(), "the v15 table refuses the new proof");
+    assert_eq!(
+        (
+            version,
+            migrated == before,
+            journal
+                .session_stop_records(None)
+                .unwrap()
+                .into_iter()
+                .map(|record| (record.identity.attempt, record.proof))
+                .collect::<Vec<_>>()
+        ),
+        (
+            16,
+            true,
+            vec![
+                (older.attempt, Some(SessionStopProof::LockAndProcesses)),
+                (
+                    marked.attempt,
+                    Some(SessionStopProof::LockProcessesAndMarks)
+                ),
+            ]
+        )
     );
 }

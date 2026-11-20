@@ -246,7 +246,7 @@ fn apply_change(
             connection.execute("UPDATE session_stop_attempts SET first_stop_at_ms=coalesce(first_stop_at_ms,?2),bound_at_ms=coalesce(bound_at_ms,?3),state=CASE WHEN state='prepared' THEN 'stopping' ELSE state END WHERE attempt=?1", params![attempt.as_str(),at_ms,bound_at_ms])?
         }
         SessionStopChange::Unconfirmed => connection.execute("UPDATE session_stop_attempts SET state=CASE WHEN state='legacy_unknown' THEN state ELSE 'stop_unconfirmed' END WHERE attempt=?1 AND state!='confirmed' AND first_stop_at_ms IS NOT NULL", [attempt.as_str()])?,
-        SessionStopChange::Confirm { at_ms, proof } => connection.execute("UPDATE session_stop_attempts SET state='confirmed',confirmed_at_ms=coalesce(confirmed_at_ms,?2),evidence=coalesce(evidence,?3) WHERE attempt=?1 AND NOT (state='legacy_unknown' AND ?3='lock_and_processes')", params![attempt.as_str(),at_ms,token(proof)?])?,
+        SessionStopChange::Confirm { at_ms, proof } => connection.execute("UPDATE session_stop_attempts SET state='confirmed',confirmed_at_ms=coalesce(confirmed_at_ms,?2),evidence=coalesce(evidence,?3) WHERE attempt=?1 AND NOT (state='legacy_unknown' AND ?3 IN ('lock_and_processes','lock_processes_and_marks'))", params![attempt.as_str(),at_ms,token(proof)?])?,
         SessionStopChange::ResourcesReleased => connection.execute("UPDATE session_stop_attempts SET resources_released=1 WHERE attempt=?1 AND state='confirmed'", [attempt.as_str()])?,
     };
     if changed != 1 {
