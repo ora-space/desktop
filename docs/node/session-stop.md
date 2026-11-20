@@ -14,8 +14,7 @@ leases, workload views and checkout responsibility across restart. Terminal even
 admission wait for confirmation and resource release.
 
 Every process the spawn gate starts also carries `ORA_SESSION_ATTEMPT=<attempt>`, which its
-descendants inherit; a Node that itself runs under another attempt's mark passes both on
-(`outer:attempt`). Before the ledger records the attempt, `session-attempts/<attempt>.mark`
+descendants inherit. Before the ledger records the attempt, `session-attempts/<attempt>.mark`
 durably records the attempt's start, in boot clock ticks, and the user its processes run as. This
 reaches tool jobs that leave every original group and drop the inherited lock, such as a `cmd &`
 in an Agent tool shell started under `setsid` (OpenCode's bash tool, Claude's Bash), adopted by
@@ -25,16 +24,33 @@ to it. Termination freezes every such process with SIGSTOP through a pidfd, resc
 one appears (at most 32 passes), then kills them all, before it signals the original groups. Stop
 proof also requires two consecutive clean scans: a claimed live process keeps the attempt
 running; an unreadable scope or procfs, or an unreadable process of the attempt's user while the
-Node runs as another user without `CAP_SYS_PTRACE`, leaves the evidence unknown. Long-lived Agent
-descendants such as MCP servers and language servers carry the mark too: they stop when the
-attempt stops, never between turns. The proof is still recorded as `lock_and_processes`.
+Node runs as another user without `CAP_SYS_PTRACE`, leaves the evidence unknown. A confirmed
+attempt with a mark scope records the proof `lock_processes_and_marks`; an attempt an older Node
+registered has no scope, none of its processes carries a mark, and it records
+`lock_and_processes` as before. Neither same-boot proof counts for `after-host-reboot`
+reconciliation. Schema 15 admits the new value; older programs refuse a schema 15 database.
 
-The mark is Linux only and does not make containment strong. A process that clears its
-environment (`env -i`) or makes itself non-dumpable is found only while its parent belongs to the
-attempt; once orphaned it is invisible. The mark is not a secret: a process that can read it can
-start processes carrying it, and those die with the attempt, but it cannot make the Node signal a
-process that started before the attempt. Attempts recorded before marks existed keep
-lock-and-clue evidence; none of their processes carries a mark.
+**What dies, and when.** When a session ends (EndSession, an Agent failure, a cancel that ends the
+session, graceful shutdown, or restart recovery after a Node crash) and when MCP lifecycle replaces
+the session's Agent process, every live process carrying that attempt's mark is killed before the
+stop is confirmed. That includes everything the Agent started: tool background jobs, dev servers,
+watchers, MCP and language servers, and shared daemons such as a Gradle daemon or an sccache
+server that a tool in the session launched. Nothing is killed between turns. A user who needs a
+daemon to outlive the session must start it outside Ora; one started by the Agent dies with the
+session even when other sessions or programs use it.
+
+**Known limits.** The mark is Linux only and does not make containment strong.
+- A process that clears its environment (`env -i`) or makes itself non-dumpable is found only while
+  its parent belongs to the attempt; once orphaned it is invisible. In particular, an orphaned
+  process of the attempt's own user whose environment the Node cannot read is not counted, and does
+  not make the evidence unknown: unrelated programs (ssh-agent, binaries with file capabilities)
+  are unreadable in the same way, and counting them would block every stop.
+- A Node that itself runs under another attempt's mark (a nested Node started by an outer Agent)
+  passes both on as `outer:attempt`, so the outer attempt's stop also kills the inner Node's
+  attempts. The inner Node only ever claims processes listing its own attempt.
+- The mark is not a secret: a process that can read it can start processes carrying it, and those
+  die with the attempt, but it cannot make the Node signal a process that started before the
+  attempt.
 
 `node.session_stop.confirmation_timeout_ms` defaults to 600000 and must be positive. Its first
 deadline is durable; retries do not extend it. Different-boot proof requires an explicit
