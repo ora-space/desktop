@@ -26,15 +26,15 @@ export interface WorktreeStorageCapability {
 }
 
 /** The host operating system, as far as the window chrome needs to care. */
-export type WindowManagerOs = "windows" | "macos" | "linux";
+export type WindowManagerOs = "windows" | "linux";
 
 /**
  * Whether this host wants the app to paint its own window controls.
  *
- * macOS (which keeps its native traffic lights) reports `none`, so the shell
- * renders no controls at all. A frameless Windows/Linux window reports
- * `overlay` and hands back the imperative window commands the custom title bar
- * drives.
+ * A frameless Windows/Linux window reports `overlay` and hands back the
+ * imperative window commands the custom title bar drives. A host without a
+ * native window to control (Web, tests, or an unrecognized OS) reports `none`,
+ * so the shell renders no controls at all.
  */
 export type WindowControlsCapability =
   | { kind: "none" }

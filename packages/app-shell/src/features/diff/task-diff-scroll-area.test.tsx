@@ -76,14 +76,10 @@ describe("diff scrollbar geometry", () => {
       windowsFirefox: usesWindowsDiffScrollbar(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/142.0",
       ),
-      macos: usesWindowsDiffScrollbar(
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X) Chrome/140.0.0.0",
-      ),
       linux: usesWindowsDiffScrollbar("Mozilla/5.0 (X11; Linux x86_64)"),
     }).toEqual({
       windows: true,
       windowsFirefox: false,
-      macos: false,
       linux: false,
     });
   });

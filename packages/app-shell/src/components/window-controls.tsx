@@ -6,9 +6,9 @@ import { cn } from "@ora/ui";
 /**
  * Custom caption buttons for a frameless desktop window (minimize / maximize /
  * close), painted only where the platform asks the app to own its chrome -
- * Windows and Linux. macOS reports `windowControls.kind === "none"`, so this
- * renders nothing and the surrounding header collapses back to
- * its native layout.
+ * Windows and Linux. A host without such a window reports
+ * `windowControls.kind === "none"`, so this renders nothing and the surrounding
+ * header collapses back to its native layout.
  *
  * The glyphs are hand-drawn at a 10px cap height so they read crisply at the
  * app's density, and the controls lean on the same neutral tokens as the rest of

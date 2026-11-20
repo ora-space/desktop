@@ -3278,7 +3278,7 @@ it("disables install for a host-incompatible marketplace plugin", async () => {
     logo: null,
     compatibility: "incompatible",
     reason:
-      "this release supports x86_64-pc-windows-msvc but your host is aarch64-apple-darwin",
+      "this release supports x86_64-pc-windows-msvc but your host is x86_64-unknown-linux-gnu",
   });
   renderSettings(createTestClient(createFixtureHandlers(state)));
 
@@ -3286,7 +3286,7 @@ it("disables install for a host-incompatible marketplace plugin", async () => {
   expect(screen.getByRole("button", { name: /安装|Install/ })).toBeDisabled();
   expect(
     screen.getByText(
-      /this release supports x86_64-pc-windows-msvc but your host is aarch64-apple-darwin/,
+      /this release supports x86_64-pc-windows-msvc but your host is x86_64-unknown-linux-gnu/,
     ),
   ).toBeInTheDocument();
 });
