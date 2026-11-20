@@ -40,7 +40,11 @@ export function SubagentGroup({
       ? "chat.subagentStateUnreported"
       : "chat.subagentStateUnknown"
     : !group.relationshipUnknown &&
-        delegationReturned(parentItems, group.sourceId)
+        delegationReturned(
+          parentItems,
+          group.sourceId,
+          group.delegationToolCallId,
+        )
       ? "chat.subagentDelegationReturned"
       : "chat.subagentProjectionStopped";
   return (

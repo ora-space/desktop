@@ -324,6 +324,7 @@ fn unowned_observed_item_is_preserved_and_never_becomes_a_mutation() {
         .unwrap_or_else(|error| panic!("native identity: {error}"));
     let fingerprint = Fingerprint::sha256(b"foreign bytes");
     let observed = ResourceObservation {
+        occupied_file_names: Default::default(),
         resource: resource.identity.clone(),
         items: BTreeMap::from([(
             native_identity.clone(),
@@ -369,6 +370,7 @@ fn preserved_item_conflict_names_the_conflicting_native_identity() {
         .unwrap_or_else(|error| panic!("native identity: {error}"));
     let fingerprint = Fingerprint::sha256(b"old package");
     let observed = ResourceObservation {
+        occupied_file_names: Default::default(),
         resource: resource.identity.clone(),
         items: BTreeMap::from([(
             native_identity.clone(),
@@ -407,7 +409,7 @@ fn preserved_item_conflict_names_the_conflicting_native_identity() {
     assert_eq!(conditions[0].code.as_str(), "preserved_item_conflict");
     assert_eq!(
         conditions[0].safe_details.message,
-        "A Preserved Item already occupies the required native identity: grilling."
+        "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling"
     );
 }
 
@@ -433,6 +435,7 @@ fn shared_resource_merges_target_contributors_before_planning_one_create() {
         },
     ];
     let observed = ResourceObservation {
+        occupied_file_names: Default::default(),
         resource: resource.identity.clone(),
         items: BTreeMap::new(),
         fingerprint: Fingerprint::sha256(&[]),
@@ -486,6 +489,7 @@ fn shared_resource_rejects_incompatible_materialization_contracts() {
         },
     ];
     let observation = ResourceObservation {
+        occupied_file_names: Default::default(),
         resource: resource.identity.clone(),
         items: BTreeMap::new(),
         fingerprint: Fingerprint::sha256(&[]),

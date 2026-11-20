@@ -2,8 +2,7 @@
 
 use super::NodeExecutionError;
 use agent_client_protocol_schema::v1::{
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-    SessionConfigSelectOptions, StopReason,
+    SessionConfigOption, SessionConfigSelectOption, SessionConfigSelectOptions, StopReason,
 };
 
 /// Finds the model option and the value to select for the graph's `modelId`.
@@ -16,21 +15,7 @@ pub(super) fn match_model_value(
     agent_ref: &str,
     model_id: &str,
 ) -> Result<(String, String), NodeExecutionError> {
-    let model_option = config_options
-        .iter()
-        .find(|option| matches!(option.category, Some(SessionConfigOptionCategory::Model)))
-        .or_else(|| {
-            let selects: Vec<&SessionConfigOption> = config_options
-                .iter()
-                .filter(|option| matches!(option.kind, SessionConfigKind::Select(_)))
-                .collect();
-            (selects.len() == 1).then_some(selects[0])
-        })
-        .ok_or_else(|| NodeExecutionError::WorkflowModelNotFound {
-            agent_ref: agent_ref.to_string(),
-            model_id: model_id.to_string(),
-        })?;
-    let SessionConfigKind::Select(select) = &model_option.kind else {
+    let Some((id, select)) = ora_agent_runtime::model_selector(config_options) else {
         return Err(NodeExecutionError::WorkflowModelNotFound {
             agent_ref: agent_ref.to_string(),
             model_id: model_id.to_string(),
@@ -55,7 +40,7 @@ pub(super) fn match_model_value(
         .iter()
         .find(|option| option.value.0.as_ref() == model_id || option.name.contains(model_id));
     match matched {
-        Some(option) => Ok((model_option.id.0.to_string(), option.value.0.to_string())),
+        Some(option) => Ok((id.0.to_string(), option.value.0.to_string())),
         None => Err(NodeExecutionError::WorkflowModelNotFound {
             agent_ref: agent_ref.to_string(),
             model_id: model_id.to_string(),
@@ -82,7 +67,8 @@ pub(crate) fn stop_reason_label(reason: StopReason) -> String {
 mod tests {
     use super::*;
     use agent_client_protocol_schema::v1::{
-        SessionConfigId, SessionConfigSelect, SessionConfigValueId,
+        SessionConfigId, SessionConfigKind, SessionConfigOptionCategory, SessionConfigSelect,
+        SessionConfigValueId,
     };
     use pretty_assertions::assert_eq;
 

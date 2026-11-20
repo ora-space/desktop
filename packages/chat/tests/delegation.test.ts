@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatToolCall } from "../src/index.ts";
 import {
+  childSessionSource,
   delegationResultCompleted,
   delegationSessionId,
+  delegationToolCallCompleted,
 } from "../src/index.ts";
 
 /** Builds the provider's delegation result shape as the store keeps it. */
@@ -87,4 +89,100 @@ test("requires both the ACP completion and the provider's completed result", () 
     }),
     false,
   );
+});
+
+test("parses _subagent/update attribution and validates toolCallId delegation completion", () => {
+  assert.deepEqual(
+    childSessionSource({
+      "_subagent/update": {
+        sessionId: "ses_main",
+        taskId: "task_1",
+        toolCallId: "parent_call_1",
+        agentType: "Explore",
+      },
+    }),
+    {
+      id: "task_1",
+      parentId: "ses_main",
+      depth: 1,
+      title: "Explore",
+      delegationToolCallId: "parent_call_1",
+    },
+  );
+  assert.equal(
+    childSessionSource({ "_subagent/update": { sessionId: " ", taskId: "t" } }),
+    undefined,
+  );
+  assert.equal(
+    childSessionSource({ "_subagent/update": { sessionId: "s", taskId: " " } }),
+    undefined,
+  );
+
+  // Completed parent Agent/Task call with string rawOutput or content counts as returned.
+  assert.equal(
+    delegationToolCallCompleted({
+      ...delegation(undefined, undefined, "completed"),
+      rawOutput: "Subagent finished exploring",
+    }),
+    true,
+  );
+  // Turn-end synthesized completion (no content and undefined rawOutput) does not count.
+  assert.equal(
+    delegationToolCallCompleted({
+      ...delegation(undefined, undefined, "completed"),
+      rawOutput: undefined,
+    }),
+    false,
+  );
+  // Turn-end synthesized completion even WITH streamed content/rawOutput does not count.
+  assert.equal(
+    delegationToolCallCompleted({
+      ...delegation(undefined, undefined, "completed"),
+      rawOutput: "intermediate output",
+      settledByTurnEnd: true,
+    }),
+    false,
+  );
+  assert.equal(
+    delegationToolCallCompleted({
+      ...delegation(undefined, undefined, "failed"),
+      rawOutput: "error",
+    }),
+    false,
+  );
+  // Real CodeAgent live completion: content array present, rawOutput omitted, title mutated.
+  assert.equal(
+    delegationToolCallCompleted({
+      ...delegation(undefined, undefined, "completed"),
+      title: "Summarized subagent findings",
+      content: [
+        { type: "content", content: { type: "text", text: "summary" } },
+      ],
+      rawOutput: undefined,
+    }),
+    true,
+  );
+  // Real CodeAgent session/load replay: content empty, top-level rawOutput.status = "completed".
+  assert.equal(
+    delegationToolCallCompleted({
+      ...delegation(undefined, undefined, "completed"),
+      content: [],
+      rawOutput: {
+        status: "completed",
+        agentId: "a1",
+        agentType: "Explore",
+      },
+    }),
+    true,
+  );
+  for (const status of ["running", "failed", "cancelled"]) {
+    assert.equal(
+      delegationToolCallCompleted({
+        ...delegation(undefined, undefined, "completed"),
+        content: [],
+        rawOutput: { status, agentId: "a1", agentType: "Explore" },
+      }),
+      false,
+    );
+  }
 });

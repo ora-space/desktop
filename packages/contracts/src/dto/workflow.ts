@@ -209,6 +209,7 @@ export type WorkflowSummary = {
   namespace: string;
   name: string;
   publishedVersion: string | null;
+  sourcePluginId: string | null;
   createdAt: bigint;
   updatedAt: bigint;
 };

@@ -37,6 +37,8 @@ export interface WorkflowLibraryItem {
   name: string;
   /** Imported during this session; marked so users can find the new row. */
   imported?: boolean;
+  /** Imported from a marketplace plugin that is currently uninstalled; informational only. */
+  sourcePluginUninstalled?: boolean;
 }
 
 interface WorkflowManagerProps {
@@ -276,6 +278,11 @@ export function WorkflowManager({
                 <span className="min-w-0 flex-1 truncate font-medium">
                   {workflow.name}
                 </span>
+                {workflow.sourcePluginUninstalled === true && (
+                  <span className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground">
+                    {t("settings.workflow.sourcePluginUninstalledBadge")}
+                  </span>
+                )}
                 {workflow.imported === true && (
                   <span className="shrink-0 rounded-full bg-blue-500/10 px-1.5 py-px text-[10px] font-medium text-blue-700 dark:text-blue-300">
                     {t("settings.workflow.transfer.importedBadge")}

@@ -1,10 +1,12 @@
-use crate::metadata::{child_source_id, retain_tool_metadata};
+use crate::metadata::{TURN_END_SETTLED_META_KEY, child_source_id, retain_tool_metadata};
 use crate::record::{HistoryRecord, ToolCallTiming};
 use agent_client_protocol_schema::v1::ContentBlock;
+use agent_client_protocol_schema::v1::Meta;
 use agent_client_protocol_schema::v1::Plan;
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate};
 use agent_client_protocol_schema::v1::{ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate};
+use serde_json::Value;
 
 /// One assembled record together with the position it occupies in the conversation.
 #[derive(Debug, Clone, PartialEq)]
@@ -295,9 +297,10 @@ impl HistoryAssembler {
     /// Installs a tool call's opening snapshot, replacing an earlier one in place.
     fn upsert_tool(
         &mut self,
-        call: ToolCall,
+        mut call: ToolCall,
         timing: Option<ToolCallTiming>,
     ) -> Vec<AssembledRecord> {
+        strip_turn_end_settled_marker(&mut call.meta);
         match self.tool_index(&call.tool_call_id) {
             // A full opening can reuse an abandoned ID. Bare deltas keep the old position.
             Some(index)
@@ -326,10 +329,15 @@ impl HistoryAssembler {
         update: &ToolCallUpdate,
         timing: Option<ToolCallTiming>,
     ) -> Vec<AssembledRecord> {
+        let mut incoming_meta = update.meta.clone();
+        strip_turn_end_settled_marker(&mut incoming_meta);
         if let Some(index) = self.tool_index(&update.tool_call_id) {
             let pending = &mut self.tools[index];
             pending.call.update(update.fields.clone());
-            retain_tool_metadata(&mut pending.call.meta, update.meta.as_ref());
+            retain_tool_metadata(&mut pending.call.meta, incoming_meta.as_ref());
+            if update.fields.status.is_some() {
+                strip_turn_end_settled_marker(&mut pending.call.meta);
+            }
             if timing.is_some() {
                 pending.timing = timing;
             }
@@ -339,7 +347,7 @@ impl HistoryAssembler {
         // ACP only guarantees the title on the opening notification.
         let mut call = ToolCall::new(update.tool_call_id.clone(), "Tool call");
         call.update(update.fields.clone());
-        retain_tool_metadata(&mut call.meta, update.meta.as_ref());
+        retain_tool_metadata(&mut call.meta, incoming_meta.as_ref());
         self.open_tool(call, timing)
     }
 
@@ -472,11 +480,25 @@ impl PendingTool {
         let projected = child_source_id(self.call.meta.as_ref()).is_some();
         if unfinished && !preserve_tool_status && !projected && stop_reason == StopReason::EndTurn {
             self.call.status = ToolCallStatus::Completed;
+            self.call
+                .meta
+                .get_or_insert_with(Meta::new)
+                .insert(TURN_END_SETTLED_META_KEY.to_string(), Value::Bool(true));
         } else if self.written {
             return None;
         }
         self.written = true;
         Some(tool_record(self.seq, &self.call, self.timing.clone()))
+    }
+}
+
+/// Drops Ora's turn-end settlement marker from untrusted incoming tool updates and cleans empty maps.
+fn strip_turn_end_settled_marker(meta: &mut Option<Meta>) {
+    if let Some(map) = meta {
+        map.remove(TURN_END_SETTLED_META_KEY);
+        if map.is_empty() {
+            *meta = None;
+        }
     }
 }
 

@@ -37,19 +37,30 @@ export function metadataKey(
   );
 }
 
+const OPENCODE_CHILD_SESSION_KEY = "opencode/child-session";
+const SUBAGENT_UPDATE_KEY = "_subagent/update";
+const TURN_END_SETTLED_KEY = "ora/turn-end-settled";
+
 export interface ChildSessionSource {
   id: string;
   parentId: string;
   depth: number;
   title?: string;
+  /** Parent delegation tool call id explicitly reported by `_subagent/update`. */
+  delegationToolCallId?: string;
 }
 
-/** Parses only OpenCode's explicit projection; names, tool prefixes and depth do not infer edges. */
-export function childSessionSource(
-  metadata: unknown,
+/** Reports whether `metadata` carries any recognized child-projection namespace, even when cleared. */
+export function hasChildSessionNamespace(metadata: unknown): boolean {
+  return (
+    object(metadata) &&
+    (OPENCODE_CHILD_SESSION_KEY in metadata || SUBAGENT_UPDATE_KEY in metadata)
+  );
+}
+
+function parseOpenCodeChildSession(
+  child: unknown,
 ): ChildSessionSource | undefined {
-  if (!object(metadata)) return undefined;
-  const child = metadata["opencode/child-session"];
   if (
     !object(child) ||
     typeof child.id !== "string" ||
@@ -69,6 +80,59 @@ export function childSessionSource(
       ? { title: child.title }
       : {}),
   };
+}
+
+function parseSubagentUpdateSource(
+  subagent: unknown,
+): ChildSessionSource | undefined {
+  if (
+    !object(subagent) ||
+    typeof subagent.taskId !== "string" ||
+    !subagent.taskId.trim() ||
+    typeof subagent.sessionId !== "string" ||
+    !subagent.sessionId.trim() ||
+    (subagent.toolCallId !== undefined &&
+      subagent.toolCallId !== null &&
+      typeof subagent.toolCallId !== "string") ||
+    (subagent.agentType !== undefined &&
+      subagent.agentType !== null &&
+      typeof subagent.agentType !== "string")
+  )
+    return undefined;
+  return {
+    id: subagent.taskId,
+    parentId: subagent.sessionId,
+    depth: 1,
+    ...(typeof subagent.agentType === "string" && subagent.agentType.trim()
+      ? { title: subagent.agentType }
+      : {}),
+    ...(typeof subagent.toolCallId === "string" && subagent.toolCallId.trim()
+      ? { delegationToolCallId: subagent.toolCallId }
+      : {}),
+  };
+}
+
+/** Parses explicit OpenCode or `_subagent/update` attribution; names and prefixes never infer edges. */
+export function childSessionSource(
+  metadata: unknown,
+): ChildSessionSource | undefined {
+  if (!object(metadata)) return undefined;
+  const hasOpenCode = OPENCODE_CHILD_SESSION_KEY in metadata;
+  const hasSubagent = SUBAGENT_UPDATE_KEY in metadata;
+  if (hasOpenCode && !hasSubagent)
+    return parseOpenCodeChildSession(metadata[OPENCODE_CHILD_SESSION_KEY]);
+  if (!hasOpenCode && hasSubagent)
+    return parseSubagentUpdateSource(metadata[SUBAGENT_UPDATE_KEY]);
+  if (hasOpenCode && hasSubagent) {
+    const openCode = parseOpenCodeChildSession(
+      metadata[OPENCODE_CHILD_SESSION_KEY],
+    );
+    const subagent = parseSubagentUpdateSource(metadata[SUBAGENT_UPDATE_KEY]);
+    return openCode && subagent && openCode.id === subagent.id
+      ? openCode
+      : undefined;
+  }
+  return undefined;
 }
 
 /** Retains metadata without interpreting or recursively merging unknown provider values. */
@@ -92,6 +156,31 @@ export function mergeToolMetadata(
   incoming: unknown,
 ): Record<string, unknown> | undefined {
   return object(incoming) ? { ...previous, ...incoming } : previous;
+}
+
+/** Strips Ora's internal turn-end settlement marker and reports it only for replayed history. */
+export function extractToolMetadata(
+  metadata: unknown,
+  trustTurnEndSettled: boolean,
+): {
+  metadata: Record<string, unknown> | undefined;
+  settledByTurnEnd: boolean;
+} {
+  if (!object(metadata)) {
+    return { metadata: undefined, settledByTurnEnd: false };
+  }
+  if (!(TURN_END_SETTLED_KEY in metadata)) {
+    return { metadata, settledByTurnEnd: false };
+  }
+  const settledByTurnEnd =
+    trustTurnEndSettled && metadata[TURN_END_SETTLED_KEY] === true;
+  const rest = Object.fromEntries(
+    Object.entries(metadata).filter(([key]) => key !== TURN_END_SETTLED_KEY),
+  );
+  return {
+    metadata: Object.keys(rest).length > 0 ? rest : undefined,
+    settledByTurnEnd,
+  };
 }
 
 export function withToolMetadata(
@@ -127,4 +216,33 @@ export function delegationResultCompleted(tool: ChatToolCall): boolean {
   if (tool.status !== "completed" || !object(tool.rawOutput)) return false;
   const metadata = tool.rawOutput.metadata;
   return object(metadata) && metadata.status === "completed";
+}
+
+/**
+ * Reports whether a parent tool call linked by `_subagent/update.toolCallId` returned a result.
+ *
+ * Turn-end settlement marks unfinished parent tools as `completed`, so only a provider-reported
+ * `completed` call carrying `content` or `rawOutput` (and without a non-`completed` status field
+ * inside `rawOutput` or `rawOutput.metadata`) qualifies.
+ */
+export function delegationToolCallCompleted(tool: ChatToolCall): boolean {
+  if (tool.status !== "completed" || tool.settledByTurnEnd) return false;
+  if (
+    tool.content.length === 0 &&
+    (tool.rawOutput === undefined || tool.rawOutput === null)
+  ) {
+    return false;
+  }
+  if (object(tool.rawOutput)) {
+    if (
+      object(tool.rawOutput.metadata) &&
+      "status" in tool.rawOutput.metadata
+    ) {
+      return tool.rawOutput.metadata.status === "completed";
+    }
+    if ("status" in tool.rawOutput) {
+      return tool.rawOutput.status === "completed";
+    }
+  }
+  return true;
 }

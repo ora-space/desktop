@@ -321,11 +321,13 @@ function RunActInspectorPanel({
     state.autoRetry === undefined
       ? 0
       : state.autoRetry.retry - (state.startedAt === undefined ? 1 : 0);
-  const agentConfig = data.agentConfig ?? undefined;
+  // A recorded contract is rendered as-is: `normalizeWorkflowAgentConfig` reads JSON `null` as
+  // "no bindings", so this only decides whether the node has a section to show.
+  const agentConfig = data.agentConfig;
   // An agent whose retry policy is on failed at once: say that this kind of failure is not
   // retried, so the policy does not look broken. Rows without the recorded flag say nothing.
   const failureKindNotRetried =
-    agentConfig !== undefined &&
+    agentConfig != null &&
     resolveAgentRetryDisplay(agentConfig).kind === "enabled" &&
     state.errorDetail?.autoRetryable === false;
   // A kind that is normally injected but was recorded without injection comes from a run
@@ -438,10 +440,9 @@ function RunActInspectorPanel({
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
         <InspectorSection>
-          {nodeType.configFields.includes("agent") &&
-            agentConfig !== undefined && (
-              <RunActAgentConfig config={agentConfig} />
-            )}
+          {nodeType.configFields.includes("agent") && agentConfig != null && (
+            <RunActAgentConfig config={agentConfig} />
+          )}
           {data.inputVariables !== undefined &&
             data.inputVariables.length > 0 &&
             (canEdit ? (

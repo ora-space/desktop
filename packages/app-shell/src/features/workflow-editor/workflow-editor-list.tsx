@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { localizeContractError } from "../../i18n/contract-error";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkflowLibrary } from "../../state/data/workflows";
+import { useUninstalledWorkflowSources } from "../../state/hooks/use-uninstalled-workflow-sources";
 import { useWorkflowEditorStore } from "./workflow-editor-store";
 import { WorkflowManager } from "./workflow-manager";
 
@@ -13,6 +14,7 @@ import { WorkflowManager } from "./workflow-manager";
 export function WorkflowEditorList() {
   const { t } = useTranslation();
   const library = useWorkflowLibrary();
+  const uninstalledSources = useUninstalledWorkflowSources(library.data);
   const selectedWorkflowId = useWorkflowEditorStore(
     (state) => state.selectedWorkflowId,
   );
@@ -34,8 +36,9 @@ export function WorkflowEditorList() {
         id: summary.id,
         name: summary.name,
         imported: importedWorkflowIds.includes(summary.id),
+        sourcePluginUninstalled: uninstalledSources.has(summary.id),
       })),
-    [importedWorkflowIds, library.data],
+    [importedWorkflowIds, library.data, uninstalledSources],
   );
   const libraryError =
     library.error !== null ? localizeContractError(library.error, t) : null;

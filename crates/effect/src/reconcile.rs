@@ -229,7 +229,24 @@ where
                 .resources
                 .get(resource_id)
                 .ok_or_else(|| ReconcileError::ResourceMissing(resource_id.clone()))?;
-            let observation = self.resource_adapter.observe(resource)?;
+            let observation = match self.resource_adapter.observe(resource) {
+                Ok(observation) => observation,
+                Err(error) => {
+                    let Some((code, safe_details)) = error.observation_blocker else {
+                        return Err(error.into());
+                    };
+                    all_conditions.push(ConditionProposal {
+                        owner: ConditionOwner::Resource(resource_id.clone()),
+                        subject: ConditionSubject::Resource(resource_id.clone()),
+                        code,
+                        impact: ConditionImpact::Blocking,
+                        retry: ConditionRetry::OnChange,
+                        generation: ConditionGeneration::At(generation),
+                        safe_details,
+                    });
+                    continue;
+                }
+            };
             let status = snapshot
                 .resource_statuses
                 .get_mut(resource_id)
@@ -436,6 +453,17 @@ where
                     .collect(),
             },
         )?;
+        // Waiting for local admission must not create a journal that needs crash recovery.
+        for (participant_id, requirement) in &coordination.participants {
+            if matches!(requirement, CoordinationRequirement::Uninterrupted) {
+                continue;
+            }
+            let participant = snapshot
+                .participant_targets
+                .get(participant_id)
+                .ok_or_else(|| ReconcileError::ParticipantMissing(participant_id.clone()))?;
+            self.consumer_adapter.reserve_coordination(participant)?;
+        }
         self.repository.prepare_attempt(
             claim,
             attempt.clone(),
@@ -527,6 +555,7 @@ where
         attempt.mark_activated()?;
         self.repository
             .record_attempt_progress(claim, &attempt, &operations, &receipts)?;
+        self.consumer_adapter.release_coordination();
 
         for resource_id in resource_plans.keys() {
             snapshot

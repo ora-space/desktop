@@ -35,7 +35,10 @@ pub use error::HistoryError;
 pub use handoff::{
     binding_needs_handoff, final_assistant_message, final_completed_assistant_turn, render_handoff,
 };
-pub use metadata::child_source_id;
+pub use metadata::{
+    OPENCODE_CHILD_SESSION_META_KEY, SUBAGENT_UPDATE_META_KEY, TURN_END_SETTLED_META_KEY,
+    child_source_id, has_child_source_namespace, subagent_delegation_tool_call_id,
+};
 pub use path::history_path;
 pub use reader::{
     HistoryIntegrity, SessionHistory, read_session_history, read_session_history_up_to,

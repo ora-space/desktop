@@ -95,6 +95,11 @@ pub struct WorkflowSummary {
     pub namespace: Namespace,
     pub name: String,
     pub published_version: Option<String>,
+    /// Canonical `<namespace>/<identifier>` plugin id that imported this workflow, if any.
+    ///
+    /// Derived purely from marketplace import records for informational source status; does not
+    /// grant ownership or alter the workflow's `local` namespace.
+    pub source_plugin_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

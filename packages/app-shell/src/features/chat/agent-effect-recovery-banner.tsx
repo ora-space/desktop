@@ -33,6 +33,9 @@ export function AgentEffectRecoveryBanner({
   const hasPreservedConflict = reasons.some(
     (reason) => reason.code === "preserved_item_conflict",
   );
+  const hasLinkedSkill = reasons.some(
+    (reason) => reason.code === "skill_directory_link",
+  );
   const title = readiness.recoveryRequired
     ? t("chat.agentEffectRecovery.title")
     : t("chat.agentEffectFailure.title");
@@ -41,7 +44,9 @@ export function AgentEffectRecoveryBanner({
     : t(
         hasPreservedConflict
           ? "chat.agentEffectFailure.preservedHint"
-          : "chat.agentEffectFailure.retryHint",
+          : hasLinkedSkill
+            ? "chat.agentEffectFailure.linkHint"
+            : "chat.agentEffectFailure.retryHint",
       );
   const targetId = readiness.targetId;
   return (

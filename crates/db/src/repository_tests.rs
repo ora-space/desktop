@@ -1,8 +1,9 @@
 use ora_application::{
-    BindWorkflowNodeSessionResult, CancelWorkflowRunResult, FileChange, NodeFailure,
-    NodeFailureKind, NodeRunToStart, ProjectRepository, RestartWorkflowRunResult,
+    BindWorkflowNodeSessionResult, CancelWorkflowRunResult, FileChange, NewImportedWorkflow,
+    NodeFailure, NodeFailureKind, NodeRunToStart, ProjectRepository, RestartWorkflowRunResult,
     ResumeWorkflowRunResult, SessionRepository, SkillRepository, StartWorkflowRunResult,
-    WorkflowRepository, WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
+    WorkflowDocumentSource, WorkflowDocumentSourceRepository, WorkflowRepository,
+    WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
     WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
@@ -19,8 +20,9 @@ use tempfile::TempDir;
 use crate::{
     DatabaseBootstrapper, DatabaseLocation, PluginSkillProjection, RepositoryPool,
     SqliteProjectRepository, SqliteSessionRepository, SqliteSkillRepository,
-    SqliteWorkflowRepository, SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository,
-    SqliteWorkspaceRepository, TimestampSource, default_migration_catalog,
+    SqliteWorkflowDocumentSourceRepository, SqliteWorkflowRepository,
+    SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
+    TimestampSource, default_migration_catalog,
 };
 
 /// Supplies deterministic timestamps for repository integration fixtures.
@@ -2118,6 +2120,135 @@ fn list_workflows_returns_newest_first() {
             .map(|item| item.id.as_str())
             .collect::<Vec<_>>(),
         vec!["workflow-new", "workflow-old"],
+    );
+}
+
+/// Verifies `list_workflows` derives `source_plugin_id` solely from `'imported'` source records,
+/// keeps it across renames, omits soft-deleted workflows, and returns `None` for manual or
+/// conflict-skipped rows.
+#[test]
+fn list_workflows_derives_source_plugin_id_from_imported_records() {
+    let (_temp_dir, pool) = bootstrapped_pool();
+    let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
+    let source_repository = SqliteWorkflowDocumentSourceRepository::new(pool);
+
+    workflow_repository
+        .create_workflow(
+            Workflow::new(
+                WorkflowId::new("manual-wf"),
+                Namespace::local(),
+                "Manual",
+                None,
+                AuditFields::new(10, 10, false),
+            )
+            .unwrap(),
+            WorkflowSnapshot::new(
+                WorkflowSnapshotId::new("snap-manual"),
+                WorkflowId::new("manual-wf"),
+                "draft",
+                "{}",
+                10,
+                Some(10),
+                false,
+            ),
+        )
+        .unwrap();
+    // Conflict-skipped records store `workflow_id = NULL` and must never attribute the existing
+    // user workflow to the marketplace package.
+    source_repository
+        .record_conflict_skip(
+            &WorkflowDocumentSource {
+                namespace: "official".to_string(),
+                identifier: "ora.conflict-pack".to_string(),
+                document_path: "assets/workflows/manual.json".to_string(),
+            },
+            15,
+        )
+        .unwrap();
+
+    for (wf_id, name, created_at, path) in [
+        (
+            "imported-keep",
+            "Imported Keep",
+            20i64,
+            "assets/workflows/keep.json",
+        ),
+        (
+            "imported-delete",
+            "Imported Delete",
+            30i64,
+            "assets/workflows/delete.json",
+        ),
+    ] {
+        let wf_id_obj = WorkflowId::new(wf_id);
+        let pub_id = WorkflowSnapshotId::new(format!("pub-{wf_id}"));
+        source_repository
+            .commit_import(NewImportedWorkflow {
+                source: WorkflowDocumentSource {
+                    namespace: "official".to_string(),
+                    identifier: "ora.cdase-workflow".to_string(),
+                    document_path: path.to_string(),
+                },
+                workflow: Workflow::new(
+                    wf_id_obj.clone(),
+                    Namespace::local(),
+                    name,
+                    Some(pub_id.clone()),
+                    AuditFields::new(created_at, created_at, false),
+                )
+                .unwrap(),
+                draft: WorkflowSnapshot::new(
+                    WorkflowSnapshotId::new(format!("draft-{wf_id}")),
+                    wf_id_obj.clone(),
+                    "draft",
+                    "{}",
+                    created_at,
+                    Some(created_at),
+                    false,
+                ),
+                published: WorkflowSnapshot::new(
+                    pub_id,
+                    wf_id_obj,
+                    "1.0.0",
+                    "{}",
+                    created_at,
+                    Some(created_at),
+                    false,
+                ),
+            })
+            .unwrap();
+    }
+
+    // Renaming the copy keeps its source association; deleting it removes it from the library.
+    workflow_repository
+        .update_workflow(
+            &WorkflowId::new("imported-keep"),
+            "Renamed Copy".to_string(),
+            40,
+        )
+        .unwrap();
+    workflow_repository
+        .soft_delete_workflow(&WorkflowId::new("imported-delete"), 50)
+        .unwrap();
+
+    let listed = workflow_repository.list_workflows().unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|item| (
+                item.id.as_str(),
+                item.name.as_str(),
+                item.source_plugin_id.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "imported-keep",
+                "Renamed Copy",
+                Some("official/ora.cdase-workflow")
+            ),
+            ("manual-wf", "Manual", None),
+        ],
     );
 }
 

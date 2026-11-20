@@ -186,6 +186,24 @@ impl SessionFollowers {
     }
 }
 
+impl Drop for SessionFollowers {
+    /// An attempt that ends without handing its followers to the retry must still close them.
+    ///
+    /// The explicit `finish` calls remain the normal path; this guard covers every early return so
+    /// a follower cannot silently observe EOF instead of a terminal boundary.
+    fn drop(&mut self) {
+        for follower in std::mem::take(&mut self.followers).into_values() {
+            if follower
+                .events
+                .try_send(Ok(LoadSessionEvent::turn_ended(StopReason::Cancelled)))
+                .is_ok()
+            {
+                let _ = follower.events.try_send(Ok(LoadSessionEvent::Completed));
+            }
+        }
+    }
+}
+
 /// Streams the replay prefix — durable history up to `cutoff` merged with the in-progress pending
 /// records — to the contract sender. Returns false when the consumer went away or the history
 /// could not be read, so the caller stops without touching the live queue.
@@ -246,6 +264,31 @@ mod tests {
             "session-1".to_string(),
             /*cutoff*/ 0,
             /*pending*/ Vec::new(),
+        );
+    }
+
+    /// A dropped attempt still closes its followers with a terminal boundary.
+    #[tokio::test]
+    async fn dropping_unfinished_followers_ends_them_cancelled() {
+        let (sender, mut receiver) = mpsc::channel(4);
+        let mut followers = SessionFollowers::new();
+        insert_idle(&mut followers, 1, sender);
+        drop(followers);
+
+        let turn_ended = receiver
+            .recv()
+            .await
+            .map(|result| result.map_err(|error| error.to_string()));
+        let completed = receiver
+            .recv()
+            .await
+            .map(|result| result.map_err(|error| error.to_string()));
+        assert_eq!(
+            [turn_ended, completed],
+            [
+                Some(Ok(LoadSessionEvent::turn_ended(StopReason::Cancelled))),
+                Some(Ok(LoadSessionEvent::Completed)),
+            ]
         );
     }
 

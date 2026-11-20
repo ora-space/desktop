@@ -53,7 +53,8 @@ Node 自己启动每一条 Git 命令，作为直接子进程，使用配置的�
 `-c gc.auto=0 -c maintenance.auto=false`，所以 Git 不会分离出后台维护进程。
 
 Node 启动时拉起一个 `ora-reaper` sidecar，并把自己运行的每条 Git 登记给它；Node 死亡时，reaper 杀掉已登记的
-进程组。reaper 拉不起来，Node 就不启动；reaper 在 Node 运行期间退出时，Node 不再启动新的 Git，并以错误退出。
+进程组。reaper 收到 SIGTERM、SIGINT 或 SIGHUP 时也先杀掉这些进程组再退出，所以按 PID 用 SIGTERM 停止它是安全的；
+只有 SIGKILL 会让它们继续运行。reaper 拉不起来，Node 就不启动；reaper 在 Node 运行期间退出时，Node 不再启动新的 Git，并以错误退出。
 Agent 会话和插件进程不向 reaper 登记，见 [Agent 会话](agent-sessions.zh.md#记录顺序与崩溃)。
 
 **尝试锁。** 每条有副作用的命令在私有目录 `<node.home_directory>/git-attempts/`（模式 `0700`，属于 Node 的

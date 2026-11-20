@@ -99,6 +99,7 @@ function seedImportedWorkflow(
   name: string,
   graph: string,
   publishedGraph?: string,
+  sourcePluginId: string | null = null,
 ) {
   const published =
     publishedGraph === undefined
@@ -131,6 +132,7 @@ function seedImportedWorkflow(
       updatedAt: 2n,
     },
     published,
+    sourcePluginId,
   });
 }
 
@@ -2451,6 +2453,7 @@ it("allows uninstall with an explicit warning when workflow catalogs fail to loa
       /无法读取工作流或插件目录，暂时无法确认卸载影响；现在卸载会跳过这项检查/,
     ),
   ).toBeVisible();
+  expect(within(dialog).queryByText(/无法读取工作流库/)).toBeNull();
   expect(within(dialog).getByRole("button", { name: "卸载" })).toBeEnabled();
 });
 
@@ -2698,6 +2701,262 @@ it("names the workflows a Pack uninstall would break", async () => {
   expect(
     within(dialog).getByRole("button", { name: /确认卸载|Uninstall/ }),
   ).toBeEnabled();
+});
+
+/**
+ * Uninstalling a workflow plugin keeps its copies as local user data; the confirmation dialog
+ * disables confirm while loading, then lists surviving copies imported by that plugin.
+ */
+it("lists surviving imported workflows when uninstalling a workflow plugin from the manager", async () => {
+  const user = userEvent.setup();
+  const { state, handlers, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    kind: "workflow",
+    configuration: { state: "not_declared" },
+  });
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "用户改名后的流程",
+    agentGraph(),
+    undefined,
+    "official/weather",
+  );
+  seedImportedWorkflow(
+    state,
+    "workflow-local",
+    "本地自建流程",
+    agentGraph(),
+    undefined,
+    null,
+  );
+  const originalListWorkflows = handlers.listWorkflows!;
+  let releaseList: (() => void) | undefined;
+  vi.spyOn(handlers, "listWorkflows").mockImplementation(
+    (req) =>
+      new Promise((resolve) => {
+        releaseList = () => {
+          void Promise.resolve(originalListWorkflows(req)).then(resolve);
+        };
+      }),
+  );
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /打开 weather 的菜单/ }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "卸载" }));
+
+  const dialog = await screen.findByRole("alertdialog");
+  expect(
+    await within(dialog).findByText(/正在检查该插件导入的工作流/),
+  ).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "卸载" })).toBeDisabled();
+
+  await act(async () => {
+    releaseList?.();
+    await Promise.resolve();
+  });
+
+  expect(
+    await within(dialog).findByText(/已导入的 1 个工作流会保留/),
+  ).toBeVisible();
+  expect(
+    within(dialog).getByText(/继续留在你的工作流库中，可以照常编辑和运行/),
+  ).toBeVisible();
+  expect(within(dialog).getByText("用户改名后的流程")).toBeVisible();
+  expect(within(dialog).queryByText("本地自建流程")).toBeNull();
+  expect(within(dialog).getByRole("button", { name: "卸载" })).toBeEnabled();
+
+  await user.click(within(dialog).getByRole("button", { name: "取消" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+
+  // When the user already deleted every copy imported by this plugin, no retention list shows.
+  state.workflows.workflows = state.workflows.workflows.filter(
+    (record) => record.workflow.id !== "workflow-1",
+  );
+  vi.spyOn(handlers, "listWorkflows").mockImplementation(originalListWorkflows);
+
+  await user.click(
+    await screen.findByRole("button", { name: /打开 weather 的菜单/ }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "卸载" }));
+
+  const secondDialog = await screen.findByRole("alertdialog");
+  await waitFor(() =>
+    expect(
+      within(secondDialog).getByRole("button", { name: "卸载" }),
+    ).toBeEnabled(),
+  );
+  expect(within(secondDialog).queryByText(/工作流会保留/)).toBeNull();
+});
+
+/** Uninstalling a workflow plugin from its detail page runs the same retention check. */
+it("lists surviving imported workflows when uninstalling a workflow plugin from the detail page", async () => {
+  const user = userEvent.setup();
+  const { state, handlers, client } = clientWithWorkflowPackage();
+  state.availablePlugins[0] = {
+    ...state.availablePlugins[0]!,
+    kind: "workflow",
+  };
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    kind: "workflow",
+    configuration: { state: "not_declared" },
+  });
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph(),
+    undefined,
+    "official/weather",
+  );
+  const originalListWorkflows = handlers.listWorkflows!;
+  let releaseList: (() => void) | undefined;
+  vi.spyOn(handlers, "listWorkflows").mockImplementation(
+    (req) =>
+      new Promise((resolve) => {
+        releaseList = () => {
+          void Promise.resolve(originalListWorkflows(req)).then(resolve);
+        };
+      }),
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(await screen.findByRole("button", { name: "卸载" }));
+
+  const dialog = await screen.findByRole("alertdialog");
+  expect(
+    await within(dialog).findByText(/正在检查该插件导入的工作流/),
+  ).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "卸载" })).toBeDisabled();
+
+  await act(async () => {
+    releaseList?.();
+    await Promise.resolve();
+  });
+
+  expect(
+    await within(dialog).findByText(/已导入的 1 个工作流会保留/),
+  ).toBeVisible();
+  expect(within(dialog).getByText("发布流程")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "卸载" })).toBeEnabled();
+});
+
+/**
+ * A workflow plugin uninstall must never read an unreadable library as "no imported workflows":
+ * the dialog names what stays unknown, keeps the confirmation available, and shows no list.
+ */
+it("warns that retained imported workflows are unknown when the library fails during a workflow plugin uninstall", async () => {
+  const user = userEvent.setup();
+  const { state, handlers, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    kind: "workflow",
+    configuration: { state: "not_declared" },
+  });
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph(),
+    undefined,
+    "official/weather",
+  );
+  vi.spyOn(handlers, "listWorkflows").mockRejectedValue(
+    new Error("workflow library unavailable"),
+  );
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.click(
+    await screen.findByRole("button", { name: /打开 weather 的菜单/ }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "卸载" }));
+
+  const dialog = await screen.findByRole("alertdialog");
+  expect(
+    await within(dialog).findByText(
+      /无法读取工作流库.*已导入的工作流都不会被删除/,
+    ),
+  ).toBeVisible();
+  expect(within(dialog).queryByText(/工作流会保留/)).toBeNull();
+  expect(within(dialog).getByRole("button", { name: "卸载" })).toBeEnabled();
+});
+
+/**
+ * Pack uninstall lists surviving workflows from removable workflow members alongside any
+ * Skill/MCP dependency warning, while excluding workflows owned by preserved members.
+ */
+it("lists removable workflow members' surviving copies alongside Pack dependency warnings", async () => {
+  const user = userEvent.setup();
+  const { state, client } = packClientWithWorkflowPackage();
+  const REMOVABLE_WORKFLOW_ID = "official/ora-space.workflow-removable";
+  const PRESERVED_WORKFLOW_ID = "official/ora-space.workflow-preserved";
+  state.installedPlugins = [
+    packMember(CORE_MEMBER_ID),
+    { ...packMember(REMOVABLE_WORKFLOW_ID), kind: "workflow" },
+    { ...packMember(PRESERVED_WORKFLOW_ID), kind: "workflow" },
+  ];
+  seedInstalledPack(state, [
+    {
+      memberId: CORE_MEMBER_ID,
+      versionAtInstall: "1.0.0",
+      ownership: "managed_by_pack",
+      state: { state: "expected_and_present" },
+    },
+    {
+      memberId: REMOVABLE_WORKFLOW_ID,
+      versionAtInstall: "1.0.0",
+      ownership: "managed_by_pack",
+      state: { state: "expected_and_present" },
+    },
+    {
+      memberId: PRESERVED_WORKFLOW_ID,
+      versionAtInstall: "1.0.0",
+      ownership: "pre_existing",
+      state: { state: "expected_and_present" },
+    },
+  ]);
+  state.skills.skills.push({
+    id: "skill-python-core",
+    namespace: "local",
+    name: "python-core-skill",
+    description: "Pack-provided Skill",
+    source: { kind: "plugin", pluginId: CORE_MEMBER_ID },
+    availability: "available",
+  });
+  seedImportedWorkflow(
+    state,
+    "workflow-removable",
+    "随包移除来源的工作流",
+    agentGraph({ skills: ["python-core-skill"] }),
+    undefined,
+    REMOVABLE_WORKFLOW_ID,
+  );
+  seedImportedWorkflow(
+    state,
+    "workflow-preserved",
+    "保留来源的工作流",
+    agentGraph(),
+    undefined,
+    PRESERVED_WORKFLOW_ID,
+  );
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: /卸载集合包/ }));
+
+  const dialog = await screen.findByRole("alertdialog");
+  expect(await within(dialog).findByText(/1 个工作流依赖该插件/)).toBeVisible();
+  expect(
+    await within(dialog).findByText(/已导入的 1 个工作流会保留/),
+  ).toBeVisible();
+  expect(within(dialog).getAllByText("随包移除来源的工作流")).toHaveLength(2);
+  expect(within(dialog).queryByText("保留来源的工作流")).toBeNull();
 });
 
 /** A path picker that rejects surfaces an error toast without touching the backend. */

@@ -295,15 +295,20 @@ fn settles_a_tool_call_the_provider_never_reported_finishing() {
     ));
     assembler.push_update(&agent_text("here is what I found", Some("m1")));
 
+    let mut settled_call = ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed);
+    settled_call.meta = Some(
+        serde_json::from_value(serde_json::json!({
+            crate::TURN_END_SETTLED_META_KEY: true
+        }))
+        .unwrap(),
+    );
     assert_eq!(
         assembler.end_turn(StopReason::EndTurn),
         vec![
             AssembledRecord {
                 seq: 0,
                 record: HistoryRecord::Update {
-                    update: Box::new(SessionUpdate::ToolCall(
-                        ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed),
-                    )),
+                    update: Box::new(SessionUpdate::ToolCall(settled_call)),
                     tool_timing: None,
                 },
             },
@@ -665,9 +670,16 @@ fn only_an_unretried_turn_can_imply_success_for_an_open_parent_tool() {
             record_at(2, tool.clone())
         );
         assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
+        let mut settled = tool.status(ToolCallStatus::Completed);
+        settled.meta = Some(
+            serde_json::from_value(serde_json::json!({
+                crate::TURN_END_SETTLED_META_KEY: true
+            }))
+            .unwrap(),
+        );
         assert_eq!(
             assembler.end_turn(StopReason::EndTurn)[0],
-            record_at(4, tool.status(ToolCallStatus::Completed))
+            record_at(4, settled)
         );
     }
 }

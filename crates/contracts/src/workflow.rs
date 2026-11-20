@@ -36,6 +36,7 @@ pub struct WorkflowSummary {
     pub namespace: String,
     pub name: String,
     pub published_version: Option<String>,
+    pub source_plugin_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

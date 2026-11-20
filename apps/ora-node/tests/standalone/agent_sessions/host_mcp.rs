@@ -496,3 +496,6 @@ fn lifecycle_start_without_http_mcp_ends_with_the_host_code() {
         assert_absent(&fixture.config().home_directory, SECRET);
     });
 }
+
+#[path = "host_mcp_entry_order.rs"]
+mod entry_order;

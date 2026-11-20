@@ -601,7 +601,9 @@ function WorkflowEditorContent({
     // on parse) get the default executor so the inspector stays editable.
     const nodes = normalizeWorkflowNodeAgentConfigs(
       envelope.nodes.map((node) => {
-        if (node.data.kind !== "agent" || node.data.agentConfig !== undefined) {
+        // A graph is JSON, so an Agent node can carry an explicit `null` config; like a
+        // missing contract it gets the default executor so the inspector stays editable.
+        if (node.data.kind !== "agent" || node.data.agentConfig != null) {
           return node;
         }
         return {
@@ -613,7 +615,7 @@ function WorkflowEditorContent({
         };
       }),
     ).map((node) => {
-      if (node.data.kind !== "agent" || node.data.agentConfig === undefined) {
+      if (node.data.kind !== "agent" || node.data.agentConfig == null) {
         return node;
       }
       if (

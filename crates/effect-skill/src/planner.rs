@@ -141,20 +141,50 @@ impl EffectPlanner for SkillPlanner {
             );
         }
 
-        let preserved_by_native = preserved
+        // Skill names collide across ASCII case variants on every filesystem.
+        let preserved_by_canonical_name = preserved
             .iter()
-            .map(|item| (item.native_identity.clone(), item))
+            .map(|item| (item.native_identity.as_str().to_ascii_lowercase(), item))
             .collect::<BTreeMap<_, _>>();
         for item in items.values() {
-            if preserved_by_native.contains_key(&item.native_identity) {
+            if let ora_effect::VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) =
+                &input.resource.descriptor
+                && let Some(name) = input
+                    .observed
+                    .occupied_file_names
+                    .iter()
+                    .find(|name| name.eq_ignore_ascii_case(item.native_identity.as_str()))
+            {
+                conditions.push(blocking_condition(
+                    owner.clone(),
+                    ConditionSubject::DesiredEffect(item.desired_effect.clone()),
+                    "unsafe_skill_directory",
+                    input.generation,
+                    format!(
+                        "Move the regular file that occupies the skill directory: {}/{name}",
+                        descriptor.relative_path
+                    ),
+                    ConditionRetry::OnChange,
+                ));
+            } else if let Some(preserved) =
+                preserved_by_canonical_name.get(item.native_identity.as_str())
+            {
+                let relative_path = match &input.resource.descriptor {
+                    ora_effect::VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) => {
+                        &descriptor.relative_path
+                    }
+                    ora_effect::VersionedResourceDescriptor::FilesystemFileV1(descriptor) => {
+                        &descriptor.relative_path
+                    }
+                };
                 conditions.push(blocking_condition(
                     owner.clone(),
                     ConditionSubject::DesiredEffect(item.desired_effect.clone()),
                     "preserved_item_conflict",
                     input.generation,
                     format!(
-                        "A Preserved Item already occupies the required native identity: {}.",
-                        item.native_identity
+                        "Move the unmanaged directory that occupies the skill directory: {relative_path}/{}",
+                        preserved.native_identity
                     ),
                     ConditionRetry::OnChange,
                 ));

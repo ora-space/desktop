@@ -375,6 +375,8 @@ export const chatTranslations = {
     "chat.agentEffectFailure.title": "Agent 技能同步失败",
     "chat.agentEffectFailure.preservedHint":
       "请移走上列旧技能目录，然后重新同步。",
+    "chat.agentEffectFailure.linkHint":
+      "请将列出的符号链接或 Windows junction 替换为普通文件或目录，然后重新同步。",
     "chat.agentEffectFailure.retryHint": "请先处理上列问题，然后重新同步。",
     "chat.agentEffectFailure.action": "重新同步",
     "chat.agentEffectFailure.pending": "正在重新同步…",
@@ -833,6 +835,8 @@ export const chatTranslations = {
     "chat.agentEffectFailure.title": "Agent Skill sync failed",
     "chat.agentEffectFailure.preservedHint":
       "Move the old Skill directories listed above out of the workspace, then retry the sync.",
+    "chat.agentEffectFailure.linkHint":
+      "Replace the listed symbolic links or Windows junctions with regular files or directories, then retry the sync.",
     "chat.agentEffectFailure.retryHint":
       "Resolve the issues listed above, then retry the sync.",
     "chat.agentEffectFailure.action": "Retry sync",

@@ -170,7 +170,10 @@ function PluginDetailAction({
     useState<WorkflowImportReportInput | null>(null);
   const uninstallImpact = useWorkflowUninstallImpact(
     [plugin.id],
-    uninstallOpen && (plugin.kind === "mcp" || plugin.kind === "skill"),
+    uninstallOpen &&
+      (plugin.kind === "mcp" ||
+        plugin.kind === "skill" ||
+        plugin.kind === "workflow"),
   );
   const uninstalling = mutations.uninstall.isPending;
   const incompatible = plugin.compatibility === "incompatible";

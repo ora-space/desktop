@@ -104,11 +104,18 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         mut attempt: PromptAttempt,
     ) {
         let original_prompt = prompt.clone();
+        // Followers belong to the logical turn, so take them before any early return can drop
+        // the attempt without a terminal boundary.
+        let mut followers = attempt
+            .followers
+            .take()
+            .unwrap_or_else(SessionFollowers::new);
         // An exit without a terminal provider response cannot prove remote work stopped.
         self.record_cleanup(operation_id, Err(runtime_unavailable()));
         let Some(mut channel) = self.channel.take() else {
             // Nothing was sent, so no side of the turn can be credited with ending it.
             end_report.record(PromptEndCause::Unknown);
+            followers.finish(StopReason::Cancelled);
             return;
         };
         let client = channel.connection.client.clone();
@@ -123,11 +130,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         "session event queue overflowed",
                     )));
                     self.isolate_channel(channel).await;
+                    followers.finish(StopReason::Cancelled);
                     return;
                 }
                 SessionControl::ConnectionLost(error) => {
                     end_report.record(PromptEndCause::SessionCrashed);
                     self.fail_prompt(&events, error);
+                    followers.finish(StopReason::Cancelled);
                     return;
                 }
             }
@@ -143,6 +152,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             {
                 end_report.record(PromptEndCause::StreamDropped);
                 self.isolate_channel(channel).await;
+                followers.finish(StopReason::Cancelled);
                 return;
             }
         }
@@ -185,6 +195,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             end_report.record(PromptEndCause::Unknown);
             let _ = events.try_send(Err(history_degraded()));
             self.channel = Some(channel);
+            followers.finish(StopReason::Cancelled);
             return;
         }
         if self.turn_cancel.deadline().is_some() && !attempt.skip_record {
@@ -224,6 +235,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 self.end_turn(StopReason::Cancelled);
                 let _ = events.try_send(Err(map_acp_error(error)));
                 self.isolate_channel(channel).await;
+                followers.finish(StopReason::Cancelled);
                 return;
             }
         };
@@ -249,10 +261,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         }
         let mut permissions = HashMap::new();
-        let mut followers = attempt
-            .followers
-            .take()
-            .unwrap_or_else(SessionFollowers::new);
         let mut input_state = ActiveInputState::default();
         let mut saw_output = false;
         #[cfg(feature = "test-support")]

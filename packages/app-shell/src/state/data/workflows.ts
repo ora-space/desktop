@@ -142,6 +142,7 @@ export function useCreateWorkflow() {
         namespace: result.workflow.namespace,
         name: result.workflow.name,
         publishedVersion: null,
+        sourcePluginId: null,
         createdAt: result.workflow.createdAt,
         updatedAt: result.workflow.updatedAt,
       };
@@ -230,6 +231,7 @@ export function useCopyWorkflow() {
                   namespace: result.workflow.namespace,
                   name: result.workflow.name,
                   publishedVersion: null,
+                  sourcePluginId: null,
                   createdAt: result.workflow.createdAt,
                   updatedAt: result.workflow.updatedAt,
                 },

@@ -20,7 +20,7 @@ ACP wire values come from the official `agent-client-protocol-schema` crate. `or
 
 - Framing limits belong to the transport. A malformed frame ends the inbound stream with that failure, which is fatal to the connection.
 - Unmatched responses, a closed inbound stream, and invalid response envelopes fail pending operations instead of being silently ignored. The exception is a response for a cancelled direct request or deliberately abandoned session request, which is recognized by its bounded tombstone.
-- Recognized permission requests are emitted as `PermissionRequest`. Unknown agent-originated methods receive a correlated method-not-found response without terminating the connection.
+- Recognized permission requests are emitted as `PermissionRequest`, and `_`-prefixed extension notifications are emitted in wire order as `ExtensionNotification`. Unknown agent-originated methods receive a correlated method-not-found response without terminating the connection.
 - The connection-to-router inbound channel is intentionally unbounded and preserves the reader's order. Per-session bounds and overflow policy belong to the backend runtime, where one noisy session can be isolated from others.
 - Write serialization is the transport's guarantee: `send` must deliver whole messages in call order so concurrent JSON-RPC frames cannot interleave.
 

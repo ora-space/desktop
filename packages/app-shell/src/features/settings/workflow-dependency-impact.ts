@@ -1,4 +1,4 @@
-import type { InstalledPlugin, Skill } from "@ora/contracts";
+import type { InstalledPlugin, Skill, WorkflowSummary } from "@ora/contracts";
 import { parseWorkflowGraph } from "@ora/workflow-runtime";
 import { collectWorkflowDependencies } from "../workflow-editor/workflow-transfer";
 
@@ -24,6 +24,48 @@ export interface WorkflowDependencyImpact {
   dependents: WorkflowDependent[];
   /** Workflows whose graph could not be read, so their references stay unknown. */
   unreadable: number;
+}
+
+/** One surviving workflow copy that a workflow plugin originally imported. */
+export interface WorkflowImportedByPlugin {
+  workflowId: string;
+  name: string;
+}
+
+/**
+ * Reports whether any pending removal could have imported workflows into the library.
+ *
+ * Unknown ids (for example a Pack member absent from the installed catalog) stay eligible so we
+ * do not skip checking the library when a package record is unavailable.
+ */
+export function hasWorkflowSourceCandidate(
+  pluginIds: readonly string[],
+  plugins: readonly InstalledPlugin[],
+): boolean {
+  return pluginIds.some((pluginId) => {
+    const plugin = plugins.find((candidate) => candidate.id === pluginId);
+    return plugin === undefined || plugin.kind === "workflow";
+  });
+}
+
+/**
+ * Lists surviving workflows imported by any plugin in `pluginIds`, preserving library order.
+ */
+export function findImportedWorkflowsFromPlugins(
+  workflows: readonly WorkflowSummary[],
+  pluginIds: readonly string[],
+): WorkflowImportedByPlugin[] {
+  const targets = new Set(pluginIds);
+  const imported: WorkflowImportedByPlugin[] = [];
+  for (const workflow of workflows) {
+    if (
+      workflow.sourcePluginId !== null &&
+      targets.has(workflow.sourcePluginId)
+    ) {
+      imported.push({ workflowId: workflow.id, name: workflow.name });
+    }
+  }
+  return imported;
 }
 
 /**
