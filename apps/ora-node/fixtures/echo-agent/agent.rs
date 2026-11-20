@@ -381,6 +381,18 @@ impl EchoAgent {
         }
         if text.contains("[hold") {
             message(output, &session_id, "holding").await?;
+            if text.contains("[hold-many]") {
+                for number in 0..300 {
+                    tool(
+                        output,
+                        &session_id,
+                        &format!("tool-{number}"),
+                        ToolCallStatus::Completed,
+                    )
+                    .await?;
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            }
             if text.contains("[hold-running-tool]") {
                 tool(output, &session_id, "echo-tool", ToolCallStatus::InProgress).await?;
             }

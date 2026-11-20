@@ -7,6 +7,25 @@ use pretty_assertions::assert_eq;
 /// The reason the Node logs when it refuses a takeover; it closes the stream without a frame.
 const REFUSAL: &str = "sessions that chose turn_cancel need a Controller that negotiates it";
 
+#[path = "turn_cancel/stop.rs"]
+mod stop;
+#[path = "turn_cancel/window.rs"]
+mod window;
+
+/// Names the turn the Controller actually stopped, independently of any later queued turn.
+fn cancel(command: &str, turn: &str) -> ControllerToNodeMessage {
+    ControllerToNodeMessage::CancelTurn(CancelTurnMessage {
+        protocol_version: CURRENT_PROTOCOL_VERSION,
+        operation_id: start("").operation_id,
+        execution_id: ExecutionId::new(EXECUTION),
+        payload: CancelTurn {
+            node_id: NodeId::new("test-node"),
+            command_id: CommandId::new(command),
+            turn_id: TurnId::new(turn),
+        },
+    })
+}
+
 /// Sends `hello`, optionally declaring `turn_cancel`, until the Node answers it or refuses it
 /// for the takeover boundary. A previous connection's slot is released asynchronously, so a
 /// connection turned away as busy is retried.
