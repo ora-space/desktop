@@ -3,6 +3,12 @@
 
 The loopback model drives real tools deterministically. No external model or login is used.
 This is an opt-in Linux conformance probe, not a statistical estimate of workload coverage.
+
+Besides the traffic and file writes it observes after the answer, the probe lists the processes
+the turn started that are still alive when the Agent answers. The host is a child subreaper, so
+that list includes jobs that left the Agent's process group or session. A file write only shows
+work that finished inside the observation window; a live process shows unfinished work whatever
+it is waiting for.
 """
 
 import argparse
@@ -19,6 +25,7 @@ sys.dont_write_bytecode = True
 
 from model import Model
 from plugin_host import PluginHost
+from processes import descendants, started_since
 
 SESSION_UPDATES = {
     "session_info_update",
@@ -203,6 +210,7 @@ async def probe(args):
                 2, "session/new", {"cwd": str(workspace), "mcpServers": []}
             )
             session = created["result"]["sessionId"]
+            before_prompt = descendants()
             prompt = asyncio.create_task(
                 rpc(
                     3,
@@ -242,7 +250,9 @@ async def probe(args):
                     }
                 )
             answered_at, answer = await prompt
+            turn_processes = started_since(before_prompt)
             summary["response"] = answer
+            summary["turn_processes_at_response"] = turn_processes
             written_at_response = (workspace / "leaked").exists()
             summary["background_write_at_response"] = written_at_response
             tools = {}
@@ -300,6 +310,7 @@ async def probe(args):
                 target_answered
                 and (args.scenario != "subagent" or model.task_issued)
                 and not late
+                and not turn_processes
                 and not written_at_response
                 and not summary["background_write_after_response"]
                 and continued.get("result", {}).get("stopReason") == "end_turn"

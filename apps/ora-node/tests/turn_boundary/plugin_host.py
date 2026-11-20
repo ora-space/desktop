@@ -7,6 +7,8 @@ import os
 import signal
 import struct
 
+from processes import become_subreaper, kill_orphans
+
 
 class PluginHost:
     def __init__(self, package, cwd, env, stderr):
@@ -23,6 +25,7 @@ class PluginHost:
         self.plugin = None
 
     async def start(self):
+        become_subreaper()
         self.plugin = await asyncio.create_subprocess_exec(
             "deno",
             "run",
@@ -190,6 +193,9 @@ class PluginHost:
                 pass
         for child in children:
             await child.wait()
+        # Agents start tool shells in their own sessions, so killing the process groups above
+        # leaves their jobs running; the subreaper still owns them.
+        kill_orphans({child.pid for child in children})
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
