@@ -219,3 +219,69 @@ fn a_marked_process_whose_leader_exited_is_claimed_and_killed() -> TestResult {
     assert_eq!((claimed, written.exists()), (vec![child.id()], false));
     Ok(())
 }
+
+/// Marked sleepers started before the forker, so a kill that does not freeze first reaches the
+/// forker only after pinning all of them, while it keeps forking.
+const AHEAD: usize = 1000;
+
+/// The live processes running exactly `/bin/sleep <seconds>`, by PID.
+fn sleeping(seconds: &str) -> Vec<u32> {
+    let wanted = format!("/bin/sleep\0{seconds}\0").into_bytes();
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| {
+            std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|cmdline| cmdline == wanted)
+                && std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                    stat.rsplit_once(')')
+                        .is_some_and(|(_, rest)| !rest.starts_with(" Z"))
+                })
+        })
+        .collect()
+}
+
+/// A marked shell that keeps forking environment-cleared children loses none of them: frozen,
+/// it can neither fork nor exit, so every child it forked before freezing still names it as
+/// parent in the next pass. Killed straight away instead, it would orphan the children forked
+/// while the kill worked through the processes ahead of it.
+#[test]
+fn a_forking_parent_is_frozen_before_it_can_orphan_cleared_children() -> TestResult {
+    let token = token("forker")?;
+    let scope = MarkScope::new(
+        EnvironmentMark::new(NAME, &token)?,
+        linux_boot_ticks()?,
+        uid(),
+    );
+    let seconds = format!("600.{}", std::process::id());
+    let mut processes = Reaped(Vec::new());
+    for _ in 0..AHEAD {
+        processes.0.push(sleeper(Some(&token))?);
+    }
+    processes.0.push(
+        Command::new("/bin/sh")
+            .args([
+                "-c",
+                // About two hundred children a second: enough to fork during an unfrozen kill,
+                // few enough to keep the window small.
+                "i=0; while [ $i -lt 2000 ]; do env -i /bin/sleep \"$0\" & sleep 0.005; i=$((i+1)); done; wait",
+                &seconds,
+            ])
+            .env(NAME, &token)
+            .spawn()?,
+    );
+    until(|| sleeping(&seconds).len() >= 20);
+    scope.kill()?;
+    std::thread::sleep(Duration::from_millis(/*millis*/ 300));
+    let survivors = sleeping(&seconds);
+    for pid in &survivors {
+        if let Ok(stat) = ora_utils::process::linux_process(*pid)
+            && let Ok(handle) = LinuxPidFd::from_observation(&stat)
+        {
+            let _ = handle.signal(ora_utils::process::ProcessSignal::Kill);
+        }
+    }
+    assert_eq!(survivors, Vec::<u32>::new());
+    Ok(())
+}

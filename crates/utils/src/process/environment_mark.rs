@@ -41,10 +41,6 @@ const SEPARATOR: u8 = b':';
 /// not frozen yet ends the loop early; the bound only stops a fork storm from holding the caller.
 const FREEZE_PASSES: usize = 32;
 
-/// Frozen processes held by pidfd at once. Reaching it kills the batch and releases the
-/// descriptors, so a fork storm of marked processes cannot exhaust the caller's descriptor table.
-const HELD_PIDFDS: usize = 256;
-
 /// One `NAME=token` environment entry a launcher gives every process it starts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnvironmentMark {
@@ -151,11 +147,14 @@ impl MarkScope {
     /// A frozen process can neither fork nor exit, so a child forked just before its parent froze
     /// still names that parent in the next pass even if it cleared its environment; killing
     /// straight away would orphan it first. A process whose pidfd could not be opened is tried
-    /// again in the next pass of the same call. Signal failures are not reported: only a later
+    /// again in the next pass of the same call; one that could never be pinned stays claimed,
+    /// so the next scan still sees it. Signal failures are not reported: only a later
     /// scan shows what remains, so callers decide on evidence, never on this call returning.
     pub fn kill(&self) -> io::Result<()> {
-        let mut seen = BTreeSet::new();
-        let mut frozen = Vec::new();
+        // A stopped process cannot exit on its own, so a frozen one is remembered by PID and
+        // start tick and pinned again to be killed: one pidfd is open at a time however many
+        // processes are frozen, and a PID taken over meanwhile fails the start-tick check.
+        let mut frozen = BTreeSet::new();
         let mut scanned = Ok(());
         for _ in 0..FREEZE_PASSES {
             let scan = match self.scan() {
@@ -167,31 +166,20 @@ impl MarkScope {
             };
             let mut quiet = true;
             for process in scan.claimed {
-                if seen.contains(&process) {
+                if frozen.contains(&process) {
                     continue;
                 }
                 quiet = false;
-                let pinned = match pin(process) {
-                    // Out of descriptors: kill the frozen batch to release its pidfds, then retry.
-                    Err(error) if exhausted(&error) && !frozen.is_empty() => {
-                        kill_all(&mut frozen);
-                        pin(process)
-                    }
-                    pinned => pinned,
-                };
-                match pinned {
+                match pin(process) {
                     Ok(handle) => {
                         let _ = handle.signal(ProcessSignal::Stop);
-                        seen.insert(process);
-                        frozen.push(handle);
-                        if frozen.len() >= HELD_PIDFDS {
-                            kill_all(&mut frozen);
-                        }
+                        frozen.insert(process);
                     }
+                    // It exited; nothing is left to freeze.
                     Err(error) if scan::gone(&error) => {
-                        seen.insert(process);
+                        frozen.insert(process);
                     }
-                    // Not marked as seen, so the next pass tries this process again.
+                    // Not remembered, so the next pass tries this process again.
                     Err(_) => {}
                 }
             }
@@ -200,7 +188,11 @@ impl MarkScope {
             }
         }
         // Frozen processes are always killed, even after a failed rescan, so none stays stopped.
-        kill_all(&mut frozen);
+        for process in frozen {
+            if let Ok(handle) = pin(process) {
+                let _ = handle.signal(ProcessSignal::Kill);
+            }
+        }
         scanned
     }
 }
@@ -212,18 +204,6 @@ fn pin(process: ClaimedProcess) -> io::Result<LinuxPidFd> {
         return Err(io::Error::from_raw_os_error(libc::ESRCH));
     }
     LinuxPidFd::from_observation(&current)
-}
-
-/// Kills and releases every frozen process.
-fn kill_all(frozen: &mut Vec<LinuxPidFd>) {
-    for handle in frozen.drain(..) {
-        let _ = handle.signal(ProcessSignal::Kill);
-    }
-}
-
-/// Whether a failure means this process or the system ran out of descriptors.
-fn exhausted(error: &io::Error) -> bool {
-    matches!(error.raw_os_error(), Some(libc::EMFILE | libc::ENFILE))
 }
 
 /// The current boot-relative time in the clock ticks `/proc/<pid>/stat` reports start times in.
