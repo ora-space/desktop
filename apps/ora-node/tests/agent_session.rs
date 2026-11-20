@@ -998,6 +998,11 @@ async fn a_cancel_during_a_model_ending_settles_within_its_deadline() {
         .behavior
         .ending_at_renewal
         .store(/*val*/ true, std::sync::atomic::Ordering::SeqCst);
+    // The revocation hangs, as a slow gateway's would: the decision must not wait for it.
+    gateway
+        .behavior
+        .hold_revoke
+        .store(/*val*/ true, std::sync::atomic::Ordering::SeqCst);
     let sessions = fixture.model_sessions(gateway.config.clone());
     fixture.start_configured_keeping(
         &sessions,
@@ -1031,6 +1036,16 @@ async fn a_cancel_during_a_model_ending_settles_within_its_deadline() {
     );
     let settled = until(|| fixture.ledger.cancels().first().cloned()).await;
     let elapsed = accepted.elapsed();
+    let decided_while_revoking =
+        fixture.ledger.ended().is_none() && fixture.ledger.decision().is_some();
+    gateway
+        .behavior
+        .hold_revoke
+        .store(/*val*/ false, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        decided_while_revoking,
+        "the decision is recorded before the revocation returns"
+    );
     fixture.command(
         &sessions,
         "end",
@@ -1049,5 +1064,43 @@ async fn a_cancel_during_a_model_ending_settles_within_its_deadline() {
     assert!(
         elapsed < std::time::Duration::from_secs(3),
         "settled after {elapsed:?}"
+    );
+}
+
+/// A ledger error while a preparation step runs never ends the session ahead of that step: the
+/// session stays unfinished until the held authorization returns, then ends with the ledger's
+/// failure (desktop#793 review).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ledger_error_during_preparation_waits_for_the_step() {
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    gateway
+        .behavior
+        .hold_grant
+        .store(/*val*/ true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured_keeping(
+        &sessions,
+        "never answered",
+        "{}",
+        Keep {
+            on_cancel: true,
+            on_failure: false,
+        },
+    );
+    until(|| (!gateway.requests.lock().unwrap().is_empty()).then_some(())).await;
+    fixture.ledger.fail_next_queue_read();
+    sessions.command_arrived(&ora_node_protocol::ExecutionId::new(EXECUTION));
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let ended_while_held = fixture.ledger.ended();
+    gateway
+        .behavior
+        .hold_grant
+        .store(/*val*/ false, std::sync::atomic::Ordering::SeqCst);
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (ended_while_held, ended.detail),
+        (None, Some("ledger_unavailable".to_string()))
     );
 }

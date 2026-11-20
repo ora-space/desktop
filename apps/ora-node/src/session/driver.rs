@@ -2,7 +2,7 @@
 mod conversation;
 mod pre_start;
 use conversation::{Conversation, TurnBook, pending_cancel_bound, settle_before_start};
-use pre_start::{ForgetAcceptances, PreStart, ended_before_start, settling_cancels};
+use pre_start::{EndDecision, ForgetAcceptances, PreStart, ended_before_start, settling_cancels};
 
 use super::end::SessionEnd;
 use super::host::{
@@ -254,6 +254,10 @@ where
                 &initial,
                 &turns,
                 &shared.cancel_acceptance,
+                EndDecision {
+                    node: &shared.node,
+                    stop: &shared.config.stop,
+                },
             ),
         },
     );
@@ -646,19 +650,32 @@ where
                         // the provisional `model_access_revoked` first would let a restart publish
                         // it, so the decision waits for the reconciled reason.
                         ModelAccessStatus::Ending => {
-                            conversation.stop_undecided().await;
-                            if let Some(access) = &mut model_access {
-                                access.close().await;
-                            }
-                            // Pending cancels need the decision within their deadline, so the
-                            // wait for the reason ends by then.
-                            match super::model::reconcile(&shared.ledger, execution, wake,
-                                shared.stopping.subscribe(), super::model::END_RECONCILE_WAIT,
-                                &mut || pending_cancel_bound(&shared.ledger, execution,
-                                    &shared.cancel_acceptance, shared.config.turn_cancel.grace)).await {
-                                Ok(reason) => SessionEnd::requested(reason),
-                                Err(detail) => SessionEnd::agent_failed(detail),
-                            }
+                            // Stopping the runtime and revoking the grant can each take long, so
+                            // they run beside the wait for the reason: the decision, with every
+                            // pending cancel's settlement, is recorded by the cancels' deadline
+                            // whatever the cleanup is doing (D1, D3).
+                            let cleanup = async {
+                                conversation.stop_undecided().await;
+                                if let Some(access) = &mut model_access {
+                                    access.close().await;
+                                }
+                            };
+                            let decided = async {
+                                let end = match super::model::reconcile(&shared.ledger, execution, wake,
+                                    shared.stopping.subscribe(), super::model::END_RECONCILE_WAIT,
+                                    &mut || pending_cancel_bound(&shared.ledger, execution,
+                                        &shared.cancel_acceptance, shared.config.turn_cancel.grace)).await {
+                                    Ok(reason) => SessionEnd::requested(reason),
+                                    Err(detail) => SessionEnd::agent_failed(detail),
+                                };
+                                match super::stop::decide(&shared.ledger, execution,
+                                    &end.terminal(shared.node.clone()), &shared.config.stop) {
+                                    Ok(()) => end,
+                                    Err(_) => SessionEnd::agent_failed("ledger_unavailable"),
+                                }
+                            };
+                            let ((), end) = tokio::join!(cleanup, decided);
+                            end
                         }
                         ModelAccessStatus::Active | ModelAccessStatus::Revoked => {
                             conversation.stop(SessionEnd::agent_failed("model_access_revoked")).await

@@ -7,6 +7,21 @@ use tokio::time::Instant;
 #[cfg(test)]
 mod tests;
 
+/// How long a turn may wait for its MCP gate before it fails (session MCP refresh D4).
+pub(super) const MCP_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Whether the turn's MCP wait reached its deadline: its timeout must be settled before anything
+/// else decides the turn, even if the timeout task has not run yet.
+pub(super) fn mcp_wait_expired(
+    blocked: &std::collections::HashMap<ora_node_protocol::TurnId, Instant>,
+    turn: &ora_node_protocol::TurnId,
+    now: Instant,
+) -> bool {
+    blocked
+        .get(turn)
+        .is_some_and(|first| now >= *first + MCP_WAIT)
+}
+
 pub(super) enum Admitted {
     Stream(SessionEventStream<PromptSessionEvent>),
     Outcome(TurnOutcome),
@@ -87,7 +102,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get(&turn.turn_id)
-                .map(|first| *first + std::time::Duration::from_secs(300));
+                .map(|first| *first + MCP_WAIT);
             let Some(deadline) = deadline else {
                 continue;
             };
@@ -143,9 +158,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 }
             }
         }
-        Ok(times
-            .get(&turn.turn_id)
-            .map(|first| *first + std::time::Duration::from_secs(300)))
+        Ok(times.get(&turn.turn_id).map(|first| *first + MCP_WAIT))
     }
 
     /// EndSession is checked before attempts, after wakes, and again inside the durable commit.

@@ -79,6 +79,21 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 | SessionCommand::EndSession(_)
                 | SessionCommand::CancelTurn(_) => None,
             });
+            // A queued turn whose MCP wait already expired has timed out, whether or not the
+            // timeout task got to it: the timeout is settled first and the cancel then finds the
+            // turn ended (D1, session MCP refresh D4).
+            if let Some(target) = &target
+                && admission::mcp_wait_expired(
+                    &self
+                        .blocked
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                    turn_id,
+                    tokio::time::Instant::now(),
+                )
+            {
+                self.expire_turn(turn_id, target)?;
+            }
             let outcome = match &target {
                 // Queued behind other turns: dropped now, so its settlement never waits for the
                 // turns ahead of it.
@@ -92,6 +107,29 @@ impl<L: SessionLedger> Conversation<'_, L> {
             }
         }
         Ok(targeting)
+    }
+
+    /// Records the MCP wait timeout of a queued turn, exactly as the timeout task would.
+    fn expire_turn(&self, turn: &TurnId, command: &CommandId) -> Result<(), SessionEnd> {
+        match self.ledger.fail_session_turn(
+            self.execution,
+            ora_node_protocol::SessionTurnFailed {
+                turn_id: turn.clone(),
+                command_id: Some(command.clone()),
+                code: ora_node_protocol::SessionTurnFailureCode::McpRefreshWaitTimeout,
+            },
+        ) {
+            Ok(()) => {
+                self.blocked
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(turn);
+                self.turn_ended(turn);
+                Ok(())
+            }
+            Err(_) if self.queued_end()?.is_some() => Ok(()),
+            Err(_) => Err(SessionEnd::agent_failed("ledger_unavailable")),
+        }
     }
 
     /// Settles cancels of the turn waiting for admission. Returns whether the turn was dropped.

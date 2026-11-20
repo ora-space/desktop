@@ -36,6 +36,8 @@ pub(crate) struct GatewayBehavior {
     pub(crate) ending_at_renewal: AtomicBool,
     /// Holds the first grant's answer while set, as a slow authorization would.
     pub(crate) hold_grant: AtomicBool,
+    /// Holds a grant revocation's answer while set, as a slow revocation would.
+    pub(crate) hold_revoke: AtomicBool,
 }
 
 impl Gateway {
@@ -159,6 +161,9 @@ fn serve(
     stream.read_exact(&mut body)?;
     let body: Value = serde_json::from_slice(&body).unwrap();
     observed.lock().unwrap().push((request.clone(), body));
+    while request.starts_with("DELETE ") && behavior.hold_revoke.load(Ordering::SeqCst) {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     while request.starts_with("POST /internal/v1/model-grants ")
         && behavior.hold_grant.load(Ordering::SeqCst)
     {

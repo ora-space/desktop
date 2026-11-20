@@ -9,7 +9,10 @@ use tokio::sync::Notify;
 /// Resolves once an `EndSession` is queued for a session whose agent has not started: turns
 /// queued ahead of it are discarded, and the command is executed by ending the session.
 ///
-/// Cancels take effect here too, so a long restore never delays a cancel's settlement.
+/// Cancels take effect here too, so a long restore never delays a cancel's settlement. Once the
+/// end's reason is chosen, the decision, its stop clock and the pending cancels' settlement are
+/// recorded at once: the restore may take long to wind down, and a restart meanwhile keeps this
+/// reason instead of `interrupted` (D3).
 pub(super) async fn ended_before_start<L: SessionLedger>(
     ledger: &L,
     execution: &ExecutionId,
@@ -17,6 +20,7 @@ pub(super) async fn ended_before_start<L: SessionLedger>(
     initial: &ora_node_protocol::TurnId,
     turns: &TurnBook,
     acceptance: &Acceptance,
+    decision: EndDecision<'_>,
 ) -> SessionEnd {
     loop {
         if let Err(end) = settle_before_start(ledger, execution, initial, turns, acceptance) {
@@ -32,7 +36,16 @@ pub(super) async fn ended_before_start<L: SessionLedger>(
                     settle(ledger, execution, discarded, CommandSettlement::Discarded);
                 }
                 settle(ledger, execution, &command_id, CommandSettlement::Executed);
-                return SessionEnd::requested(reason);
+                let end = SessionEnd::requested(reason);
+                return match crate::session::stop::decide(
+                    ledger,
+                    execution,
+                    &end.terminal(decision.node.clone()),
+                    decision.stop,
+                ) {
+                    Ok(()) => end,
+                    Err(_) => SessionEnd::agent_failed("ledger_unavailable"),
+                };
             }
             // A turn waits for the agent; the conversation reads the queue again once it starts.
             Ok(Plan::Turn { .. } | Plan::Wait) => wake.notified().await,
@@ -42,6 +55,12 @@ pub(super) async fn ended_before_start<L: SessionLedger>(
             }
         }
     }
+}
+
+/// What recording an end decision needs.
+pub(super) struct EndDecision<'a> {
+    pub(super) node: &'a ora_node_protocol::NodeRuntimeIdentity,
+    pub(super) stop: &'a crate::SessionStopConfig,
 }
 
 /// Clears the acceptance times an execution left behind when its run ends.
@@ -70,7 +89,8 @@ pub(super) struct PreStart<'a, L> {
 }
 
 /// Runs one preparation step while cancels keep taking effect: no turn is admitted yet, so each
-/// one settles at once instead of waiting for the step (D1).
+/// one settles at once instead of waiting for the step (D1). The step always runs to its end,
+/// even when settling fails, so nothing it started outlives the session.
 pub(super) async fn settling_cancels<L: SessionLedger, F: std::future::Future>(
     step: F,
     pre_start: PreStart<'_, L>,
@@ -80,13 +100,18 @@ pub(super) async fn settling_cancels<L: SessionLedger, F: std::future::Future>(
         let notified = pre_start.wake.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
-        settle_before_start(
+        if let Err(end) = settle_before_start(
             pre_start.ledger,
             pre_start.execution,
             pre_start.initial,
             pre_start.turns,
             pre_start.acceptance,
-        )?;
+        ) {
+            // The step is never abandoned: a placement task keeps walking and handing over the
+            // checkout after its handle is dropped, so the session may end only once it has.
+            drop(step.await);
+            return Err(end);
+        }
         tokio::select! {
             output = &mut step => return Ok(output),
             () = &mut notified => {}

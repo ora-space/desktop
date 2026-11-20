@@ -69,6 +69,8 @@ struct LedgerState {
     journal: Vec<Entry>,
     /// Fails the next end decision once, as a ledger that cannot write would.
     fail_next_decision: bool,
+    /// Fails the next queue read once, as a ledger with a passing error would.
+    fail_next_queue_read: bool,
     /// Runs when the named command is settled executed, inside the admission commit.
     on_executed: Option<(CommandId, Box<dyn FnOnce() + Send>)>,
 }
@@ -117,6 +119,11 @@ impl MemoryLedger {
     /// The end decision recorded for the execution, the one a restart would publish.
     pub fn decision(&self) -> Option<AgentSessionEnded> {
         self.stops.decision(&ExecutionId::new(EXECUTION))
+    }
+
+    /// Makes the next queue read fail once.
+    pub fn fail_next_queue_read(&self) {
+        self.state().fail_next_queue_read = true;
     }
 
     /// Makes the next end decision fail once.
@@ -378,6 +385,9 @@ impl SessionLedger for MemoryLedger {
     }
 
     fn queued_commands(&self, _execution: &ExecutionId) -> Result<Vec<QueuedCommand>, LedgerError> {
+        if std::mem::take(&mut self.state().fail_next_queue_read) {
+            return Err(LedgerError("queue read failed".into()));
+        }
         Ok(self
             .state()
             .commands
@@ -506,6 +516,8 @@ pub struct Restorer {
     /// While set, a restore runs until it is cancelled, then counts that in `cancelled`.
     pub hold: Arc<AtomicBool>,
     pub cancelled: Arc<AtomicUsize>,
+    /// While set, a cancelled hold keeps winding down instead of returning.
+    pub stall: Arc<AtomicBool>,
 }
 
 impl PriorRevisionRestore for Restorer {
@@ -521,6 +533,7 @@ impl PriorRevisionRestore for Restorer {
             .push(request);
         if self.hold.load(Ordering::SeqCst) {
             until(|| cancel.requested().then_some(())).await;
+            until(|| (!self.stall.load(Ordering::SeqCst)).then_some(())).await;
             self.cancelled.fetch_add(1, Ordering::SeqCst);
             return Err(RestoreFailure::Unavailable);
         }
@@ -556,6 +569,7 @@ impl Fixture {
                 answer: Arc::new(Mutex::new(Ok(Restored::OnSnapshotHistory))),
                 requests: Arc::default(),
                 hold: Arc::default(),
+                stall: Arc::default(),
                 cancelled: Arc::default(),
             },
             configuration: Arc::new(Mutex::new(Ok(()))),

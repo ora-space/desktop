@@ -232,10 +232,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 
 /// The part of a prompt's state its own end reports into.
 pub(crate) struct PromptEnd<'a> {
-    events: &'a mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
-    end_report: &'a PromptEndReport,
-    followers: &'a mut SessionFollowers,
-    tool_timings: &'a ToolTimings,
+    pub(crate) events: &'a mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+    pub(crate) end_report: &'a PromptEndReport,
+    pub(crate) followers: &'a mut SessionFollowers,
+    pub(crate) tool_timings: &'a ToolTimings,
 }
 
 /// Groups the state a prompt's own end reports into.
@@ -273,21 +273,18 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.load_restoration = crate::attach::LoadRestoration::NotRestored;
         match answer {
             Ok(response) => {
-                self.record_cleanup(operation_id, Ok(()));
-                end_report.record(PromptEndCause::Settled);
-                self.end_timed_turn(response.stop_reason, tool_timings);
-                followers.finish(response.stop_reason);
-                if events
-                    .try_send(Ok(PromptSessionEvent::Completed {
-                        stop_reason: response.stop_reason,
-                        token_usage: None,
-                    }))
-                    .is_ok()
-                {
-                    self.channel = Some(channel);
-                } else {
-                    self.isolate_channel(channel).await;
-                }
+                self.finish_completed_prompt(
+                    channel,
+                    response,
+                    operation_id,
+                    PromptEnd {
+                        events,
+                        end_report,
+                        followers,
+                        tool_timings,
+                    },
+                )
+                .await;
             }
             Err(error) => {
                 let reusable = matches!(&error, ora_acp::AcpError::RequestFailed(_));

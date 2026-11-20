@@ -74,11 +74,14 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         let settle = settle_cancelled_prompt(actor, channel, &client, pending, events, saw_output);
         tokio::pin!(settle);
         loop {
-            let deadline = turn_cancel.deadline().unwrap_or(watchdog_deadline);
+            // One snapshot decides both the timer and whether to keep listening, so a cancel that
+            // arrives between two reads cannot leave the watchdog's grace in charge.
+            let merged = turn_cancel.deadline();
+            let deadline = merged.unwrap_or(watchdog_deadline);
             tokio::select! {
                 settled = &mut settle => break Ok(settled),
                 () = tokio::time::sleep_until(deadline) => break Err(()),
-                () = turn_cancel.requested(), if turn_cancel.deadline().is_none() => {}
+                () = turn_cancel.requested(), if merged.is_none() => {}
             }
         }
     };
