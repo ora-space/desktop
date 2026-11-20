@@ -113,6 +113,7 @@ where
                 .await
         })
         .await;
+    let scope = stop::recorded_scope(&shared.ledger, &old).ok_or_else(blocked)?;
     let mut pause = stop::FIRST_RECHECK;
     loop {
         if control.snapshot(false).convergence == ora_node_protocol::SessionMcpConvergence::Stopping
@@ -121,11 +122,10 @@ where
         }
         let files =
             stop::files::StopFiles::open(&shared.config.home_directory).map_err(|_| blocked())?;
-        // The live attempt being replaced was prepared by this Node, with its scope record.
         let (evidence, proof) = files
             .settle(
                 &old,
-                ora_node_db::SessionStopScope::Recorded,
+                scope,
                 &shared.config.stop.host(),
                 shared.config.stop.single_mount_with_storage_fencing,
             )

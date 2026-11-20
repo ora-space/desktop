@@ -268,13 +268,15 @@ async fn run<L, C, P, R>(
                 continue;
             }
         }
-        let proof = match stop::files::StopFiles::open(&shared.config.home_directory) {
-            // This Node prepared the probe attempt, so its scope record was written first.
-            Ok(files) => {
+        let opened = stop::files::StopFiles::open(&shared.config.home_directory)
+            .ok()
+            .zip(stop::recorded_scope(&shared.ledger, &identity));
+        let proof = match opened {
+            Some((files, scope)) => {
                 let (evidence, proof) = files
                     .settle(
                         &identity,
-                        ora_node_db::SessionStopScope::Recorded,
+                        scope,
                         &shared.config.stop.host(),
                         shared.config.stop.single_mount_with_storage_fencing,
                     )
@@ -283,7 +285,7 @@ async fn run<L, C, P, R>(
                     .then_some(proof)
                     .flatten()
             }
-            Err(_) => None,
+            None => None,
         };
         if !confirmed
             && let Some(proof) = proof

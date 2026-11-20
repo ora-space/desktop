@@ -182,6 +182,20 @@ pub(crate) fn next_recheck(pause: Duration) -> Duration {
     (pause * 2).min(LAST_RECHECK)
 }
 
+/// The scope flag the ledger recorded for an attempt, the one source of whether its stop evidence
+/// includes the mark scan; `None` when the row cannot be read, which proves nothing.
+pub(crate) fn recorded_scope<L: SessionLedger>(
+    ledger: &L,
+    identity: &SessionStopIdentity,
+) -> Option<SessionStopScope> {
+    ledger
+        .session_stop_records(Some(&identity.execution))
+        .ok()?
+        .into_iter()
+        .find(|record| record.identity.attempt == identity.attempt)
+        .map(|record| record.scope)
+}
+
 /// Resource release is a second durable boundary, after proof and actual removal of local views.
 pub(crate) fn released<L: SessionLedger>(
     ledger: &L,
