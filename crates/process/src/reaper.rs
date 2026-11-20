@@ -7,6 +7,10 @@ use ora_logging::ora_trace;
 
 use crate::tree::ReaperTargets;
 
+mod termination;
+
+use termination::SharedTargets;
+
 const READY_FRAME: &[u8; 4] = b"ORA1";
 const REGISTER: u8 = 1;
 const UNREGISTER: u8 = 2;
@@ -84,11 +88,17 @@ pub fn reaper_has_exited() -> bool {
 /// Runs the reaper protocol on standard input and output until its Ora parent shuts down.
 ///
 /// This is the complete entry point for the version-locked `ora-reaper` sidecar. EOF is treated
-/// exactly like an explicit shutdown, so normal exit and crashes converge on the same cleanup.
+/// exactly like an explicit shutdown, so normal exit and crashes converge on the same cleanup. On
+/// Unix, SIGTERM, SIGINT and SIGHUP run that cleanup too before the sidecar exits successfully.
+/// The caller must not have started other threads, so that they inherit the blocked signal mask.
 pub fn run_reaper() -> io::Result<()> {
+    let targets = SharedTargets::new(ReaperTargets::new()?);
+    // Installed before readiness is announced, so no registered tree can predate it.
+    #[cfg(unix)]
+    termination::clean_up_on_termination_signals(&targets)?;
     let stdin = io::stdin();
     let stdout = io::stdout();
-    run_reaper_io(stdin.lock(), stdout.lock())
+    run_reaper_io(&targets, stdin.lock(), stdout.lock())
 }
 
 /// Registers a process tree when Desktop installed a process-global reaper.
@@ -244,9 +254,22 @@ fn configure_reaper_command(command: &mut std::process::Command) {
     }
 }
 
-/// Serves the local protocol and converges explicit shutdown and parent EOF on one cleanup path.
-fn run_reaper_io(mut reader: impl Read, mut writer: impl Write) -> io::Result<()> {
-    let mut targets = ReaperTargets::new()?;
+/// Serves the local protocol and converges explicit shutdown, parent EOF and protocol failures on
+/// one cleanup path.
+fn run_reaper_io(targets: &SharedTargets, reader: impl Read, writer: impl Write) -> io::Result<()> {
+    let served = serve_requests(targets, reader, writer);
+    // A broken or malformed pipe ends supervision just like EOF. After `SHUTDOWN` this finds the
+    // cleanup already done.
+    let cleaned = targets.finish().into_result();
+    served.and(cleaned)
+}
+
+/// Answers requests until parent EOF or a completed `SHUTDOWN`.
+fn serve_requests(
+    targets: &SharedTargets,
+    mut reader: impl Read,
+    mut writer: impl Write,
+) -> io::Result<()> {
     ora_trace!(direction = "send", "sending process reaper readiness");
     writer.write_all(READY_FRAME)?;
     writer.flush()?;
@@ -257,7 +280,7 @@ fn run_reaper_io(mut reader: impl Read, mut writer: impl Write) -> io::Result<()
                 direction = "receive",
                 "process reaper received parent EOF; cleaning up"
             );
-            return targets.kill_all();
+            return Ok(());
         };
         ora_trace!(
             direction = "receive",
@@ -266,9 +289,9 @@ fn run_reaper_io(mut reader: impl Read, mut writer: impl Write) -> io::Result<()
             "received request from parent",
         );
         let result = match operation {
-            REGISTER => targets.register(process_id),
-            UNREGISTER => targets.unregister(process_id),
-            SHUTDOWN => targets.kill_all(),
+            REGISTER => targets.serve(|targets| targets.register(process_id)),
+            UNREGISTER => targets.serve(|targets| targets.unregister(process_id)),
+            SHUTDOWN => targets.finish().into_result(),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unknown process reaper operation {operation}"),
@@ -349,7 +372,10 @@ fn write_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{ACKNOWLEDGED, READY_FRAME, REGISTER, SHUTDOWN, UNREGISTER, run_reaper_io};
+    use super::{
+        ACKNOWLEDGED, READY_FRAME, REGISTER, SHUTDOWN, SharedTargets, UNREGISTER, run_reaper_io,
+    };
+    use crate::tree::ReaperTargets;
     use pretty_assertions::assert_eq;
 
     /// Verifies duplicate, unregistered, and already-gone targets make cleanup idempotent.
@@ -366,7 +392,7 @@ mod tests {
         .concat();
         let mut output = Vec::new();
 
-        run_reaper_io(requests.as_slice(), &mut output)
+        run_reaper_io(&targets(), requests.as_slice(), &mut output)
             .unwrap_or_else(|error| panic!("reap missing process: {error}"));
 
         let expected = [
@@ -385,12 +411,18 @@ mod tests {
     #[test]
     fn rejects_truncated_request() {
         let mut output = Vec::new();
-        let error = match run_reaper_io([REGISTER, 1, 2].as_slice(), &mut output) {
+        let error = match run_reaper_io(&targets(), [REGISTER, 1, 2].as_slice(), &mut output) {
             Ok(()) => panic!("truncated request must fail"),
             Err(error) => error,
         };
 
         assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    fn targets() -> SharedTargets {
+        SharedTargets::new(
+            ReaperTargets::new().unwrap_or_else(|error| panic!("create reaper targets: {error}")),
+        )
     }
 
     fn request(operation: u8, process_id: u32) -> Vec<u8> {

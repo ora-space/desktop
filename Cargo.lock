@@ -4200,6 +4200,7 @@ dependencies = [
 name = "ora-reaper"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "ora-process",
  "pretty_assertions",
  "tokio",

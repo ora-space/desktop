@@ -34,6 +34,18 @@ whole Unix process group is gone; Windows descendants remain contained by the re
 Job Object. On Windows the aggregate Job is assigned before each tree's private Job so it remains
 the common outer containment boundary for every independently managed process. Explicit Desktop
 shutdown and unexpected parent EOF both forcefully terminate every remaining registered tree.
+
+On Unix the reaper can be stopped safely with SIGTERM, which a cleanup owner or service manager
+sends by PID because the reaper sits outside Ora's process group. SIGTERM, SIGINT and SIGHUP all
+run the same final cleanup and then exit successfully, or with status 1 if a group could not be
+signalled. They are blocked in every thread and received by one dedicated `sigwait` thread, never
+handled in a signal handler. Cleanup runs once: a signal that arrives while EOF or `SHUTDOWN`
+cleanup runs waits for it and leaves the exit to the protocol loop, and repeated signals during a
+signal-started cleanup are ignored, so nothing aborts it halfway. The cleanup only submits
+`SIGKILL`s, so it is bounded. SIGKILL cannot be intercepted and still strands registered groups.
+Windows has no such signals; however the reaper ends, including `TerminateProcess` and console
+control events, the kernel closes its aggregate Job Object and `KILL_ON_JOB_CLOSE` terminates every
+registered tree.
 There is an accepted narrow window between OS spawn and synchronous registration during which an
 immediate Ora crash can still leave the new process unmanaged.
 
