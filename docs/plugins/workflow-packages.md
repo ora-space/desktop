@@ -108,7 +108,8 @@ as that document's failure.
 
 The uninstall dialog lists the surviving workflows imported from that marketplace plugin. For a
 Pack it lists copies from members being removed. The library and the create-run menu mark those
-copies “Source plugin uninstalled”; they remain editable and runnable. Reinstalling the same plugin
+copies “Source plugin uninstalled”. The mark allows editing and running a copy. Running it still
+requires its MCP and Skill dependencies, which a Pack uninstall may also remove. Reinstalling the same plugin
 ID clears the mark. Local `.orax` imports also survive uninstall. They have no marketplace source
 record, so they do not appear in the retained-copy list or receive a source mark.
 
