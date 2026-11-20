@@ -148,6 +148,11 @@ Completed 状态。actor、插件和恢复都不会启动，也不存在会话�
 模式、命令和配置通知不算）。否则会话以 `turn_not_quiescent` 结束。之后的轮次中引用已停下轮次的工具调用或子代理
 来源的更新不记入任何一轮，会话以 `turn_leak_detected` 结束。
 
+ACP 请求报错时，Agent 进程可能仍在，但 provider 会话已经失效。Agent 明确报告会话已关闭或不存在时，运行时
+丢弃这个会话的连接；下一轮先恢复，再发送 `session/prompt`。MCP 生命周期模式只恢复原 provider ID，load 失败时
+保持 blocked，这些 load 同样计入 Agent 进程替换预算。替换进程不结束 Ora 会话，也不新建 provider ID。
+普通模型错误和认证错误仍保留既有的 provider 连接。
+
 每当会话决定结束，这份结束决定和所有待结算取消的 `session_ending` 在一个事务中写入，然后才向 Agent 发停止信号；
 没有事先决定就写入的终态（例如重启收口）同样先结算它们，所以没有取消会缺少结论，也没有结论排在终态之后。
 

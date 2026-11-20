@@ -51,6 +51,8 @@ enum AfterCancel {
     Message,
     /// A session title: a session-level notification, which belongs to no turn.
     Title,
+    /// Some providers discard their session while returning an error to the cancelled prompt.
+    SessionClosed,
 }
 
 /// Everything the fixture remembers between frames.
@@ -170,14 +172,22 @@ impl EchoAgent {
                     } else {
                         StopReason::Cancelled
                     };
-                    respond(output, held.request_id, &PromptResponse::new(stop_reason)).await?;
+                    if matches!(held.after_cancel, AfterCancel::SessionClosed) {
+                        self.sessions.remove(&held.session_id);
+                        acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":held.request_id,"error":{"code":-32603,"message":"Session is closed"}})).await?;
+                    } else {
+                        respond(output, held.request_id, &PromptResponse::new(stop_reason)).await?;
+                    }
                     // Traffic that follows the answer is sent a little later, as an Agent's late
                     // output would be, so the host has settled the answer before it arrives.
-                    if !matches!(held.after_cancel, AfterCancel::Nothing) {
+                    if !matches!(
+                        held.after_cancel,
+                        AfterCancel::Nothing | AfterCancel::SessionClosed
+                    ) {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                     match held.after_cancel {
-                        AfterCancel::Nothing => {}
+                        AfterCancel::Nothing | AfterCancel::SessionClosed => {}
                         AfterCancel::Message => {
                             message(output, &held.session_id, "still talking").await?;
                         }
@@ -249,6 +259,9 @@ impl EchoAgent {
         if method == AGENT_METHOD_NAMES.session_load {
             record_acp_method("session/load");
             record_host_mcp(AGENT_METHOD_NAMES.session_load, &params);
+            if std::path::Path::new("fail-load").exists() {
+                return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32602,"message":"unknown provider session"}})).await;
+            }
             if let Some(delay) = std::fs::read_to_string("load-delay-ms")
                 .ok()
                 .and_then(|value| value.trim().parse::<u64>().ok())
@@ -297,6 +310,10 @@ impl EchoAgent {
         request: PromptRequest,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let session_id = request.session_id.to_string();
+        record_acp_method("session/prompt");
+        if !self.sessions.contains_key(&session_id) {
+            return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32602,"message":"unknown provider session"}})).await;
+        }
         if let Ok(delay) = std::fs::read_to_string("prompt-delay-ms") {
             std::fs::remove_file("prompt-delay-ms")?;
             let until = tokio::time::Instant::now()
@@ -319,6 +336,10 @@ impl EchoAgent {
             .collect::<Vec<_>>()
             .join("\n");
         let cwd = self.sessions.get(&session_id).cloned().unwrap_or_default();
+        if text.contains("[session-closed]") {
+            self.sessions.remove(&session_id);
+            return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32603,"message":"Session is closed"}})).await;
+        }
         if text.contains("[mcp]") {
             message(
                 output,
@@ -370,6 +391,8 @@ impl EchoAgent {
                 AfterCancel::Message
             } else if text.contains("[hold-titled]") {
                 AfterCancel::Title
+            } else if text.contains("[hold-close]") {
+                AfterCancel::SessionClosed
             } else {
                 AfterCancel::Nothing
             };

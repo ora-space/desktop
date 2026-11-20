@@ -11,6 +11,9 @@ use ora_node_protocol::{
 };
 use pretty_assertions::assert_eq;
 
+#[path = "cancel/recovery.rs"]
+mod recovery;
+
 const CANCEL: Keep = Keep {
     on_cancel: true,
     on_failure: false,

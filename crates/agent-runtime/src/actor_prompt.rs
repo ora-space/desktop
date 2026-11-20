@@ -291,7 +291,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         pending = resent;
                         continue;
                     }
-                    StalledPrompt::Cancelled { reusable } => {
+                    StalledPrompt::Cancelled {
+                        reusable,
+                        session_invalid,
+                    } => {
                         // A turn cancel merged into the watchdog's stop: the turn ends as the
                         // user's cancel, never resent, and only an answered cancel keeps the
                         // provider session.
@@ -306,6 +309,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                     token_usage: None,
                                 }))
                                 .is_ok()
+                                && !session_invalid
                             {
                                 self.channel = Some(channel);
                             } else {
@@ -443,6 +447,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         }
                         Err(error) => {
                             let reusable = matches!(&error, ora_acp::AcpError::RequestFailed(_));
+                            let session_invalid = super::support::provider_session_invalid(&error);
                             // A load can claim success while the provider session is gone; its
                             // first prompt then fails before producing anything. Rebuild once and
                             // resend the same prompt with the transcript this side still owns.
@@ -521,7 +526,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                 failure
                             };
                             let delivered = events.try_send(Err(failure)).is_ok();
-                            if reusable && delivered {
+                            if reusable && delivered && !session_invalid {
                                 self.channel = Some(channel);
                             } else {
                                 self.isolate_channel(channel).await;
@@ -614,6 +619,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         settled,
                         Ok(Some(Ok(_))) | Ok(Some(Err(ora_acp::AcpError::RequestFailed(_))))
                     );
+                    let session_invalid = matches!(&settled, Ok(Some(Err(error))) if super::support::provider_session_invalid(error));
                     if !reusable {
                         drain_queued_prompt_events(
                             self,
@@ -645,7 +651,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                 }))
                                 .is_ok()
                         };
-                    if reusable && owner_notified {
+                    if reusable && owner_notified && !session_invalid {
                         self.channel = Some(channel);
                     } else {
                         self.isolate_channel(channel).await;

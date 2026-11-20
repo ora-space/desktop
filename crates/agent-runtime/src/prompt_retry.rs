@@ -25,7 +25,10 @@ pub(super) enum StalledPrompt {
     Failed(RuntimeError),
     /// A turn cancel merged into this stop: never resend. `reusable` says whether the Agent
     /// answered by the cancel's deadline.
-    Cancelled { reusable: bool },
+    Cancelled {
+        reusable: bool,
+        session_invalid: bool,
+    },
 }
 
 /// Cancels a stalled attempt and, while the schedule allows, re-sends the same prompt.
@@ -87,7 +90,11 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         if !reusable {
             drain_queued_prompt_events(actor, channel, &client, events, saw_output).await;
         }
-        return StalledPrompt::Cancelled { reusable };
+        let session_invalid = matches!(&settled, Ok(Some(Err(error))) if super::support::provider_session_invalid(error));
+        return StalledPrompt::Cancelled {
+            reusable,
+            session_invalid,
+        };
     }
     let (cancellation_result, stop_reason) = match &settled {
         Ok(Some(Ok(response))) => ("response", Some(response.stop_reason)),

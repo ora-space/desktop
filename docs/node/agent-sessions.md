@@ -202,6 +202,13 @@ version is on the Node's verified turn-boundary list (none yet: such stops end t
 session ends with `turn_not_quiescent`. A later turn's update that names a stopped turn's tool call or
 child source joins no turn and ends the session with `turn_leak_detected`.
 
+An ACP request error can leave the agent process alive while invalidating its provider session.
+When the agent explicitly reports a closed or missing session, the runtime detaches that session;
+the next turn restores it before sending `session/prompt`. MCP lifecycle sessions restore only the
+original provider ID, remain blocked if loading fails, and count these loads toward the agent process
+replacement budget. Replacing that process does not end the Ora session or create a new provider ID.
+Ordinary model or authentication errors keep their existing provider registration.
+
 Whenever the session's end is decided, the decision and a `session_ending` settlement for every
 pending cancel are written in one transaction before the agent is signalled; a terminal written
 without a prior decision, such as restart settlement, settles them first as well, so no cancel is left
