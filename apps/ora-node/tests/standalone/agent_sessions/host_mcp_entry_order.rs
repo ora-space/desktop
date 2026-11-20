@@ -54,8 +54,8 @@ fn run(entry: Entry) {
             let original = plugin(&root);
             let home = fixture.config().home_directory.clone();
             let db = rusqlite::Connection::open(home.join("ora-node.sqlite3")).unwrap();
-            let count = || db.query_row("SELECT count(*) FROM session_stop_attempts WHERE execution=?1",[EXECUTION],|r| r.get::<_,usize>(0)).unwrap();
-            let attempt: String = db.query_row("SELECT attempt FROM session_stop_attempts WHERE execution=?1",[EXECUTION],|r| r.get(0)).unwrap();
+            let count = || db.query_row("SELECT count(*) FROM session_stop_attempts WHERE execution=?1 AND json_extract(record,'$.kind')='agent'",[EXECUTION],|r| r.get::<_,i64>(0)).unwrap();
+            let attempt: String = db.query_row("SELECT attempt FROM session_stop_attempts WHERE execution=?1 AND json_extract(record,'$.kind')='agent'",[EXECUTION],|r| r.get(0)).unwrap();
             let lock = home.join("session-attempts").join(format!("{attempt}.lock"));
             let marker = fs::read(&lock).unwrap();
             if entry == Entry::Disconnect {
@@ -83,14 +83,21 @@ fn run(entry: Entry) {
                 send(&mut stream,update).await;
                 assert_eq!(reply(&mut stream).await.result,SessionMcpResult::Accepted);
                 assert!(!methods().contains("session/new"));
-                if entry == Entry::Startup { fs::write(&lock,b"await original proof").unwrap(); }
+                if entry == Entry::Startup {
+                    fs::write(root.join("hold-shutdown"), []).unwrap();
+                    fs::write(&lock, b"await original proof").unwrap();
+                }
                 fs::remove_file(&gate).unwrap();
             }
             if entry != Entry::SameVersion {
                 until(|| db.query_row("SELECT first_stop_at_ms IS NOT NULL FROM session_stop_attempts WHERE attempt=?1",[&attempt],|r| r.get::<_,bool>(0)).unwrap());
                 until(|| original.has_exited().unwrap());
                 assert_eq!(count(),1);
-                if entry == Entry::Startup { assert!(!methods().contains("session/new")); }
+                if entry == Entry::Startup {
+                    assert!(!root.join("received-shutdown").exists(), "supervisor shutdown reached the original process before stop");
+                    fs::remove_file(root.join("hold-shutdown")).unwrap();
+                    assert!(!methods().contains("session/new"));
+                }
                 fs::write(&lock,marker).unwrap();
                 until(|| count() == 2);
                 let confirmed: bool = db.query_row("SELECT state='confirmed' AND evidence='lock_and_processes' FROM session_stop_attempts WHERE attempt=?1",[&attempt],|r| r.get(0)).unwrap();
