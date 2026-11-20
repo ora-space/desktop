@@ -2,6 +2,8 @@
 
 #[path = "plugin_replacement_tests.rs"]
 mod plugin_replacement_tests;
+#[path = "prompt_policy_tests/restore_replay.rs"]
+mod restore_replay;
 
 use super::*;
 use crate::host::SessionStore;
@@ -155,8 +157,13 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// Composes the production peer, generation router, and actors over controlled pipes.
+    /// Most policy cases begin with an attached session and need no provider restore.
     async fn new() -> Self {
+        Self::with_load_support(/*load_session_supported*/ false).await
+    }
+
+    /// Composes the production peer, generation router, and actors over controlled pipes.
+    async fn with_load_support(load_session_supported: bool) -> Self {
         let directory = TempDir::new().unwrap();
         let entrypoint = directory.path().join("agent.ts");
         std::fs::write(&entrypoint, "").unwrap();
@@ -210,7 +217,7 @@ impl Fixture {
             client: client.clone(),
             runtime: plugin.clone(),
             generation: 1,
-            load_session_supported: false,
+            load_session_supported,
             http_mcp_supported: false,
             list_session_supported: false,
             close_session_supported: false,
@@ -254,7 +261,7 @@ impl Fixture {
                 },
                 client,
                 inbound,
-                load_session_supported: false,
+                load_session_supported,
                 http_mcp_supported: false,
                 list_session_supported: false,
                 close_session_supported: false,
@@ -277,19 +284,9 @@ impl Fixture {
         }
     }
 
-    /// Seeds an already attached session so the test measures prompt policy rather than setup.
-    fn add_session(&self, id: &str) {
-        self.add_session_with_title_acquisition(id, crate::TitleAcquisition::disabled());
-    }
-
-    /// Retains the title lifecycle established by setup so title admission can also be exercised.
-    fn add_session_with_title_acquisition(
-        &self,
-        id: &str,
-        title_acquisition: crate::TitleAcquisition,
-    ) {
-        let session = self
-            .manager
+    /// Persists the binding that survives a restart, independently of any live actor.
+    fn seed_session(&self, id: &str) -> Session {
+        self.manager
             .inner
             .store
             .create_session(Session::new(
@@ -303,7 +300,21 @@ impl Fixture {
                     /*created_at*/ 0, /*updated_at*/ 0, /*is_deleted*/ false,
                 ),
             ))
-            .unwrap();
+            .unwrap()
+    }
+
+    /// Seeds an already attached session so the test measures prompt policy rather than setup.
+    fn add_session(&self, id: &str) {
+        self.add_session_with_title_acquisition(id, crate::TitleAcquisition::disabled());
+    }
+
+    /// Retains the title lifecycle established by setup so title admission can also be exercised.
+    fn add_session_with_title_acquisition(
+        &self,
+        id: &str,
+        title_acquisition: crate::TitleAcquisition,
+    ) {
+        let session = self.seed_session(id);
         let recorder = self.manager.open_recorder(&session).unwrap().recorder;
         let channel = self.supervisor.open_session_channel(id, id).unwrap();
         self.manager
