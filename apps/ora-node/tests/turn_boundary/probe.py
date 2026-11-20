@@ -350,7 +350,7 @@ def main():
     )
     parser.add_argument(
         "--scenario",
-        choices=["shell", "subagent", "background", "error"],
+        choices=["shell", "subagent", "background", "detached", "error"],
         required=True,
     )
     parser.add_argument(

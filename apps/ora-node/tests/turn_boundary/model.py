@@ -74,7 +74,12 @@ class Model:
                     call = model.call(tools, has_result)
                 # Keep the parent's prompt open after starting background work, so cancellation
                 # occurs while that work is still alive, rather than after a normal turn end.
-                if model.scenario == "background" and has_result and tools and not woken:
+                if (
+                    model.scenario in ["background", "detached"]
+                    and has_result
+                    and tools
+                    and not woken
+                ):
                     time.sleep(20)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -233,7 +238,12 @@ class Model:
         return True, (shell, arguments, "probe-wake-1")
 
     def call(self, tools, has_result):
-        if has_result or self.scenario not in ["shell", "subagent", "background"]:
+        if has_result or self.scenario not in [
+            "shell",
+            "subagent",
+            "background",
+            "detached",
+        ]:
             return None
         names = [
             tool.get("name", tool.get("function", {}).get("name", "")) for tool in tools
@@ -268,13 +278,15 @@ class Model:
             "description": "cancel conformance sleeper",
             "timeout": 60000,
         }
-        if self.scenario == "background":
-            if self.agent == "claude":
-                arguments["run_in_background"] = True
-            else:
-                arguments["command"] = (
-                    f"printf started > {started}; (sleep 3; printf leaked > {leaked}) >/dev/null 2>&1 &"
-                )
+        # `background` uses each Agent's own way to run a command in the background; OpenCode's
+        # shell has none, so it detaches a job. `detached` detaches a job from an ordinary shell
+        # call for every Agent, which no background task bookkeeping of the Agent sees.
+        if self.scenario == "background" and self.agent == "claude":
+            arguments["run_in_background"] = True
+        elif self.scenario in ["background", "detached"]:
+            arguments["command"] = (
+                f"printf started > {started}; (sleep 3; printf leaked > {leaked}) >/dev/null 2>&1 &"
+            )
         return shell, arguments, identity
 
     def close(self):
