@@ -27,6 +27,22 @@ export function scheduleTime(schedule: ScheduledTaskSchedule): string {
   return `${twoDigits(schedule.hour)}:${twoDigits(schedule.minute)}`;
 }
 
+/**
+ * Labels for the schedule-kind Select.
+ *
+ * Pass this to Base UI's `items` so the closed trigger never prints the raw
+ * enum (`daily`). Item children are not used while the popup is closed.
+ */
+export function scheduleKindItems(
+  t: ReturnType<typeof useTranslation>["t"],
+): Record<ScheduledTaskSchedule["kind"], string> {
+  return {
+    every_hours: t("scheduledTask.everyHours"),
+    daily: t("scheduledTask.daily"),
+    weekly: t("scheduledTask.weekly"),
+  };
+}
+
 export function scheduleLabel(
   schedule: ScheduledTaskSchedule,
   t: ReturnType<typeof useTranslation>["t"],
