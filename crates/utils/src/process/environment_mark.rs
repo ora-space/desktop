@@ -7,11 +7,16 @@
 //! so a launcher that puts one entry on every child can find their descendants wherever they
 //! moved. A scan reads `/proc/<pid>/environ` of the processes that started no earlier than the
 //! launch, through pinned proc directories, so a reused PID is never read or signalled in place
-//! of the original.
+//! of the original. A pass holds a bounded handful of descriptors whatever the number of
+//! processes, and a leader whose own thread exited is still read and claimed through one of its
+//! live threads.
 //!
 //! Limits a caller must not present as stronger containment:
-//! - a process that clears or overwrites its environment (`env -i`) carries no entry. It is still
-//!   claimed while its parent is claimed, through the parent link, but not once it is orphaned;
+//! - a process that clears or overwrites its environment (`env -i`, or a daemon rewriting its
+//!   process title over the environment block) carries no entry. It is still claimed while its
+//!   parent is claimed, through the parent link, but not once it is orphaned;
+//! - a parent lends its children only while its PID still names the observed process; a PID
+//!   reused by an unrelated process during the same pass lends nothing;
 //! - the entry is not a secret. A process that can read a claimed process's environment can start
 //!   processes carrying the entry, and those are claimed too. Only processes that started at or
 //!   after the scope's start can be claimed, and writing the entry into an existing process needs
@@ -22,24 +27,23 @@
 //!   without `CAP_SYS_PTRACE`). An unreadable process of the scanner's own user is one that made
 //!   itself non-dumpable; counting all of those would let unrelated programs block every stop.
 
-use super::linux_process::{
-    LinuxPidFd, LinuxProcessStat, ProcessSignal, linux_process_snapshot, read_pinned,
-};
+mod scan;
+
+use super::linux_process::{LinuxPidFd, ProcessSignal, linux_process};
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::io;
-use std::os::unix::fs::MetadataExt;
 
 /// Separates the tokens of nested launches inside one value.
 const SEPARATOR: u8 = b':';
 
-/// Linux bounds a new program's arguments and environment together to 6 MiB, so a longer block
-/// that does not show the entry is not trusted to lack it.
-const ENVIRON_LIMIT: usize = 8 << 20;
-
 /// Freezing passes before the frozen processes are killed. A pass that finds no process it has
 /// not frozen yet ends the loop early; the bound only stops a fork storm from holding the caller.
 const FREEZE_PASSES: usize = 32;
+
+/// Frozen processes held by pidfd at once. Reaching it kills the batch and releases the
+/// descriptors, so a fork storm of marked processes cannot exhaust the caller's descriptor table.
+const HELD_PIDFDS: usize = 256;
 
 /// One `NAME=token` environment entry a launcher gives every process it starts.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,11 +112,19 @@ pub struct MarkScope {
     uid: u32,
 }
 
+/// One claimed process, named by PID and start tick so it can be pinned again without
+/// confusing it with a later process that reused the PID.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ClaimedProcess {
+    pub pid: u32,
+    pub start_ticks: u64,
+}
+
 /// What one pass over procfs found.
-#[derive(Debug)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct MarkScan {
     /// Live processes that carry the mark or descend from a claimed process.
-    pub claimed: Vec<LinuxProcessStat>,
+    pub claimed: Vec<ClaimedProcess>,
     /// Processes that may belong to the scope but whose environment could not be checked.
     pub undecided: usize,
 }
@@ -126,47 +138,11 @@ impl MarkScope {
         }
     }
 
-    /// Observes every visible process once. Failing to enumerate procfs, or an unexpected read
-    /// failure, is an error rather than an empty scan.
+    /// Observes every visible process once, holding a bounded handful of descriptors. Failing
+    /// to enumerate procfs, running out of descriptors, or an unexpected read failure is an
+    /// error rather than an empty scan.
     pub fn scan(&self) -> io::Result<MarkScan> {
-        // SAFETY: geteuid only reads this process's credentials.
-        let scanner = unsafe { libc::geteuid() };
-        let own = std::process::id();
-        let mut candidates = Vec::new();
-        for observation in linux_process_snapshot()? {
-            let process = observation?;
-            // Exited processes cannot act any more; their zombies stay until a parent reaps them.
-            if process.pid == own
-                || process.start_ticks < self.since_ticks
-                || matches!(process.state, b'Z' | b'X')
-            {
-                continue;
-            }
-            let environ = match read_pinned(&process.directory, c"environ", ENVIRON_LIMIT) {
-                Ok((bytes, _)) if self.mark.is_in(&bytes) => Environ::Marked,
-                Ok((_, truncated)) if truncated => Environ::Unreadable,
-                Ok(_) => Environ::Unmarked,
-                Err(error) if gone(&error) => continue,
-                Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-                    Environ::Unreadable
-                }
-                Err(error) => return Err(error),
-            };
-            let owner = match process.directory.metadata() {
-                Ok(metadata) => metadata.uid(),
-                Err(error) if gone(&error) => continue,
-                Err(error) => return Err(error),
-            };
-            candidates.push(Candidate {
-                pid: process.pid,
-                parent: process.parent,
-                owner,
-                environ,
-                process,
-            });
-        }
-        let (claimed, undecided) = classify(candidates, self.uid, scanner);
-        Ok(MarkScan { claimed, undecided })
+        scan::scan(&self.mark, self.since_ticks, self.uid)
     }
 
     /// Freezes every claimed process, rescanning until a pass finds none it has not frozen, and
@@ -174,8 +150,9 @@ impl MarkScope {
     ///
     /// A frozen process can neither fork nor exit, so a child forked just before its parent froze
     /// still names that parent in the next pass even if it cleared its environment; killing
-    /// straight away would orphan it first. Signal failures are not reported: only a later scan
-    /// shows what remains, so callers decide on evidence, never on this call returning.
+    /// straight away would orphan it first. A process whose pidfd could not be opened is tried
+    /// again in the next pass of the same call. Signal failures are not reported: only a later
+    /// scan shows what remains, so callers decide on evidence, never on this call returning.
     pub fn kill(&self) -> io::Result<()> {
         let mut seen = BTreeSet::new();
         let mut frozen = Vec::new();
@@ -188,25 +165,65 @@ impl MarkScope {
                     break;
                 }
             };
-            let before = seen.len();
+            let mut quiet = true;
             for process in scan.claimed {
-                if seen.insert((process.pid, process.start_ticks))
-                    && let Ok(handle) = LinuxPidFd::from_observation(&process)
-                {
-                    let _ = handle.signal(ProcessSignal::Stop);
-                    frozen.push(handle);
+                if seen.contains(&process) {
+                    continue;
+                }
+                quiet = false;
+                let pinned = match pin(process) {
+                    // Out of descriptors: kill the frozen batch to release its pidfds, then retry.
+                    Err(error) if exhausted(&error) && !frozen.is_empty() => {
+                        kill_all(&mut frozen);
+                        pin(process)
+                    }
+                    pinned => pinned,
+                };
+                match pinned {
+                    Ok(handle) => {
+                        let _ = handle.signal(ProcessSignal::Stop);
+                        seen.insert(process);
+                        frozen.push(handle);
+                        if frozen.len() >= HELD_PIDFDS {
+                            kill_all(&mut frozen);
+                        }
+                    }
+                    Err(error) if scan::gone(&error) => {
+                        seen.insert(process);
+                    }
+                    // Not marked as seen, so the next pass tries this process again.
+                    Err(_) => {}
                 }
             }
-            if seen.len() == before {
+            if quiet {
                 break;
             }
         }
         // Frozen processes are always killed, even after a failed rescan, so none stays stopped.
-        for handle in &frozen {
-            let _ = handle.signal(ProcessSignal::Kill);
-        }
+        kill_all(&mut frozen);
         scanned
     }
+}
+
+/// Pins the claimed process again, refusing a PID that a later process has taken over.
+fn pin(process: ClaimedProcess) -> io::Result<LinuxPidFd> {
+    let current = linux_process(process.pid)?;
+    if current.start_ticks != process.start_ticks {
+        return Err(io::Error::from_raw_os_error(libc::ESRCH));
+    }
+    LinuxPidFd::from_observation(&current)
+}
+
+/// Kills and releases every frozen process.
+fn kill_all(frozen: &mut Vec<LinuxPidFd>) {
+    for handle in frozen.drain(..) {
+        let _ = handle.signal(ProcessSignal::Kill);
+    }
+}
+
+/// Whether a failure means this process or the system ran out of descriptors.
+fn exhausted(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(libc::EMFILE | libc::ENFILE))
 }
 
 /// The current boot-relative time in the clock ticks `/proc/<pid>/stat` reports start times in.
@@ -237,81 +254,11 @@ pub fn linux_boot_ticks() -> io::Result<u64> {
     Ok(seconds * hertz + nanoseconds / (1_000_000_000 / hertz))
 }
 
-/// What a pinned read of one process's environment showed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Environ {
-    Marked,
-    Unmarked,
-    Unreadable,
-}
-
-/// One live process that started inside the scope's time window.
-struct Candidate<T> {
-    pid: u32,
-    parent: u32,
-    /// The owner of its proc directory: its user, or root once it made itself non-dumpable.
-    owner: u32,
-    environ: Environ,
-    process: T,
-}
-
-/// Claims the marked candidates and, transitively, the children of claimed ones, and counts the
-/// unreadable candidates of the scope's user when the scanner runs as another user.
-fn classify<T>(candidates: Vec<Candidate<T>>, uid: u32, scanner: u32) -> (Vec<T>, usize) {
-    let mut claimed: BTreeSet<u32> = candidates
-        .iter()
-        .filter(|candidate| candidate.environ == Environ::Marked)
-        .map(|candidate| candidate.pid)
-        .collect();
-    // Parents usually precede their children in PID order, but PIDs wrap; iterate to a fixed
-    // point. A parent outside the window is never a candidate, so it never lends its children.
-    loop {
-        let before = claimed.len();
-        for candidate in &candidates {
-            if claimed.contains(&candidate.parent) {
-                claimed.insert(candidate.pid);
-            }
-        }
-        if claimed.len() == before {
-            break;
-        }
-    }
-    let mut undecided = 0;
-    let mut found = Vec::new();
-    for candidate in candidates {
-        if claimed.contains(&candidate.pid) {
-            found.push(candidate.process);
-        } else if candidate.environ == Environ::Unreadable
-            && candidate.owner == uid
-            && scanner != uid
-        {
-            undecided += 1;
-        }
-    }
-    (found, undecided)
-}
-
-/// Whether a procfs failure only means the process exited during the scan.
-fn gone(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Candidate, Environ, EnvironmentMark, classify};
+    use super::EnvironmentMark;
     use pretty_assertions::assert_eq;
     use std::ffi::OsStr;
-
-    /// Builds one candidate whose payload is its own PID.
-    fn candidate(pid: u32, parent: u32, owner: u32, environ: Environ) -> Candidate<u32> {
-        Candidate {
-            pid,
-            parent,
-            owner,
-            environ,
-            process: pid,
-        }
-    }
 
     /// An entry matches only under the exact name and as a whole token of a nested list.
     #[test]
@@ -350,30 +297,5 @@ mod tests {
             [false; 5]
         );
         Ok(())
-    }
-
-    /// Descendants are claimed through their parents whatever their environment shows, while
-    /// unrelated processes stay unclaimed and unreadable ones are undecided only for a foreign
-    /// scanner.
-    #[test]
-    fn classification_follows_parent_links_and_counts_foreign_unreadable_processes() {
-        let candidates = || {
-            vec![
-                // A grandchild listed before its parent, as after PID wrap-around.
-                candidate(5, 4, 1000, Environ::Unmarked),
-                candidate(3, 1, 1000, Environ::Marked),
-                candidate(4, 3, 0, Environ::Unreadable),
-                candidate(6, 1, 1000, Environ::Unmarked),
-                candidate(7, 1, 1000, Environ::Unreadable),
-                candidate(8, 2, 0, Environ::Unreadable),
-            ]
-        };
-        assert_eq!(
-            (
-                classify(candidates(), /*uid*/ 1000, /*scanner*/ 1000),
-                classify(candidates(), /*uid*/ 1000, /*scanner*/ 0),
-            ),
-            ((vec![5, 3, 4], 0), (vec![5, 3, 4], 1))
-        );
     }
 }

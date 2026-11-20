@@ -7,7 +7,9 @@ pub use child_identity::LinuxChildIdentity;
 #[cfg(target_os = "linux")]
 mod environment_mark;
 #[cfg(target_os = "linux")]
-pub use environment_mark::{EnvironmentMark, MarkScan, MarkScope, linux_boot_ticks};
+pub use environment_mark::{
+    ClaimedProcess, EnvironmentMark, MarkScan, MarkScope, linux_boot_ticks,
+};
 #[cfg(target_os = "linux")]
 mod linux_process;
 #[cfg(target_os = "linux")]
