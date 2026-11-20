@@ -313,7 +313,9 @@ cleanup and commits terminal evidence before releasing the database lease. `seal
 
 The plugin process and agent CLI are started by the Node directly (process group, whole-tree
 termination) and are not registered with the Node's `ora-reaper`. When the Node crashes, the plugin
-exits on its closed stdio, but a descendant that ignores that is not reclaimed.
+exits on its closed stdio; a descendant that ignores that keeps running until restart recovery, which
+kills every process carrying the attempt mark before it records the stop and reports `interrupted`
+(see [Agent stop ownership](session-stop.md)).
 
 ## Ledger
 

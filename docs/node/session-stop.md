@@ -5,12 +5,36 @@ English | [中文](session-stop.zh.md)
 Agent launches have separate synced attempt locks under `session-attempts`. The plugin and every
 host-spawned child inherit the attempt descriptor. Synced PID/start-time/boot clues also protect
 against a child closing inherited descriptors. On session shutdown and MCP process replacement, Node closes spawn admission
-and immediately sends SIGKILL to the original process groups identified by the durable clues.
+and immediately kills the processes the attempt mark claims (below) and the original process
+groups identified by the durable clues.
 The plugin can die before it receives ora/shutdown. Node awaits lifecycle cleanup for diagnostics
 and verifies stop evidence before releasing resources. A closed spawn gate disables automatic restarts.
 Signals, timeout and a free lock alone are not stop proof. An unresolved attempt retains package
 leases, workload views and checkout responsibility across restart. Terminal events and revision
 admission wait for confirmation and resource release.
+
+Every process the spawn gate starts also carries `ORA_SESSION_ATTEMPT=<attempt>`, which its
+descendants inherit; a Node that itself runs under another attempt's mark passes both on
+(`outer:attempt`). Before the ledger records the attempt, `session-attempts/<attempt>.mark`
+durably records the attempt's start, in boot clock ticks, and the user its processes run as. This
+reaches tool jobs that leave every original group and drop the inherited lock, such as a `cmd &`
+in an Agent tool shell started under `setsid` (OpenCode's bash tool, Claude's Bash), adopted by
+init, from a runtime like Bun that closes inherited descriptors. A live process belongs to the
+attempt when it carries the mark and started at or after the attempt, or when its parent belongs
+to it. Termination freezes every such process with SIGSTOP through a pidfd, rescans until no new
+one appears (at most 32 passes), then kills them all, before it signals the original groups. Stop
+proof also requires two consecutive clean scans: a claimed live process keeps the attempt
+running; an unreadable scope or procfs, or an unreadable process of the attempt's user while the
+Node runs as another user without `CAP_SYS_PTRACE`, leaves the evidence unknown. Long-lived Agent
+descendants such as MCP servers and language servers carry the mark too: they stop when the
+attempt stops, never between turns. The proof is still recorded as `lock_and_processes`.
+
+The mark is Linux only and does not make containment strong. A process that clears its
+environment (`env -i`) or makes itself non-dumpable is found only while its parent belongs to the
+attempt; once orphaned it is invisible. The mark is not a secret: a process that can read it can
+start processes carrying it, and those die with the attempt, but it cannot make the Node signal a
+process that started before the attempt. Attempts recorded before marks existed keep
+lock-and-clue evidence; none of their processes carries a mark.
 
 `node.session_stop.confirmation_timeout_ms` defaults to 600000 and must be positive. Its first
 deadline is durable; retries do not extend it. Different-boot proof requires an explicit
@@ -42,8 +66,8 @@ Lifecycle sessions retain their provider session ID and last active MCP revision
 loads or detach. They never rebuild a provider session or replay a transcript to recover an MCP
 failure. The next turn can retry once per generation; there is no periodic refresh retry.
 An MCP package-version change, or the ninth runtime load after the initial setup, replaces only
-this execution's Agent process. Node records the stop request and signals the original process
-groups before waiting for the old supervisor to retire. Its cleanup completes before a successor
+this execution's Agent process. Node records the stop request and kills the old attempt's marked processes and
+original process groups before waiting for the old supervisor to retire. Its cleanup completes before a successor
 is installed. The latest target is prepared before replacement; affirmative
 stop proof precedes a new attempt. HOME, checkout, model grant and ora-git context remain attached
 to the execution. New targets coalesce while cleanup is pending.
@@ -72,4 +96,4 @@ filesystems. Homes on NFS, 9p or virtiofs are refused by the new stop-evidence c
 and move the deployment's owned data to a supported local filesystem before this upgrade; copying
 unconfirmed responsibilities to another host does not establish stop proof.
 
-A probe owner task panic fails the Node closed. Its slot, exact-version leases and durable responsibility remain retained until restart recovery proves cleanup; continuing with a lost owner is not supported. Stop-request and kill_all results are diagnostic only: proof comes from the original lock plus process clues or the configured trusted reboot evidence.
+A probe owner task panic fails the Node closed. Its slot, exact-version leases and durable responsibility remain retained until restart recovery proves cleanup; continuing with a lost owner is not supported. Stop-request and kill_all results are diagnostic only: proof comes from the original lock plus process clues and the attempt mark scan, or the configured trusted reboot evidence.

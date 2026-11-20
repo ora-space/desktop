@@ -220,7 +220,8 @@ Cloud 可以把会话输入作为定时 occurrence 受理（`spec.trigger = sche
 它的 JSONL。
 
 插件进程和 Agent CLI 由 Node 直接启动（进程组，整棵树终止），不向 Node 的 `ora-reaper` 登记。Node 崩溃时，插件会因
-stdio 关闭而退出，但忽略这一点的后代进程不会被回收。
+stdio 关闭而退出；忽略这一点的后代进程会一直运行到重启恢复，恢复在记录停止并报告 `interrupted` 之前杀掉所有带尝试标记的
+进程（见 [Agent 停止责任](session-stop.zh.md)）。
 
 ## 账本
 

@@ -3,9 +3,23 @@
 [English](session-stop.md) | 中文
 Agent 启动使用 `session-attempts` 下独立并刷盘的尝试锁。插件和每个由宿主启动的子进程继承锁描述符；
 刷盘的 PID、启动时间和 boot 线索也防止关闭继承描述符的子进程被误判为停止。会话停止或 MCP 替换 Agent 进程时，Node 先关闭 spawn 闸门，
-立即向持久线索标识的原进程组发送 SIGKILL。插件可能在收到 ora/shutdown 前退出。Node 等待生命周期收尾以取得诊断，
+立即杀掉尝试标记认领的进程（见下文）和持久线索标识的原进程组。插件可能在收到 ora/shutdown 前退出。Node 等待生命周期收尾以取得诊断，
 并在释放资源前核验停止证据。spawn 闸门关闭后禁用自动重启。发送信号、超时、单独取得空闲锁都不是完整停止证据。未确认的尝试在重启后仍保留包租约、
 工作负载视图和 checkout 责任。终止事件和 Revision 准入等待停止确认及资源释放。
+
+spawn 闸门启动的每个进程还带有 `ORA_SESSION_ATTEMPT=<attempt>`，后代进程会继承它；Node 自己若运行在另一个尝试的标记下，
+会把两者一起传下去（`outer:attempt`）。账本登记尝试之前，`session-attempts/<attempt>.mark` 先持久记录尝试的开始时间
+（boot 时钟 tick）和其进程运行所用的用户。这样能找到离开全部原进程组、又丢掉继承锁的工具作业，例如 Agent 工具 shell
+（OpenCode 的 bash 工具、Claude 的 Bash）在 `setsid` 下执行的 `cmd &`：它被 init 收养，又由 Bun 这类会关闭继承描述符的运行时启动。
+存活进程只要带有该标记且在尝试开始之后启动，或其父进程属于该尝试，就属于该尝试。终止时先经 pidfd 用 SIGSTOP 冻结所有这类进程，
+反复扫描直到不再出现新进程（最多 32 轮），再全部杀掉，然后才向原进程组发信号。停止证明还要求连续两次扫描都干净：
+仍有被认领的存活进程时尝试视为运行中；标记范围或 procfs 无法读取，或 Node 以其他用户运行且没有 `CAP_SYS_PTRACE` 时
+出现了尝试用户的不可读进程，证据为未知。MCP 服务、语言服务等常驻 Agent 后代同样带有标记：它们随尝试一起停止，
+轮次之间不受影响。证明仍记为 `lock_and_processes`。
+
+标记只在 Linux 上提供，也不构成强隔离。清空环境（`env -i`）或把自己设为不可 dump 的进程，只在父进程属于该尝试时才能找到，
+成为孤儿后就看不到了。标记不是秘密：能读到它的进程可以启动带标记的进程，这些进程会随尝试一起被杀，但无法让 Node
+向尝试开始之前启动的进程发信号。标记出现之前登记的尝试仍使用锁加线索的证据，它们的进程都不带标记。
 
 `node.session_stop.confirmation_timeout_ms` 默认为 600000，必须为正数。首次期限持久化，重试不会延长。
 跨 boot 证明需要显式配置且与原宿主匹配的 `trusted_host_id`，或由部署提供存储隔离保障的
@@ -30,7 +44,7 @@ Node home 和独立工作负载包视图必须位于支持的本地文件系统�
 
 生命周期会话在 load 失败或断连后保留 provider session ID 和上次 active MCP revision，不通过新建
 provider session 或回放 transcript 修复 MCP 失败。下一轮可对每个 generation 重试一次，不做周期性刷新重试。
-MCP 包版本变化，或首次 setup 后第九次运行期 load，会仅替换本 execution 的 Agent 进程。Node 先记录停止请求并向原进程组发出终止信号，再等待旧 supervisor 退出。旧 supervisor 完成清理后才安装后继进程。替换前准备最新目标，
+MCP 包版本变化，或首次 setup 后第九次运行期 load，会仅替换本 execution 的 Agent 进程。Node 先记录停止请求，杀掉旧尝试带标记的进程和原进程组，再等待旧 supervisor 退出。旧 supervisor 完成清理后才安装后继进程。替换前准备最新目标，
 确认旧进程停止后才注册新尝试；HOME、checkout、model grant 和 ora-git 上下文继续属于原 execution。
 等待清理时的新目标合并到最新代际。
 
@@ -51,4 +65,4 @@ NFS、9p、virtiofs 上的 home；升级前先排空会话，再将部署拥有�
 
 正常结束、自动恢复和 root 对账在持久确认后都会唤醒探测 owner。root 的 probe_capacity 还返回具名残留：execution、attempt、state 和原始 bound_at_ms，可直接用于停止对账；会话查询仍只暴露匿名容量。
 
-探测 owner task panic 会使整个 Node 失败退出，保留槽位、精确版本租约和持久责任，由重启恢复证明清理完成；不支持丢失 owner 后继续服务。stop 请求和 kill_all 的结果仅用于诊断，停止证明来自原锁、进程线索或配置允许的可信重启证据。
+探测 owner task panic 会使整个 Node 失败退出，保留槽位、精确版本租约和持久责任，由重启恢复证明清理完成；不支持丢失 owner 后继续服务。stop 请求和 kill_all 的结果仅用于诊断，停止证明来自原锁、进程线索和尝试标记扫描，或配置允许的可信重启证据。
