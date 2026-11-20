@@ -241,9 +241,9 @@ mod tests {
 
     /// Returns the temporary root with every symlink resolved, in plain form.
     ///
-    /// macOS hands out temporary directories under `/var/folders`, where `/var` is itself a
-    /// symlink, and the staging and commit paths deliberately reject a link anywhere in the
-    /// chain — so the tests anchor on the resolved path. Windows `canonicalize` answers with a
+    /// The system temporary root may itself be reached through a symlink, and the staging and
+    /// commit paths deliberately reject a link anywhere in the chain — so the tests anchor on the
+    /// resolved path. Windows `canonicalize` answers with a
     /// `\\?\`-prefixed verbatim path the same checks reject, so the prefix is stripped after
     /// resolution: the path is link-free either way and reads the same on every platform.
     fn symlink_free_root(temp_dir: &TempDir) -> std::path::PathBuf {
