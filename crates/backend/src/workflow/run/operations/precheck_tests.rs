@@ -10,6 +10,7 @@ use super::WorkflowRuns;
 use crate::Backend;
 use crate::test_backend::backend_paths;
 use crate::workflow::run::test_fixture::{SeededWorkflow, seeded_workflow};
+use ora_application::{WorkflowRepository, WorkflowRunRepository};
 use ora_contracts::{
     CancelWorkflowRunRequest, CreateWorkflowRunRequest, ImportPluginRequest, PluginDataDisposition,
     PublicError, RestartWorkflowRunRequest, ResumeWorkflowRunRequest, StartWorkflowRunRequest,
@@ -100,6 +101,38 @@ impl Fixture {
         );
     }
 
+    /// Returns the public run and node state before or after a scheduling attempt.
+    fn get(&self, run_id: &str) -> ora_contracts::GetWorkflowRunResponse {
+        self.runs
+            .get(ora_contracts::GetWorkflowRunRequest {
+                run_id: run_id.to_string(),
+            })
+            .unwrap()
+    }
+
+    /// Publishes the graph a resume explicitly selects, leaving the existing run on v1.
+    fn publish_target(&self, graph: &str) {
+        let repository = ora_db::SqliteWorkflowRepository::new(self.runs.pool.clone());
+        let workflow = ora_domain::WorkflowId::new(&self.seeded.workflow_id);
+        assert!(matches!(
+            repository
+                .update_draft(&workflow, graph.to_string(), 30)
+                .unwrap(),
+            ora_application::UpdateDraftResult::Updated(_)
+        ));
+        assert!(matches!(
+            repository
+                .publish_snapshot(
+                    &workflow,
+                    ora_domain::WorkflowSnapshotId::new("snapshot-2"),
+                    "v2".into(),
+                    31
+                )
+                .unwrap(),
+            ora_application::PublishSnapshotResult::Published(_)
+        ));
+    }
+
     /// Installs the Skill plugin the graph binds through the real local-archive import.
     async fn install_skill_plugin(&self, plugin: &str, skill: &str) {
         let archive = skill_plugin_archive(self.temporary.path(), plugin, skill);
@@ -154,36 +187,42 @@ fn skill_plugin_archive(directory: &Path, plugin: &str, skill: &str) -> PathBuf 
     archive
 }
 
-/// Writes one installed MCP package whose declared stdio command exists inside the package.
-fn install_mcp_package(home: &Path, name: &str) {
-    let root = home
-        .join("plugins")
-        .join("installed")
-        .join("local")
-        .join(name)
-        .join("1.0.0");
-    std::fs::create_dir_all(root.join("assets")).expect("create MCP package");
-    std::fs::write(
-        root.join("orax.toml"),
-        format!(
-            "resolver = 1\nidentifier = \"{name}\"\nkind = \"mcp\"\nversion = \"1.0.0\"\ndescription = \"MCP fixture\"\n"
-        ),
-    )
-    .expect("write MCP manifest");
-    let command = root.join("assets").join("server");
-    std::fs::write(&command, "#!/bin/sh\n").expect("write MCP command");
-    // Unix discovery refuses a stdio command without an executable mode bit, and CI runs there.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o755))
-            .expect("make the MCP command executable");
-    }
-    std::fs::write(
-        root.join("assets").join("config.json"),
-        r#"{"schemaVersion":1,"transport":{"type":"stdio","command":"assets/server","args":[],"env":{}}}"#,
-    )
-    .expect("write MCP configuration");
+/// Installs a valid MCP with an unset required setting through the live plugin host.
+/// Settings and command readiness belong to session setup, while scheduling requires the package.
+async fn install_mcp_package(fixture: &Fixture) {
+    let archive = fixture.temporary.path().join("github.orax");
+    let mut writer = ZipWriter::new(File::create(&archive).unwrap());
+    let options = SimpleFileOptions::default();
+    writer.start_file("orax.toml", options).unwrap();
+    writer
+        .write_all(
+            br#"resolver = 1
+identifier = "github"
+kind = "mcp"
+version = "1.0.0"
+description = "MCP fixture"
+"#,
+        )
+        .unwrap();
+    writer.start_file("assets/config.json", options).unwrap();
+    writer.write_all(br#"{"schemaVersion":1,"settings":{"apiKey":{"type":"string","title":"API key","description":"Required credential","required":true}},"transport":{"type":"stdio","command":"assets/server","env":{"API_KEY":{"setting":"apiKey"}}}}"#).unwrap();
+    writer
+        .start_file("assets/server", options.unix_permissions(0o755))
+        .unwrap();
+    writer
+        .write_all(b"#!/nonexistent-ora-test-interpreter\n")
+        .unwrap();
+    drop(writer.finish().unwrap());
+    let installed = fixture
+        .backend
+        .plugins()
+        .import(ImportPluginRequest {
+            path: archive.to_string_lossy().into_owned(),
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .expect("import the MCP package");
+    assert_eq!(installed.plugin_id, "local/github");
 }
 
 /// Uninstalling the Skill plugin a frozen run declares blocks both start and restart, and
@@ -326,13 +365,21 @@ async fn an_idempotent_start_is_not_turned_into_a_dependency_error() {
         })
         .expect("start with every dependency installed");
 
+    fixture.uninstall_plugin("local/review-pack").await;
     let answered = fixture
         .runs
         .start(StartWorkflowRunRequest {
             run_id: run_id.clone(),
         })
         .expect("an already started run answers with its current state");
-    let _ = answered;
+    assert_eq!(answered.run.status, WorkflowRunStatus::Running);
+    let error = fixture
+        .runs
+        .restart(RestartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .expect_err("a running run cannot restart");
+    assert_eq!(error.public_error().code(), "workflow_run_not_restartable");
 
     fixture
         .runs
@@ -346,7 +393,9 @@ async fn an_idempotent_start_is_not_turned_into_a_dependency_error() {
 #[tokio::test]
 async fn a_missing_mcp_plugin_blocks_start() {
     let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
     let run_id = fixture.create_run();
+    fixture.uninstall_plugin("local/github").await;
 
     let error = fixture
         .runs
@@ -363,9 +412,267 @@ async fn a_missing_mcp_plugin_blocks_start() {
         }))
     );
 
-    install_mcp_package(fixture.temporary.path(), "github");
+    assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
+    install_mcp_package(&fixture).await;
     fixture
         .runs
         .start(StartWorkflowRunRequest { run_id })
         .expect("start once the MCP plugin is installed");
+}
+
+/// Uninstall after cancellation must preserve the run and prevent both routes back to dispatch.
+#[tokio::test]
+async fn removed_mcp_blocks_restart_and_same_snapshot_resume() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    fixture.start_and_settle(&run_id).await;
+    fixture.uninstall_plugin("local/github").await;
+    let before = fixture.get(&run_id).run;
+
+    let restart = fixture
+        .runs
+        .restart(RestartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .unwrap_err();
+    assert_eq!(restart.public_error().code(), "workflow_mcp_not_found");
+    assert_eq!(fixture.get(&run_id).run, before);
+    let resume = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: run_id.clone(),
+            rollback: None,
+            snapshot_id: None,
+        })
+        .unwrap_err();
+    assert_eq!(resume.public_error(), restart.public_error());
+    assert_eq!(fixture.get(&run_id).run, before);
+}
+
+/// Disabling a binding removes that MCP from the set of scheduling prerequisites.
+#[tokio::test]
+async fn a_disabled_missing_mcp_allows_start() {
+    let graph = MCP_GRAPH.replace(
+        r#""mcpId":"local/github","enabled":true"#,
+        r#""mcpId":"local/github","enabled":false"#,
+    );
+    let fixture = Fixture::open(&graph);
+    let run_id = fixture.create_run();
+    fixture.start_and_settle(&run_id).await;
+}
+
+/// A package with the selected id must actually provide a usable MCP.
+#[tokio::test]
+async fn a_skill_plugin_with_the_selected_mcp_id_blocks_start() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    fixture.install_skill_plugin("github", "code_review").await;
+    let run_id = fixture.create_run();
+    let error = fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .unwrap_err();
+    assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
+    assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
+}
+
+/// Both kinds of missing target dependency must be refused before a real checkpoint restore.
+#[tokio::test]
+async fn target_dependencies_are_checked_before_checkpoint_rollback() {
+    for (target, expected) in [
+        (MCP_GRAPH, "workflow_mcp_not_found"),
+        (SKILL_GRAPH, "workflow_skill_not_found"),
+    ] {
+        let original = MCP_GRAPH.replace(
+            r#""mcpId":"local/github","enabled":true"#,
+            r#""mcpId":"local/github","enabled":false"#,
+        );
+        let fixture = Fixture::open(&original);
+        let workspace = crate::workflow::run::test_fixture::init_git_workspace(&fixture.temporary);
+        let run_id = fixture.create_run();
+        fixture.start_and_settle(&run_id).await;
+        let before = fixture.get(&run_id);
+        let node = before
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "reviewer")
+            .unwrap();
+        super::super::checkpoint::record_pre_node_checkpoint(
+            &ora_db::SqliteWorkflowRunEngineRepository::new(fixture.runs.pool.clone()),
+            &workspace,
+            &ora_domain::WorkflowRunId::new(&run_id),
+            "reviewer",
+            &ora_domain::WorkflowNodeRunId::new(&node.id),
+            &fixture.seeded.snapshot_id,
+            95,
+        )
+        .unwrap();
+        let file = workspace.join("README.md");
+        std::fs::write(&file, "unsaved work").unwrap();
+        fixture.publish_target(target);
+        let request = ResumeWorkflowRunRequest {
+            run_id: run_id.clone(),
+            rollback: Some(ora_contracts::ResumeRollbackMode::Checkpoint),
+            snapshot_id: Some("snapshot-2".to_owned()),
+        };
+        let error = fixture
+            .runs
+            .resume_from_failure(request.clone())
+            .unwrap_err();
+        assert_eq!(error.public_error().code(), expected);
+        assert_eq!(fixture.get(&run_id).run, before.run);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "unsaved work");
+
+        // A successful retry proves the selected checkpoint really could overwrite the file.
+        if target == MCP_GRAPH {
+            install_mcp_package(&fixture).await;
+        } else {
+            fixture
+                .install_skill_plugin("review-pack", "code_review")
+                .await;
+        }
+        let resumed = fixture.runs.resume_from_failure(request).unwrap();
+        assert_eq!(resumed.run.snapshot_id, "snapshot-2");
+        assert_eq!(
+            std::fs::read_to_string(file)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["seed"]
+        );
+    }
+}
+
+/// Switching versions freezes the same agent-declared discovery path that creation would use.
+#[tokio::test]
+async fn switched_receipt_uses_the_agent_declared_skill_directory() {
+    let original = SKILL_GRAPH.replace(
+        r#""skillId":"code_review","enabled":true"#,
+        r#""skillId":"code_review","enabled":false"#,
+    );
+    let fixture = Fixture::open(&original);
+    let run_id = fixture.create_run();
+    fixture.start_and_settle(&run_id).await;
+    fixture
+        .install_skill_plugin("review-pack", "code_review")
+        .await;
+    let agent_id = "official/ora-space.opencode";
+    fixture
+        .runs
+        .plugin_api
+        .replace_agent_effect_declaration(
+            ora_domain::PluginId::parse(agent_id).unwrap(),
+            Some(ora_effect::ConsumerDeclaration {
+                consumer: ora_effect::ConsumerIdentity::new(
+                    ora_effect::ConsumerKind::agent_plugin(),
+                    agent_id,
+                )
+                .unwrap(),
+                adapter: ora_effect::ConsumerAdapterIdentity::parse("ora/agent-plugin").unwrap(),
+                capabilities: ora_effect::CapabilitySet {
+                    materialization_contracts: [
+                        ora_effect::MaterializationContract::skill_directory_v1().capability_key(),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+                resources: vec![ora_effect::FilesystemResourceTemplate {
+                    relative_path: ora_effect::ResourcePath::parse(".claude/skills").unwrap(),
+                    materialization_format: ora_effect::MaterializationFormat::skill_directory_v1(),
+                    materialization_contract:
+                        ora_effect::MaterializationContract::skill_directory_v1(),
+                    accepts: Default::default(),
+                    coordination: ora_effect::CoordinationRequirement::Uninterrupted,
+                    ownership_relative_path: None,
+                }],
+            }),
+        )
+        .unwrap();
+    fixture.publish_target(SKILL_GRAPH);
+    let resumed = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: run_id.clone(),
+            rollback: None,
+            snapshot_id: Some("snapshot-2".to_owned()),
+        })
+        .unwrap();
+    assert_eq!(resumed.run.snapshot_id, "snapshot-2");
+    let row = ora_db::SqliteWorkflowRunRepository::new(fixture.runs.pool.clone())
+        .find_run(&ora_domain::WorkflowRunId::new(run_id))
+        .unwrap()
+        .unwrap();
+    let payload: ora_application::WorkflowRunPayload =
+        serde_json::from_str(row.payload.as_deref().unwrap()).unwrap();
+    let bindings = payload.skill_materialization.bindings_for_node("reviewer");
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(
+        bindings[0].package_paths,
+        vec![ora_utils::path::StrictRelativePath::parse(".claude/skills/code_review").unwrap()]
+    );
+}
+
+/// Scheduling accepts an installed, unconfigured MCP and keeps a running start idempotent
+/// when that MCP is subsequently removed.
+#[tokio::test]
+async fn start_with_an_unconfigured_mcp_stays_idempotent_after_uninstall() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    let request = StartWorkflowRunRequest {
+        run_id: run_id.clone(),
+    };
+    assert_eq!(
+        fixture.runs.start(request.clone()).unwrap().run.status,
+        WorkflowRunStatus::Running
+    );
+    fixture.uninstall_plugin("local/github").await;
+    assert_eq!(
+        fixture.runs.start(request).unwrap().run.status,
+        WorkflowRunStatus::Running
+    );
+    let restart = fixture
+        .runs
+        .restart(RestartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .unwrap_err();
+    assert_eq!(
+        restart.public_error().code(),
+        "workflow_run_not_restartable"
+    );
+    fixture
+        .runs
+        .cancel(CancelWorkflowRunRequest { run_id })
+        .await
+        .unwrap();
+}
+
+/// A package whose manifest no longer exposes a valid MCP cannot satisfy a frozen binding.
+#[tokio::test]
+async fn invalid_mcp_package_blocks_pending_start() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    let config = fixture
+        .temporary
+        .path()
+        .join("plugins")
+        .join("installed")
+        .join("local")
+        .join("github")
+        .join("1.0.0")
+        .join("assets")
+        .join("config.json");
+    std::fs::write(config, "invalid configuration").unwrap();
+    let error = fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .unwrap_err();
+    assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
+    assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
 }

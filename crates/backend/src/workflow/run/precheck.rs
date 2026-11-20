@@ -18,12 +18,11 @@
 //! session and fails closed with `agent_not_installed`; rejecting an identity here would also
 //! reject the portable identities the runtime deliberately accepts.
 
-use super::prerequisites::{plugin_initializer, validate_mcp_bindings};
-use crate::agent_runtime::AgentRuntimeManager;
+use super::prerequisites::plugin_initializer;
 use crate::error::BackendError;
 use ora_application::{
-    ApplicationError, ExecutionContext, WorkflowGraph, WorkflowRunEngineRepository,
-    WorkflowRunWorkspaceInitializer,
+    ApplicationError, ExecutionContext, NodeType, SkillMaterializationReceipt,
+    StartPrerequisitesError, WorkflowGraph, WorkflowRunEngineRepository,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_domain::{WorkflowRunId, WorkflowRunStatus};
@@ -41,8 +40,6 @@ pub(super) enum StartOperation {
     Start,
     /// Any non-`Running` run is reset and re-executes from its Start node.
     Restart,
-    /// A `Failed`/`Cancelled` run re-executes the nodes that had not succeeded.
-    Resume,
 }
 
 impl StartOperation {
@@ -51,12 +48,6 @@ impl StartOperation {
         match self {
             Self::Start => status == WorkflowRunStatus::Pending,
             Self::Restart => status != WorkflowRunStatus::Running,
-            Self::Resume => {
-                matches!(
-                    status,
-                    WorkflowRunStatus::Failed | WorkflowRunStatus::Cancelled
-                )
-            }
         }
     }
 }
@@ -95,7 +86,6 @@ impl<'a> DependencySources<'a> {
 /// with the run instead of a dependency failure.
 pub(super) fn ensure_dependencies_available(
     dependencies: DependencySources<'_>,
-    agent_runtime: &AgentRuntimeManager,
     run_id: &WorkflowRunId,
     operation: StartOperation,
 ) -> Result<(), BackendError> {
@@ -103,23 +93,71 @@ pub(super) fn ensure_dependencies_available(
     if !operation.schedules(context.run.status) {
         return Ok(());
     }
-    let workspace_root = agent_runtime
-        .workspace_cwd(&context.run.workspace_id)
-        .map_err(BackendError::from)?;
     let graph = WorkflowGraph::parse(&context.graph_json).map_err(ApplicationError::from)?;
-    let initializer = plugin_initializer(
-        dependencies.skills_root,
-        dependencies.pool,
-        dependencies.plugin_api,
-    )
-    .map_err(|error| ApplicationError::WorkflowRunStartFailed {
-        message: error.to_string(),
-    })?;
-    // Skills and roles first: they are the deploy dependencies the frozen receipt addresses.
-    initializer
-        .initialize_workspace(&graph, &workspace_root)
-        .and_then(|_receipt| validate_mcp_bindings(dependencies.plugin_api, &graph))
-        .map_err(ApplicationError::from_start_prerequisites_error)?;
+    dependencies.resolve_graph(&graph)?;
+    Ok(())
+}
+
+impl DependencySources<'_> {
+    /// Resolves all scheduling dependencies and returns the Skill receipt to freeze on a switch.
+    pub(super) fn resolve_graph(
+        &self,
+        graph: &WorkflowGraph,
+    ) -> Result<SkillMaterializationReceipt, BackendError> {
+        let initializer = plugin_initializer(self.skills_root, self.pool, self.plugin_api)
+            .map_err(|error| ApplicationError::WorkflowRunStartFailed {
+                message: error.to_string(),
+            })?;
+        let receipt = initializer
+            .resolve_graph(graph)
+            .map_err(ApplicationError::from_start_prerequisites_error)?;
+        validate_mcp_bindings(self.plugin_api, graph)
+            .map_err(ApplicationError::from_start_prerequisites_error)?;
+        Ok(receipt)
+    }
+}
+
+/// Rejects every enabled MCP binding whose plugin is no longer installed.
+///
+/// MCP bindings are plugin installation dependencies: the node's frozen allowlist only becomes a
+/// session selection after a session starts, so without this check an uninstalled MCP plugin keeps
+/// a run startable until the owning node fails. Discovery reads the installed tree directly, the
+/// same catalog session setup resolves a selection against, so the check cannot pass on a cached
+/// snapshot of a package that is already gone. Configuration completeness is not checked here — an
+/// installed but unconfigured MCP is a configuration problem the settings surface owns, and session
+/// setup already refuses to deliver it.
+fn validate_mcp_bindings(
+    plugin_api: &crate::plugin::PluginApi,
+    graph: &WorkflowGraph,
+) -> Result<(), StartPrerequisitesError> {
+    let manager = ora_plugin_manager::PluginManager::discover(plugin_api.home_directory());
+    let installed = manager.installed_plugins();
+    for node in graph
+        .execution_scopes()
+        .into_iter()
+        .flat_map(WorkflowGraph::nodes)
+        .filter(|node| node.node_type == NodeType::Agent)
+    {
+        let Some(config) = &node.agent_config else {
+            continue;
+        };
+        for binding in config.mcps.iter().filter(|binding| binding.enabled) {
+            let installed_mcp = installed.iter().any(|plugin| {
+                plugin.id == binding.mcp_id
+                    && matches!(
+                        plugin.contributes,
+                        ora_plugin_manager::PluginContribution::Mcp(_)
+                    )
+            });
+            if !installed_mcp {
+                return Err(StartPrerequisitesError::WorkflowMcpNotFound {
+                    node_id: node.id.clone(),
+                    node_title: super::prerequisites::node_display_name(node),
+                    mcp_id: binding.mcp_id.canonical(),
+                });
+            }
+        }
+    }
     Ok(())
 }
 
@@ -173,22 +211,6 @@ mod tests {
             ]
             .map(|status| StartOperation::Restart.schedules(status)),
             [true, false, true, true, true]
-        );
-    }
-
-    /// Only a failed or cancelled run resumes; the other statuses are reported as not resumable.
-    #[test]
-    fn resume_operation_only_validates_resumable_statuses() {
-        assert_eq!(
-            [
-                WorkflowRunStatus::Pending,
-                WorkflowRunStatus::Running,
-                WorkflowRunStatus::Succeeded,
-                WorkflowRunStatus::Failed,
-                WorkflowRunStatus::Cancelled,
-            ]
-            .map(|status| StartOperation::Resume.schedules(status)),
-            [false, false, false, true, true]
         );
     }
 }

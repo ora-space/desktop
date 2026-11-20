@@ -507,3 +507,29 @@ pub(crate) fn run_test(test: impl std::future::Future<Output = ()>) {
             .block_on(test);
     });
 }
+
+/// Drives snapshot switching in engine-level fixtures that do not compose a plugin host.
+pub(super) fn switch_if_requested(
+    pool: &RepositoryPool,
+    skills_root: &Path,
+    workspace_root: &Path,
+    run_id: &WorkflowRunId,
+    snapshot_id: Option<&str>,
+    now: i64,
+) -> Result<bool, crate::error::BackendError> {
+    use super::prerequisites::SkillRoleWorkspaceInitializer;
+    use ora_application::{ApplicationError, WorkflowRunWorkspaceInitializer};
+    let initializer =
+        SkillRoleWorkspaceInitializer::new(skills_root.to_path_buf(), pool.clone()).unwrap();
+    let switch = super::snapshot_switch::prepare_resume(pool, run_id, snapshot_id, |graph| {
+        Ok(initializer
+            .initialize_workspace(graph, workspace_root)
+            .map_err(ApplicationError::from_start_prerequisites_error)?)
+    })?;
+    if let Some(switch) = switch {
+        switch.apply(pool, now)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}

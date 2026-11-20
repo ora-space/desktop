@@ -161,7 +161,6 @@ impl WorkflowRuns {
     ) -> Result<(), BackendError> {
         ensure_dependencies_available(
             self.dependency_sources(),
-            &self.agent_runtime,
             &ora_domain::WorkflowRunId::new(run_id),
             operation,
         )
