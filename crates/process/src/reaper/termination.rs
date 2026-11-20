@@ -11,6 +11,13 @@
 //! thread receives them synchronously with `sigwait`. That thread runs ordinary Rust code: it
 //! takes the same mutex as the protocol loop, which may meanwhile stay blocked in its stdin read.
 //!
+//! A signal whose disposition the parent set to `SIG_IGN` behaves differently by platform, since
+//! POSIX leaves it unspecified whether such a signal is discarded at generation while blocked.
+//! Linux keeps it pending, so `sigwait` still receives it and the reaper cleans up. macOS (XNU)
+//! discards it, so the reaper keeps running as if it was never sent; a non-interactive shell's
+//! background job, for example, inherits an ignored SIGINT, and `nohup` ignores SIGHUP. No tree
+//! is stranded either way, because an ignored signal does not end the reaper.
+//!
 //! Windows has no termination signals. Anything that ends the reaper there, `TerminateProcess`
 //! and console control events included, closes the only handle to its aggregate Job Object, whose
 //! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` limit makes the kernel end every registered tree. Windows
@@ -86,9 +93,43 @@ impl Cleanup<'_> {
     /// caller already ran counts as done.
     pub(super) fn into_result(self) -> io::Result<()> {
         match self {
-            Self::Performed { result, hold: _ } => result,
+            Self::Performed { result, hold } => {
+                drop(hold);
+                result
+            }
             Self::AlreadyFinished => Ok(()),
         }
+    }
+}
+
+/// What the signal thread does after a termination signal.
+#[cfg(unix)]
+enum SignalResponse<'a> {
+    /// Exit the process with `code`. `hold` must stay alive until the process is gone: releasing
+    /// it would let the protocol loop serve a request against finished targets, answer it with a
+    /// failure, and race this exit with its own unsuccessful one.
+    Exit { code: i32, hold: CleanupHold<'a> },
+    /// The protocol loop already ran the cleanup and exits once it has sent its last response;
+    /// exiting here could drop that `SHUTDOWN` acknowledgement.
+    LeaveExitToProtocolLoop,
+}
+
+/// Decides how the signal thread ends after the final cleanup the signal requested.
+#[cfg(unix)]
+fn respond_to_termination_signal(cleanup: Cleanup<'_>, signal: i32) -> SignalResponse<'_> {
+    match cleanup {
+        Cleanup::Performed {
+            result: Ok(()),
+            hold,
+        } => SignalResponse::Exit { code: 0, hold },
+        Cleanup::Performed {
+            result: Err(error),
+            hold,
+        } => {
+            eprintln!("ora-reaper failed to clean up after signal {signal}: {error}");
+            SignalResponse::Exit { code: 1, hold }
+        }
+        Cleanup::AlreadyFinished => SignalResponse::LeaveExitToProtocolLoop,
     }
 }
 
@@ -98,7 +139,8 @@ impl Cleanup<'_> {
 /// trees. The reaper sits outside Ora's process group, so these arrive by PID: SIGTERM from a
 /// cleanup owner or a service manager, SIGINT from an operator, SIGHUP when the reaper's session
 /// or terminal goes away, which, like parent EOF, means its supervisor is gone. SIGQUIT keeps its
-/// core-dump default for diagnostics, and SIGKILL cannot be caught.
+/// core-dump default for diagnostics, and SIGKILL cannot be caught. On macOS a signal inherited
+/// as ignored stays ignored; see the module documentation.
 ///
 /// The caller must not have started any other thread: a thread that does not inherit the blocked
 /// mask could receive a signal with its default action. Returns an error, leaving the signals
@@ -161,19 +203,11 @@ fn wait_for_termination_signals(
             continue;
         };
         ora_logging::ora_trace!(signal, "process reaper received a termination signal");
-        match targets.finish() {
-            // Exiting while `hold` is alive keeps the protocol loop from serving another request.
-            Cleanup::Performed {
-                result,
-                hold: _hold,
-            } => match result {
-                Ok(()) => std::process::exit(0),
-                Err(error) => {
-                    eprintln!("ora-reaper failed to clean up after signal {signal}: {error}");
-                    std::process::exit(1);
-                }
-            },
-            Cleanup::AlreadyFinished => {}
+        match respond_to_termination_signal(targets.finish(), signal) {
+            // `exit` never returns, so `_hold` keeps the targets locked until the process is gone.
+            // No test can observe a release here: it would race this very exit.
+            SignalResponse::Exit { code, hold: _hold } => std::process::exit(code),
+            SignalResponse::LeaveExitToProtocolLoop => {}
         }
     }
 }
@@ -188,7 +222,7 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
-    use super::{Cleanup, SharedTargets};
+    use super::{Cleanup, SharedTargets, SignalResponse, respond_to_termination_signal};
     use crate::tree::ReaperTargets;
 
     /// A cleanup outcome reduced to what the assertions compare.
@@ -196,6 +230,89 @@ mod tests {
     enum Outcome {
         Performed,
         AlreadyFinished,
+    }
+
+    /// A signal response reduced to what the assertions compare.
+    #[derive(Debug, PartialEq)]
+    enum Response {
+        /// The exit code, and whether the targets were still locked when the response was given.
+        Exit {
+            code: i32,
+            targets_locked: bool,
+        },
+        LeaveExitToProtocolLoop,
+    }
+
+    /// A signal that runs the cleanup kills the registered group and exits successfully, still
+    /// holding the targets so the protocol loop cannot serve another request before the exit.
+    #[test]
+    fn a_signal_that_cleans_up_exits_successfully_holding_the_targets() {
+        let mut target = spawn_group_leader();
+        let targets = registered_targets(&target);
+
+        let response = response(
+            &targets,
+            respond_to_termination_signal(targets.finish(), libc::SIGTERM),
+        );
+        let target_signal = target
+            .wait()
+            .unwrap_or_else(|error| panic!("wait for target: {error}"))
+            .signal();
+
+        assert_eq!(
+            (response, target_signal),
+            (
+                Response::Exit {
+                    code: 0,
+                    targets_locked: true
+                },
+                Some(libc::SIGKILL)
+            )
+        );
+    }
+
+    /// A signal whose cleanup fails exits unsuccessfully, still holding the targets.
+    #[test]
+    fn a_signal_whose_cleanup_fails_exits_with_failure() {
+        let targets = empty_targets();
+        let Cleanup::Performed { result: _, hold } = targets.finish() else {
+            panic!("fresh targets must run the final cleanup");
+        };
+        let failed = Cleanup::Performed {
+            result: Err(io::Error::other("injected kill failure")),
+            hold,
+        };
+
+        let response = response(
+            &targets,
+            respond_to_termination_signal(failed, libc::SIGTERM),
+        );
+
+        assert_eq!(
+            response,
+            Response::Exit {
+                code: 1,
+                targets_locked: true
+            }
+        );
+    }
+
+    /// A signal after the protocol loop's own cleanup leaves the exit to that loop, so its last
+    /// `SHUTDOWN` acknowledgement is not lost.
+    #[test]
+    fn a_signal_after_protocol_cleanup_leaves_the_exit_to_the_protocol_loop() {
+        let targets = empty_targets();
+        targets
+            .finish()
+            .into_result()
+            .unwrap_or_else(|error| panic!("protocol cleanup: {error}"));
+
+        let response = response(
+            &targets,
+            respond_to_termination_signal(targets.finish(), libc::SIGHUP),
+        );
+
+        assert_eq!(response, Response::LeaveExitToProtocolLoop);
     }
 
     /// The first caller terminates the registered group; later callers, whichever path they come
@@ -279,6 +396,26 @@ mod tests {
             .serve(|targets| targets.register(target.id()))
             .unwrap_or_else(|error| panic!("register target: {error}"));
         targets
+    }
+
+    /// Creates shared targets with nothing registered.
+    fn empty_targets() -> SharedTargets {
+        SharedTargets::new(
+            ReaperTargets::new().unwrap_or_else(|error| panic!("create targets: {error}")),
+        )
+    }
+
+    /// Records a signal response, probing the lock before the response releases it.
+    fn response(targets: &SharedTargets, response: SignalResponse<'_>) -> Response {
+        // `try_lock` on the same thread fails without blocking while any guard is alive.
+        let targets_locked = targets.0.try_lock().is_err();
+        match response {
+            SignalResponse::Exit { code, hold: _ } => Response::Exit {
+                code,
+                targets_locked,
+            },
+            SignalResponse::LeaveExitToProtocolLoop => Response::LeaveExitToProtocolLoop,
+        }
     }
 
     /// Drops the hold, releasing waiting callers, and checks that a cleanup succeeded.

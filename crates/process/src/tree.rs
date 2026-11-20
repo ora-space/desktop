@@ -59,6 +59,11 @@ pub(crate) struct ReaperTargets {
 unsafe impl Send for ProcessTree {}
 #[cfg(windows)]
 unsafe impl Sync for ProcessTree {}
+// SAFETY: The aggregate Job Object handle is likewise owned exclusively by `ReaperTargets` and only
+// used through synchronous win32 calls. The reaper shares the value behind a `Mutex`, so only
+// `Send` is needed for one thread at a time to use and drop it.
+#[cfg(windows)]
+unsafe impl Send for ReaperTargets {}
 
 impl ProcessTree {
     /// Applies platform-specific spawn configuration so the spawned child becomes the root of a
