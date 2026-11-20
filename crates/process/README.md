@@ -41,7 +41,10 @@ run the same final cleanup and then exit successfully, or with status 1 if a gro
 signalled. They are blocked in every thread and received by one dedicated `sigwait` thread, never
 handled in a signal handler. Cleanup runs once: a signal that arrives while EOF or `SHUTDOWN`
 cleanup runs waits for it and leaves the exit to the protocol loop, and repeated signals during a
-signal-started cleanup are ignored, so nothing aborts it halfway. The cleanup only submits
+signal-started cleanup are ignored, so nothing aborts it halfway. A signal that wins against an
+explicit `SHUTDOWN` exits without acknowledging it; `shutdown_reaper` counts a closed pipe followed
+by a successful exit as a completed shutdown, since the reaper exits successfully only after its
+cleanup succeeded. The cleanup only submits
 `SIGKILL`s, so it is bounded. SIGKILL cannot be intercepted and still strands registered groups.
 A signal the parent set to `SIG_IGN` differs by platform, since POSIX leaves unspecified whether a
 blocked, ignored signal is discarded: Linux keeps it pending and the reaper still cleans up, while

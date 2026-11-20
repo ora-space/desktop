@@ -1,6 +1,6 @@
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, ExitStatus, Stdio};
 use std::sync::{Mutex, PoisonError};
 
 use ora_logging::ora_trace;
@@ -222,16 +222,40 @@ impl ReaperClient {
         let request_result = self.request(SHUTDOWN, /*process_id*/ 0);
         // Closing stdin also preserves the EOF fallback if the explicit request failed halfway.
         drop(self.writer);
-        let wait_result = self.child.wait();
-        request_result?;
-        let status = wait_result?;
-        if status.success() {
+        let status = match self.child.wait() {
+            Ok(status) => status,
+            Err(error) => return request_result.and(Err(error)),
+        };
+        settle_shutdown(request_result, status)
+    }
+}
+
+/// Judges a `SHUTDOWN` exchange by the sidecar's exit status as well as by its acknowledgement.
+///
+/// The sidecar exits successfully only after its final cleanup succeeded. A termination signal can
+/// win the race against this request; the sidecar then runs that cleanup itself and exits without
+/// acknowledging, so the exchange only sees the pipe close. That is a successful shutdown. Any
+/// other failure of the exchange, and any unsuccessful exit, stays an error.
+fn settle_shutdown(request_result: io::Result<()>, status: ExitStatus) -> io::Result<()> {
+    match request_result {
+        Ok(()) if status.success() => Ok(()),
+        Err(error)
+            if status.success()
+                && matches!(
+                    error.kind(),
+                    io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
+                ) =>
+        {
+            ora_trace!(
+                error = %error,
+                "process reaper exited successfully before acknowledging shutdown",
+            );
             Ok(())
-        } else {
-            Err(io::Error::other(format!(
-                "process reaper exited unsuccessfully: {status}"
-            )))
         }
+        Ok(()) => Err(io::Error::other(format!(
+            "process reaper exited unsuccessfully: {status}"
+        ))),
+        Err(error) => Err(error),
     }
 }
 
@@ -374,6 +398,7 @@ fn write_response(
 mod tests {
     use super::{
         ACKNOWLEDGED, READY_FRAME, REGISTER, SHUTDOWN, SharedTargets, UNREGISTER, run_reaper_io,
+        settle_shutdown,
     };
     use crate::tree::ReaperTargets;
     use pretty_assertions::assert_eq;
@@ -417,6 +442,45 @@ mod tests {
         };
 
         assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    /// Verifies a sidecar that exits successfully without acknowledging `SHUTDOWN`, as it does when
+    /// a termination signal won the race, counts as shut down, and nothing else is excused.
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_outcome_accepts_only_a_successful_exit_without_acknowledgement() {
+        use std::io::{Error, ErrorKind};
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::ExitStatus;
+
+        let success = ExitStatus::from_raw(0);
+        // A raw wait status carries the exit code in its second byte.
+        let failure = ExitStatus::from_raw(1 << 8);
+        let cases = [
+            (Ok(()), success),
+            (Err(Error::from(ErrorKind::UnexpectedEof)), success),
+            (Err(Error::from(ErrorKind::BrokenPipe)), success),
+            (Err(Error::other("rejected")), success),
+            (Err(Error::from(ErrorKind::UnexpectedEof)), failure),
+            (Ok(()), failure),
+        ];
+
+        let outcomes: Vec<Result<(), ErrorKind>> = cases
+            .into_iter()
+            .map(|(request, status)| settle_shutdown(request, status).map_err(|error| error.kind()))
+            .collect();
+
+        assert_eq!(
+            outcomes,
+            vec![
+                Ok(()),
+                Ok(()),
+                Ok(()),
+                Err(ErrorKind::Other),
+                Err(ErrorKind::UnexpectedEof),
+                Err(ErrorKind::Other),
+            ]
+        );
     }
 
     fn targets() -> SharedTargets {
