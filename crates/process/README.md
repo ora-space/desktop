@@ -34,6 +34,9 @@ whole Unix process group is gone; Windows descendants remain contained by the re
 Job Object. On Windows the aggregate Job is assigned before each tree's private Job so it remains
 the common outer containment boundary for every independently managed process. Explicit Desktop
 shutdown and unexpected parent EOF both forcefully terminate every remaining registered tree.
+The reaper refuses to register or unregister pid 0, pid 1 or, on Unix, a value outside `pid_t`:
+signalling such a "group" would reach the reaper's own group or every process it may signal. A
+refused request is answered as failed and ends the session like any other failed request.
 
 On Unix the reaper can be stopped safely with SIGTERM, which a cleanup owner or service manager
 sends by PID because the reaper sits outside Ora's process group. SIGTERM, SIGINT and SIGHUP all

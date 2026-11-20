@@ -313,8 +313,10 @@ fn serve_requests(
             "received request from parent",
         );
         let result = match operation {
-            REGISTER => targets.serve(|targets| targets.register(process_id)),
-            UNREGISTER => targets.serve(|targets| targets.unregister(process_id)),
+            REGISTER => check_process_id(process_id)
+                .and_then(|()| targets.serve(|targets| targets.register(process_id))),
+            UNREGISTER => check_process_id(process_id)
+                .and_then(|()| targets.serve(|targets| targets.unregister(process_id))),
             SHUTDOWN => targets.finish().into_result(),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -342,6 +344,23 @@ fn serve_requests(
             ora_trace!("process reaper completed shutdown request");
             return Ok(());
         }
+    }
+}
+
+/// Rejects an identifier that cannot be a spawned child leading its own process tree.
+///
+/// Unix cleanup signals `-pid` to reach the whole group, so pid 0 would name the reaper's own
+/// group and pid 1 every process the reaper may signal. Values beyond `i32` are no `pid_t` and
+/// would wrap into such targets. A spawned child is never pid 0 or 1 on any platform.
+fn check_process_id(process_id: u32) -> io::Result<()> {
+    let in_range = cfg!(not(unix)) || i32::try_from(process_id).is_ok();
+    if process_id > 1 && in_range {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("process reaper refuses pid {process_id}: it cannot be a spawned child's tree"),
+        ))
     }
 }
 
@@ -397,8 +416,8 @@ fn write_response(
 #[cfg(test)]
 mod tests {
     use super::{
-        ACKNOWLEDGED, READY_FRAME, REGISTER, SHUTDOWN, SharedTargets, UNREGISTER, run_reaper_io,
-        settle_shutdown,
+        ACKNOWLEDGED, FAILED, READY_FRAME, REGISTER, SHUTDOWN, SharedTargets, UNREGISTER,
+        check_process_id, run_reaper_io, settle_shutdown,
     };
     use crate::tree::ReaperTargets;
     use pretty_assertions::assert_eq;
@@ -406,7 +425,8 @@ mod tests {
     /// Verifies duplicate, unregistered, and already-gone targets make cleanup idempotent.
     #[test]
     fn protocol_is_idempotent_for_gone_processes() {
-        let missing_process_id = u32::MAX;
+        // The largest `pid_t` exceeds every platform's pid limit, so no process can hold it.
+        let missing_process_id = i32::MAX.cast_unsigned();
         let requests = [
             request(REGISTER, missing_process_id),
             request(REGISTER, missing_process_id),
@@ -430,6 +450,69 @@ mod tests {
         ]
         .concat();
         assert_eq!(output, expected);
+    }
+
+    /// Verifies the identifiers whose process-group signal would reach the reaper's own group,
+    /// every process it may signal, or a wrapped `pid_t` are refused, and real ones are not.
+    #[test]
+    fn refuses_identifiers_that_cannot_be_a_child_tree() {
+        let unix_only_invalid = [i32::MAX.cast_unsigned() + 1, u32::MAX];
+        let checked: Vec<(u32, bool)> = [0, 1, 2, i32::MAX.cast_unsigned()]
+            .into_iter()
+            .chain(unix_only_invalid)
+            .map(|process_id| (process_id, check_process_id(process_id).is_ok()))
+            .collect();
+
+        let unix = cfg!(unix);
+        assert_eq!(
+            checked,
+            vec![
+                (0, false),
+                (1, false),
+                (2, true),
+                (i32::MAX.cast_unsigned(), true),
+                (unix_only_invalid[0], !unix),
+                (unix_only_invalid[1], !unix),
+            ]
+        );
+    }
+
+    /// Verifies a refused registration is answered as failed and ends the session with a clear
+    /// error. Only out-of-range identifiers are sent: if the check regressed, pid 0 or 1 would be
+    /// registered and the final cleanup would SIGKILL the test's own group or every user process.
+    #[cfg(unix)]
+    #[test]
+    fn protocol_rejects_registering_an_invalid_identifier() {
+        for process_id in [i32::MAX.cast_unsigned() + 1, u32::MAX] {
+            let mut output = Vec::new();
+            let error = run_reaper_io(
+                &targets(),
+                request(REGISTER, process_id).as_slice(),
+                &mut output,
+            )
+            .err()
+            .map(|error| (error.kind(), error.to_string()));
+
+            let expected_output = [
+                READY_FRAME.to_vec(),
+                vec![FAILED, REGISTER],
+                process_id.to_le_bytes().to_vec(),
+            ]
+            .concat();
+            assert_eq!(
+                (output, error),
+                (
+                    expected_output,
+                    Some((
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "process reaper refuses pid {process_id}: it cannot be a spawned \
+                             child's tree"
+                        )
+                    ))
+                )
+            );
+        }
     }
 
     /// Verifies a partial registration cannot be mistaken for a valid process identifier.
