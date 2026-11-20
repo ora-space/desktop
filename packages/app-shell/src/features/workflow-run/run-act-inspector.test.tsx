@@ -425,13 +425,13 @@ describe("RunActInspector frozen inactivity setting", () => {
       locale: "zh-CN",
       config: { promptInactivity: "wait" },
       label: "长时间未收到进展时",
-      text: "持续等待，直到完成或手动停止",
+      text: "持续等待，无进展 30 分钟后失败",
     },
     {
       locale: "en-US",
-      config: { promptInactivity: "wait", interactive: true },
+      config: { promptInactivity: { waitMinutes: 75 }, interactive: true },
       label: "When no progress is reported",
-      text: "Keep waiting until completion or manual stop",
+      text: "Keep waiting, fail after 75 minutes without progress",
     },
   ] as const)(
     "shows the snapshot policy $config in $locale",
