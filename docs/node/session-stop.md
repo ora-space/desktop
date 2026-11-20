@@ -35,8 +35,9 @@ without `CAP_SYS_PTRACE`, leaves the evidence unknown.
 | not set (registered before marks) | not read | `lock_and_processes`, as before |
 
 Neither same-boot proof counts for `after-host-reboot` reconciliation or lifts `legacy_unknown`.
-Schema 15 adds the proof value and the flag in one table rebuild that leaves every existing row
-unflagged; older programs refuse a schema 15 database.
+Schema 16, which follows schema 15's turn-cancel settlements, adds the proof value and the flag in
+one table rebuild that leaves every existing row unflagged; older programs refuse a schema 16
+database.
 
 **Cost and bounds.** Scans and kills never run on the Node's runtime thread. They run on one
 blocking worker per Node, so the stop observations of all its sessions are serialized: a session
