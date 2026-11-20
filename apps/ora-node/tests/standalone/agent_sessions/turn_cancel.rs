@@ -13,7 +13,7 @@ mod stop;
 mod window;
 
 /// Names the turn the Controller actually stopped, independently of any later queued turn.
-fn cancel(command: &str, turn: &str) -> ControllerToNodeMessage {
+pub(super) fn cancel(command: &str, turn: &str) -> ControllerToNodeMessage {
     ControllerToNodeMessage::CancelTurn(CancelTurnMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         operation_id: start("").operation_id,
@@ -29,7 +29,7 @@ fn cancel(command: &str, turn: &str) -> ControllerToNodeMessage {
 /// Sends `hello`, optionally declaring `turn_cancel`, until the Node answers it or refuses it
 /// for the takeover boundary. A previous connection's slot is released asynchronously, so a
 /// connection turned away as busy is retried.
-async fn greet(
+pub(super) async fn greet(
     fixture: &Fixture,
     turn_cancel: bool,
 ) -> (tokio::net::UnixStream, Option<NodeToControllerMessage>) {

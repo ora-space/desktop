@@ -1,6 +1,7 @@
 //! A tool job that left every Node process group, and closed the attempt lock as Bun's children
 //! do, dies before the Node reports a stop, on every path that ends a session; the ledger never
 //! shows the attempt confirmed while the job runs, and the job never writes the checkout.
+use super::turn_cancel::{cancel, greet};
 use super::*;
 use crate::support::until;
 use ora_utils::process::{LinuxPidFd, linux_process};
@@ -236,6 +237,79 @@ fn ending_a_running_turn_kills_its_detached_tool_job() {
             (ended, watcher.join().unwrap()),
             (
                 (AgentSessionEndReason::UserEnded, false),
+                Ok("lock_processes_and_marks".to_owned())
+            )
+        );
+        job.assert_never_wrote();
+    });
+}
+
+/// A cancel the echo Agent cannot settle at a verified turn boundary ends a session that chose to
+/// be kept, as `turn_boundary_unverified`; that end takes the same stop path, so the turn's job
+/// dies before the end is reported and before the attempt is confirmed.
+#[test]
+fn a_cancel_that_ends_the_session_kills_its_detached_tool_job() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        prepare(&fixture, &config, &server);
+        let checkout = PathBuf::from(checkout(&fixture).path.as_str());
+        let mut child = launch(&fixture, &config);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut stream = runtime.block_on(async {
+            let (mut stream, answer) = greet(&fixture, /*turn_cancel*/ true).await;
+            assert!(matches!(
+                answer,
+                Some(NodeToControllerMessage::HelloAccepted(_))
+            ));
+            let mut input = start(&format!("[background {DELAY_MS}] [hold]"));
+            input.payload.spec.keep_session_on_cancel = true;
+            send(
+                &mut stream,
+                ControllerToNodeMessage::StartAgentSession(input),
+            )
+            .await;
+            while !matches!(
+                receive(&mut stream).await,
+                NodeToControllerMessage::ThreadEvent(_)
+            ) {}
+            stream
+        });
+        let (job, sampled) = Job::pin(&checkout, DELAY_MS);
+        let watcher = watch(&fixture, sampled);
+        let (settled, ended) = runtime.block_on(async {
+            send(&mut stream, cancel("cancel-job", "first")).await;
+            let mut settled = None;
+            loop {
+                match receive(&mut stream).await {
+                    NodeToControllerMessage::TurnCancelSettled(message) => {
+                        settled = Some(message.payload.outcome);
+                    }
+                    NodeToControllerMessage::AgentSessionEnded(event) => {
+                        let AgentSessionResult::AgentSessionEnded(ended) = event.payload;
+                        return (settled, (ended.reason, ended.detail, job.alive()));
+                    }
+                    _ => {}
+                }
+            }
+        });
+        // The Node finishes serving a connected Controller before it exits.
+        drop(stream);
+        child.terminate();
+        assert_eq!(
+            (settled, ended, watcher.join().unwrap()),
+            (
+                Some(TurnCancelOutcome::SessionEnding),
+                (
+                    AgentSessionEndReason::AgentFailed,
+                    Some("turn_boundary_unverified".to_owned()),
+                    false
+                ),
                 Ok("lock_processes_and_marks".to_owned())
             )
         );
