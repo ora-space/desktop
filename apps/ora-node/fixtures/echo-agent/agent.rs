@@ -168,6 +168,9 @@ impl EchoAgent {
             }
             let request: InitializeRequest = serde_json::from_value(params)?;
             record_acp_method("initialize");
+            while std::path::Path::new("hold-initialize").exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
             let flags: Value = std::fs::read("mcp-capabilities.json")
                 .ok()
                 .and_then(|bytes| serde_json::from_slice(&bytes).ok())
