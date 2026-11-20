@@ -507,3 +507,97 @@ fn stop_marks_upgrade_keeps_rows_unflagged_and_admits_the_mark_scan_proof() {
         )
     );
 }
+
+/// Files written by desktop#793 (v15, with cancel settlements) and by the release before it
+/// (v14, without them) both open in one step at the stop-marks schema. Their attempts come out
+/// unflagged, so a stop still pending is later confirmed with the legacy proof, and v15's cancel
+/// settlements survive the stop table rebuild.
+#[test]
+fn v14_and_v15_files_upgrade_in_one_step_with_attempts_unflagged() {
+    for from in [14, 15] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db");
+        let (db, journal, input) = running(&path);
+        let pending = identity(&input);
+        journal
+            .record_session_stop(&pending, SessionStopScope::Recorded, 1)
+            .unwrap();
+        journal
+            .change_session_stop(
+                &pending.attempt,
+                SessionStopChange::Request {
+                    at_ms: 10,
+                    bound_at_ms: 20,
+                },
+            )
+            .unwrap();
+        drop(journal);
+        drop(db);
+        let old = Connection::open(&path).unwrap();
+        remove_session_stop_marks_schema(&old);
+        if from == 14 {
+            old.execute_batch("DROP TABLE session_turn_cancels; PRAGMA user_version=14;")
+                .unwrap();
+        } else {
+            old.execute(
+                "INSERT INTO session_turn_cancels VALUES(?1,'cancel-1','initial','session_ending',3)",
+                [input.execution_id.as_str()],
+            )
+            .unwrap();
+        }
+        let version = |connection: &Connection| -> i64 {
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap()
+        };
+        let before = version(&old);
+        drop(old);
+        let db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node"))).unwrap();
+        let journal = db.session_journal().unwrap();
+        let migrated: Vec<_> = journal
+            .session_stop_records(None)
+            .unwrap()
+            .into_iter()
+            .map(|record| (record.identity.attempt, record.state, record.scope))
+            .collect();
+        journal
+            .change_session_stop(
+                &pending.attempt,
+                SessionStopChange::Confirm {
+                    at_ms: 12,
+                    proof: SessionStopProof::LockAndProcesses,
+                },
+            )
+            .unwrap();
+        let confirmed: Vec<_> = journal
+            .session_stop_records(None)
+            .unwrap()
+            .into_iter()
+            .map(|record| (record.proof, record.scope))
+            .collect();
+        let check = Connection::open(&path).unwrap();
+        let cancels: i64 = check
+            .query_row("SELECT count(*) FROM session_turn_cancels", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            (before, version(&check), migrated, confirmed, cancels),
+            (
+                from,
+                crate::schema::LATEST_VERSION,
+                vec![(
+                    pending.attempt.clone(),
+                    SessionStopState::Stopping,
+                    SessionStopScope::Absent
+                )],
+                vec![(
+                    Some(SessionStopProof::LockAndProcesses),
+                    SessionStopScope::Absent
+                )],
+                i64::from(from == 15)
+            ),
+            "upgrading from v{from}"
+        );
+    }
+}
