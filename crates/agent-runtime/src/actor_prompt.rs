@@ -264,7 +264,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             .unwrap_or(&PROMPT_INACTIVITY_WINDOWS);
         #[cfg(not(feature = "test-support"))]
         let windows = &PROMPT_INACTIVITY_WINDOWS;
-        let mut liveness = PromptLiveness::new(windows);
+        let mut liveness = PromptLiveness::for_policy(windows, inactivity_policy);
         let mut tool_timings = ToolTimings::default();
         loop {
             let input = tokio::select! {
@@ -273,9 +273,26 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     &mut channel.controls,
                     &mut self.commands,
                 ) => Some(input),
-                () = liveness.wait(inactivity_policy) => None,
+                () = liveness.wait() => None,
             };
             let Some(input) = input else {
+                if let Some(limit) = inactivity_policy.wait_limit() {
+                    ora_warn!(session_id = %self.session.id, limit_seconds = limit.as_secs(), "workflow prompt exceeded its silence limit");
+                    end_report.record(PromptEndCause::InactivityTimeout);
+                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                    followers.finish(StopReason::Cancelled);
+                    let _ = events.try_send(Err(agent_timed_out(format!(
+                        "workflow agent reported no progress for {} minutes",
+                        limit.as_secs() / 60
+                    ))));
+                    // End the turn before provider I/O. Cleanup cannot hold its owner or followers
+                    // hostage if the provider also ignores cancellation.
+                    drop(events);
+                    drop(pending);
+                    let _ = timeout(CANCELLATION_GRACE, self.cancel(&client, &permissions)).await;
+                    self.isolate_channel(channel).await;
+                    return;
+                }
                 match retry_stalled_prompt(
                     self,
                     &mut channel,
@@ -364,7 +381,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         self.isolate_channel(channel).await;
                         return;
                     };
-                    let auto_response = respond_permission(
+                    let reply = respond_permission(
                         &client,
                         RespondToPermissionRequest {
                             session_id: self.session.id.to_string(),
@@ -372,8 +389,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             option_id,
                         },
                         &mut permissions,
-                    )
-                    .await;
+                    );
+                    let auto_response = if let Some(deadline) = liveness.wait_deadline() {
+                        match tokio::time::timeout_at(deadline, reply).await {
+                            Ok(response) => response,
+                            // The deadline is still expired; let the turn's timeout branch finish it.
+                            Err(_) => continue,
+                        }
+                    } else {
+                        reply.await
+                    };
                     if let Err(error) = auto_response {
                         ora_warn!(session_id = %self.session.id, error = %error, "failed to auto-allow permission request");
                         end_report.record(PromptEndCause::Unknown);

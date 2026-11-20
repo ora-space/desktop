@@ -391,7 +391,10 @@ fn title_polling_admission_preserves_a_waiting_prompt_policy() {
         assert_eq!(fixture.next_frame().await["method"], "session/list");
         let mut waiting = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+            )
             .await
             .unwrap();
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
@@ -532,7 +535,10 @@ fn waiting_prompt_survives_silence_while_default_session_retries() {
         fixture.add_session("default");
         let mut waiting = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+            )
             .await
             .unwrap();
         assert_eq!(fixture.next_frame().await["params"]["sessionId"], "waiting");
@@ -831,7 +837,10 @@ fn waiting_prompt_remains_cancellable_and_reusable() {
         fixture.add_session("waiting");
         let mut stream = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+            )
             .await
             .unwrap();
         fixture.next_frame().await;
@@ -864,7 +873,10 @@ fn dropping_a_waiting_prompt_cancels_its_owner() {
         fixture.add_session("waiting");
         let stream = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+            )
             .await
             .unwrap();
         fixture.next_frame().await;
@@ -883,6 +895,64 @@ fn dropping_a_waiting_prompt_cancels_its_owner() {
     });
 }
 
+/// Expiry settles the owner even if the CLI also ignores cancellation.
+#[test]
+fn waiting_prompt_times_out_without_a_cancellation_acknowledgement() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        let mut follower = fixture
+            .manager
+            .load_session(ora_contracts::LoadSessionRequest {
+                session_id: "waiting".into(),
+            })
+            .await
+            .unwrap();
+        let (configured, done) = oneshot::channel();
+        fixture
+            .agent
+            .send(AgentInput::CancelReply {
+                session_id: "waiting".into(),
+                reply: CancelReply::Ignore,
+                configured,
+            })
+            .unwrap();
+        done.await.unwrap();
+        tokio::time::advance(Duration::from_secs(1799)).await;
+        assert!(stream.try_recv().is_none());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let err = stream.recv().await.unwrap().unwrap_err();
+        assert_eq!(
+            err.public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert!(stream.recv().await.is_none());
+        let mut ended = 0;
+        while let Some(event) = follower.recv().await {
+            if matches!(
+                event.unwrap(),
+                ora_contracts::LoadSessionEvent::TurnEnded {
+                    stop_reason: StopReason::Cancelled,
+                    ..
+                }
+            ) {
+                ended += 1;
+            }
+        }
+        assert_eq!(ended, 1);
+        assert_eq!(stream.end_cause(), Some(PromptEndCause::InactivityTimeout));
+        assert!(fixture.frames.try_recv().is_err());
+        fixture.shutdown().await;
+    });
+}
+
 /// A real provider EOF terminates an opted-out prompt through the generation's failure control.
 #[test]
 fn provider_disconnect_ends_a_waiting_prompt() {
@@ -891,7 +961,10 @@ fn provider_disconnect_ends_a_waiting_prompt() {
         fixture.add_session("waiting");
         let mut stream = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+            )
             .await
             .unwrap();
         fixture.next_frame().await;
@@ -915,7 +988,10 @@ fn releasing_the_host_and_stream_ends_a_silent_waiting_actor() {
         fixture.add_session("waiting");
         let stream = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+            )
             .await
             .unwrap();
         fixture.next_frame().await;

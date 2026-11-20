@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createMockWorkflow, parseDemoWorkflow } from "../src";
 
 describe("Agent prompt inactivity configuration", () => {
-  it.each([undefined, null, "timeout", "wait"])(
+  it.each([undefined, null, "timeout", "wait", { waitMinutes: 75 }])(
     "imports and preserves the accepted policy %s",
     (promptInactivity) => {
       const workflow = createMockWorkflow("en-US");
@@ -24,7 +24,17 @@ describe("Agent prompt inactivity configuration", () => {
     },
   );
 
-  it.each(["forever", "", true, 0, {}, []])(
+  it.each([
+    "forever",
+    "",
+    true,
+    0,
+    {},
+    [],
+    { waitMinutes: 0 },
+    { waitMinutes: 65536 },
+    { waitMinutes: 1.5 },
+  ])(
     "rejects the invalid policy %j at the workflow import boundary",
     (promptInactivity) => {
       const workflow = createMockWorkflow("en-US");

@@ -88,7 +88,7 @@ setup 按无活动计时，而不是总时长。交付 MCP server 的请求有 1
 
 ### prompt 无活动与重试
 
-每个 prompt 有一个 `PromptInactivityPolicy`。`Timeout`（普通聊天和默认值）应用无活动窗口；`Wait` 从不仅因为沉默就取消、重发或让 prompt 失败。工作流的 Agent 节点可以选择 `Wait`，见[工作流运行](../workflows/workflow-runs.zh.md#prompt-无活动)。
+每个 prompt 有一个 `PromptInactivityPolicy`。`Timeout`（普通聊天和默认值）应用无活动窗口；`Wait` 每轮只发送一次，达到工作流静默上限（默认 30 分钟）时本轮失败。工作流的 Agent 节点可以选择 `Wait`，见[工作流运行](../workflows/workflow-runs.zh.md#prompt-无活动)。
 
 Agent 消息、思考、计划和工具生命周期更新会重置窗口；会话外围的通知（`available_commands_update`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update`）不会。运行中的工具会暂停窗口直到最后一个并行工具结束，等待权限也会暂停到得到答复，所以一个长工具可以运行数小时。prompt 没有绝对时长上限。
 

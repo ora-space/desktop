@@ -188,6 +188,23 @@ describe("Agent prompt inactivity settings", () => {
     await waitFor(() => expect(savedConfig().promptInactivity).toBe("wait"));
   });
 
+  it("saves a custom silence limit and restores invalid input on blur", async () => {
+    await appI18n.changeLanguage("en-US");
+    const user = userEvent.setup();
+    render(<Harness config={{ promptInactivity: "wait" }} />);
+    const input = () =>
+      screen.getByRole("spinbutton", { name: "Silence limit (minutes)" });
+    expect(input()).toHaveValue(30);
+    await user.clear(input());
+    await user.type(input(), "75");
+    await user.tab();
+    expect(savedConfig().promptInactivity).toEqual({ waitMinutes: 75 });
+    await user.clear(input());
+    await user.type(input(), "0");
+    await user.tab();
+    expect(input()).toHaveValue(75);
+  });
+
   it("renders the Chinese choices and explains manual stopping separately from failure retries", async () => {
     await appI18n.changeLanguage("zh-CN");
     const user = userEvent.setup();
@@ -200,7 +217,7 @@ describe("Agent prompt inactivity settings", () => {
     );
     expect(
       document.getElementById("workflow-agent-prompt-inactivity-hint"),
-    ).toHaveTextContent("可手动停止。实际执行错误仍按失败自动重试设置处理。");
+    ).toHaveTextContent("到达无进展上限后本轮失败");
     await user.click(select);
     await user.click(await screen.findByRole("option", { name: "持续等待" }));
     await waitFor(() => expect(savedConfig().promptInactivity).toBe("wait"));
