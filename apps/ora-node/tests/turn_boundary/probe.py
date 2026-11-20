@@ -290,6 +290,7 @@ async def probe(args):
                 },
             )
             summary["next_prompt"] = continued
+            summary["subagent_started"] = model.task_issued
             target_answered = (
                 "error" in answer
                 if args.scenario == "error"
@@ -297,7 +298,9 @@ async def probe(args):
             )
             summary["conformant_in_observation"] = (
                 target_answered
+                and (args.scenario != "subagent" or model.task_issued)
                 and not late
+                and not written_at_response
                 and not summary["background_write_after_response"]
                 and continued.get("result", {}).get("stopReason") == "end_turn"
             )
