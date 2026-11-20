@@ -1642,7 +1642,7 @@ mod tests {
             &[
                 (
                     "orax.toml",
-                    bundled_agent_manifest("aarch64-apple-darwin").as_bytes(),
+                    bundled_agent_manifest("x86_64-unknown-linux-gnu").as_bytes(),
                 ),
                 ("main.js", b"export {};".as_slice()),
                 ("assets/bin/opencode", b"\x7fELFdummy".as_slice()),
@@ -1696,7 +1696,7 @@ mod tests {
             &[
                 (
                     "orax.toml",
-                    b"resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n\n[artifact]\ntarget = \"aarch64-apple-darwin\"\n".as_slice(),
+                    b"resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n\n[artifact]\ntarget = \"x86_64-unknown-linux-gnu\"\n".as_slice(),
                 ),
                 (
                     "assets/config.json",
@@ -1768,7 +1768,8 @@ mod tests {
             "resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK hook\"\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"https://example.com/rtk.orax\"\nsha256 = \"{digest}\"\n"
         ))
         .unwrap();
-        let host_target = ora_plugin_manifest::HookTarget::parse("aarch64-apple-darwin").unwrap();
+        let host_target =
+            ora_plugin_manifest::HookTarget::parse("x86_64-unknown-linux-gnu").unwrap();
         let error = super::select_release(&manifest, HostTarget::Triple(&host_target)).unwrap_err();
         assert!(matches!(error, InstallError::NoArtifactForTarget { .. }));
     }
