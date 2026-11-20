@@ -2,7 +2,8 @@ use ora_application::{
     AgentDefinitionRepository, AgentSkillDelivery, AgentSkillDeliveryProvider,
     FilesystemSkillStorage, MaterializedSkillBinding, NodeType, RepositoryError,
     SkillDiscoveryRoots, SkillMaterializationReceipt, SkillRepository, StartPrerequisitesError,
-    WorkflowGraph, WorkflowRunWorkspaceInitializer, has_usable_package, skill_package_is_usable,
+    WorkflowGraph, WorkflowGraphNode, WorkflowRunWorkspaceInitializer, has_usable_package,
+    skill_package_is_usable,
 };
 use ora_db::{
     RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository, TimestampSource,
@@ -19,11 +20,13 @@ use std::sync::Arc;
 ///
 /// Keeping the default behind [`AgentSkillDeliveryProvider`] means workflow validation and prompt
 /// rendering consume the same placements that the Effect subsystem materializes.
+#[cfg(test)]
 #[derive(Clone)]
 pub struct SharedAgentSkillDeliveryProvider {
     discovery_roots: SkillDiscoveryRoots,
 }
 
+#[cfg(test)]
 impl SharedAgentSkillDeliveryProvider {
     /// Builds the current shared capability after validating its worktree-relative root.
     fn new() -> Result<Self, ora_application::AgentSkillDeliveryError> {
@@ -38,6 +41,7 @@ impl SharedAgentSkillDeliveryProvider {
     }
 }
 
+#[cfg(test)]
 impl AgentSkillDeliveryProvider for SharedAgentSkillDeliveryProvider {
     fn skill_delivery(
         &self,
@@ -127,6 +131,28 @@ fn skill_roots_from_declaration(
     Ok(Some(SkillDiscoveryRoots::new(first, roots.collect())))
 }
 
+/// Builds the deploy initializer that resolves skills through each Agent plugin's Effect
+/// declaration.
+///
+/// Run creation and every later start/restart must resolve skill bindings through the same
+/// implementation, so a binding the catalog accepted at creation cannot silently resolve
+/// differently when the run is scheduled again.
+pub(super) fn plugin_initializer(
+    skills_root: &Path,
+    pool: &RepositoryPool,
+    plugin_api: &Arc<crate::plugin::PluginApi>,
+) -> Result<
+    SkillRoleWorkspaceInitializer<PluginAwareAgentSkillDeliveryProvider>,
+    ora_application::AgentSkillDeliveryError,
+> {
+    let delivery_provider = PluginAwareAgentSkillDeliveryProvider::new(plugin_api.clone())?;
+    Ok(SkillRoleWorkspaceInitializer::with_delivery_provider(
+        skills_root.to_path_buf(),
+        pool.clone(),
+        delivery_provider,
+    ))
+}
+
 /// Validates a run workspace's roles and skill bindings at deploy time.
 ///
 /// Roles and skills are deploy hard-dependencies: every agent's role must resolve in the agents
@@ -135,12 +161,13 @@ fn skill_roots_from_declaration(
 /// Effect subsystem owns physical package materialization; this initializer only freezes the
 /// invocation names and Effect-owned discovery paths that execution uses to build the prompt.
 #[derive(Clone)]
-pub struct SkillRoleWorkspaceInitializer<DeliveryProvider = SharedAgentSkillDeliveryProvider> {
+pub struct SkillRoleWorkspaceInitializer<DeliveryProvider> {
     skills_root: PathBuf,
     pool: RepositoryPool,
     delivery_provider: DeliveryProvider,
 }
 
+#[cfg(test)]
 impl SkillRoleWorkspaceInitializer<SharedAgentSkillDeliveryProvider> {
     /// Builds an initializer from the skill catalog root and the shared repository pool.
     pub fn new(
@@ -179,6 +206,16 @@ where
         &self,
         graph: &WorkflowGraph,
         _workspace_root: &Path,
+    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
+        self.resolve_graph(graph)
+    }
+}
+
+impl<DeliveryProvider: AgentSkillDeliveryProvider> SkillRoleWorkspaceInitializer<DeliveryProvider> {
+    /// Resolves the graph against the catalogs without reading or mutating a worktree.
+    pub(super) fn resolve_graph(
+        &self,
+        graph: &WorkflowGraph,
     ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
         let roles = collect_roles(graph);
 
@@ -284,8 +321,15 @@ where
             if !seen_skill_ids.insert(skill.skill_id.clone()) {
                 continue;
             }
-            let catalog_name =
-                resolve_skill_catalog_name(storage, skill_repository, &skill.skill_id)?;
+            let Some(catalog_name) =
+                resolve_skill_catalog_name(storage, skill_repository, &skill.skill_id)?
+            else {
+                return Err(StartPrerequisitesError::WorkflowSkillNotFound {
+                    node_id: node.id.clone(),
+                    node_title: node_display_name(node),
+                    skill_id: skill.skill_id.clone(),
+                });
+            };
             let invocation_name = normalize_skill_name(&catalog_name);
             // Distinct catalog names can collapse onto one prompt invocation within the same
             // discovery root even when their canonical on-disk directories stay distinct. Keep
@@ -342,7 +386,7 @@ where
     Ok(receipt)
 }
 
-/// Resolves one enabled skill id to its catalog name.
+/// Resolves one enabled skill id to its catalog name, or `None` when nothing usable is left.
 ///
 /// Graphs store the catalog name in `skillId`, so the candidate name first resolves through the
 /// local formal package directory. When that directory is absent — the shape of every
@@ -356,10 +400,10 @@ fn resolve_skill_catalog_name(
     storage: &FilesystemSkillStorage,
     skill_repository: &SqliteSkillRepository<impl TimestampSource>,
     skill_id: &str,
-) -> Result<String, StartPrerequisitesError> {
+) -> Result<Option<String>, StartPrerequisitesError> {
     let candidate = skill_id.rsplit(':').next().unwrap_or(skill_id);
     if skill_package_usable(storage, candidate)? {
-        return Ok(candidate.to_string());
+        return Ok(Some(candidate.to_string()));
     }
     let skills = skill_repository
         .list_skills()
@@ -381,12 +425,23 @@ fn resolve_skill_catalog_name(
             }
         })?;
         if usable {
-            return Ok(skill.name.clone());
+            return Ok(Some(skill.name.clone()));
         }
     }
-    Err(StartPrerequisitesError::WorkflowSkillNotFound {
-        skill_id: skill_id.to_string(),
-    })
+    Ok(None)
+}
+
+/// Returns the label a dependency failure should show for one node.
+///
+/// The title is the label the canvas and the run view display, so an operator can find the node;
+/// graphs whose node carries no title fall back to its identifier, which is never blank.
+pub(super) fn node_display_name(node: &WorkflowGraphNode) -> String {
+    let title = node.title.trim();
+    if title.is_empty() {
+        node.id.clone()
+    } else {
+        title.to_string()
+    }
 }
 
 /// Returns whether the local catalog still has a formal package that parses as a skill manifest.
@@ -410,12 +465,11 @@ fn resolve_executable_skill_name(
     storage: &FilesystemSkillStorage,
     skill_repository: &SqliteSkillRepository<impl TimestampSource>,
     skill_id: &str,
-) -> Result<String, StartPrerequisitesError> {
-    Ok(normalize_skill_name(&resolve_skill_catalog_name(
-        storage,
-        skill_repository,
-        skill_id,
-    )?))
+) -> Result<Option<String>, StartPrerequisitesError> {
+    Ok(
+        resolve_skill_catalog_name(storage, skill_repository, skill_id)?
+            .map(|catalog_name| normalize_skill_name(&catalog_name)),
+    )
 }
 
 /// Normalizes a catalog name for the prompt's Agent-facing `/name` invocation: lowercase, `_`
@@ -696,7 +750,9 @@ mod tests {
             crate::test_clock::TestClock,
         );
         assert_eq!(
-            resolve_executable_skill_name(&storage, &repository, "cdase:sfmea_review").unwrap(),
+            resolve_executable_skill_name(&storage, &repository, "cdase:sfmea_review")
+                .unwrap()
+                .unwrap(),
             "sfmea-review"
         );
     }
@@ -716,7 +772,7 @@ mod tests {
 
         assert_eq!(
             resolve_executable_skill_name(&storage, &repository, "review").unwrap(),
-            "review"
+            Some("review".to_string())
         );
         assert_eq!(
             resolve_executable_skill_name(
@@ -725,7 +781,7 @@ mod tests {
                 "plugin:official/review-pack:review",
             )
             .unwrap(),
-            "review"
+            Some("review".to_string())
         );
     }
 
@@ -741,11 +797,10 @@ mod tests {
         let storage = FilesystemSkillStorage::new(temp.path().join("skills"));
         let repository = SqliteSkillRepository::with_clock(pool, crate::test_clock::TestClock);
 
-        assert!(matches!(
-            resolve_executable_skill_name(&storage, &repository, "review"),
-            Err(StartPrerequisitesError::WorkflowSkillNotFound { skill_id })
-                if skill_id == "review"
-        ));
+        assert_eq!(
+            resolve_executable_skill_name(&storage, &repository, "review").unwrap(),
+            None
+        );
     }
 
     /// A workflow node bound to a plugin-imported skill deploys: the receipt freezes the plugin

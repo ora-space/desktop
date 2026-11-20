@@ -23,6 +23,7 @@ mod mixed_scope_tests;
 mod operations;
 #[cfg(feature = "test-support")]
 mod owner_stream_drop;
+mod precheck;
 mod prerequisites;
 mod prompt;
 mod recovery;
