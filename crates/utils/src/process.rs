@@ -14,7 +14,8 @@ pub use environment_mark::{
 mod linux_process;
 #[cfg(target_os = "linux")]
 pub use linux_process::{
-    LinuxPidFd, LinuxProcessStat, ProcessSignal, linux_process, linux_process_snapshot,
+    LinuxPidFd, LinuxProcessStat, ProcessSignal, linux_has_effective_capability, linux_process,
+    linux_process_snapshot,
 };
 
 /// Configures a background child so it does not surface a console window on Windows.

@@ -226,3 +226,15 @@ fn read_stat(directory: &File) -> io::Result<StatFields> {
         start_ticks: fields[19].parse().map_err(|_| invalid())?,
     })
 }
+
+/// Whether this process holds `capability` (a Linux capability number such as 19,
+/// `CAP_SYS_PTRACE`) in its effective set.
+pub fn linux_has_effective_capability(capability: u32) -> io::Result<bool> {
+    let status = std::fs::read_to_string("/proc/self/status")?;
+    let mask = status
+        .lines()
+        .find_map(|line| line.strip_prefix("CapEff:"))
+        .and_then(|mask| u64::from_str_radix(mask.trim(), 16).ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid CapEff line"))?;
+    Ok(capability < 64 && mask & (1 << capability) != 0)
+}
