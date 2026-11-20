@@ -17,7 +17,12 @@ struct State {
 
 impl Stops {
     /// Registration is idempotent but never rebinds an attempt.
-    pub fn record(&self, identity: &SessionStopIdentity, at_ms: i64) -> io::Result<()> {
+    pub fn record(
+        &self,
+        identity: &SessionStopIdentity,
+        scope: ora_node_db::SessionStopScope,
+        at_ms: i64,
+    ) -> io::Result<()> {
         let mut state = self
             .0
             .lock()
@@ -27,7 +32,7 @@ impl Stops {
             .iter()
             .find(|r| r.identity.attempt == identity.attempt)
         {
-            return if record.identity == *identity {
+            return if record.identity == *identity && record.scope == scope {
                 Ok(())
             } else {
                 Err(io::Error::other("attempt rebound"))
@@ -42,6 +47,7 @@ impl Stops {
             confirmed_at_ms: None,
             resources_released: false,
             proof: None,
+            scope,
         });
         Ok(())
     }

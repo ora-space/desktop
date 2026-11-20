@@ -100,7 +100,7 @@ fn run(entry: Entry) {
                 }
                 fs::write(&lock,marker).unwrap();
                 until(|| count() == 2);
-                let confirmed: bool = db.query_row("SELECT state='confirmed' AND evidence='lock_and_processes' FROM session_stop_attempts WHERE attempt=?1",[&attempt],|r| r.get(0)).unwrap();
+                let confirmed: bool = db.query_row("SELECT state='confirmed' AND evidence='lock_processes_and_marks' FROM session_stop_attempts WHERE attempt=?1",[&attempt],|r| r.get(0)).unwrap();
                 assert!(confirmed);
             }
             let expected = if entry == Entry::Disconnect { "session/load" } else { "session/new" };

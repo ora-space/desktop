@@ -42,7 +42,9 @@ fn prior_revision_is_fenced_by_residual_stop_even_with_a_legacy_terminal_row() {
     let path = directory.path().join("db");
     let (mut db, journal, input) = running(&path);
     let original = identity(&input);
-    journal.record_session_stop(&original, 10).unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 10)
+        .unwrap();
     journal
         .change_session_stop(
             &original.attempt,
@@ -96,11 +98,19 @@ fn restart_preserves_clock_identity_terminal_intent_and_resource_fence() {
     let path = directory.path().join("db");
     let (db, journal, input) = running(&path);
     let original = identity(&input);
-    journal.record_session_stop(&original, 10).unwrap();
-    journal.record_session_stop(&original, 11).unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 10)
+        .unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 11)
+        .unwrap();
     let mut changed = original.clone();
     changed.host.boot_id = "other".into();
-    assert!(journal.record_session_stop(&changed, 12).is_err());
+    assert!(
+        journal
+            .record_session_stop(&changed, SessionStopScope::Recorded, 12)
+            .is_err()
+    );
     journal
         .change_session_stop(
             &original.attempt,
@@ -182,7 +192,9 @@ fn audit_is_root_only_idempotent_and_commits_proof_before_release() {
     let directory = tempfile::tempdir().unwrap();
     let (_db, journal, input) = running(&directory.path().join("db"));
     let original = identity(&input);
-    journal.record_session_stop(&original, 1).unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 1)
+        .unwrap();
     let request = SessionStopReconcile {
         request_id: "recheck-1".into(),
         execution: input.execution_id,
@@ -280,17 +292,20 @@ fn undrained_v13_upgrade_marks_only_running_agents_legacy_unknown() {
         SessionStopState::LegacyUnknown,
         "ordinary stop processing cannot erase the stronger upgrade fence"
     );
-    assert!(
-        journal
-            .change_session_stop(
-                &records[0].identity.attempt,
-                SessionStopChange::Confirm {
-                    at_ms: 1,
-                    proof: SessionStopProof::LockAndProcesses
-                }
-            )
-            .is_err()
-    );
+    for proof in [
+        SessionStopProof::LockAndProcesses,
+        SessionStopProof::LockProcessesAndMarks,
+    ] {
+        assert!(
+            journal
+                .change_session_stop(
+                    &records[0].identity.attempt,
+                    SessionStopChange::Confirm { at_ms: 1, proof }
+                )
+                .is_err(),
+            "same-boot evidence cannot lift the upgrade fence"
+        );
+    }
     journal
         .change_session_stop(
             &records[0].identity.attempt,
@@ -308,7 +323,9 @@ fn gc_requires_age_release_ack_and_completed_audit_and_retains_a_summary() {
     let path = directory.path().join("db");
     let (mut db, journal, input) = running(&path);
     let original = identity(&input);
-    journal.record_session_stop(&original, 1).unwrap();
+    journal
+        .record_session_stop(&original, SessionStopScope::Recorded, 1)
+        .unwrap();
     let later = 8 * 24 * 60 * 60 * 1000;
     assert!(
         journal
@@ -388,4 +405,199 @@ fn gc_requires_age_release_ack_and_completed_audit_and_retains_a_summary() {
             .unwrap(),
         1
     );
+}
+
+/// A file from just before the stop-marks schema keeps every stop row through the rebuild, with
+/// no scope flag; afterwards the mark-scan proof and the flag are recorded and read back while
+/// the older row stays as it was.
+#[test]
+fn stop_marks_upgrade_keeps_rows_unflagged_and_admits_the_mark_scan_proof() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db");
+    let (db, journal, input) = running(&path);
+    let [older, marked] = [identity(&input), identity(&input)];
+    journal
+        .record_session_stop(&older, SessionStopScope::Recorded, 1)
+        .unwrap();
+    for change in [
+        SessionStopChange::Request {
+            at_ms: 10,
+            bound_at_ms: 20,
+        },
+        SessionStopChange::Confirm {
+            at_ms: 11,
+            proof: SessionStopProof::LockAndProcesses,
+        },
+    ] {
+        journal.change_session_stop(&older.attempt, change).unwrap();
+    }
+    // Only the flag differs after the rebuild: an older row cannot claim a scope it never had.
+    let before: Vec<_> = journal
+        .session_stop_records(None)
+        .unwrap()
+        .into_iter()
+        .map(|record| SessionStopRecord {
+            scope: SessionStopScope::Absent,
+            ..record
+        })
+        .collect();
+    drop(journal);
+    drop(db);
+    let old = Connection::open(&path).unwrap();
+    remove_session_stop_marks_schema(&old);
+    let rejected = old.execute(
+        "UPDATE session_stop_attempts SET evidence='lock_processes_and_marks'",
+        [],
+    );
+    drop(old);
+    let db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node"))).unwrap();
+    let journal = db.session_journal().unwrap();
+    let migrated = journal.session_stop_records(None).unwrap();
+    journal
+        .record_session_stop(&marked, SessionStopScope::Recorded, 2)
+        .unwrap();
+    for change in [
+        SessionStopChange::Request {
+            at_ms: 12,
+            bound_at_ms: 22,
+        },
+        SessionStopChange::Confirm {
+            at_ms: 13,
+            proof: SessionStopProof::LockProcessesAndMarks,
+        },
+    ] {
+        journal
+            .change_session_stop(&marked.attempt, change)
+            .unwrap();
+    }
+    let version: i64 = Connection::open(&path)
+        .unwrap()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert!(
+        rejected.is_err(),
+        "the previous table refuses the new proof"
+    );
+    assert_eq!(
+        (
+            version,
+            migrated == before,
+            journal
+                .session_stop_records(None)
+                .unwrap()
+                .into_iter()
+                .map(|record| (record.identity.attempt, record.proof, record.scope))
+                .collect::<Vec<_>>()
+        ),
+        (
+            crate::schema::STOP_MARKS_VERSION,
+            true,
+            vec![
+                (
+                    older.attempt,
+                    Some(SessionStopProof::LockAndProcesses),
+                    SessionStopScope::Absent
+                ),
+                (
+                    marked.attempt,
+                    Some(SessionStopProof::LockProcessesAndMarks),
+                    SessionStopScope::Recorded
+                ),
+            ]
+        )
+    );
+}
+
+/// Files written by desktop#793 (v15, with cancel settlements) and by the release before it
+/// (v14, without them) both open in one step at the stop-marks schema. Their attempts come out
+/// unflagged, so a stop still pending is later confirmed with the legacy proof, and v15's cancel
+/// settlements survive the stop table rebuild.
+#[test]
+fn v14_and_v15_files_upgrade_in_one_step_with_attempts_unflagged() {
+    for from in [14, 15] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db");
+        let (db, journal, input) = running(&path);
+        let pending = identity(&input);
+        journal
+            .record_session_stop(&pending, SessionStopScope::Recorded, 1)
+            .unwrap();
+        journal
+            .change_session_stop(
+                &pending.attempt,
+                SessionStopChange::Request {
+                    at_ms: 10,
+                    bound_at_ms: 20,
+                },
+            )
+            .unwrap();
+        drop(journal);
+        drop(db);
+        let old = Connection::open(&path).unwrap();
+        remove_session_stop_marks_schema(&old);
+        if from == 14 {
+            old.execute_batch("DROP TABLE session_turn_cancels; PRAGMA user_version=14;")
+                .unwrap();
+        } else {
+            old.execute(
+                "INSERT INTO session_turn_cancels VALUES(?1,'cancel-1','initial','session_ending',3)",
+                [input.execution_id.as_str()],
+            )
+            .unwrap();
+        }
+        let version = |connection: &Connection| -> i64 {
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap()
+        };
+        let before = version(&old);
+        drop(old);
+        let db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node"))).unwrap();
+        let journal = db.session_journal().unwrap();
+        let migrated: Vec<_> = journal
+            .session_stop_records(None)
+            .unwrap()
+            .into_iter()
+            .map(|record| (record.identity.attempt, record.state, record.scope))
+            .collect();
+        journal
+            .change_session_stop(
+                &pending.attempt,
+                SessionStopChange::Confirm {
+                    at_ms: 12,
+                    proof: SessionStopProof::LockAndProcesses,
+                },
+            )
+            .unwrap();
+        let confirmed: Vec<_> = journal
+            .session_stop_records(None)
+            .unwrap()
+            .into_iter()
+            .map(|record| (record.proof, record.scope))
+            .collect();
+        let check = Connection::open(&path).unwrap();
+        let cancels: i64 = check
+            .query_row("SELECT count(*) FROM session_turn_cancels", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            (before, version(&check), migrated, confirmed, cancels),
+            (
+                from,
+                crate::schema::LATEST_VERSION,
+                vec![(
+                    pending.attempt.clone(),
+                    SessionStopState::Stopping,
+                    SessionStopScope::Absent
+                )],
+                vec![(
+                    Some(SessionStopProof::LockAndProcesses),
+                    SessionStopScope::Absent
+                )],
+                i64::from(from == 15)
+            ),
+            "upgrading from v{from}"
+        );
+    }
 }

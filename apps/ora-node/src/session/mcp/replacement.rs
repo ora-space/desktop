@@ -5,7 +5,7 @@ use crate::session::{
     host::SessionLifecycle, stop,
 };
 use ora_node_db::{SessionStopChange, SessionStopPackage};
-use std::{sync::PoisonError, time::Duration};
+use std::sync::PoisonError;
 
 /// The callback captures ownership handles, never a second copy of the desired settings.
 pub(in crate::session) fn configure<L, C, P, R>(
@@ -113,6 +113,8 @@ where
                 .await
         })
         .await;
+    let scope = stop::recorded_scope(&shared.ledger, &old).ok_or_else(blocked)?;
+    let mut pause = stop::FIRST_RECHECK;
     loop {
         if control.snapshot(false).convergence == ora_node_protocol::SessionMcpConvergence::Stopping
         {
@@ -120,12 +122,14 @@ where
         }
         let files =
             stop::files::StopFiles::open(&shared.config.home_directory).map_err(|_| blocked())?;
-        files.terminate(&old, &shared.config.stop.host());
-        let (evidence, proof) = files.probe(
-            &old,
-            &shared.config.stop.host(),
-            shared.config.stop.single_mount_with_storage_fencing,
-        );
+        let (evidence, proof) = files
+            .settle(
+                &old,
+                scope,
+                &shared.config.stop.host(),
+                shared.config.stop.single_mount_with_storage_fencing,
+            )
+            .await;
         if evidence == crate::managed::attempt_lock::StopEvidence::Stopped {
             shared
                 .ledger
@@ -146,7 +150,8 @@ where
                 .map_err(|_| blocked())?;
             return Err(blocked());
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::time::sleep(pause).await;
+        pause = stop::next_recheck(pause);
     }
     let control = shared
         .controls

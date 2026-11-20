@@ -9,11 +9,17 @@ pub struct LinuxProcessStat {
     pub pid: u32,
     pub session: u32,
     pub start_ticks: u64,
-    directory: File,
+    /// The parent at observation time; init or a subreaper once the original parent exited.
+    pub(super) parent: u32,
+    /// The one-letter `stat` state, where `Z` and `X` mean the process has already exited.
+    pub(super) state: u8,
+    pub(super) directory: File,
 }
 
 struct StatFields {
     pid: u32,
+    parent: u32,
+    state: u8,
     session: u32,
     start_ticks: u64,
 }
@@ -23,6 +29,8 @@ struct StatFields {
 pub enum ProcessSignal {
     Terminate,
     Kill,
+    /// Freezes the process so it can neither fork nor exit until it is killed or continued.
+    Stop,
 }
 
 /// A kernel handle keeps signal delivery tied to the original process after PID reuse.
@@ -90,6 +98,7 @@ impl LinuxPidFd {
         let signal = match signal {
             ProcessSignal::Terminate => libc::SIGTERM,
             ProcessSignal::Kill => libc::SIGKILL,
+            ProcessSignal::Stop => libc::SIGSTOP,
         };
         // SAFETY: the descriptor is live, and a null siginfo asks the kernel to construct it.
         if unsafe {
@@ -114,13 +123,7 @@ impl LinuxPidFd {
 /// Pins one proc directory so callers can compare observations around stable handle acquisition.
 pub fn linux_process(pid: u32) -> io::Result<LinuxProcessStat> {
     let directory = File::open(std::path::Path::new("/proc").join(pid.to_string()))?;
-    let stat = read_stat(&directory)?;
-    Ok(LinuxProcessStat {
-        pid: stat.pid,
-        session: stat.session,
-        start_ticks: stat.start_ticks,
-        directory,
-    })
+    observe(directory)
 }
 
 /// Enumerates visible processes; permission and parse failures are errors, never empty evidence.
@@ -134,15 +137,7 @@ pub fn linux_process_snapshot() -> io::Result<impl Iterator<Item = io::Result<Li
             .file_name()
             .to_str()
             .and_then(|name| name.parse::<u32>().ok())?;
-        let observation = File::open(entry.path()).and_then(|directory| {
-            let stat = read_stat(&directory)?;
-            Ok(LinuxProcessStat {
-                pid: stat.pid,
-                session: stat.session,
-                start_ticks: stat.start_ticks,
-                directory,
-            })
-        });
+        let observation = File::open(entry.path()).and_then(observe);
         match observation {
             Ok(stat) => Some(Ok(stat)),
             Err(error)
@@ -156,13 +151,31 @@ pub fn linux_process_snapshot() -> io::Result<impl Iterator<Item = io::Result<Li
     }))
 }
 
-/// Reads through the pinned proc directory so PID reuse cannot redirect an identity recheck.
-fn read_stat(directory: &File) -> io::Result<StatFields> {
-    // SAFETY: the directory and static NUL-terminated filename remain live throughout openat.
+/// Reads the stat of a freshly pinned proc directory into an observation that keeps the pin.
+fn observe(directory: File) -> io::Result<LinuxProcessStat> {
+    let stat = read_stat(&directory)?;
+    Ok(LinuxProcessStat {
+        pid: stat.pid,
+        session: stat.session,
+        start_ticks: stat.start_ticks,
+        parent: stat.parent,
+        state: stat.state,
+        directory,
+    })
+}
+
+/// Reads at most `limit` bytes of one file of a pinned proc directory, so a reused PID can never
+/// redirect the read to another process. The flag reports whether the file was longer.
+pub(super) fn read_pinned(
+    directory: &File,
+    name: &std::ffi::CStr,
+    limit: usize,
+) -> io::Result<(Vec<u8>, bool)> {
+    // SAFETY: the directory and the NUL-terminated filename remain live throughout openat.
     let fd = unsafe {
         libc::openat(
             directory.as_raw_fd(),
-            c"stat".as_ptr(),
+            name.as_ptr(),
             libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
         )
     };
@@ -172,9 +185,17 @@ fn read_stat(directory: &File) -> io::Result<StatFields> {
     // SAFETY: openat returned a fresh descriptor, now owned by File.
     let file = unsafe { File::from_raw_fd(fd) };
     let mut bytes = Vec::new();
-    file.take(/*limit*/ 16385).read_to_end(&mut bytes)?;
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    let truncated = bytes.len() > limit;
+    bytes.truncate(limit);
+    Ok((bytes, truncated))
+}
+
+/// Reads through the pinned proc directory so PID reuse cannot redirect an identity recheck.
+fn read_stat(directory: &File) -> io::Result<StatFields> {
+    let (bytes, truncated) = read_pinned(directory, c"stat", /*limit*/ 16384)?;
     let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid proc stat");
-    if bytes.len() > 16384 {
+    if truncated {
         return Err(invalid());
     }
     let begin = bytes
@@ -199,7 +220,21 @@ fn read_stat(directory: &File) -> io::Result<StatFields> {
     }
     Ok(StatFields {
         pid,
+        state: *fields[0].as_bytes().first().ok_or_else(invalid)?,
+        parent: fields[1].parse().map_err(|_| invalid())?,
         session: fields[3].parse().map_err(|_| invalid())?,
         start_ticks: fields[19].parse().map_err(|_| invalid())?,
     })
+}
+
+/// Whether this process holds `capability` (a Linux capability number such as 19,
+/// `CAP_SYS_PTRACE`) in its effective set.
+pub fn linux_has_effective_capability(capability: u32) -> io::Result<bool> {
+    let status = std::fs::read_to_string("/proc/self/status")?;
+    let mask = status
+        .lines()
+        .find_map(|line| line.strip_prefix("CapEff:"))
+        .and_then(|mask| u64::from_str_radix(mask.trim(), 16).ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid CapEff line"))?;
+    Ok(capability < 64 && mask & (1 << capability) != 0)
 }

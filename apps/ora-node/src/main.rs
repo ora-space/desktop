@@ -98,33 +98,43 @@ fn run(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         ora_logging::LogOutput::Stdout,
         config.timezone.parse()?,
     ))?;
-    tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()?
-        .block_on(async move {
-            let mut terminate = signal(SignalKind::terminate())?;
-            let mut interrupt = signal(SignalKind::interrupt())?;
-            let shutdown = ora_node::Shutdown::default();
-            // The reaper ends the Git this Node runs if the Node is killed. A Node that cannot
-            // start it does not start, and one that loses it stops instead of running on.
-            ora_process::initialize_reaper(config.process.reaper()?)
-                .map_err(|error| format!("process reaper could not be started: {error}"))?;
-            let service = ora_node::serve(config, shutdown.clone());
-            tokio::pin!(service);
-            let served = tokio::select! {
-                result = &mut service => result,
-                _ = terminate.recv() => { shutdown.request(); service.await },
-                _ = interrupt.recv() => { shutdown.request(); service.await },
-            };
-            // Every Git has been settled by now. Ending the reaper here means a Node that exited
-            // on its own leaves no process behind for its supervisor to wait for; a reaper that
-            // already died has nothing left to answer and is not the failure to report.
-            let _ = ora_process::shutdown_reaper();
-            served?;
-            match shutdown.failure() {
-                Some(reason) => Err(reason.into()),
-                None => Ok::<_, Box<dyn std::error::Error>>(()),
-            }
-        })?;
+        .build()?;
+    let served = runtime.block_on(async move {
+        let mut terminate = signal(SignalKind::terminate())?;
+        let mut interrupt = signal(SignalKind::interrupt())?;
+        let shutdown = ora_node::Shutdown::default();
+        // The reaper ends the Git this Node runs if the Node is killed. A Node that cannot
+        // start it does not start, and one that loses it stops instead of running on.
+        ora_process::initialize_reaper(config.process.reaper()?)
+            .map_err(|error| format!("process reaper could not be started: {error}"))?;
+        let service = ora_node::serve(config, shutdown.clone());
+        tokio::pin!(service);
+        let served = tokio::select! {
+            result = &mut service => result,
+            _ = terminate.recv() => { shutdown.request(); service.await },
+            _ = interrupt.recv() => { shutdown.request(); service.await },
+        };
+        // Every Git has been settled by now. Ending the reaper here means a Node that exited
+        // on its own leaves no process behind for its supervisor to wait for; a reaper that
+        // already died has nothing left to answer and is not the failure to report.
+        let _ = ora_process::shutdown_reaper();
+        served?;
+        match shutdown.failure() {
+            Some(reason) => Err(reason.into()),
+            None => Ok::<_, Box<dyn std::error::Error>>(()),
+        }
+    });
+    // By now the service and its worker have returned; what can remain is a stop observation the
+    // Node gave up on, still blocked in an `environ` read on a stuck mount. Dropping the runtime
+    // would wait for it indefinitely, so the Node waits a bounded time and then exits, which ends
+    // that thread with the process.
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
+    served?;
     Ok(())
 }
+
+/// How long an exiting Node waits for blocking tasks it no longer awaits.
+#[cfg(target_os = "linux")]
+const RUNTIME_SHUTDOWN: std::time::Duration = std::time::Duration::from_secs(5);

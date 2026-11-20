@@ -313,7 +313,17 @@ cleanup and commits terminal evidence before releasing the database lease. `seal
 
 The plugin process and agent CLI are started by the Node directly (process group, whole-tree
 termination) and are not registered with the Node's `ora-reaper`. When the Node crashes, the plugin
-exits on its closed stdio, but a descendant that ignores that is not reclaimed.
+exits on its closed stdio; a descendant that ignores that keeps running until restart recovery, which
+kills every process carrying the attempt mark before it records the stop and reports `interrupted`
+(see [Agent stop ownership](session-stop.md)).
+
+Ending a session kills what its Agent started and what kept the attempt mark, on every end path and
+when MCP lifecycle replaces the Agent process: tool background jobs, dev servers, MCP and language
+servers, and shared daemons (for example a Gradle daemon or an sccache server) launched from the
+session. Nothing is killed between turns. Start a daemon outside Ora when it must outlive the
+session. Orphaned programs that cleared or rewrote their environment (PostgreSQL and nginx rewrite
+it with their process title) or changed user are not found and survive; see
+[Agent stop ownership](session-stop.md) for the limits and the deployment prerequisite.
 
 ## Ledger
 

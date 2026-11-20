@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 mod ora_git;
+mod startup;
 
 /// A service configuration over `root` that would run agents as `workload_uid` from
 /// `workload_directory`; everything else is valid and never reached by these tests.
@@ -773,6 +774,7 @@ fn restart_settles_a_pending_cancel_while_stop_evidence_is_missing()
             kind: SessionStopKind::Agent,
             packages: Vec::new(),
         },
+        ora_node_db::SessionStopScope::Recorded,
         1,
     )?;
     node.database

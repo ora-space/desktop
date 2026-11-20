@@ -1,10 +1,11 @@
 //! Real kernel locks and processes distinguish shutdown requests from stop proof.
+mod marks;
 mod replacement;
 
 use super::*;
-use ora_node_db::{SessionStopHost, SessionStopKind, SessionStopProof};
+use ora_node_db::{SessionStopHost, SessionStopKind, SessionStopProof, SessionStopScope};
 use ora_node_protocol::{NodeId, NodeIncarnationId, NodeRuntimeIdentity};
-use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec};
+use ora_process::{ManagedProcess, ProcessIdentity, ProcessSpawner, ProcessSpec};
 use pretty_assertions::assert_eq;
 use std::os::unix::fs::PermissionsExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -17,9 +18,9 @@ async fn stop_wait_keeps_original_bound_and_does_not_treat_request_failure_as_pr
     use ora_node_db::{SessionStopChange, SessionStopState};
     let (home, files, identity) = fixture()?;
     let journal = journal(home.path())?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let descriptor = files.hold(&identity.attempt)?;
-    journal.record_session_stop(&identity, now_ms())?;
+    journal.record_session_stop(&identity, SessionStopScope::Recorded, now_ms())?;
     let config = SessionStopConfig {
         confirmation_timeout_ms: 500,
         ..Default::default()
@@ -55,7 +56,7 @@ async fn stop_wait_keeps_original_bound_and_does_not_treat_request_failure_as_pr
 #[test]
 fn foreign_or_missing_host_identity_cannot_turn_a_boot_change_into_stop_proof() -> TestResult {
     let (_home, files, mut identity) = fixture()?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     identity.host.boot_id = "old-boot".into();
     identity.host.trusted_host_id = Some("old-host".into());
     for host in [Some("other-host".into()), None, Some(String::new())] {
@@ -64,7 +65,7 @@ fn foreign_or_missing_host_identity_cannot_turn_a_boot_change_into_stop_proof() 
             trusted_host_id: host,
         };
         assert_eq!(
-            files.probe(&identity, &current, false),
+            files.probe(&identity, SessionStopScope::Recorded, &current, false),
             (StopEvidence::Unknown, None)
         );
     }
@@ -91,9 +92,9 @@ fn journal(home: &Path) -> Result<ora_node_db::SessionJournal, Box<dyn std::erro
 async fn successful_cleanup_with_held_lock_leaves_attempt_unconfirmed() -> TestResult {
     let (home, files, identity) = fixture()?;
     let journal = journal(home.path())?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let _held = files.hold(&identity.attempt)?;
-    journal.record_session_stop(&identity, now_ms())?;
+    journal.record_session_stop(&identity, SessionStopScope::Recorded, now_ms())?;
     let config = SessionStopConfig {
         confirmation_timeout_ms: 1,
         ..Default::default()
@@ -179,7 +180,7 @@ async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> 
         records,
         vec![ora_node_db::SessionStopRecord {
             state: SessionStopState::Confirmed,
-            proof: Some(SessionStopProof::LockAndProcesses),
+            proof: Some(SessionStopProof::LockProcessesAndMarks),
             confirmed_at_ms: Some(confirmed_at),
             ..original
         }]
@@ -187,10 +188,10 @@ async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> 
     assert!(plugin.try_wait()?.is_some());
     assert!(cli.try_wait()?.is_some());
     assert_eq!(
-        files.probe(&identity, &identity.host, false),
+        files.probe(&identity, SessionStopScope::Recorded, &identity.host, false),
         (
             StopEvidence::Stopped,
-            Some(SessionStopProof::LockAndProcesses)
+            Some(SessionStopProof::LockProcessesAndMarks)
         )
     );
     Ok(())
@@ -200,7 +201,7 @@ async fn stop_confirmation_terminates_plugin_and_cli_while_lifecycle_waits() -> 
 #[tokio::test]
 async fn replacement_signals_old_groups_before_lifecycle_cleanup() -> TestResult {
     let (_home, files, identity) = fixture()?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let spawner = SessionAttemptSpawner::new(
         TokioProcessSpawner::new().without_reaper_registration(),
         identity.clone(),
@@ -225,7 +226,7 @@ async fn replacement_signals_old_groups_before_lifecycle_cleanup() -> TestResult
 #[tokio::test]
 async fn plugin_and_each_host_child_share_one_attempt_while_siblings_stay_running() -> TestResult {
     let (_home, files, identity) = fixture()?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let inner = TokioProcessSpawner::new().without_reaper_registration();
     let spawner = SessionAttemptSpawner::new(inner.clone(), identity.clone(), files.clone())?;
     let plugin = spawner.spawn(ProcessSpec::new("sleep").arg("60"))?;
@@ -236,23 +237,29 @@ async fn plugin_and_each_host_child_share_one_attempt_while_siblings_stay_runnin
     plugin.kill().await?;
     plugin.wait().await?;
     assert_eq!(
-        files.probe(&identity, &identity.host, false).0,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &identity.host, false)
+            .0,
         StopEvidence::Running
     );
     files.terminate(&identity, &identity.host);
     cli.wait().await?;
     // A concurrent fork can retain CLOEXEC descriptors until its exec; the owner polls proof.
     tokio::time::timeout(Duration::from_secs(2), async {
-        while files.probe(&identity, &identity.host, false).0 == StopEvidence::Running {
+        while files
+            .probe(&identity, SessionStopScope::Recorded, &identity.host, false)
+            .0
+            == StopEvidence::Running
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await?;
     assert_eq!(
-        files.probe(&identity, &identity.host, false),
+        files.probe(&identity, SessionStopScope::Recorded, &identity.host, false),
         (
             StopEvidence::Stopped,
-            Some(SessionStopProof::LockAndProcesses)
+            Some(SessionStopProof::LockProcessesAndMarks)
         )
     );
     assert!(
@@ -268,7 +275,7 @@ async fn plugin_and_each_host_child_share_one_attempt_while_siblings_stay_runnin
 #[tokio::test]
 async fn live_direct_child_that_closes_its_descriptor_is_not_stop_proof() -> TestResult {
     let (_home, files, identity) = fixture()?;
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     let spawner = SessionAttemptSpawner::new(
         TokioProcessSpawner::new().without_reaper_registration(),
         identity.clone(),
@@ -285,20 +292,28 @@ async fn live_direct_child_that_closes_its_descriptor_is_not_stop_proof() -> Tes
     assert_eq!(line.trim(), "ready");
     spawner.close();
     assert_eq!(
-        files.probe(&identity, &identity.host, false).0,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &identity.host, false)
+            .0,
         StopEvidence::Running
     );
     process.kill().await?;
     process.wait().await?;
     // Concurrent forks can briefly retain the lock descriptor before exec closes it.
     tokio::time::timeout(Duration::from_secs(2), async {
-        while files.probe(&identity, &identity.host, false).0 == StopEvidence::Running {
+        while files
+            .probe(&identity, SessionStopScope::Recorded, &identity.host, false)
+            .0
+            == StopEvidence::Running
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await?;
     assert_eq!(
-        files.probe(&identity, &identity.host, false).0,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &identity.host, false)
+            .0,
         StopEvidence::Stopped
     );
     Ok(())
@@ -309,29 +324,39 @@ fn a_durable_unstarted_lock_is_proof_but_missing_corrupt_or_foreign_boot_evidenc
 -> TestResult {
     let (home, files, mut identity) = fixture()?;
     assert_eq!(
-        files.probe(&identity, &identity.host, false).0,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &identity.host, false)
+            .0,
         StopEvidence::Unknown
     );
-    files.create(&identity.attempt)?;
+    files.create(&identity.attempt, ProcessIdentity::Inherit)?;
     assert_eq!(
-        files.probe(&identity, &identity.host, false).0,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &identity.host, false)
+            .0,
         StopEvidence::Stopped
     );
     let original = identity.host.clone();
     identity.host.boot_id = "old-kernel".into();
     assert_eq!(
-        files.probe(&identity, &original, false).0,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &original, false)
+            .0,
         StopEvidence::Unknown
     );
     assert_eq!(
-        files.probe(&identity, &original, true).1,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &original, true)
+            .1,
         Some(SessionStopProof::FencedVolume)
     );
     identity.host.trusted_host_id = Some("physical-host".into());
     let mut current = original;
     current.trusted_host_id = Some("physical-host".into());
     assert_eq!(
-        files.probe(&identity, &current, false).1,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &current, false)
+            .1,
         Some(SessionStopProof::HostReboot)
     );
     identity.host = current;
@@ -341,13 +366,81 @@ fn a_durable_unstarted_lock_is_proof_but_missing_corrupt_or_foreign_boot_evidenc
         b"damaged",
     )?;
     assert_eq!(
-        files.probe(&identity, &identity.host, false).0,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &identity.host, false)
+            .0,
         StopEvidence::Unknown
     );
     identity.kind = SessionStopKind::LegacyAgent;
     assert_eq!(
-        files.probe(&identity, &identity.host, false).0,
+        files
+            .probe(&identity, SessionStopScope::Recorded, &identity.host, false)
+            .0,
         StopEvidence::Unknown
     );
     Ok(())
+}
+
+/// A stop observation that outlives its budget returns no evidence at once instead of holding
+/// the runtime, and keeps the single worker, so the next observation also gives up within its
+/// own budget rather than starting a second thread behind a hung read. The worker is the test's
+/// own, so other tests in this binary can neither delay nor be delayed by it.
+#[tokio::test]
+async fn a_hung_observation_costs_its_budget_and_holds_the_worker() {
+    static WORKER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let budget = Duration::from_millis(50);
+    let began = tokio::time::Instant::now();
+    let hung = files::off_runtime_within(&WORKER, budget, || {
+        std::thread::sleep(Duration::from_millis(400));
+        "finished"
+    })
+    .await;
+    let behind = files::off_runtime_within(&WORKER, budget, || "queued").await;
+    let elapsed = began.elapsed();
+    // Once the hung job returns, the worker serves again.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after = files::off_runtime_within(&WORKER, budget, || "served").await;
+    assert_eq!((hung, behind, after), (None, None, Some("served")));
+    assert!(elapsed < Duration::from_millis(300), "{elapsed:?}");
+}
+
+/// A deadline narrows the budget of each observation, and once it has passed no job is started:
+/// a spent budget must not occupy the worker with work nobody waits for.
+#[tokio::test]
+async fn a_deadline_narrows_the_budget_and_a_spent_one_starts_nothing() {
+    static WORKER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let now = tokio::time::Instant::now();
+    let near = files::budget_until(now + Duration::from_millis(200));
+    let far = files::budget_until(now + Duration::from_secs(60));
+    let spent = files::budget_until(now);
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = started.clone();
+    let outcome = files::off_runtime_within(&WORKER, spent, move || {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(near <= Duration::from_millis(200) && near > Duration::from_millis(100));
+    assert_eq!(
+        (
+            far,
+            spent,
+            outcome,
+            started.load(std::sync::atomic::Ordering::SeqCst),
+            WORKER.available_permits()
+        ),
+        (files::STOP_WORK_BUDGET, Duration::ZERO, None, false, 1)
+    );
+}
+
+/// Stop loops wait 25 ms after the first observation and double the wait up to one second, so
+/// an attempt that refuses to stop costs at most one observation a second until its bound.
+#[test]
+fn rechecks_back_off_from_25_ms_to_one_second() {
+    let waits: Vec<_> =
+        std::iter::successors(Some(FIRST_RECHECK), |pause| Some(next_recheck(*pause)))
+            .take(9)
+            .map(|pause| pause.as_millis())
+            .collect();
+    assert_eq!(waits, vec![25, 50, 100, 200, 400, 800, 1000, 1000, 1000]);
 }

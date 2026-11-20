@@ -6,6 +6,8 @@ use std::os::unix::fs::PermissionsExt;
 mod admission;
 #[path = "agent_sessions/authority.rs"]
 mod authority;
+#[path = "agent_sessions/background_jobs.rs"]
+mod background_jobs;
 #[path = "agent_sessions/delivery.rs"]
 mod delivery;
 #[path = "agent_sessions/host_mcp.rs"]

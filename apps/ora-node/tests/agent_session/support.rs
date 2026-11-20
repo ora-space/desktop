@@ -293,10 +293,11 @@ impl SessionLedger for MemoryLedger {
     fn record_session_stop(
         &self,
         identity: &ora_node_db::SessionStopIdentity,
+        scope: ora_node_db::SessionStopScope,
         at_ms: i64,
     ) -> Result<(), Self::Error> {
         self.stops
-            .record(identity, at_ms)
+            .record(identity, scope, at_ms)
             .map_err(|e| LedgerError(e.to_string()))
     }
     fn session_stop_records(

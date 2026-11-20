@@ -220,7 +220,13 @@ Cloud 可以把会话输入作为定时 occurrence 受理（`spec.trigger = sche
 它的 JSONL。
 
 插件进程和 Agent CLI 由 Node 直接启动（进程组，整棵树终止），不向 Node 的 `ora-reaper` 登记。Node 崩溃时，插件会因
-stdio 关闭而退出，但忽略这一点的后代进程不会被回收。
+stdio 关闭而退出；忽略这一点的后代进程会一直运行到重启恢复，恢复在记录停止并报告 `interrupted` 之前杀掉所有带尝试标记的
+进程（见 [Agent 停止责任](session-stop.zh.md)）。
+
+会话结束时（任何结束方式），以及 MCP 生命周期替换 Agent 进程时，Agent 启动且保留了尝试标记的进程都会被杀掉：工具后台作业、
+开发服务器、MCP 服务和语言服务，以及从会话中启动的共享守护进程（例如 Gradle daemon 或 sccache 服务）。轮次之间不会杀任何进程。
+需要在会话结束后继续运行的守护进程，请在 Ora 之外启动。清空或改写了环境（PostgreSQL、nginx 会用进程标题改写它）或换了用户的
+孤儿程序找不到，会继续运行；限制与部署前提见 [Agent 停止责任](session-stop.zh.md)。
 
 ## 账本
 

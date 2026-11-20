@@ -227,6 +227,8 @@ fn cleanup_restore(
 /// (root in a sandbox) and writable by nobody else, because the Node creates, links and removes
 /// trees inside it with that authority. It must also not overlap any state or checkout root, so
 /// purging it can never reach them. The `ora-git` directory is checked by [`validate_ora_git`].
+/// A valid configuration whose workload environments the stop mark scan cannot read is warned
+/// about, not refused.
 pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
     if !agent.deno_path.is_absolute() || agent.ready_timeout_ms == 0 {
         return Err(io::Error::other(
@@ -234,7 +236,11 @@ pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Resul
         ));
     }
     validate_workload(agent, config)?;
-    validate_ora_git(agent, config)
+    validate_ora_git(agent, config)?;
+    // Not a refusal: a Node that cannot read the workload's environments only confirms fewer
+    // stops, so the deployment prerequisite of the mark scan is a warning.
+    crate::session::stop::marks::warn_unless_readable(config.process.workload_uid);
+    Ok(())
 }
 
 fn validate_workload(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {

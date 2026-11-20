@@ -268,19 +268,25 @@ async fn run<L, C, P, R>(
                 continue;
             }
         }
-        let proof = stop::files::StopFiles::open(&shared.config.home_directory)
+        let opened = stop::files::StopFiles::open(&shared.config.home_directory)
             .ok()
-            .and_then(|files| {
-                files.terminate(&identity, &shared.config.stop.host());
-                let (evidence, proof) = files.probe(
-                    &identity,
-                    &shared.config.stop.host(),
-                    shared.config.stop.single_mount_with_storage_fencing,
-                );
+            .zip(stop::recorded_scope(&shared.ledger, &identity));
+        let proof = match opened {
+            Some((files, scope)) => {
+                let (evidence, proof) = files
+                    .settle(
+                        &identity,
+                        scope,
+                        &shared.config.stop.host(),
+                        shared.config.stop.single_mount_with_storage_fencing,
+                    )
+                    .await;
                 (evidence == crate::managed::attempt_lock::StopEvidence::Stopped)
                     .then_some(proof)
                     .flatten()
-            });
+            }
+            None => None,
+        };
         if !confirmed
             && let Some(proof) = proof
             && shared

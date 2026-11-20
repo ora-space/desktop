@@ -36,7 +36,7 @@ pub use session_stop::{
     SessionStopAuditAdmission, SessionStopAuditResult, SessionStopChange, SessionStopHost,
     SessionStopIdentity, SessionStopKind, SessionStopMode, SessionStopObservation,
     SessionStopPackage, SessionStopProof, SessionStopReason, SessionStopReconcile,
-    SessionStopRecord, SessionStopState,
+    SessionStopRecord, SessionStopScope, SessionStopState,
 };
 
 use ora_node_protocol::NodeId;
