@@ -53,21 +53,22 @@ language changes later.
 For each Skill-using node, run creation asks an `AgentSkillDeliveryProvider` for its validated,
 Workspace-relative discovery roots and freezes a per-node receipt with the Skill id, slash-command
 name and actual package paths. Local Skills resolve through their catalog directory and plugin Skills
-through the immutable package recorded in their row. The current provider returns the shared
-`.agents/skills` root. Execution uses only the frozen receipt, so a later catalog change cannot
+through the immutable package recorded in their row. The provider uses the discovery roots declared by the selected Agent plugin and falls back to
+`.agents/skills` when it declares none. Execution uses only the frozen receipt, so a later catalog change cannot
 silently rewrite the packages an existing run addresses.
 
-Because the receipt is frozen, creation is not the last time the dependencies are read. Every
-operation that begins scheduling — `startWorkflowRun`, `restartWorkflowRun`, and
-`resumeWorkflowRunFromFailure` — re-resolves the frozen graph's declared roles, enabled Skills and
-enabled MCP bindings against the live skills catalog and the installed plugin tree before the first
-node is dispatched. A dependency that was uninstalled or whose package disappeared fails the
-operation with `workflow_skill_not_found` or `workflow_mcp_not_found`, naming both the node (id and
-display title) and the dependency, and the run keeps its previous status. Re-installing the
-dependency makes the same run startable again. An operation the engine would treat as a no-op — a
-start of an already running run, a restart of a running one — is not a scheduling change and still
-answers idempotently. Agent availability is not part of this precheck: the runtime resolves the
-frozen agent identity when it opens the node session and fails closed with `agent_not_installed`.
+Before start, restart, or resume dispatches a node, Desktop checks the entire graph it will run
+against the current role and Skill catalogs and installed MCP packages. Creation checks roles and
+Skills; an enabled MCP binding first needs a valid MCP package at dispatch. A missing Skill or
+unavailable MCP fails with `workflow_skill_not_found` or `workflow_mcp_not_found`, naming the node
+and dependency. Repairing the dependency allows the same run to proceed. A repeated start of a
+running run returns that run; restart of a running run returns `workflow_run_not_restartable`.
+
+A resume onto a new snapshot checks the target graph before restoring a checkpoint or changing
+the worktree. It freezes the validated Skill paths from the Agent plugin's declaration when it
+switches snapshots. Keeping the current snapshot preserves its existing frozen Skill receipt.
+After dispatch, session setup handles an MCP removed or misconfigured before a node session opens,
+as well as missing Agent capabilities; it does not deliver a partial selection.
 
 The boundary for a dependency removed while a run is already executing is the next scheduling
 operation: an in-flight run is not re-checked, because its nodes already hold the receipt they

@@ -122,13 +122,13 @@ describe("workflow dependency failures", () => {
 
     expect(localizeContractError(skill, appI18n.t)).toBe(
       activeLocale() === "zh-CN"
-        ? "节点「Code review」需要的技能 code_review 不可用，请重新安装提供该技能的插件后再启动。"
-        : "The skill code_review required by node 'Code review' is unavailable. Reinstall the plugin that provides it, then start the run again.",
+        ? "节点「Code review」需要的技能 code_review 不可用，请安装或恢复该技能后重试。"
+        : "The skill code_review required by node 'Code review' is unavailable. Install or restore the skill, then retry.",
     );
     expect(localizeContractError(mcp, appI18n.t)).toBe(
       activeLocale() === "zh-CN"
-        ? "节点「Code review」需要的 MCP local/github 未安装，请重新安装该插件后再启动。"
-        : "The MCP local/github required by node 'Code review' is not installed. Reinstall that plugin, then start the run again.",
+        ? "节点「Code review」需要的 MCP local/github 不可用，请安装或修复该 MCP 插件后重试。"
+        : "The MCP local/github required by node 'Code review' is unavailable. Install or repair the MCP plugin, then retry.",
     );
   });
 });
