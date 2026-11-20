@@ -345,6 +345,7 @@ impl EchoAgent {
             self.sessions.remove(&session_id);
             return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32603,"message":"Session is closed"}})).await;
         }
+        super::background::start(&cwd, &text)?;
         if text.contains("[mcp]") {
             message(
                 output,
