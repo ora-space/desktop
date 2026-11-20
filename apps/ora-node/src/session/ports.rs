@@ -74,11 +74,14 @@ pub trait SessionLedger: Clone + Send + Sync + 'static {
         change: ora_node_db::SessionStopChange,
     ) -> Result<(), Self::Error>;
 
-    /// Retains the first intended terminal while cleanup is still outstanding.
-    fn defer_session_stop_end(
+    /// Records the end decision, anchors the stop clock of every outstanding stop
+    /// responsibility, and settles pending cancels as `session_ending`, in one durable write.
+    fn decide_session_end(
         &self,
         execution: &ExecutionId,
         ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
     ) -> Result<(), Self::Error>;
 
     /// Assigns the next sequence to one Thread event and returns once it is durable.

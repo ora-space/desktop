@@ -44,6 +44,21 @@ impl TurnFence {
         state.children.clear();
     }
 
+    /// Whether a record not yet settled may be shown as part of the current turn. A record that
+    /// names a stopped turn's tool call or child source is withheld and counts as a leak, the
+    /// same as when it settles, so the live preview never shows what the Thread refuses.
+    pub(super) fn admits_preview(&self, record: &HistoryRecord) -> bool {
+        let HistoryRecord::Update { update, .. } = record else {
+            return true;
+        };
+        let (tool, child) = identities(update);
+        let mut state = self.lock();
+        let leaked = tool.is_some_and(|(id, _)| state.fenced_tools.contains(id))
+            || child.is_some_and(|id| state.fenced_children.contains(id));
+        state.leaked |= leaked;
+        !leaked
+    }
+
     /// Classifies one settled line and, when it belongs to the current turn, tracks it.
     pub(super) fn observe(&self, line: &HistoryLine) -> Admission {
         let HistoryRecord::Update { update, .. } = &line.record else {

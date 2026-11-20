@@ -326,8 +326,18 @@ impl<L: SessionLedger> RuntimeEvents for ThreadMirror<L> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
+        let admitted: Vec<_> = records
+            .iter()
+            .filter(|record| self.fence.admits_preview(&record.record))
+            .cloned()
+            .collect();
+        if admitted.len() != records.len() {
+            // The same leak the settled line would report; end the session without waiting.
+            ora_warn!(execution_id = %self.execution, "pending update of a stopped turn arrived in a later turn");
+            self.wake.notify_one();
+        }
         self.previews
-            .replace(&self.operation, &self.execution, turn, records);
+            .replace(&self.operation, &self.execution, turn, &admitted);
     }
     /// A Thread has no title of its own; Cloud names the run.
     fn session_title_updated(&self, _session_id: &SessionId) {}

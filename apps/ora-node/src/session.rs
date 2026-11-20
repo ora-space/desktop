@@ -35,8 +35,8 @@ pub(crate) use workload::purge_workload_directory;
 
 use chrono_tz::Tz;
 use ora_node_protocol::{
-    AgentSessionEndReason, AgentSessionEnded, AgentSessionSpec, ExecutionId, NodeRuntimeIdentity,
-    OperationId,
+    AgentSessionEndReason, AgentSessionEnded, AgentSessionSpec, CommandId, ExecutionId,
+    NodeRuntimeIdentity, OperationId,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -105,6 +105,9 @@ pub(crate) struct Shared<L, C, P: PluginCatalog, R> {
     ora_git: Option<crate::ora_git::Availability>,
     /// Wake handles of the sessions running in this process, by execution.
     live: Mutex<HashMap<ExecutionId, Arc<Notify>>>,
+    /// When each pending `CancelTurn` was durably accepted: a stop's deadline counts from the
+    /// first cancel's acceptance, not from when the conversation got to it (D1).
+    cancel_acceptance: Mutex<HashMap<(ExecutionId, CommandId), tokio::time::Instant>>,
     stopping: tokio::sync::watch::Sender<bool>,
     finished: Notify,
     failed: std::sync::atomic::AtomicBool,
@@ -224,6 +227,7 @@ where
                 restorer,
                 ora_git: None,
                 live: Mutex::new(HashMap::new()),
+                cancel_acceptance: Mutex::new(HashMap::new()),
                 stopping: tokio::sync::watch::channel(/*init*/ false).0,
                 finished: Notify::new(),
                 failed: std::sync::atomic::AtomicBool::new(/*v*/ false),
@@ -310,8 +314,34 @@ impl<L, C, P: PluginCatalog, R> AgentSessions<L, C, P, R> {
         self.shared.is_live(execution)
     }
 
+    /// Records that a `CancelTurn` was durably accepted at `accepted_at` and wakes the session at
+    /// once. The protocol side calls this right after the ledger commit, before any reply is
+    /// written, so a reply that cannot be delivered never delays the settlement.
+    pub fn turn_cancel_accepted(
+        &self,
+        execution: &ExecutionId,
+        command: &CommandId,
+        accepted_at: tokio::time::Instant,
+    ) {
+        self.shared
+            .cancel_acceptance
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry((execution.clone(), command.clone()))
+            .or_insert(accepted_at);
+        if let Some(wake) = self
+            .shared
+            .live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(execution)
+        {
+            wake.notify_one();
+        }
+    }
+
     /// The transport flushes replacements independently of durable event replay and Ack.
-    pub(crate) fn preview_snapshots(&self) -> Vec<ora_node_protocol::ThreadPreviewMessage> {
+    pub fn preview_snapshots(&self) -> Vec<ora_node_protocol::ThreadPreviewMessage> {
         self.shared.previews.snapshots()
     }
     /// Model-bound sessions require this additional negotiated capability.

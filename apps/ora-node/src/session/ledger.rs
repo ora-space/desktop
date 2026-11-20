@@ -36,12 +36,15 @@ impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> 
         SessionJournal::change_session_stop(self, attempt, change)
     }
 
-    fn defer_session_stop_end(
+    /// One transaction for the decision, the stop clock and the cancel settlements.
+    fn decide_session_end(
         &self,
         execution: &ExecutionId,
         ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
     ) -> Result<(), Self::Error> {
-        SessionJournal::defer_session_stop_end(self, execution, ended)
+        SessionJournal::decide_session_end(self, execution, ended, at_ms, bound_at_ms)
     }
 
     /// History release follows durable terminal evidence, never actor lifetime alone.

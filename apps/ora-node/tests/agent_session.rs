@@ -886,3 +886,50 @@ async fn an_undeclared_plugin_never_takes_the_legacy_model_route() {
         (Vec::new(), Vec::<String>::new(), Vec::new())
     );
 }
+
+/// Model access that ends at renewal stops the Agent first and records the end decision only
+/// once the Controller's `EndSession` names the reason, so a restart can never publish the
+/// provisional `model_access_revoked` (desktop#793 review).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_model_ending_records_the_reason_of_the_end_session() {
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    gateway
+        .behavior
+        .ending_at_renewal
+        .store(/*val*/ true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured(&sessions, "[hold]", "{}");
+    // The grant expires in two seconds; its renewal reports that Cloud is ending the session.
+    until(|| {
+        gateway
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(route, _)| route.contains("/renew "))
+            .then_some(())
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let before = fixture.ledger.decision();
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::EndSession(EndSessionReason::Cancelled),
+    );
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (
+            before,
+            fixture.ledger.decision().map(|decision| decision.reason),
+            ended.reason
+        ),
+        (
+            None,
+            Some(AgentSessionEndReason::Cancelled),
+            AgentSessionEndReason::Cancelled
+        )
+    );
+}

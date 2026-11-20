@@ -195,21 +195,11 @@ impl<G: WriteGuard> SessionJournal<G> {
         execution: &ExecutionId,
         ended: &AgentSessionEnded,
     ) -> Result<(), Error> {
-        let mut db = self.lock()?;
-        let guard = Arc::clone(&db.guard);
-        guard.before_write(WritePoint::Progress)?;
-        let tx = db
-            .connection
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let decided = super::end_decided(&tx, execution)?;
-        tx.execute("UPDATE session_restores SET deferred_end=?2 WHERE execution=?1 AND deferred_end IS NULL", params![execution.as_str(), serde_json::to_string(ended)?])?;
-        if !decided
-            && let Some(current) = read(&tx, execution)?
-            && current.state == ExecutionState::Running
-        {
-            super::settle_pending_as_ending(&tx, &guard, &current)?;
-        }
-        tx.commit()?;
+        // Pending cancels are settled only with the full end decision, which also anchors the
+        // stop clock (`decide_session_end`), never by this restore-owned intention.
+        let db = self.lock()?;
+        db.guard.before_write(WritePoint::Progress)?;
+        db.connection.execute("UPDATE session_restores SET deferred_end=?2 WHERE execution=?1 AND deferred_end IS NULL", params![execution.as_str(), serde_json::to_string(ended)?])?;
         Ok(())
     }
 

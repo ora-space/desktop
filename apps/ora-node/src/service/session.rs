@@ -466,6 +466,15 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                     "Controller exceeded unanswered request limit",
                 ));
             };
+            // A keep choice is only valid over a connection that negotiated `turn_cancel`: this
+            // Controller could neither read the events it causes nor take the session over
+            // again. It is refused before durable admission, like an unknown field would be.
+            if chooses_keep(&message) && !turn_cancel {
+                return Err(Failure::local(
+                    CloseReason::ProtocolViolation,
+                    "a session start chose a keep behaviour without negotiating turn_cancel",
+                ));
+            }
             // Enqueueing in read order keeps the worker's FIFO equal to the Controller's order.
             let ack = match &message {
                 ControllerToNodeMessage::EventAck(ack) => Some(ack.clone()),
@@ -586,4 +595,14 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
         result = write => result,
         result = replay => result,
     }
+}
+
+/// Whether a message starts a session that chose a keep behaviour, through either start entry.
+pub(super) fn chooses_keep(message: &ControllerToNodeMessage) -> bool {
+    let spec = match message {
+        ControllerToNodeMessage::StartAgentSession(start) => &start.payload.spec,
+        ControllerToNodeMessage::ControlledStartAgentSession(start) => &start.command.payload.spec,
+        _ => return false,
+    };
+    spec.keep_session_on_cancel || spec.keep_session_on_failure
 }

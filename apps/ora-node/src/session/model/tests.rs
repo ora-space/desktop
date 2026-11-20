@@ -123,12 +123,14 @@ impl SessionLedger for Ledger {
     ) -> Result<(), Self::Error> {
         self.stops.change(attempt, change)
     }
-    fn defer_session_stop_end(
+    fn decide_session_end(
         &self,
         execution: &ExecutionId,
         ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
     ) -> Result<(), Self::Error> {
-        self.stops.defer(execution, ended)
+        self.stops.decide(execution, ended, at_ms, bound_at_ms)
     }
 
     /// Deferred stop evidence has not sealed the session, even after its actor is gone.

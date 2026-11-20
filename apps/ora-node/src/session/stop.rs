@@ -63,6 +63,23 @@ pub(super) fn prepare<L: SessionLedger>(
     SessionAttemptSpawner::new(inner, identity, files)
 }
 
+/// Records the end decision with the stop clock of every outstanding responsibility and the
+/// pending cancel settlements in one transaction; the first decision and clock are kept.
+pub(super) fn decide<L: SessionLedger>(
+    ledger: &L,
+    execution: &ExecutionId,
+    ended: &ora_node_protocol::AgentSessionEnded,
+    config: &SessionStopConfig,
+) -> Result<(), L::Error> {
+    let at_ms = now_ms();
+    ledger.decide_session_end(
+        execution,
+        ended,
+        at_ms,
+        at_ms.saturating_add(config.confirmation_timeout_ms as i64),
+    )
+}
+
 /// Anchors all outstanding responsibilities before notifying any process or closing admission.
 pub(super) fn request<L: SessionLedger>(
     ledger: &L,

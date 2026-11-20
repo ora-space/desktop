@@ -1,6 +1,6 @@
 //! One session execution from start to its terminal result.
 mod conversation;
-use conversation::Conversation;
+use conversation::{Conversation, TurnBook, settle_before_start};
 
 use super::end::SessionEnd;
 use super::host::{
@@ -63,6 +63,12 @@ where
         .checkout(&spec.checkout_execution_id)
         .map(|checkout| checkout.path);
     let mut end = prepare_and_converse(&shared, &operation, &execution, spec, &wake).await;
+    // Acceptance times matter only while the conversation can still stop a turn.
+    shared
+        .cancel_acceptance
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|(accepted, _), _| accepted != &execution);
     let ended = end.terminal(shared.node.clone());
     if super::model::seal_unstarted_history(&shared.sessions_root(), &execution).is_err() {
         return false;
@@ -70,10 +76,7 @@ where
     if shared.ledger.defer_restore_end(&execution, &ended).is_err() {
         return false;
     }
-    if shared
-        .ledger
-        .defer_session_stop_end(&execution, &ended)
-        .is_err()
+    if super::stop::decide(&shared.ledger, &execution, &ended, &shared.config.stop).is_err()
         || super::stop::request(&shared.ledger, &execution, &shared.config.stop).is_err()
     {
         return false;
@@ -230,6 +233,8 @@ where
     let session_setup = session_setup.with_host_servers(std::mem::take(&mut spec.host_mcp_servers));
     let host_refused = session_setup.host_refused();
     // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
+    let turns = TurnBook::default();
+    let initial = spec.initial_turn.turn_id.clone();
     let stopping = shared.stopping.subscribe();
     let restored = resume::restore_prior(
         &shared.restorer,
@@ -240,7 +245,7 @@ where
         &mut spec,
         resume::EndSignals {
             stopping,
-            ended: ended_before_start(&shared.ledger, execution, wake),
+            ended: ended_before_start(&shared.ledger, execution, wake, &initial, &turns),
         },
     );
     if let Err(end) = restored.await {
@@ -559,7 +564,9 @@ where
                     },
                 ),
                 turn_cancel: &shared.config.turn_cancel,
-                ended: std::sync::Mutex::new(std::collections::HashSet::new()),
+                stop_config: &shared.config.stop,
+                cancel_acceptance: &shared.cancel_acceptance,
+                turns: &turns,
             };
             let mut stopping = shared.stopping.subscribe();
             let mut model_status = model_access.as_ref().map(|access| access.status.clone());
@@ -582,9 +589,12 @@ where
                         None => std::future::pending::<ModelAccessStatus>().await,
                     }
                 } => {
-                    let failed = conversation.stop(SessionEnd::agent_failed("model_access_revoked")).await;
                     match status {
+                        // The real reason arrives with the Controller's `EndSession`; recording
+                        // the provisional `model_access_revoked` first would let a restart publish
+                        // it, so the decision waits for the reconciled reason.
                         ModelAccessStatus::Ending => {
+                            conversation.stop_undecided().await;
                             if let Some(access) = &mut model_access {
                                 access.close().await;
                             }
@@ -594,7 +604,9 @@ where
                                 Err(detail) => SessionEnd::agent_failed(detail),
                             }
                         }
-                        ModelAccessStatus::Active | ModelAccessStatus::Revoked => failed,
+                        ModelAccessStatus::Active | ModelAccessStatus::Revoked => {
+                            conversation.stop(SessionEnd::agent_failed("model_access_revoked")).await
+                        }
                     }
                 },
                 end = conversation.run(&agent_ref, spec, shared.config.agent_ready_timeout) => end,
@@ -616,10 +628,13 @@ where
         }
     };
     // The first deadline and terminal intention precede process cleanup; proof is checked by run.
-    if shared
-        .ledger
-        .defer_session_stop_end(execution, &end.terminal(shared.node.clone()))
-        .is_err()
+    if super::stop::decide(
+        &shared.ledger,
+        execution,
+        &end.terminal(shared.node.clone()),
+        &shared.config.stop,
+    )
+    .is_err()
         || super::stop::request(&shared.ledger, execution, &shared.config.stop).is_err()
     {
         return SessionEnd::agent_failed("ledger_unavailable");
@@ -695,12 +710,19 @@ fn settle<L: SessionLedger>(
 
 /// Resolves once an `EndSession` is queued for a session whose agent has not started: turns
 /// queued ahead of it are discarded, and the command is executed by ending the session.
+///
+/// Cancels take effect here too, so a long restore never delays a cancel's settlement.
 async fn ended_before_start<L: SessionLedger>(
     ledger: &L,
     execution: &ExecutionId,
     wake: &Notify,
+    initial: &ora_node_protocol::TurnId,
+    turns: &TurnBook,
 ) -> SessionEnd {
     loop {
+        if let Err(end) = settle_before_start(ledger, execution, initial, turns) {
+            return end;
+        }
         match ledger.queued_commands(execution).map(plan) {
             Ok(Plan::End {
                 command_id,

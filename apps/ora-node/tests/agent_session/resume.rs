@@ -231,3 +231,76 @@ async fn an_end_during_the_restore_cancels_it_before_any_plugin_starts() {
         ),
     );
 }
+
+/// Cancels accepted while a prior Revision is still being restored take effect at once: the
+/// initial turn and a queued turn are both dropped as `not_started` without waiting for the
+/// restore, which keeps running, and neither ever reaches an Agent.
+///
+/// Evidence for specs/test-cases/node/protocol/cancel-turn-and-keep-session.md cases 2 and 23
+#[tokio::test(flavor = "multi_thread")]
+async fn cancels_during_the_restore_settle_without_waiting_for_it() {
+    let fixture = Fixture::new();
+    fixture
+        .restorer
+        .hold
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping_resuming(
+        &sessions,
+        "hello",
+        Keep {
+            on_cancel: true,
+            on_failure: false,
+        },
+        Some(prior()),
+    );
+    until(|| (!fixture.restorer.requests.lock().unwrap().is_empty()).then_some(())).await;
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::SubmitUserTurn(turn("turn-2", "never")),
+    );
+    fixture.command(
+        &sessions,
+        "cancel-2",
+        SessionCommand::CancelTurn(ora_node_protocol::TurnId::new("turn-2")),
+    );
+    fixture.command(
+        &sessions,
+        "cancel-1",
+        SessionCommand::CancelTurn(ora_node_protocol::TurnId::new("turn-1")),
+    );
+    until(|| (fixture.ledger.cancels().len() == 2).then_some(())).await;
+    let during_restore = (
+        fixture.ledger.cancels(),
+        fixture
+            .restorer
+            .cancelled
+            .load(std::sync::atomic::Ordering::SeqCst),
+        fixture.ledger.ended(),
+    );
+    fixture.command(
+        &sessions,
+        "command-end",
+        SessionCommand::EndSession(EndSessionReason::UserEnded),
+    );
+    fixture.ended().await;
+    assert_eq!(
+        during_restore,
+        (
+            vec![
+                (
+                    "cancel-2".to_string(),
+                    ora_node_protocol::TurnCancelOutcome::NotStarted
+                ),
+                (
+                    "cancel-1".to_string(),
+                    ora_node_protocol::TurnCancelOutcome::NotStarted
+                ),
+            ],
+            0,
+            None
+        )
+    );
+    assert_eq!(fixture.plugin_pids(), Vec::<u32>::new());
+}

@@ -168,3 +168,133 @@ fn a_keep_session_is_taken_over_only_by_a_controller_that_negotiated_turn_cancel
         child.terminate();
     });
 }
+
+/// A connection that did not negotiate `turn_cancel` cannot start a session that chose a keep
+/// behaviour: the start is refused before durable admission, so nothing is left that would later
+/// lock that Controller out.
+#[test]
+fn a_keep_session_cannot_be_started_without_turn_cancel() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        prepare(&fixture, &config, &server);
+        let mut child = launch(&fixture, &config);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut stream, answer) = greet(&fixture, /*turn_cancel*/ false).await;
+                assert!(matches!(
+                    answer,
+                    Some(NodeToControllerMessage::HelloAccepted(_))
+                ));
+                let mut keeping = start("[hold]");
+                keeping.payload.spec.keep_session_on_cancel = true;
+                send(
+                    &mut stream,
+                    ControllerToNodeMessage::StartAgentSession(keeping),
+                )
+                .await;
+                let closed = loop {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        read_node_message(&mut stream),
+                    )
+                    .await
+                    .expect("the Node answers or closes")
+                    {
+                        Ok(Some(NodeToControllerMessage::Heartbeat(_))) => {}
+                        Ok(Some(other)) => break Some(other),
+                        Ok(None) | Err(_) => break None,
+                    }
+                };
+                assert!(closed.is_none(), "the start was answered with {closed:?}");
+                drop(stream);
+                // Nothing was admitted, so the same Controller is not refused afterwards.
+                let (_stream, answer) = greet(&fixture, /*turn_cancel*/ false).await;
+                assert!(matches!(
+                    answer,
+                    Some(NodeToControllerMessage::HelloAccepted(_))
+                ));
+            });
+        child.terminate();
+    });
+}
+
+/// A cancel whose acceptance reply never reaches the Controller is still settled: the durable
+/// acceptance, not the reply, wakes the idle session, and the settlement waits in the outbox.
+#[test]
+fn a_cancel_is_settled_even_when_its_reply_is_lost() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        prepare(&fixture, &config, &server);
+        let mut child = launch(&fixture, &config);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut stream, _) = greet(&fixture, /*turn_cancel*/ true).await;
+                let mut keeping = start("hello");
+                keeping.payload.spec.keep_session_on_cancel = true;
+                send(
+                    &mut stream,
+                    ControllerToNodeMessage::StartAgentSession(keeping),
+                )
+                .await;
+                // The initial turn ends; the session now waits for commands.
+                loop {
+                    if let NodeToControllerMessage::ThreadEvent(event) = receive(&mut stream).await
+                        && event
+                            .payload
+                            .record
+                            .get("type")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("turnEnded")
+                    {
+                        break;
+                    }
+                }
+                let cancel = ControllerToNodeMessage::CancelTurn(CancelTurnMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    operation_id: start("").operation_id,
+                    execution_id: ExecutionId::new(EXECUTION),
+                    payload: CancelTurn {
+                        node_id: NodeId::new("test-node"),
+                        command_id: CommandId::new("cancel-unknown"),
+                        turn_id: TurnId::new("never-submitted"),
+                    },
+                });
+                send(&mut stream, cancel).await;
+                // Gone before the Node can write the accepted reply.
+                drop(stream);
+                let (mut stream, _) = greet(&fixture, /*turn_cancel*/ true).await;
+                let settled = loop {
+                    if let NodeToControllerMessage::TurnCancelSettled(settled) =
+                        receive(&mut stream).await
+                    {
+                        break settled.payload;
+                    }
+                };
+                assert_eq!(
+                    (settled.command_id, settled.outcome),
+                    (CommandId::new("cancel-unknown"), TurnCancelOutcome::Unknown)
+                );
+                send(&mut stream, end()).await;
+                loop {
+                    if let NodeToControllerMessage::AgentSessionEnded(_) =
+                        receive(&mut stream).await
+                    {
+                        break;
+                    }
+                }
+            });
+        child.terminate();
+    });
+}

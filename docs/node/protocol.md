@@ -101,7 +101,8 @@ fact). See [Runtime control](../controller/runtime-control.md).
   Node answer `turn_cancel: true` and add the `turn_cancel` capability, so an older Controller, which
   decodes capabilities as a closed set, sees the handshake unchanged. Over such a connection a session
   start may set `keep_session_on_cancel` and `keep_session_on_failure` (omitted means `false`; they
-  are part of the compared input). `cancel_turn { node_id, command_id, turn_id }` is accepted like
+  are part of the compared input); a start that sets either over a connection that did not negotiate
+  `turn_cancel` is a protocol violation and is refused before admission. `cancel_turn { node_id, command_id, turn_id }` is accepted like
   any session command, refused with `turn_cancel_unsupported` when the session did not choose
   `keep_session_on_cancel`, and gets exactly one sequenced, acknowledged `turn_cancel_settled
   { command_id, turn_id, outcome }`, where `outcome` is `stopped`, `not_started`, `already_ended`,

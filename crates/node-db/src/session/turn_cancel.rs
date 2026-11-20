@@ -46,6 +46,11 @@ impl<G: WriteGuard> SessionJournal<G> {
             return Err(Error::InvalidTransition);
         }
         let mut outcome = outcome;
+        // `unknown` is only for turns the session never accepted: an accepted turn that left the
+        // queue, such as one whose MCP wait timed out, already has its own durable result.
+        if outcome == TurnCancelOutcome::Unknown && accepted_turn(&tx, &current, &turn)? {
+            outcome = TurnCancelOutcome::AlreadyEnded;
+        }
         if outcome == TurnCancelOutcome::NotStarted {
             let failed: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM session_turn_failures WHERE execution=?1 AND turn_id=?2)",
@@ -148,13 +153,14 @@ pub(crate) fn settle_pending_as_ending<G: WriteGuard>(
     Ok(last)
 }
 
-/// Whether the session's end was already decided: a deferred stop end or restore end exists.
+/// Whether the session's end was already decided: the stop end, written together with the stop
+/// clock and the cancel settlements, exists.
 pub(crate) fn end_decided(
     connection: &rusqlite::Connection,
     execution: &ExecutionId,
 ) -> Result<bool, Error> {
     Ok(connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM session_stop_ends WHERE execution=?1) OR EXISTS(SELECT 1 FROM session_restores WHERE execution=?1 AND deferred_end IS NOT NULL)",
+        "SELECT EXISTS(SELECT 1 FROM session_stop_ends WHERE execution=?1)",
         [execution.as_str()],
         |row| row.get(/*idx*/ 0),
     )?)
@@ -267,6 +273,31 @@ fn end_requested(
             serde_json::from_str::<SessionCommandInput>(&input)?,
             SessionCommandInput::EndSession(_)
         ) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the session accepted this turn: its initial turn or any stored user turn command.
+fn accepted_turn(
+    connection: &rusqlite::Connection,
+    current: &SessionExecution,
+    turn: &TurnId,
+) -> Result<bool, Error> {
+    if &current.command.payload.spec.initial_turn.turn_id == turn {
+        return Ok(true);
+    }
+    let inputs = connection
+        .prepare("SELECT input FROM session_commands WHERE execution=?1")?
+        .query_map([current.command.execution_id.as_str()], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for input in inputs {
+        if let SessionCommandInput::SubmitUserTurn(message) = serde_json::from_str(&input)?
+            && &message.payload.turn.turn_id == turn
+        {
             return Ok(true);
         }
     }

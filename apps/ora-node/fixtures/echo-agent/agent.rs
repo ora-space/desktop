@@ -376,6 +376,18 @@ impl EchoAgent {
             message(output, &session_id, "ignoring").await?;
             return Ok(());
         }
+        if text.contains("[leak-running]") {
+            // Names the `[hold-done-tool]` turn's tool call with a status that keeps the record
+            // pending, so it would reach only the live preview, then holds.
+            tool(output, &session_id, "echo-tool", ToolCallStatus::InProgress).await?;
+            self.held = Some(PendingPrompt {
+                request_id: id,
+                session_id,
+                after_cancel: AfterCancel::Nothing,
+                finishing: false,
+            });
+            return Ok(());
+        }
         if text.contains("[leak]") {
             // Names the tool call a `[hold-done-tool]` turn ran, as if that turn still produced.
             tool(output, &session_id, "echo-tool", ToolCallStatus::Completed).await?;

@@ -110,6 +110,11 @@ impl MemoryLedger {
         });
     }
 
+    /// The end decision recorded for the execution, the one a restart would publish.
+    pub fn decision(&self) -> Option<AgentSessionEnded> {
+        self.stops.decision(&ExecutionId::new(EXECUTION))
+    }
+
     /// Returns Thread events and cancel settlements in write order.
     pub fn journal(&self) -> Vec<Entry> {
         self.state().journal.clone()
@@ -290,13 +295,15 @@ impl SessionLedger for MemoryLedger {
             .change(attempt, change)
             .map_err(|e| LedgerError(e.to_string()))
     }
-    fn defer_session_stop_end(
+    fn decide_session_end(
         &self,
         execution: &ExecutionId,
         ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
     ) -> Result<(), Self::Error> {
         self.stops
-            .defer(execution, ended)
+            .decide(execution, ended, at_ms, bound_at_ms)
             .map_err(|e| LedgerError(e.to_string()))?;
         self.state().settle_pending_cancels();
         Ok(())
@@ -712,6 +719,17 @@ impl Fixture {
 
     /// Starts a session that chose to stay after a cancelled and/or a failed turn.
     pub fn start_keeping(&self, sessions: &Sessions, initial: &str, keep: Keep) {
+        self.start_keeping_resuming(sessions, initial, keep, None);
+    }
+
+    /// Starts a session with keep choices that resumes `prior`, if given.
+    pub fn start_keeping_resuming(
+        &self,
+        sessions: &Sessions,
+        initial: &str,
+        keep: Keep,
+        prior: Option<PriorRevision>,
+    ) {
         sessions.start(
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
@@ -729,7 +747,7 @@ impl Fixture {
                 model_binding_id: None,
                 git_identity: identity(),
                 initial_turn: turn("turn-1", initial),
-                prior_revision: None,
+                prior_revision: prior,
                 workspace_directory: vec![],
                 trigger: None,
             },

@@ -89,14 +89,37 @@ impl Stops {
         }
         Ok(())
     }
-    /// The first terminal intention survives subsequent attempts to replace it.
-    pub fn defer(&self, execution: &ExecutionId, ended: &AgentSessionEnded) -> io::Result<()> {
-        self.0
+    /// Records the first decision and anchors every outstanding stop clock together.
+    pub fn decide(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
+    ) -> io::Result<()> {
+        let mut state = self
+            .0
             .lock()
-            .map_err(|_| io::Error::other("poisoned stop fixture"))?
+            .map_err(|_| io::Error::other("poisoned stop fixture"))?;
+        state
             .ends
             .entry(execution.clone())
             .or_insert_with(|| ended.clone());
+        for record in state.records.iter_mut().filter(|r| {
+            &r.identity.execution == execution && r.state != SessionStopState::Confirmed
+        }) {
+            record.first_stop_at_ms.get_or_insert(at_ms);
+            record.bound_at_ms.get_or_insert(bound_at_ms);
+            if record.state == SessionStopState::Prepared {
+                record.state = SessionStopState::Stopping;
+            }
+        }
         Ok(())
+    }
+    /// The first recorded end decision of the execution, if any.
+    // Read only by the session integration tests, not by the model unit tests sharing this file.
+    #[allow(dead_code)]
+    pub fn decision(&self, execution: &ExecutionId) -> Option<AgentSessionEnded> {
+        self.0.lock().ok()?.ends.get(execution).cloned()
     }
 }

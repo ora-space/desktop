@@ -3,7 +3,7 @@ use super::*;
 mod admission;
 mod cancel;
 use agent_client_protocol_schema::v1::StopReason;
-pub(super) use cancel::Keep;
+pub(super) use cancel::{Keep, TurnBook, settle_before_start};
 use ora_node_protocol::TurnCancelOutcome;
 
 /// How one running turn stopped.
@@ -46,8 +46,15 @@ pub(super) struct Conversation<'a, L: SessionLedger> {
     /// Whether this Agent version has a verified turn boundary (D2).
     pub(super) boundary_verified: bool,
     pub(super) turn_cancel: &'a crate::session::TurnCancelConfig,
-    /// Turns that already have their own result, so a later cancel of one is `already_ended`.
-    pub(super) ended: std::sync::Mutex<std::collections::HashSet<ora_node_protocol::TurnId>>,
+    /// Acceptance times of pending cancels, written by the protocol side at durable acceptance.
+    pub(super) cancel_acceptance: &'a std::sync::Mutex<
+        std::collections::HashMap<(ExecutionId, CommandId), tokio::time::Instant>,
+    >,
+    /// The stop clock the end decision anchors together with itself.
+    pub(super) stop_config: &'a crate::SessionStopConfig,
+    /// Turns that already have their own result, so a later cancel of one is `already_ended`,
+    /// including those settled while the session prepared.
+    pub(super) turns: &'a TurnBook,
 }
 
 impl<L: SessionLedger> Conversation<'_, L> {
@@ -58,7 +65,8 @@ impl<L: SessionLedger> Conversation<'_, L> {
         spec: AgentSessionSpec,
         ready_timeout: std::time::Duration,
     ) -> SessionEnd {
-        let mut next_turn = Some(spec.initial_turn);
+        // A cancel accepted while the session prepared may already have dropped the first turn.
+        let mut next_turn = (!self.turns.initial_dropped()).then_some(spec.initial_turn);
         loop {
             if self.mirror.is_broken() {
                 return self
@@ -329,12 +337,21 @@ impl<L: SessionLedger> Conversation<'_, L> {
     /// recoverable decision (D3). A ledger that cannot write still lets the stop proceed, because
     /// stopping is always safe; the decision is written by the driver or after recovery.
     pub(super) async fn stop(&self, end: SessionEnd) -> SessionEnd {
-        if let Err(error) = self
-            .ledger
-            .defer_session_stop_end(self.execution, &end.terminal(self.node.clone()))
-        {
+        if let Err(error) = crate::session::stop::decide(
+            self.ledger,
+            self.execution,
+            &end.terminal(self.node.clone()),
+            self.stop_config,
+        ) {
             ora_warn!(execution_id = %self.execution, error = %error, "session end decision was not recorded before stopping");
         }
+        self.stop_undecided().await;
+        end
+    }
+
+    /// Stops the Agent without recording a decision, for an end whose reason is still unknown;
+    /// the caller records the decision once the reason is settled, before the terminal.
+    pub(super) async fn stop_undecided(&self) {
         if let Some(control) = self.control {
             control.stop();
         }
@@ -348,6 +365,5 @@ impl<L: SessionLedger> Conversation<'_, L> {
             ora_warn!(execution_id = %self.execution, error = %error, "agent session did not stop cleanly");
         }
         self.mirror.set_turn(None);
-        end
     }
 }

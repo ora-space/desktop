@@ -116,6 +116,8 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .remove(&turn.turn_id);
+            // The timed-out turn has its own result; a later cancel of it is `already_ended`.
+            self.turn_ended(&turn.turn_id);
         }
         Ok(next)
     }

@@ -120,3 +120,79 @@ fn protected_hardlinks_is_required_only_for_a_separate_workload() {
         .collect();
     assert_eq!(checks, vec![Ok(()), Ok(())]);
 }
+
+/// Both session start entries are checked for a keep choice before admission; other messages,
+/// and starts that choose nothing, never are.
+#[test]
+fn both_start_entries_report_a_keep_choice() {
+    use ora_node_protocol::*;
+    let start = |cancel: bool, failure: bool| StartAgentSessionMessage {
+        protocol_version: CURRENT_PROTOCOL_VERSION,
+        operation_id: OperationId::new("operation"),
+        execution_id: ExecutionId::new("execution"),
+        payload: StartAgentSession {
+            spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
+                mcp_lifecycle: false,
+                keep_session_on_cancel: cancel,
+                keep_session_on_failure: failure,
+                mcp: Vec::new(),
+                agent_configuration: None,
+                node_id: NodeId::new("node"),
+                agent_plugin_id: PluginId::new("official/agent"),
+                agent_plugin_version: PluginVersion::new("1.0.0"),
+                checkout_execution_id: ExecutionId::new("clone"),
+                model_binding_id: None,
+                git_identity: GitIdentity {
+                    name: "User".into(),
+                    email: "user@example.com".into(),
+                },
+                initial_turn: UserTurn {
+                    turn_id: TurnId::new("turn-1"),
+                    content: vec![ContentBlock::Text {
+                        text: "hello".into(),
+                    }],
+                },
+                prior_revision: None,
+                workspace_directory: Vec::new(),
+                trigger: None,
+            },
+        },
+    };
+    let controlled = |command: StartAgentSessionMessage| {
+        ControllerToNodeMessage::ControlledStartAgentSession(Box::new(
+            ControlledStartAgentSession {
+                binding: RuntimeBinding {
+                    tenant_id: "tenant".into(),
+                    workspace_id: "workspace".into(),
+                    sandbox_id: "sandbox".into(),
+                    runtime_generation: 1,
+                    node_id: "node".into(),
+                    node_incarnation_id: "incarnation".into(),
+                    node_instance_id: "instance".into(),
+                    controller_epoch: 1,
+                    control_epoch: 1,
+                    control_version: 1,
+                    session_id: "session".into(),
+                    actor_user_id: "user".into(),
+                    operation_id: "operation".into(),
+                    execution_id: "execution".into(),
+                    node_operation_id: "operation".into(),
+                    input_closed: false,
+                    issued_at_ms: 1,
+                    expires_at_ms: 2,
+                },
+                command,
+            },
+        ))
+    };
+    let chosen = [(true, false), (false, true), (false, false)].map(|(cancel, failure)| {
+        (
+            super::session::chooses_keep(&ControllerToNodeMessage::StartAgentSession(start(
+                cancel, failure,
+            ))),
+            super::session::chooses_keep(&controlled(start(cancel, failure))),
+        )
+    });
+    assert_eq!(chosen, [(true, true), (true, true), (false, false)]);
+}

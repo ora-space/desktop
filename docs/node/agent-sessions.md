@@ -179,7 +179,9 @@ already queued keeps its explicit reason.
 A session started with `keep_session_on_cancel` accepts `CancelTurn` for any of its turns; one started
 with `keep_session_on_failure` may also outlive a failed turn. A cancel takes effect at the ledger,
 which is the one serial boundary for a cancel, the turn's admission and its MCP wait timeout: whichever
-commits first decides the turn.
+commits first decides the turn. The durable acceptance itself wakes the session, before the accepted
+reply is written, and a stop's deadline counts from the first cancel's acceptance. Cancels also take
+effect while the session prepares, for example during a prior Revision restore.
 
 - **Queued turn**, including one waiting for the agent or an MCP gate: dropped, its command settled
   `discarded`, settlement `not_started`, at once. A wait already past its deadline is settled as the
@@ -225,8 +227,11 @@ violation was observed or the probe could not exercise its target. A successful 
 does not automatically register a version: evaluate the complete scenario set, tool cleanup and
 background work before changing the turn-boundary list. Keep measurements in the circus run issue.
 
-Whenever the session's end is decided, the decision and a `session_ending` settlement for every
-pending cancel are written in one transaction before the agent is signalled; a terminal written
+Whenever the session's end is decided, the decision, the stop clock of every outstanding stop
+responsibility and a `session_ending` settlement for every pending cancel are written in one
+transaction before the agent is signalled, so a restart keeps the original reason and clock. When
+the reason is not yet known (model access ending before the Controller's `EndSession`), the decision
+waits for it; a terminal written
 without a prior decision, such as restart settlement, settles them first as well, so no cancel is left
 without its settlement and none follows the terminal.
 

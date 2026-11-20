@@ -531,3 +531,73 @@ async fn a_cancel_during_a_failed_turns_quiet_window_is_already_ended() {
         )
     );
 }
+
+/// Case 8 (live preview): a later turn's pending update that names a stopped turn's tool call
+/// never reaches the live preview, and the session ends as a leak without waiting for the
+/// update to settle.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pending_leaked_update_never_reaches_the_preview() {
+    let mut fixture = Fixture::new();
+    fixture.verify_turn_boundary();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping(&sessions, "[hold-done-tool]", CANCEL);
+    running(&fixture, 0).await;
+    fixture.command(
+        &sessions,
+        "cancel-1",
+        SessionCommand::CancelTurn(TurnId::new("turn-1")),
+    );
+    assert_eq!(
+        settled(&fixture, "cancel-1").await,
+        TurnCancelOutcome::Stopped
+    );
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::SubmitUserTurn(turn("turn-2", "[leak-running]")),
+    );
+    let mut previewed = false;
+    let ended = until(|| {
+        previewed |= sessions.preview_snapshots().iter().any(|preview| {
+            serde_json::to_string(&preview.payload)
+                .unwrap_or_default()
+                .contains("echo-tool")
+        });
+        fixture.ledger.ended()
+    })
+    .await;
+    assert_eq!(
+        (ended.detail, previewed),
+        (Some("turn_leak_detected".to_string()), false)
+    );
+}
+
+/// Case 11 (deadline origin): the cancel deadline counts from the durable acceptance, so time the
+/// conversation spent before reaching the cancel is part of G, not added to it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_cancel_deadline_counts_from_acceptance() {
+    let mut fixture = Fixture::new();
+    fixture.verify_turn_boundary();
+    fixture.turn_cancel.grace = std::time::Duration::from_secs(2);
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start_keeping(&sessions, "[ignore-cancel]", CANCEL);
+    running(&fixture, 0).await;
+    fixture.ledger.accept(
+        "cancel-1",
+        SessionCommand::CancelTurn(TurnId::new("turn-1")),
+    );
+    let woken = std::time::Instant::now();
+    // Accepted 1.5 s before the session could act on it: only 0.5 s of G is left.
+    sessions.turn_cancel_accepted(
+        &ExecutionId::new(EXECUTION),
+        &ora_node_protocol::CommandId::new("cancel-1"),
+        tokio::time::Instant::now() - std::time::Duration::from_millis(1500),
+    );
+    let outcome = settled(&fixture, "cancel-1").await;
+    let elapsed = woken.elapsed();
+    assert_eq!(outcome, TurnCancelOutcome::SessionEnding);
+    assert!(
+        elapsed < std::time::Duration::from_millis(1700),
+        "settled {elapsed:?} after the wake, beyond what remained of G"
+    );
+}
