@@ -61,7 +61,8 @@ every frozen process even while a scan hangs, and the remaining passes kill inst
 A frozen process that cannot be pinned again for that kill, though it has not exited (the Node is
 out of descriptors, for instance), stays stopped until the next observation kills it; scans still
 claim it meanwhile, so its attempt stays running. Shutdown is bounded as well: once the service
-has returned, the Node waits at most 5 seconds for such an abandoned read and then exits.
+has returned, the Node waits at most 5 seconds for any blocking task still running, normally only
+such an abandoned read, and then exits.
 
 **What dies, and when.** When a session ends (EndSession, an Agent failure, a cancel that ends the
 session, graceful shutdown, or restart recovery after a Node crash) and when MCP lifecycle replaces

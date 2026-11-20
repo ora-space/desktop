@@ -101,7 +101,7 @@ fn run(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let served = runtime.block_on(async move {
+    serve_then_exit(runtime, async move {
         let mut terminate = signal(SignalKind::terminate())?;
         let mut interrupt = signal(SignalKind::interrupt())?;
         let shutdown = ora_node::Shutdown::default();
@@ -125,16 +125,73 @@ fn run(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
             Some(reason) => Err(reason.into()),
             None => Ok::<_, Box<dyn std::error::Error>>(()),
         }
-    });
-    // By now the service and its worker have returned; what can remain is a stop observation the
-    // Node gave up on, still blocked in an `environ` read on a stuck mount. Dropping the runtime
-    // would wait for it indefinitely, so the Node waits a bounded time and then exits, which ends
-    // that thread with the process.
+    })
+}
+
+/// Runs the Node to completion on `runtime`, then exits the runtime within [`RUNTIME_SHUTDOWN`]
+/// even if a blocking task never returns.
+///
+/// By now the service and its worker have returned, and the bounded shutdown abandons every
+/// blocking task still running, whatever it is:
+/// - a stop observation (terminate, probe, or both) whose budget ran out, still blocked in an
+///   `environ` read on a stuck mount. This is the only kind expected here. It only signals and
+///   reads procfs; the caller records the outcome in the ledger, and that caller gave up, so an
+///   abandoned observation leaves no ledger row behind, only the Unknown its caller recorded;
+/// - the service worker, ora-git requests, checkout placement, a revision restore, or a file
+///   read of a revision upload. The service awaits each of these before it returns, so none is
+///   expected to remain. One left on a failure path ends as it would if the Node were killed:
+///   its ledger writes are SQLite transactions, and restart recovery handles the step it was in.
+///
+/// Dropping the runtime instead would wait for such a task indefinitely; exiting ends its thread
+/// with the process.
+#[cfg(target_os = "linux")]
+fn serve_then_exit<T>(
+    runtime: tokio::runtime::Runtime,
+    node: impl std::future::Future<Output = Result<T, Box<dyn std::error::Error>>>,
+) -> Result<T, Box<dyn std::error::Error>> {
+    let served = runtime.block_on(node);
     runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
-    served?;
-    Ok(())
+    served
 }
 
 /// How long an exiting Node waits for blocking tasks it no longer awaits.
 #[cfg(target_os = "linux")]
 const RUNTIME_SHUTDOWN: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::{RUNTIME_SHUTDOWN, serve_then_exit};
+    use std::time::{Duration, Instant};
+
+    /// A blocking task nothing awaits any more, as a stop observation hung in an `environ` read
+    /// is, holds the exit for the bound and no longer.
+    #[test]
+    fn a_hung_blocking_task_holds_the_exit_only_for_the_bound()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let (release, hung) = std::sync::mpsc::channel::<()>();
+        let began = Instant::now();
+        serve_then_exit(runtime, async move {
+            let (started, running) = tokio::sync::oneshot::channel();
+            // Dropping the handle abandons the task, as an observation's caller does at its
+            // budget. It must be running by then: a task still queued is simply discarded. It
+            // gives up on its own well past the bound, so an exit that waited for it fails the
+            // assertion instead of hanging the test.
+            drop(tokio::task::spawn_blocking(move || {
+                let _ = started.send(());
+                let _ = hung.recv_timeout(RUNTIME_SHUTDOWN * 3);
+            }));
+            running.await?;
+            Ok(())
+        })?;
+        let waited = began.elapsed();
+        drop(release);
+        assert!(
+            waited >= RUNTIME_SHUTDOWN && waited < RUNTIME_SHUTDOWN + Duration::from_secs(2),
+            "{waited:?}"
+        );
+        Ok(())
+    }
+}
