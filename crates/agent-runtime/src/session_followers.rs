@@ -80,6 +80,8 @@ impl SessionFollowers {
                 let mut overflow_open = true;
                 loop {
                     tokio::select! {
+                        // Both senders close on drop. A pending overflow must win over event EOF.
+                        biased;
                         signal = overflow_receiver.recv(), if overflow_open => {
                             match signal {
                                 Some(()) => {
@@ -305,6 +307,25 @@ mod tests {
                 Some(Ok(LoadSessionEvent::Completed)),
             ]
         );
+    }
+
+    /// A single free slot cannot represent the complete two-event terminal sequence.
+    #[tokio::test]
+    async fn dropping_with_one_free_slot_reports_overflow_without_a_partial_terminal() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        let mut followers = SessionFollowers::new();
+        insert_idle(&mut followers, 1, sender);
+        // Holding permits keeps exactly one slot free without depending on relay scheduling.
+        let queue = followers.followers[&1].events.clone();
+        let held = queue.try_reserve_many(FOLLOWER_QUEUE_CAPACITY - 1).unwrap();
+        drop(followers);
+        drop(held);
+        drop(queue);
+        assert_eq!(
+            receiver.recv().await.unwrap().unwrap_err().to_string(),
+            "session load follower fell behind the active prompt"
+        );
+        assert!(receiver.recv().await.is_none());
     }
 
     /// A loaded session receives live updates and the active turn's finite ending.
