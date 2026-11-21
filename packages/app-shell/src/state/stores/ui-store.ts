@@ -76,6 +76,7 @@ export type SettingsCategory =
   | "skills"
   | "plugins"
   | "proxy"
+  | "cloud"
   | "privacy"
   | "developer";
 

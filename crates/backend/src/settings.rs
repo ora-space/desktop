@@ -139,6 +139,43 @@ impl Settings {
         crate::proxy::check_proxy(&settings, &url).await
     }
 
+    /// Loads the Cloud server origin Desktop connects to, if one was saved.
+    ///
+    /// The value is the origin already normalized by the Desktop Cloud connection; it is not a
+    /// secret, so it lives with the other preferences while the token stays in the OS store.
+    pub async fn cloud_server(&self) -> Result<Option<String>, BackendError> {
+        let store = self.store.clone();
+        spawn_repository_work(move || {
+            store
+                .get(ConfigKey::CloudServer)
+                .map(|value| value.map(|value| value.as_str().to_owned()))
+                .map_err(user_config_repository_error)
+        })
+        .await
+    }
+
+    /// Persists the Cloud server origin chosen in Settings.
+    pub async fn set_cloud_server(&self, origin: String) -> Result<(), BackendError> {
+        let store = self.store.clone();
+        spawn_repository_work(move || {
+            store
+                .set_display(ConfigKey::CloudServer, origin)
+                .map_err(user_config_repository_error)
+        })
+        .await
+    }
+
+    /// Forgets the Cloud server origin, leaving Desktop unconnected.
+    pub async fn clear_cloud_server(&self) -> Result<(), BackendError> {
+        let store = self.store.clone();
+        spawn_repository_work(move || {
+            store
+                .delete(ConfigKey::CloudServer)
+                .map_err(user_config_repository_error)
+        })
+        .await
+    }
+
     /// Restricts runtime logging to its preferred-level persistence capability.
     pub fn preferred_log_level_store(&self) -> BackendPreferredLogLevelStore {
         BackendPreferredLogLevelStore {

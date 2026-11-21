@@ -21,6 +21,36 @@ export const settingsTranslations = {
     "settings.appearance.language": "界面语言",
     "settings.appearance.languageDescription":
       "设置菜单、提示和 Agent 工作区使用的语言。",
+    "settings.nav.cloud": "Cloud 连接",
+    "settings.cloud.title": "Cloud 连接",
+    "settings.cloud.description":
+      "以企业账号登录团队的 Cloud 服务器。没有连接时，本地的会话、Agent 和工作区照常可用。",
+    "settings.cloud.loading": "加载中",
+    "settings.cloud.loadError": "无法读取 Cloud 连接。",
+    "settings.cloud.server": "服务器地址",
+    "settings.cloud.serverHint":
+      "填 https 地址，例如 https://cloud.example.com；只有本机地址可以用 http。更换或清空地址会退出当前服务器。",
+    "settings.cloud.save": "保存",
+    "settings.cloud.saveError": "无法保存服务器地址：{{reason}}",
+    "settings.cloud.signIn": "登录",
+    "settings.cloud.cancel": "取消登录",
+    "settings.cloud.signOut": "退出登录",
+    "settings.cloud.startError": "无法打开浏览器登录，请重试。",
+    "settings.cloud.revocationUnconfirmed":
+      "已在本机退出，但服务器暂时连不上，没有确认登录已吊销。",
+    "settings.cloud.status.notConfigured": "尚未设置服务器。",
+    "settings.cloud.status.signedOut": "未登录。",
+    "settings.cloud.status.signingIn": "请在浏览器中完成登录并点「允许」。",
+    "settings.cloud.status.signedIn": "已登录为 {{name}}。",
+    "settings.cloud.status.unreachable":
+      "已登录为 {{name}}，但服务器暂时连不上。",
+    "settings.cloud.status.needsSignIn": "登录已失效，请重新登录。",
+    "settings.cloud.status.storageUnavailable":
+      "系统凭据存储不可用（{{reason}}），无法保存登录，Cloud 功能已关闭。",
+    "settings.cloud.failure.denied": "浏览器中没有完成授权，未登录。",
+    "settings.cloud.failure.timedOut": "等待浏览器授权超时，未登录。",
+    "settings.cloud.failure.rejected": "服务器拒绝了这次登录，请重试。",
+    "settings.cloud.failure.unreachable": "登录时连不上服务器，请稍后重试。",
     "settings.proxy.title": "网络代理",
     "settings.proxy.description":
       "可选 HTTP 代理设置。仅当市场源选择“使用代理”时生效。",
@@ -154,6 +184,42 @@ export const settingsTranslations = {
     "settings.appearance.language": "Display language",
     "settings.appearance.languageDescription":
       "Set the language used by menus, prompts, and the agent workspace.",
+    "settings.nav.cloud": "Cloud connection",
+    "settings.cloud.title": "Cloud connection",
+    "settings.cloud.description":
+      "Sign in to your team's Cloud server with your company account. Without a connection, local sessions, agents and workspaces work as usual.",
+    "settings.cloud.loading": "Loading",
+    "settings.cloud.loadError": "Could not read the Cloud connection.",
+    "settings.cloud.server": "Server address",
+    "settings.cloud.serverHint":
+      "Use an https address such as https://cloud.example.com; plain http works only for this computer. Changing or clearing the address signs out of the current server.",
+    "settings.cloud.save": "Save",
+    "settings.cloud.saveError": "Could not save the server address: {{reason}}",
+    "settings.cloud.signIn": "Sign in",
+    "settings.cloud.cancel": "Cancel sign-in",
+    "settings.cloud.signOut": "Sign out",
+    "settings.cloud.startError":
+      "Could not open the browser to sign in. Try again.",
+    "settings.cloud.revocationUnconfirmed":
+      "Signed out on this device, but the server could not be reached to confirm the sign-in was revoked.",
+    "settings.cloud.status.notConfigured": "No server is set.",
+    "settings.cloud.status.signedOut": "Not signed in.",
+    "settings.cloud.status.signingIn":
+      "Finish signing in in your browser and click Allow.",
+    "settings.cloud.status.signedIn": "Signed in as {{name}}.",
+    "settings.cloud.status.unreachable":
+      "Signed in as {{name}}, but the server cannot be reached right now.",
+    "settings.cloud.status.needsSignIn":
+      "Your sign-in has expired. Sign in again.",
+    "settings.cloud.status.storageUnavailable":
+      "The system credential store is unavailable ({{reason}}), so the sign-in cannot be kept and Cloud features are off.",
+    "settings.cloud.failure.denied": "The browser did not approve the sign-in.",
+    "settings.cloud.failure.timedOut":
+      "Timed out waiting for approval in the browser.",
+    "settings.cloud.failure.rejected":
+      "The server refused this sign-in. Try again.",
+    "settings.cloud.failure.unreachable":
+      "The server could not be reached while signing in. Try again later.",
     "settings.proxy.title": "Network proxy",
     "settings.proxy.description":
       "Configure an optional HTTP proxy host and port. It is used only for marketplace sources that choose to use the proxy.",

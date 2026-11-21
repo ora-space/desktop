@@ -20,6 +20,10 @@ Generic, domain-free download capability used by crates that fetch release artif
   caller-provided `S3Config`. An S3 object key is resolved as a path-style HTTPS URL and signed
   with SigV4; a full HTTPS URL is signed only when it belongs to that exact endpoint and bucket.
   Foreign HTTPS URLs in S3 mode are rejected instead of silently falling back to unsigned access.
+- `credential_client` (`http-reqwest` feature): a client for requests that carry a credential
+  bound to one origin (presigned URLs, bearer tokens). It never follows redirects, verifies
+  certificates with the platform verifier and resolves the proxy from the caller's `ProxyConfig`.
+  Presigned uploads and downloads build their clients with it.
 - Proxy resolution (`ProxyConfig` + `resolve_proxy`): an explicit proxy, then per-scheme
   environment variables (`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`), honoring `NO_PROXY` and a bypass
   list; otherwise a direct connection. Platform system-proxy reading is not yet implemented.
