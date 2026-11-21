@@ -465,3 +465,25 @@ fn proxy_clear_does_not_block_async_progress() {
         );
     });
 }
+
+/// The Cloud server origin survives reopening and can be forgotten again.
+#[test]
+fn cloud_server_round_trips_and_clears() {
+    run_test(async {
+        let temporary = TempDir::new().expect("settings fixture");
+        let path = temporary.path().join("ora.sqlite3");
+        let (_pool, settings) = open_settings(&path);
+        assert_eq!(settings.cloud_server().await.expect("read empty"), None);
+        settings
+            .set_cloud_server("https://cloud.example".to_owned())
+            .await
+            .expect("save origin");
+        let (_reopened_pool, reopened) = open_settings(&path);
+        assert_eq!(
+            reopened.cloud_server().await.expect("read saved"),
+            Some("https://cloud.example".to_owned())
+        );
+        reopened.clear_cloud_server().await.expect("clear origin");
+        assert_eq!(reopened.cloud_server().await.expect("read cleared"), None);
+    });
+}

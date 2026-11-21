@@ -8,6 +8,8 @@ use thiserror::Error;
 /// Names every persisted user preference without spreading string literals across callers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfigKey {
+    /// Normalized origin of the Cloud server Desktop signs in to; the token is never stored here.
+    CloudServer,
     DeveloperMode,
     LogLevel,
     NetworkProxySettings,
@@ -18,6 +20,7 @@ impl ConfigKey {
     /// Returns the stable SQLite key used by every storage adapter.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::CloudServer => "cloud_server",
             Self::DeveloperMode => "developer_mode",
             Self::NetworkProxySettings => "network_proxy_settings",
             Self::LogLevel => "log_level",
