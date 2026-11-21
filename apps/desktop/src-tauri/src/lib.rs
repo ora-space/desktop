@@ -1,4 +1,5 @@
 mod cli;
+mod cloud_connection;
 mod commands;
 mod diagnostic_logs;
 mod error;
@@ -80,6 +81,16 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        // Regaining focus is when someone may have just revoked or re-approved access elsewhere,
+        // so the Cloud token is re-checked then (the service throttles it).
+        .on_window_event(|window, event| {
+            if window.label() == "main"
+                && matches!(event, tauri::WindowEvent::Focused(true))
+                && let Some(state) = window.app_handle().try_state::<DesktopState>()
+            {
+                state.cloud_connection.window_focused();
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -265,6 +276,7 @@ fn bootstrap_desktop(app: &tauri::AppHandle) -> Result<DesktopBootstrap, Desktop
         resolved_timezone.timezone,
     )
     .map_err(DesktopBootstrapError::MarketplaceSync)?;
+    let cloud_connection = cloud_connection::start(app.clone(), backend.settings().clone());
     let runtime_log_level = RuntimeLogLevelManager::new(
         level_control,
         backend.settings().preferred_log_level_store(),
@@ -274,6 +286,7 @@ fn bootstrap_desktop(app: &tauri::AppHandle) -> Result<DesktopBootstrap, Desktop
         DesktopState {
             backend,
             update,
+            cloud_connection,
             runtime_log_level,
             workspace_files,
             binary_paths,
