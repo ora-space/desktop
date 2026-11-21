@@ -33,6 +33,7 @@ import {
   IconLanguage,
   IconMoon,
   IconProng,
+  IconCloud,
   IconPuzzle,
   IconRobot,
   IconSparkles,
@@ -45,6 +46,7 @@ import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-
 import { SettingsHeading } from "./settings-heading";
 import { RuntimeLogLevelSettings } from "./runtime-log-level-settings";
 import { ProxySettings } from "./proxy-settings";
+import { CloudConnectionSettings } from "./cloud-connection-settings";
 import { DeveloperModeSettings } from "./developer-mode-settings";
 import { DiagnosticLogsSettings } from "./diagnostic-logs-settings";
 import { useDeveloperMode } from "../../state/hooks/use-developer-mode";
@@ -116,6 +118,7 @@ export function SettingsDialog() {
     { id: "skills", icon: IconSparkles, label: t("settings.nav.skills") },
     { id: "plugins", icon: IconPuzzle, label: t("settings.nav.plugins") },
     { id: "proxy", icon: IconProng, label: t("settings.nav.proxy") },
+    { id: "cloud", icon: IconCloud, label: t("settings.nav.cloud") },
     { id: "privacy", icon: IconDatabase, label: t("settings.nav.privacy") },
     {
       id: "developer",
@@ -218,6 +221,7 @@ export function SettingsDialog() {
                   />
                 )}
                 {category === "proxy" && <ProxySettings />}
+                {category === "cloud" && <CloudConnectionSettings />}
                 {category === "privacy" && <PrivacySettings />}
                 {category === "developer" && (
                   <DeveloperSettings

@@ -13,3 +13,5 @@ deno.lock
 
 apps/desktop/web/marketplace-sync.generated.ts
 apps/desktop/web/marketplace-sync-fixtures.generated.ts
+apps/desktop/web/cloud-connection.generated.ts
+apps/desktop/web/cloud-connection-fixtures.generated.ts

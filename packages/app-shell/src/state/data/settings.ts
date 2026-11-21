@@ -3,4 +3,5 @@ export const settingsKeys = {
   developerMode: ["developer-mode"] as const,
   runtimeLogLevel: ["runtime-log-level"] as const,
   proxySettings: ["proxy-settings"] as const,
+  cloudConnection: ["cloud-connection"] as const,
 };
