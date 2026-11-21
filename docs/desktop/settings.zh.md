@@ -27,6 +27,10 @@
 
 代理由主机、端口和可选的 HTTP Basic 凭据组成，存为一个 JSON 值。选择使用它的 marketplace 流量（每个源的 Git 同步和制品下载，见 [Marketplace](../plugins/marketplace.zh.md)）和 Desktop 更新器会使用它。`checkProxySettings` 用请求中给出的设置（与已保存的无关）探测一个绝对的 HTTP(S) URL：任何 HTTP 响应，包括 4xx 和 5xx，都表示代理已经连到了主机；超时、拒绝连接和无效 URL 返回 `unreachable`，而不是让命令失败。
 
+## Cloud 连接
+
+服务器地址（规范化的 origin）存在 `user_config.cloud_server`；登录令牌不在这里，而在操作系统的安全存储里。地址规则、登录和令牌见 [Desktop 宿主](desktop-host.zh.md#cloud-连接)。
+
 ## worktree 根目录
 
 worktree 根目录在 设置 → 数据与隐私 中，必须是已存在目录的绝对路径，默认为 `~/.ora/worktrees`。它只是创建目标，见 [Desktop 宿主](desktop-host.zh.md#持久化路径)。
