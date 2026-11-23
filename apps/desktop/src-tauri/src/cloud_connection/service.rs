@@ -72,6 +72,9 @@ struct Inner<S, A, B, P, O> {
     timing: Timing,
     runtime: Handle,
     state: Mutex<State>,
+    /// Serializes every secure-store write, and the startup read, so a token being settled and a
+    /// sign-out, server change or check never interleave on the same entry.
+    store_lock: tokio::sync::Mutex<()>,
     ready: watch::Sender<bool>,
 }
 
@@ -107,6 +110,7 @@ where
                     last_check: None,
                     last_emitted: None,
                 }),
+                store_lock: tokio::sync::Mutex::new(()),
                 ready,
             }),
         };
@@ -351,7 +355,11 @@ where
         let phase = match server {
             None => Phase::NotConfigured,
             Some(server) => {
-                let session = match self.load(&server).await {
+                let loaded = {
+                    let _store = self.inner.store_lock.lock().await;
+                    self.load(&server).await
+                };
+                let session = match loaded {
                     Ok(Some(stored)) => Session::Active {
                         stored,
                         reach: Reach::Confirmed,

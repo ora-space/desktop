@@ -628,3 +628,125 @@ async fn signing_out_with_a_failing_store_still_revokes_and_says_so() {
             .contains(&format!("logout {SERVER} ora_dt_old"))
     );
 }
+
+/// Waits until `ready` holds, failing after a few seconds.
+async fn until(mut ready: impl FnMut() -> bool) {
+    for _ in 0..500 {
+        if ready() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(ready(), "condition not reached");
+}
+
+/// Whether the fake server was asked to revoke `token` on `origin`.
+fn revoked(h: &Harness, origin: &str, token: &str) -> bool {
+    h.api
+        .calls
+        .lock()
+        .expect("calls")
+        .contains(&format!("logout {origin} {token}"))
+}
+
+/// Starts an approved sign-in whose exchange is held after the server chose its token.
+async fn sign_in_held_in_exchange() -> (Harness, std::sync::Arc<tokio::sync::Notify>) {
+    let h = harness(
+        Some(SERVER),
+        None,
+        BrowserAction::Approve("code-1"),
+        Timing::default(),
+    );
+    let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+    *h.api.exchange_gate.lock().expect("gate") = Some(gate.clone());
+    h.service.start_login().await.expect("start");
+    until(|| h.api.exchange_gate.lock().expect("gate").is_none()).await;
+    (h, gate)
+}
+
+/// Cancelling while the exchange is in flight: the issued token is revoked, nothing is stored.
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelling_during_the_exchange_revokes_the_issued_token() {
+    let (h, gate) = sign_in_held_in_exchange().await;
+    assert_eq!(
+        h.service.cancel_login().await,
+        configured(CloudSession::SignedOut { failure: None })
+    );
+    gate.notify_one();
+    until(|| revoked(&h, SERVER, "ora_dt_issued")).await;
+    assert_eq!(
+        (h.service.connection().await, h.store.token(SERVER)),
+        (configured(CloudSession::SignedOut { failure: None }), None)
+    );
+}
+
+/// Cancelling while the keyring write is in progress: the entry it wrote is deleted again and the
+/// token revoked, so a restart does not sign the person back in.
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelling_during_the_secure_store_write_leaves_nothing_stored() {
+    let h = harness(
+        Some(SERVER),
+        None,
+        BrowserAction::Approve("code-1"),
+        Timing::default(),
+    );
+    let (release, gate) = std::sync::mpsc::channel();
+    *h.store.save_gate.lock().expect("save gate") = Some(gate);
+    h.service.start_login().await.expect("start");
+    until(|| {
+        h.store
+            .save_waiting
+            .load(std::sync::atomic::Ordering::SeqCst)
+    })
+    .await;
+    h.service.cancel_login().await;
+    release.send(()).expect("release save");
+    until(|| revoked(&h, SERVER, "ora_dt_issued")).await;
+    assert_eq!(
+        (h.service.connection().await, h.store.token(SERVER)),
+        (configured(CloudSession::SignedOut { failure: None }), None)
+    );
+}
+
+/// Switching servers while the exchange is in flight revokes the token on the server that issued
+/// it and stores nothing for either server.
+#[tokio::test(flavor = "multi_thread")]
+async fn changing_the_server_during_the_exchange_revokes_the_issued_token() {
+    let (h, gate) = sign_in_held_in_exchange().await;
+    let next = h
+        .service
+        .set_server(Some("https://other.example".to_owned()))
+        .await
+        .expect("switch");
+    assert_eq!(next.revocation, None);
+    gate.notify_one();
+    until(|| revoked(&h, SERVER, "ora_dt_issued")).await;
+    assert_eq!(h.store.entries.lock().expect("entries").len(), 0);
+}
+
+/// A new sign-in while the old exchange is in flight: the old token is revoked, the new one kept.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_sign_in_during_the_exchange_revokes_the_old_token() {
+    let (h, gate) = sign_in_held_in_exchange().await;
+    *h.api.exchange.lock().expect("exchange") = Ok("ora_dt_second".to_owned());
+    h.service.start_login().await.expect("second");
+    eventually(
+        &h.service,
+        configured(CloudSession::SignedIn { account: alice() }),
+    )
+    .await;
+    gate.notify_one();
+    until(|| revoked(&h, SERVER, "ora_dt_issued")).await;
+    assert_eq!(
+        (
+            h.service.connection().await,
+            h.store.token(SERVER),
+            revoked(&h, SERVER, "ora_dt_second")
+        ),
+        (
+            configured(CloudSession::SignedIn { account: alice() }),
+            Some("ora_dt_second".to_owned()),
+            false
+        )
+    );
+}

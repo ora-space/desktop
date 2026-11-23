@@ -75,19 +75,43 @@ where
         });
         // The entry is deleted only when this answer ended the session it was asked about: a
         // late 401 for a token that was since signed out and replaced must not delete the entry
-        // the newer sign-in wrote. A crash before the delete leaves a dead token that the next
-        // startup check rejects again.
-        if ended && let Err(error) = self.delete(&server).await {
-            ora_warn!(operation = "cloud_connection.check", error = %error, "failed to delete a rejected Cloud token");
+        // the newer sign-in wrote. Under the store lock the session is checked again, so a sign-in
+        // that settled in between keeps its entry. A crash before the delete leaves a dead token
+        // that the next startup check rejects again.
+        if ended {
+            let _store = self.inner.store_lock.lock().await;
+            let still_ended = self.with_state(|state| {
+                state.epoch == epoch
+                    && matches!(state.phase.configured(), Some((_, Session::NeedsSignIn)))
+            });
+            if still_ended && let Err(error) = self.delete(&server).await {
+                ora_warn!(operation = "cloud_connection.check", error = %error, "failed to delete a rejected Cloud token");
+            }
         }
-        if let Some(stored) = renamed
-            && let Err(error) = self.save(&server, stored).await
-        {
-            ora_warn!(operation = "cloud_connection.check", error = %error, "failed to refresh the stored Cloud account");
+        if let Some(stored) = renamed {
+            // Rewritten only while this exact token is still the active one, so a sign-out that
+            // deleted the entry in the meantime is not undone.
+            let _store = self.inner.store_lock.lock().await;
+            let current = self.with_state(|state| {
+                state.epoch == epoch
+                    && matches!(
+                        state.phase.configured(),
+                        Some((_, Session::Active { stored: active, .. })) if active.token == stored.token
+                    )
+            });
+            if current && let Err(error) = self.save(&server, stored).await {
+                ora_warn!(operation = "cloud_connection.check", error = %error, "failed to refresh the stored Cloud account");
+            }
         }
     }
 
-    /// The background half of a sign-in: wait for the redirect, exchange the code, store the token.
+    /// The background half of a sign-in: wait for the redirect, then hand the code to a detached
+    /// task that exchanges and settles it.
+    ///
+    /// This task is aborted when the sign-in is cancelled or replaced, but an abort only lands at
+    /// an await. Once a code has arrived the server may issue a token at any moment, so the
+    /// exchange and everything after it run detached: awaiting the handle here keeps the order,
+    /// and dropping it on abort lets the exchange finish and settle the token either way.
     pub(super) async fn finish_login(
         &self,
         epoch: u64,
@@ -97,11 +121,8 @@ where
         verifier: String,
     ) {
         let redirect_uri = listener.redirect_uri().to_owned();
-        let outcome = match tokio::time::timeout(
-            self.inner.timing.login_timeout,
-            listener.wait(state),
-        )
-        .await
+        let code = match tokio::time::timeout(self.inner.timing.login_timeout, listener.wait(state))
+            .await
         {
             Err(_) => Err(CloudLoginFailure::TimedOut),
             Ok(Err(LoopbackError::Denied)) => Err(CloudLoginFailure::Denied),
@@ -109,61 +130,127 @@ where
                 ora_warn!(operation = "cloud_connection.login", error = %error, "loopback listener failed");
                 Err(CloudLoginFailure::Denied)
             }
-            Ok(Ok(code)) => {
-                let exchange = CodeExchange {
-                    code: &code,
-                    verifier: &verifier,
-                    redirect_uri: &redirect_uri,
-                };
-                match self.inner.ports.api.exchange(&server, exchange).await {
-                    Ok(issued) => Ok(issued),
-                    Err(CallError::Unreachable(_)) => Err(CloudLoginFailure::Unreachable),
-                    Err(CallError::Rejected | CallError::Request(_)) => {
-                        Err(CloudLoginFailure::Rejected)
-                    }
-                }
+            Ok(Ok(code)) => Ok(code),
+        };
+        let code = match code {
+            Ok(code) => code,
+            Err(failure) => {
+                self.end_login(epoch, failure);
+                return;
             }
         };
-        let session = match outcome {
-            Err(failure) => Session::SignedOut {
-                failure: Some(failure),
-            },
-            Ok(issued) => {
-                let stored = StoredSession {
-                    token: issued.token,
-                    account: issued.account,
+        let service = self.clone();
+        let exchange = self.inner.runtime.spawn(async move {
+            service
+                .exchange_and_settle(epoch, server, code, verifier, redirect_uri)
+                .await
+        });
+        let _ = exchange.await;
+    }
+
+    /// Ends the sign-in of `epoch` without a token, if it is still the current one.
+    fn end_login(&self, epoch: u64, failure: CloudLoginFailure) {
+        self.change(|current| {
+            if current.epoch != epoch {
+                return;
+            }
+            if let Some((_, slot)) = current.phase.configured() {
+                *slot = Session::SignedOut {
+                    failure: Some(failure),
                 };
-                match self.save(&server, stored.clone()).await {
-                    // Without the secure store there is nowhere safe to keep the token, so it is
-                    // dropped rather than held in memory or written in plain text, and the server
-                    // is asked (best effort) to revoke the token it just issued.
-                    Err(error) => {
-                        if let Err(revoke) =
-                            self.inner.ports.api.logout(&server, &stored.token).await
-                        {
-                            ora_info!(operation = "cloud_connection.login", outcome = "revoke_unconfirmed", error = ?revoke, "could not revoke a token the secure store refused");
-                        }
-                        Session::StorageUnavailable { reason: error.0 }
-                    }
-                    Ok(()) => Session::Active {
-                        stored,
-                        reach: Reach::Confirmed,
-                    },
-                }
+            }
+        });
+    }
+
+    /// Exchanges the code and settles the issued token; never aborted.
+    async fn exchange_and_settle(
+        &self,
+        epoch: u64,
+        server: CloudServer,
+        code: String,
+        verifier: String,
+        redirect_uri: String,
+    ) {
+        let exchange = CodeExchange {
+            code: &code,
+            verifier: &verifier,
+            redirect_uri: &redirect_uri,
+        };
+        let issued = match self.inner.ports.api.exchange(&server, exchange).await {
+            Ok(issued) => issued,
+            Err(CallError::Unreachable(_)) => {
+                self.end_login(epoch, CloudLoginFailure::Unreachable);
+                return;
+            }
+            Err(CallError::Rejected | CallError::Request(_)) => {
+                self.end_login(epoch, CloudLoginFailure::Rejected);
+                return;
             }
         };
-        let signed_in = matches!(session, Session::Active { .. });
+        let stored = StoredSession {
+            token: issued.token,
+            account: issued.account,
+        };
+        self.settle(epoch, &server, stored).await;
+    }
+
+    /// Puts an issued token where it belongs: in the secure store and the state when its sign-in
+    /// is still current, otherwise nowhere, revoked on the server. Holding the store lock means no
+    /// sign-out, server change or check can touch the entry between the save and the decision.
+    async fn settle(&self, epoch: u64, server: &CloudServer, stored: StoredSession) {
+        let store = self.inner.store_lock.lock().await;
+        if self.with_state(|state| state.epoch) != epoch {
+            drop(store);
+            self.revoke_issued(server, &stored, "stale").await;
+            return;
+        }
+        let saved = self.save(server, stored.clone()).await;
         let applied = self.change(|current| {
             if current.epoch != epoch {
                 return false;
             }
             if let Some((_, slot)) = current.phase.configured() {
-                *slot = session;
+                *slot = match &saved {
+                    Ok(()) => Session::Active {
+                        stored: stored.clone(),
+                        reach: Reach::Confirmed,
+                    },
+                    // Without the secure store there is nowhere safe to keep the token, so it is
+                    // dropped rather than held in memory or written in plain text.
+                    Err(error) => Session::StorageUnavailable {
+                        reason: error.0.clone(),
+                    },
+                };
             }
             true
         });
-        if applied && signed_in {
-            self.inner.ports.observer.signed_in();
+        match (applied, saved) {
+            (true, Ok(())) => {
+                drop(store);
+                self.inner.ports.observer.signed_in();
+            }
+            (true, Err(_)) => {
+                drop(store);
+                self.revoke_issued(server, &stored, "store_refused").await;
+            }
+            (false, saved) => {
+                // The sign-in was cancelled or replaced while the token was being written. Nobody
+                // else writes this entry while the store lock is held, so it is still ours.
+                if saved.is_ok()
+                    && let Err(error) = self.delete(server).await
+                {
+                    ora_warn!(operation = "cloud_connection.login", error = %error, "failed to delete the token of an abandoned sign-in");
+                }
+                drop(store);
+                self.revoke_issued(server, &stored, "abandoned").await;
+            }
+        }
+    }
+
+    /// Asks the server, best effort, to revoke a token this host will not keep.
+    async fn revoke_issued(&self, server: &CloudServer, stored: &StoredSession, why: &str) {
+        if let Err(error) = self.inner.ports.api.logout(server, &stored.token).await {
+            ora_info!(operation = "cloud_connection.login", outcome = "revoke_unconfirmed", reason = why, error = ?error, "could not revoke a token this Desktop is not keeping");
         }
     }
 
@@ -175,7 +262,10 @@ where
         server: CloudServer,
         stored: StoredSession,
     ) -> (CloudRevocation, Result<(), StoreError>) {
-        let deleted = self.delete(&server).await;
+        let deleted = {
+            let _store = self.inner.store_lock.lock().await;
+            self.delete(&server).await
+        };
         if let Err(error) = &deleted {
             ora_warn!(operation = "cloud_connection.logout", error = %error, "failed to delete the Cloud token");
         }
@@ -190,7 +280,8 @@ where
         (revocation, deleted)
     }
 
-    /// Reads the secure store off the async workers.
+    /// Reads the secure store off the async workers. Callers that act on what they read hold the
+    /// store lock, as do all writers below.
     pub(super) async fn load(
         &self,
         server: &CloudServer,

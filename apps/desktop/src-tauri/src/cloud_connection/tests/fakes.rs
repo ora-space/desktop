@@ -17,6 +17,10 @@ use super::super::server::CloudServer;
 pub(super) struct MemoryStore {
     pub(super) entries: Arc<Mutex<HashMap<String, StoredSession>>>,
     pub(super) failure: Arc<Mutex<Option<String>>>,
+    /// When set, the next save blocks (like a keyring write) until the sender sends or drops.
+    pub(super) save_gate: Arc<Mutex<Option<std::sync::mpsc::Receiver<()>>>>,
+    /// Set once a save has reached the gate.
+    pub(super) save_waiting: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MemoryStore {
@@ -52,6 +56,12 @@ impl SecureStore for MemoryStore {
 
     /// Writes an entry unless failing.
     fn save(&self, server: &CloudServer, session: &StoredSession) -> Result<(), StoreError> {
+        let gate = self.save_gate.lock().expect("save gate lock").take();
+        if let Some(gate) = gate {
+            self.save_waiting
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = gate.recv();
+        }
         self.check()?;
         self.entries
             .lock()
@@ -79,6 +89,8 @@ pub(super) struct ScriptedApi {
     pub(super) logout: Arc<Mutex<Result<(), CallError>>>,
     /// When set, the next `me` call waits for this before answering, holding a check in flight.
     pub(super) me_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
+    /// When set, the next exchange waits for this after choosing its token, holding it in flight.
+    pub(super) exchange_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     pub(super) calls: Arc<Mutex<Vec<String>>>,
     pub(super) exchanges: Arc<Mutex<Vec<(String, String, String)>>>,
 }
@@ -91,6 +103,7 @@ impl ScriptedApi {
             me: Arc::new(Mutex::new(Ok(account))),
             logout: Arc::new(Mutex::new(Ok(()))),
             me_gate: Arc::default(),
+            exchange_gate: Arc::default(),
             calls: Arc::default(),
             exchanges: Arc::default(),
         }
@@ -118,7 +131,12 @@ impl CloudApi for ScriptedApi {
             exchange.verifier.to_owned(),
             exchange.redirect_uri.to_owned(),
         ));
-        let token = self.exchange.lock().expect("exchange lock").clone()?;
+        let token = self.exchange.lock().expect("exchange lock").clone();
+        let gate = self.exchange_gate.lock().expect("gate lock").take();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
+        let token = token?;
         let account = match self.me.lock().expect("me lock").clone() {
             Ok(account) => account,
             Err(_) => CloudAccount {
