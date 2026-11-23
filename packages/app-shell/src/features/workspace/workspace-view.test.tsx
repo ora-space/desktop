@@ -2289,6 +2289,96 @@ describe("WorkspaceView", () => {
       screen.queryByLabelText(/给 Ora 的消息|Message to Ora/),
     ).not.toBeInTheDocument();
   });
+
+  it("shows the localized skill conflict path on the disabled send hint in zh-CN", async () => {
+    const previousLanguage = appI18n.language;
+    await act(() => appI18n.changeLanguage("zh-CN"));
+    try {
+      const user = userEvent.setup();
+      const state = createFixtureState();
+      state.projects = [{ id: "p1", name: "Ora" }];
+      state.sessions = [
+        {
+          id: "s1",
+          workspaceId: "workspace-p1",
+          agentRef: AGENT_REF.opencode,
+          status: "running",
+          title: null,
+          historyState: { type: "writable" },
+          mcpSelection: { mode: "automatic" },
+        },
+      ];
+      const ready = await readyEffectHandlers().getEffectTargetStatus();
+      const englishMessage =
+        "Move the unmanaged directory that occupies the skill directory: .opencode/skills/foo";
+      const clientHandlers: TestHandlers = {
+        ...createFixtureHandlers(state),
+        loadSession: vi.fn(async function* () {
+          yield { type: "completed" as const };
+        }),
+        getEffectTargetStatus: vi.fn(async () => ({
+          status: {
+            ...ready.status!,
+            targetId: "target-1",
+            phase: "planning" as const,
+            conditions: [
+              {
+                id: "condition-1",
+                ownerKind: "resource",
+                ownerId: "resource-1",
+                subjectKind: "desired_effect",
+                subjectId: "desired-1",
+                code: "preserved_item_conflict",
+                impact: "blocking" as const,
+                retry: "on_change" as const,
+                generation: 1n,
+                message: englishMessage,
+                parameters: { relativePath: ".opencode/skills/foo" },
+                firstObservedAt: 1n,
+                lastObservedAt: 1n,
+              },
+            ],
+          },
+        })),
+      };
+      const client = createTestClient(clientHandlers);
+      const chatStore = createChatStore(client.session);
+      const Wrapper = createHookWrapper(
+        client,
+        createTestQueryClient(),
+        chatStore,
+      );
+      useWorkspaceSelectionStore.getState().selectSessionBeforeTask("s1", "p1");
+
+      render(
+        <Wrapper>
+          <AppI18nProvider>
+            <PlatformProvider adapter={createStubPlatform()}>
+              <TooltipProvider>
+                <WorkspaceView userName="Eric" />
+              </TooltipProvider>
+            </PlatformProvider>
+          </AppI18nProvider>
+        </Wrapper>,
+      );
+
+      const sendButton = await screen.findByRole("button", {
+        name: /发送消息|Send message/,
+      });
+      await waitFor(() =>
+        expect(sendButton).toHaveAttribute("aria-disabled", "true"),
+      );
+      await user.hover(sendButton);
+      const hint = await screen.findByRole("tooltip", { hidden: true });
+      expect(hint).toHaveTextContent("Agent 技能同步失败");
+      expect(hint).toHaveTextContent(
+        "存在未由 Ora 管理的旧技能目录，无法覆盖：.opencode/skills/foo",
+      );
+      expect(hint).not.toHaveTextContent(englishMessage);
+    } finally {
+      await act(() => appI18n.changeLanguage(previousLanguage));
+    }
+  });
 });
 
 describe("directChatTitle", () => {

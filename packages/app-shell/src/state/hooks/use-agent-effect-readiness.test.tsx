@@ -7,7 +7,7 @@ import { AGENT_REF } from "../../test/agent-identity";
 import { readyEffectHandlers } from "../../test/memory/effects";
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
 import {
-  effectTargetFailureMessage,
+  effectTargetPrimaryFailure,
   effectTargetStatusPollInterval,
   useAgentEffectReadiness,
 } from "./use-agent-effect-readiness";
@@ -124,9 +124,11 @@ describe("useAgentEffectReadiness", () => {
       phase: "recovery_required" as const,
     };
     expect(effectTargetStatusPollInterval(recovering)).toBe(10_000);
-    expect(effectTargetFailureMessage(recovering)).toBe(
-      "Effect recovery is required.",
-    );
+    expect(effectTargetPrimaryFailure(recovering)).toEqual({
+      code: "recovery_required",
+      message: "Effect recovery is required.",
+      parameters: {},
+    });
   });
 
   it("reports manual and resource-level blocking Conditions with their reasons", async () => {
@@ -152,9 +154,11 @@ describe("useAgentEffectReadiness", () => {
         },
       ],
     };
-    expect(effectTargetFailureMessage(drifted)).toBe(
-      "A Managed Item changed outside Ora.",
-    );
+    expect(effectTargetPrimaryFailure(drifted)).toEqual({
+      code: "managed_item_drift",
+      message: "A Managed Item changed outside Ora.",
+      parameters: { relativePath: ".agents/skills/grilling" },
+    });
     expect(effectTargetStatusPollInterval(drifted)).toBe(10_000);
 
     const preserved = {
@@ -172,9 +176,12 @@ describe("useAgentEffectReadiness", () => {
         },
       ],
     };
-    expect(effectTargetFailureMessage(preserved)).toBe(
-      "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
-    );
+    expect(effectTargetPrimaryFailure(preserved)).toEqual({
+      code: "preserved_item_conflict",
+      message:
+        "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+      parameters: { relativePath: ".agents/skills/grilling" },
+    });
     expect(effectTargetStatusPollInterval(preserved)).toBe(10_000);
 
     // A Target-owned blocking Condition that can still resolve on its own stays a sync wait.
@@ -188,7 +195,7 @@ describe("useAgentEffectReadiness", () => {
         },
       ],
     };
-    expect(effectTargetFailureMessage(waiting)).toBeNull();
+    expect(effectTargetPrimaryFailure(waiting)).toBeNull();
     expect(effectTargetStatusPollInterval(waiting)).toBe(1_000);
   });
 
@@ -210,8 +217,67 @@ describe("useAgentEffectReadiness", () => {
     await waitFor(() =>
       expect(result.current).toEqual({
         kind: "failed",
-        message: "Effect recovery is required.",
+        primaryReason: {
+          code: "recovery_required",
+          message: "Effect recovery is required.",
+          parameters: {},
+        },
         reasons: [],
+        targetId: status.status!.targetId,
+        recoveryRequired: true,
+      }),
+    );
+  });
+
+  it("keeps recovery_required as primaryReason when no manual or resource blocker exists", async () => {
+    const status = await readyEffectHandlers().getEffectTargetStatus();
+    const getEffectTargetStatus = vi.fn(async () => ({
+      status: {
+        ...status.status!,
+        phase: "recovery_required" as const,
+        recoveryOperationId: "operation-1",
+        conditions: [
+          {
+            id: "condition-unrelated",
+            ownerKind: "target",
+            ownerId: status.status!.targetId,
+            subjectKind: "desired_effect",
+            subjectId: "desired-1",
+            code: "preserved_item_conflict",
+            impact: "blocking" as const,
+            retry: "on_change" as const,
+            generation: 1n,
+            message:
+              "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+            parameters: { relativePath: ".agents/skills/grilling" },
+            firstObservedAt: 1n,
+            lastObservedAt: 1n,
+          },
+        ],
+      },
+    }));
+    const plugins = createPluginMemory();
+    const { result } = renderHookWithClient(
+      () => useAgentEffectReadiness("workspace-1", AGENT_REF.claude),
+      createTestClient({ ...pluginHandlers(plugins), getEffectTargetStatus }),
+    );
+
+    await waitFor(() =>
+      expect(result.current).toEqual({
+        kind: "failed",
+        primaryReason: {
+          code: "recovery_required",
+          message: "Effect recovery is required.",
+          parameters: {},
+        },
+        reasons: [
+          {
+            code: "preserved_item_conflict",
+            message:
+              "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+            parameters: { relativePath: ".agents/skills/grilling" },
+          },
+        ],
         targetId: status.status!.targetId,
         recoveryRequired: true,
       }),
@@ -271,8 +337,12 @@ describe("useAgentEffectReadiness", () => {
     await waitFor(() =>
       expect(result.current).toEqual({
         kind: "failed",
-        message:
-          "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+        primaryReason: {
+          code: "preserved_item_conflict",
+          message:
+            "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+          parameters: { relativePath: ".agents/skills/grilling" },
+        },
         reasons: [
           {
             code: "preserved_item_conflict",

@@ -27,7 +27,11 @@ import type { GetEffectTargetStatusRequest } from "@ora/contracts";
 /** The failed readiness a quarantined Effect Target produces. */
 const quarantined: AgentEffectReadiness = {
   kind: "failed",
-  message: "An Effect operation requires explicit recovery.",
+  primaryReason: {
+    code: "recovery_required",
+    message: "An Effect operation requires explicit recovery.",
+    parameters: {},
+  },
   reasons: [
     {
       code: "recovery_required",
@@ -454,6 +458,28 @@ describe("AgentEffectRecoveryBanner", () => {
     expect(
       localizeAgentEffectFailureReason(
         {
+          code: "skill_directory_link",
+          message:
+            "Symbolic links and Windows junctions are not supported: workspace folder",
+          parameters: { location: "workspace_root" },
+        },
+        appI18n.t,
+      ),
+    ).toBe("工作区文件夹本身是符号链接或 Windows 联接，不受支持。");
+    expect(
+      localizeAgentEffectFailureReason(
+        {
+          code: "unsafe_skill_directory",
+          message:
+            "The skill directory or an ancestor is unsafe: workspace folder",
+          parameters: { location: "workspace_root" },
+        },
+        appI18n.t,
+      ),
+    ).toBe("工作区文件夹本身的路径不安全，无法同步技能。");
+    expect(
+      localizeAgentEffectFailureReason(
+        {
           code: "future_condition_code",
           message: "Backend safe detail.",
           parameters: {},
@@ -465,7 +491,11 @@ describe("AgentEffectRecoveryBanner", () => {
       localizeAgentEffectFailureSummary(
         {
           kind: "failed",
-          message: "Effect recovery is required.",
+          primaryReason: {
+            code: "recovery_required",
+            message: "Effect recovery is required.",
+            parameters: {},
+          },
           reasons: [],
           targetId: "target-1",
           recoveryRequired: true,
@@ -477,8 +507,35 @@ describe("AgentEffectRecoveryBanner", () => {
       localizeAgentEffectFailureSummary(
         {
           kind: "failed",
-          message:
-            "Move the unmanaged directory that occupies the skill directory: .opencode/skills/foo",
+          primaryReason: {
+            code: "recovery_required",
+            message: "Effect recovery is required.",
+            parameters: {},
+          },
+          reasons: [
+            {
+              code: "preserved_item_conflict",
+              message:
+                "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+              parameters: { relativePath: ".agents/skills/grilling" },
+            },
+          ],
+          targetId: "target-1",
+          recoveryRequired: true,
+        },
+        appI18n.t,
+      ),
+    ).toBe("存在未完成的技能同步操作，需要手动恢复。");
+    expect(
+      localizeAgentEffectFailureSummary(
+        {
+          kind: "failed",
+          primaryReason: {
+            code: "preserved_item_conflict",
+            message:
+              "Move the unmanaged directory that occupies the skill directory: .opencode/skills/foo",
+            parameters: { relativePath: ".opencode/skills/foo" },
+          },
           reasons: [
             {
               code: "preserved_item_conflict",
@@ -506,7 +563,11 @@ describe("AgentEffectRecoveryBanner", () => {
     const retryable = renderBanner(
       {
         kind: "failed",
-        message: "A Managed Item changed outside Ora.",
+        primaryReason: {
+          code: "managed_item_drift",
+          message: "A Managed Item changed outside Ora.",
+          parameters: {},
+        },
         reasons: [
           {
             code: "managed_item_drift",
@@ -524,7 +585,11 @@ describe("AgentEffectRecoveryBanner", () => {
     const unaddressable = renderBanner(
       {
         kind: "failed",
-        message: "An Effect operation requires explicit recovery.",
+        primaryReason: {
+          code: "recovery_required",
+          message: "An Effect operation requires explicit recovery.",
+          parameters: {},
+        },
         reasons: [],
         targetId: null,
         recoveryRequired: true,
