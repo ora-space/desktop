@@ -13,8 +13,12 @@ use pretty_assertions::assert_eq;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+#[path = "turn_processes/limits.rs"]
+mod limits;
 #[path = "turn_processes/order.rs"]
 mod order;
+#[path = "turn_processes/scope.rs"]
+mod scope;
 
 const CANCEL: Keep = Keep {
     on_cancel: true,

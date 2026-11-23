@@ -370,6 +370,7 @@ impl EchoAgent {
         super::background::start(&cwd, &text)?;
         super::background::respawn(&cwd, &text);
         super::background::late_job(&cwd, &text)?;
+        super::background::cleared_children(&cwd, &text)?;
         if let Some(helper) = super::background::helper(&cwd, &text)? {
             message(output, &session_id, &helper).await?;
         }

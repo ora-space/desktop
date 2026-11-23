@@ -73,6 +73,8 @@ struct LedgerState {
     fail_next_queue_read: bool,
     /// Runs when the named command is settled executed, inside the admission commit.
     on_executed: Option<(CommandId, Box<dyn FnOnce() + Send>)>,
+    /// Runs when the end decision is recorded, before the Agent is signalled.
+    on_decision: Option<Box<dyn FnOnce() + Send>>,
 }
 
 /// The keep choices a session starts with.
@@ -119,6 +121,11 @@ impl MemoryLedger {
     /// The end decision recorded for the execution, the one a restart would publish.
     pub fn decision(&self) -> Option<AgentSessionEnded> {
         self.stops.decision(&ExecutionId::new(EXECUTION))
+    }
+
+    /// Runs `action` when the end decision is recorded, before the Agent is signalled.
+    pub fn on_decision(&self, action: impl FnOnce() + Send + 'static) {
+        self.state().on_decision = Some(Box::new(action));
     }
 
     /// Makes the next queue read fail once.
@@ -326,6 +333,10 @@ impl SessionLedger for MemoryLedger {
     ) -> Result<(), Self::Error> {
         if std::mem::take(&mut self.state().fail_next_decision) {
             return Err(LedgerError("decision write failed".into()));
+        }
+        let action = self.state().on_decision.take();
+        if let Some(action) = action {
+            action();
         }
         self.stops
             .decide(execution, ended, at_ms, bound_at_ms)

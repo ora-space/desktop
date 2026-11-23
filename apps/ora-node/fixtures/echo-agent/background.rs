@@ -26,6 +26,8 @@
 //!   job and records its PID in `late-job.pid`, as a language server that launches a worker of
 //!   its own later. Only the turn process fence kills the sentinel, so the second job starts
 //!   after the fence, whatever the fence took;
+//! - `[cleared-children]` starts a `setsid` shell that keeps forking children with an empty
+//!   environment, every 50 ms, and appends each child's PID to `cleared.pids`;
 //! - `[watch-job]` starts a `setsid` job the Agent watches, recorded in `watch-job.pid`; once it
 //!   dies after a cancel was answered, the Agent reports that in a message.
 //!
@@ -221,6 +223,20 @@ pub(super) fn late_job(cwd: &Path, prompt: &str) -> std::io::Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
+    Ok(())
+}
+
+/// Starts the `[cleared-children]` shell; it forks until it is killed.
+pub(super) fn cleared_children(cwd: &Path, prompt: &str) -> std::io::Result<()> {
+    if !prompt.contains("[cleared-children]") {
+        return Ok(());
+    }
+    let mut shell = Command::new("/bin/sh");
+    shell.args([
+        "-c",
+        "while :; do env -i /bin/sleep 60 & echo $! >> cleared.pids; sleep 0.05; done",
+    ]);
+    in_new_session(cwd, shell).spawn()?;
     Ok(())
 }
 
