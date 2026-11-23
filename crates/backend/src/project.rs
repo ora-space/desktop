@@ -236,13 +236,74 @@ impl BranchLister for GitBranchLister {
 mod tests {
     use crate::test_backend::backend_paths;
     use crate::{Backend, ErrorClassification};
+    use ora_application::ProjectRepository;
     use ora_contracts::{
         CreateProjectRequest, EmptyErrorParams, ListProjectsRequest, ListWorkspacesRequest,
-        PublicError,
+        PublicError, Workspace, WorkspaceDirectory, WorkspaceKind, WorkspaceLifecycle,
     };
+    use ora_db::{
+        DatabaseBootstrapper, DatabaseLocation, MigrationCatalog, SqliteProjectRepository,
+        default_migration_catalog,
+    };
+    use ora_domain::{AuditFields, Project, ProjectId, WorkspaceLocation};
     use pretty_assertions::assert_eq;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tempfile::TempDir;
+
+    /// Writes the rows an older build stored for a project created while its folder was absent.
+    ///
+    /// Those builds probed the folder once at creation and kept the local main Workspace in
+    /// `provisioning` / `pending` when it was missing. The database is left at the last schema
+    /// before migration `0024`, so opening a backend on it runs the real upgrade.
+    fn seed_project_created_before_its_folder(database_path: &Path, folder: &Path) {
+        let latest = default_migration_catalog().expect("create migration catalog");
+        let previous = MigrationCatalog::new(
+            latest
+                .target_versions()
+                .iter()
+                .filter(|version| **version < "0024")
+                .map(|version| {
+                    latest
+                        .migration(version)
+                        .expect("catalog migration")
+                        .clone()
+                })
+                .collect(),
+        )
+        .expect("create pre-0024 catalog");
+        let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
+            .bootstrap_repository_pool(&DatabaseLocation::path(database_path), &previous)
+            .expect("bootstrap pre-0024 database");
+        SqliteProjectRepository::with_clock(pool, crate::test_clock::TestClock)
+            .create_project(
+                Project::new(
+                    ProjectId::new("stranded"),
+                    "Stranded",
+                    AuditFields::new(1, 1, false),
+                ),
+                WorkspaceLocation::local_filesystem(folder.to_string_lossy()),
+            )
+            .expect("persist project");
+        rusqlite::Connection::open(database_path)
+            .expect("open seeded database")
+            .execute_batch(
+                "UPDATE workspaces SET lifecycle = 'provisioning' WHERE project_id = 'stranded';
+                 UPDATE workspace_provisioning SET state = 'pending'
+                 WHERE workspace_id IN (SELECT id FROM workspaces WHERE project_id = 'stranded');",
+            )
+            .expect("store the pre-fix creation state");
+    }
+
+    /// Lists the only workspace a test backend holds.
+    fn only_workspace(backend: &Backend) -> Workspace {
+        let mut workspaces = backend
+            .workspaces()
+            .list(ListWorkspacesRequest {})
+            .expect("list workspaces")
+            .workspaces;
+        assert_eq!(workspaces.len(), 1);
+        workspaces.remove(0)
+    }
 
     /// Rejects every root that is not an existing directory and persists nothing for it.
     #[test]
@@ -373,6 +434,64 @@ mod tests {
                     .resolve_workspace_cwd(&workspace_id)
                     .expect("a restored checkout is available again"),
                 repository
+            );
+        });
+    }
+
+    /// Lets `directory` alone decide a project an older build created while its folder was absent.
+    ///
+    /// That build stranded the Workspace in `provisioning`: `listWorkspaces` reported the folder
+    /// `present` once it appeared, yet every session start and model listing still failed with
+    /// `workspace_unavailable`, so the client showed no reason. After the upgrade the client's
+    /// `directory: missing` gate (sidebar, banner, send, model selector) covers the absent folder,
+    /// and creating the folder makes the project usable with no other step.
+    #[test]
+    fn upgrade_lets_the_folder_decide_a_project_created_before_its_folder() {
+        ora_logging::with_trace_logging(|| {
+            let temporary = TempDir::new().expect("create temporary backend directory");
+            let paths = backend_paths(temporary.path(), temporary.path());
+            let folder = temporary.path().join("repository");
+            seed_project_created_before_its_folder(
+                &paths.app_data_directory.join("ora.sqlite3"),
+                &folder,
+            );
+            let backend = Backend::open(paths).expect("open upgraded backend");
+
+            let workspace = only_workspace(&backend);
+            let expected = |directory| Workspace {
+                id: workspace.id.clone(),
+                project_id: "stranded".to_string(),
+                kind: WorkspaceKind::Main,
+                lifecycle: WorkspaceLifecycle::Active,
+                directory,
+            };
+            assert_eq!(
+                workspace,
+                expected(WorkspaceDirectory::Missing {
+                    path: folder.to_string_lossy().into_owned(),
+                })
+            );
+            assert_eq!(
+                backend
+                    .workspaces()
+                    .resolve_workspace_cwd(&workspace.id)
+                    .expect_err("an absent folder is unavailable")
+                    .public_error()
+                    .clone(),
+                PublicError::WorkspaceUnavailable(EmptyErrorParams {})
+            );
+
+            std::fs::create_dir(&folder).expect("create the project folder");
+            assert_eq!(
+                only_workspace(&backend),
+                expected(WorkspaceDirectory::Present)
+            );
+            assert_eq!(
+                backend
+                    .workspaces()
+                    .resolve_workspace_cwd(&workspace.id)
+                    .expect("the folder alone makes the project usable"),
+                folder
             );
         });
     }
