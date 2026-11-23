@@ -22,6 +22,8 @@ mod recovery;
 mod resume;
 #[path = "agent_sessions/support.rs"]
 mod support;
+#[path = "agent_sessions/turn_boundary.rs"]
+mod turn_boundary;
 #[path = "agent_sessions/turn_cancel.rs"]
 mod turn_cancel;
 #[path = "agent_sessions/unknown_delivery.rs"]
