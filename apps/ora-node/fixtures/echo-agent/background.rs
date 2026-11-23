@@ -18,11 +18,14 @@
 //!   a language server lazily, and records its PID in `helper.pid`; a later `[helper]` reports
 //!   whether that same helper still runs;
 //! - `[respawn]` makes the Agent restart a `setsid` job each time it dies, until the Agent exits,
-//!   as an Agent that supervises a tool job and keeps it running after it answered;
-//!   `[respawn-for <ms>]` stops restarting once `<ms>` milliseconds passed after the answer;
-//! - `[late-job <ms>]` starts a helper in the Agent's session that, `<ms>` milliseconds after the
-//!   Agent answered a cancel, silently starts a `setsid` job and records its PID in
-//!   `late-job.pid`, as a language server that launches a worker of its own later;
+//!   as an Agent that supervises a tool job and keeps it running after it answered; it records
+//!   the current job's PID in `respawn.pid`. `[respawn-for <ms>]` instead restarts short-lived
+//!   jobs, each living 200 ms, and starts none once `<ms>` milliseconds passed after the answer;
+//! - `[late-job <ms>]` starts a helper in the Agent's session that starts a `setsid` sentinel job
+//!   at once and, `<ms>` milliseconds after that sentinel died, silently starts another `setsid`
+//!   job and records its PID in `late-job.pid`, as a language server that launches a worker of
+//!   its own later. Only the turn process fence kills the sentinel, so the second job starts
+//!   after the fence, whatever the fence took;
 //! - `[watch-job]` starts a `setsid` job the Agent watches, recorded in `watch-job.pid`; once it
 //!   dies after a cancel was answered, the Agent reports that in a message.
 //!
@@ -129,11 +132,16 @@ pub(super) fn helper(cwd: &Path, prompt: &str) -> std::io::Result<Option<String>
     Ok(Some(format!("helper {} started", child.id())))
 }
 
-/// A long sleep in a session of its own, as a tool shell that calls `setsid` starts it.
-fn session_job(cwd: &Path) -> Command {
+/// A sleep of `seconds` in a session of its own, as a tool shell that calls `setsid` starts it.
+fn session_job(cwd: &Path, seconds: &str) -> Command {
     let mut command = Command::new("/bin/sleep");
+    command.arg(seconds);
+    in_new_session(cwd, command)
+}
+
+/// Makes `command` start in a session of its own in `cwd`, detached from the Agent's stdio.
+fn in_new_session(cwd: &Path, mut command: Command) -> Command {
     command
-        .arg("60")
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -181,8 +189,10 @@ pub(super) fn respawn(cwd: &Path, prompt: &str) {
                 }
             }
             // One job at a time: the next one starts as soon as the last one died.
-            match session_job(&cwd).spawn() {
+            let seconds = if limit.is_some() { "0.2" } else { "60" };
+            match session_job(&cwd, seconds).spawn() {
                 Ok(mut job) => {
+                    let _ = std::fs::write(cwd.join("respawn.pid"), job.id().to_string());
                     let _ = job.wait();
                 }
                 Err(_) => std::thread::sleep(Duration::from_millis(10)),
@@ -196,12 +206,12 @@ pub(super) fn late_job(cwd: &Path, prompt: &str) -> std::io::Result<()> {
     let Some(delay) = delay(prompt, "late-job") else {
         return Ok(());
     };
-    // No new session: the helper stays where the Agent runs, so it is exempt; only the job it
-    // starts later leaves for a session of its own.
+    // No new session: the helper stays where the Agent runs, so it is exempt; only the jobs it
+    // starts leave for sessions of their own.
     Command::new("/bin/sh")
         .args([
             "-c",
-            "while [ ! -e answered ]; do sleep 0.01; done; sleep \"$0\"; \
+            "/usr/bin/setsid /bin/sleep 600 & wait $!; sleep \"$0\"; \
              /usr/bin/setsid /bin/sleep 60 & echo $! > late-job.pid.tmp; \
              mv late-job.pid.tmp late-job.pid; wait",
         ])
@@ -216,7 +226,7 @@ pub(super) fn late_job(cwd: &Path, prompt: &str) -> std::io::Result<()> {
 
 /// Starts the `[watch-job]` job and records its PID.
 pub(super) fn watched_job(cwd: &Path) -> std::io::Result<std::process::Child> {
-    let job = session_job(cwd).spawn()?;
+    let job = session_job(cwd, "60").spawn()?;
     std::fs::write(cwd.join("watch-job.pid"), job.id().to_string())?;
     Ok(job)
 }

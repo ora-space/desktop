@@ -801,12 +801,16 @@ impl Fixture {
         );
     }
 
-    /// Marks the echo agent's version as having a verified turn boundary and shortens the
-    /// windows, so a stopped turn can keep the session within a test.
+    /// Marks the echo agent's version as having a verified turn boundary and shortens the quiet
+    /// window, so a stopped turn can keep the session within a test. The fence and the re-check
+    /// get ten seconds: their budgets include the wait for the Node's one stop worker, which the
+    /// tests of this binary share, and a busy machine must not turn a clean scope into Unknown.
     pub fn verify_turn_boundary(&mut self) {
         self.turn_cancel.turn_boundary =
             vec![boundary(PLUGIN_VERSION, TurnBoundaryPlatform::Linux)];
         self.turn_cancel.quiet = Duration::from_millis(300);
+        self.turn_cancel.process_fence = Duration::from_secs(10);
+        self.turn_cancel.process_recheck = Duration::from_secs(10);
     }
 
     /// Starts the session execution with `initial` as its first turn, resuming `prior` if given.
