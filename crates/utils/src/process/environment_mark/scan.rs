@@ -9,7 +9,7 @@
 use super::super::linux_process::{
     LinuxProcessStat, linux_process, linux_process_snapshot, read_pinned,
 };
-use super::{ClaimedProcess, EnvironmentMark, MarkScan};
+use super::{ClaimedProcess, EnvironmentMark, MarkScan, Reach};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CStr, CString};
 use std::io;
@@ -31,6 +31,7 @@ pub(super) enum Environ {
 pub(super) struct Candidate {
     pub(super) pid: u32,
     pub(super) parent: u32,
+    pub(super) session: u32,
     pub(super) start_ticks: u64,
     /// The owner of its proc directory: its user, or root once it made itself non-dumpable.
     pub(super) owner: u32,
@@ -41,7 +42,12 @@ pub(super) struct Candidate {
 ///
 /// Failing to enumerate procfs, running out of descriptors, or any read failure other than the
 /// process having exited is an error, never an empty scan.
-pub(super) fn scan(mark: &EnvironmentMark, since_ticks: u64, uid: u32) -> io::Result<MarkScan> {
+pub(super) fn scan(
+    mark: &EnvironmentMark,
+    since_ticks: u64,
+    uid: u32,
+    reach: Reach,
+) -> io::Result<MarkScan> {
     // SAFETY: geteuid only reads this process's credentials.
     let scanner = unsafe { libc::geteuid() };
     let own = std::process::id();
@@ -56,7 +62,7 @@ pub(super) fn scan(mark: &EnvironmentMark, since_ticks: u64, uid: u32) -> io::Re
             candidates.push(candidate);
         }
     }
-    let (claimed, undecided) = classify(candidates, uid, scanner, |pid, start_ticks| {
+    let (claimed, undecided) = classify(candidates, uid, scanner, reach, |pid, start_ticks| {
         linux_process(pid).is_ok_and(|current| current.start_ticks == start_ticks)
     });
     Ok(MarkScan { claimed, undecided })
@@ -97,6 +103,7 @@ fn observe(
     Ok(Some(Candidate {
         pid: process.pid,
         parent: process.parent,
+        session: process.session,
         start_ticks: process.start_ticks,
         owner,
         environ,
@@ -147,7 +154,9 @@ fn live_thread(pid: u32) -> io::Result<Option<u32>> {
 }
 
 /// Claims the marked candidates and, transitively, the children of claimed ones, and counts the
-/// unreadable candidates of the scope's user when the scanner runs as another user.
+/// unreadable candidates of the scope's user when the scanner runs as another user. `reach` then
+/// keeps the claimed and undecided processes the scope reports; claiming itself always uses every
+/// candidate, so a parent outside the reach still lends its children.
 ///
 /// A parent lends its children only while `same(pid, start_ticks)` confirms it is still the
 /// process the pass observed: if it exited and its PID went to an unrelated process during the
@@ -156,6 +165,7 @@ pub(super) fn classify(
     candidates: Vec<Candidate>,
     uid: u32,
     scanner: u32,
+    reach: Reach,
     mut same: impl FnMut(u32, u64) -> bool,
 ) -> (Vec<ClaimedProcess>, usize) {
     let starts: BTreeMap<u32, u64> = candidates
@@ -190,9 +200,27 @@ pub(super) fn classify(
             break;
         }
     }
+    // Sessions of earlier claimed processes, read in this pass, so each one is live now.
+    let exempt: BTreeSet<u32> = match reach {
+        Reach::All => BTreeSet::new(),
+        Reach::NewSessionsSince(since) => candidates
+            .iter()
+            .filter(|earlier| earlier.start_ticks < since && claimed.contains(&earlier.pid))
+            .map(|earlier| earlier.session)
+            .collect(),
+    };
+    let reported = |candidate: &Candidate| match reach {
+        Reach::All => true,
+        Reach::NewSessionsSince(since) => {
+            candidate.start_ticks >= since && !exempt.contains(&candidate.session)
+        }
+    };
     let mut undecided = 0;
     let mut found = Vec::new();
-    for candidate in candidates {
+    for candidate in &candidates {
+        if !reported(candidate) {
+            continue;
+        }
         if claimed.contains(&candidate.pid) {
             found.push(ClaimedProcess {
                 pid: candidate.pid,
@@ -215,7 +243,7 @@ pub(super) fn gone(error: &io::Error) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Candidate, ClaimedProcess, Environ, classify};
+    use super::{Candidate, ClaimedProcess, Environ, Reach, classify};
     use pretty_assertions::assert_eq;
 
     /// Builds one candidate whose start tick is its PID.
@@ -223,6 +251,7 @@ mod tests {
         Candidate {
             pid,
             parent,
+            session: pid,
             start_ticks: u64::from(pid),
             owner,
             environ,
@@ -254,12 +283,14 @@ mod tests {
             candidates(),
             /*uid*/ 1000,
             /*scanner*/ 1000,
+            Reach::All,
             |_, _| true,
         );
         let (foreign, foreign_undecided) = classify(
             candidates(),
             /*uid*/ 1000,
             /*scanner*/ 0,
+            Reach::All,
             |_, _| true,
         );
         assert_eq!(
@@ -284,8 +315,57 @@ mod tests {
             ],
             /*uid*/ 1000,
             /*scanner*/ 1000,
+            Reach::All,
             |pid, _| pid != 3,
         );
         assert_eq!((pids(claimed), undecided), (vec![3], 0));
+    }
+
+    /// A new-session reach keeps the later processes outside the sessions of earlier claimed
+    /// ones: a later job that left for its own session is reported, one in the session of an
+    /// earlier claimed helper is not, and a session whose earlier members are all unclaimed
+    /// exempts nothing. Claiming still runs through the earlier parent.
+    #[test]
+    fn a_new_session_reach_spares_the_sessions_of_earlier_claimed_processes() {
+        let with_session = |pid, parent, session, environ| Candidate {
+            session,
+            ..candidate(pid, parent, 1000, environ)
+        };
+        let candidates = || {
+            vec![
+                // Earlier: the launcher's session 2, a helper that left for session 4.
+                with_session(2, 1, 2, Environ::Marked),
+                with_session(4, 2, 4, Environ::Marked),
+                // An earlier unmarked process in session 6 claims nothing and exempts nothing.
+                with_session(6, 1, 6, Environ::Unmarked),
+                // Later: a child of the launcher in its session, one in the helper's session,
+                // a cleared-environment job that called setsid, and one joining session 6.
+                with_session(10, 2, 2, Environ::Marked),
+                with_session(11, 4, 4, Environ::Marked),
+                with_session(12, 2, 12, Environ::Unmarked),
+                with_session(13, 2, 6, Environ::Marked),
+                // Later and unreadable: undecided only outside the exempt sessions.
+                with_session(14, 1, 14, Environ::Unreadable),
+                with_session(15, 1, 2, Environ::Unreadable),
+            ]
+        };
+        let (claimed, undecided) = classify(
+            candidates(),
+            /*uid*/ 1000,
+            /*scanner*/ 0,
+            Reach::NewSessionsSince(10),
+            |_, _| true,
+        );
+        let (all, all_undecided) = classify(
+            candidates(),
+            /*uid*/ 1000,
+            /*scanner*/ 0,
+            Reach::All,
+            |_, _| true,
+        );
+        assert_eq!(
+            (pids(claimed), undecided, pids(all), all_undecided),
+            (vec![12, 13], 1, vec![2, 4, 10, 11, 12, 13], 2)
+        );
     }
 }
