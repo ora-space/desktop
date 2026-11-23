@@ -3,7 +3,11 @@ import { IconRefresh } from "@tabler/icons-react";
 import { useRecoverEffectTarget } from "../../state/hooks/use-recover-effect-target";
 import { useRetryEffectTarget } from "../../state/hooks/use-retry-effect-target";
 import { localizeContractError } from "../../i18n/contract-error";
-import type { AgentEffectReadiness } from "../../state/hooks/use-agent-effect-readiness";
+import type {
+  AgentEffectFailureReason,
+  AgentEffectReadiness,
+} from "../../state/hooks/use-agent-effect-readiness";
+import { localizeAgentEffectFailureReason } from "./agent-effect-failure-reason";
 
 /**
  * Explains one failed Agent Effect Target and offers its owned recovery action.
@@ -23,13 +27,23 @@ export function AgentEffectRecoveryBanner({
 
   if (readiness.kind !== "failed" || readiness.targetId === null) return null;
   const action = readiness.recoveryRequired ? recovery : retry;
-  // The condition message is backend-approved safe detail (SafeConditionDetails), not a
-  // raw Error.message, so rendering it verbatim is the same contract the send hint uses.
-  const reasons =
+  // Known codes localize from structured SafeConditionDetails parameters; unknown
+  // codes and legacy rows fall back to the backend-approved safe message.
+  const reasons: AgentEffectFailureReason[] =
     readiness.reasons.length > 0
       ? readiness.reasons
-      : [{ code: "effect_failure", message: readiness.message }];
-  const reasonMessages = reasons.map((reason) => reason.message);
+      : [
+          {
+            code: readiness.recoveryRequired
+              ? "recovery_required"
+              : "effect_failure",
+            message: readiness.message,
+            parameters: {},
+          },
+        ];
+  const reasonMessages = reasons.map((reason) =>
+    localizeAgentEffectFailureReason(reason, t),
+  );
   const hasPreservedConflict = reasons.some(
     (reason) => reason.code === "preserved_item_conflict",
   );

@@ -234,9 +234,13 @@ function WorkspaceEntityDialog({
       },
     ];
     submit = async (values) => {
+      // Pasted paths often carry surrounding whitespace that is never part of the folder name.
+      const rootPath = values.rootPath!.trim();
+      // The host owns the filesystem check. Its `project_workspace_not_directory` rejection
+      // propagates to the dialog, which stays open and shows it beside the path to correct.
       await createProject.mutateAsync({
-        name: projectNameFromPath(values.rootPath!),
-        mainWorkspacePath: values.rootPath!,
+        name: projectNameFromPath(rootPath),
+        mainWorkspacePath: rootPath,
       });
     };
   } else if (dialog.kind === "task") {

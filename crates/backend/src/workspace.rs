@@ -24,6 +24,10 @@ use ora_domain::{Workspace, WorkspaceId, WorkspaceLocation};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+mod local_directory;
+
+pub(crate) use local_directory::{LocalDirectory, probe_local_directory};
+
 /// Owns workspace queries, live checkout resolution, root configuration, and Git review.
 ///
 /// Serves both an isolated task worktree and a project's main checkout — both are `Workspace`
@@ -360,19 +364,17 @@ impl WorkspaceApi {
 
 /// Probes the directory behind one Workspace location at list time.
 ///
-/// Uses the same anchoring as cwd resolution, so a workspace reported `Present` is exactly one
-/// that session start and model discovery can resolve, and a `Missing` path is the one they
-/// would refuse.
+/// Shares the probe cwd resolution uses, so a workspace reported `Present` is exactly one that
+/// session start and model discovery can resolve, and a `Missing` path is the one they would
+/// refuse.
 fn probe_directory(location: &WorkspaceLocation, relative_path_base: &Path) -> WorkspaceDirectory {
     match location {
         WorkspaceLocation::LocalFilesystem { path } => {
-            let resolved = crate::task::resolve_local_path(PathBuf::from(path), relative_path_base);
-            if resolved.is_dir() {
-                WorkspaceDirectory::Present
-            } else {
-                WorkspaceDirectory::Missing {
+            match probe_local_directory(PathBuf::from(path), relative_path_base) {
+                LocalDirectory::Present(_) => WorkspaceDirectory::Present,
+                LocalDirectory::Missing(resolved) => WorkspaceDirectory::Missing {
                     path: resolved.to_string_lossy().into_owned(),
-                }
+                },
             }
         }
         WorkspaceLocation::Ssh { .. } | WorkspaceLocation::RemoteTarget { .. } => {

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::{Config, ExportError, TS};
 
 /// One stable Consumer identity used by an Effect Target selector.
@@ -153,6 +154,8 @@ pub struct EffectConditionDto {
     pub retry: EffectConditionRetryDto,
     pub generation: Option<u64>,
     pub message: String,
+    #[serde(default)]
+    pub parameters: BTreeMap<String, String>,
     pub first_observed_at: i64,
     pub last_observed_at: i64,
 }

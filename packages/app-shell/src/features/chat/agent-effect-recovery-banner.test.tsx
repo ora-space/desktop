@@ -1,18 +1,22 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
 import type { ContractsClient } from "@ora/contracts";
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestClient } from "../../test/contracts-transport";
 import {
   createHookWrapper,
   createTestQueryClient,
 } from "../../test/hook-harness";
 import { createChatStore } from "@ora/chat";
-import "../../i18n/i18n-instance";
+import { appI18n } from "../../i18n/i18n-instance";
 import type { RecoverEffectTargetResponse } from "@ora/contracts";
 import type { AgentEffectReadiness } from "../../state/hooks/use-agent-effect-readiness";
+import {
+  localizeAgentEffectFailureReason,
+  localizeAgentEffectFailureSummary,
+} from "./agent-effect-failure-reason";
 import { AgentEffectRecoveryBanner } from "./agent-effect-recovery-banner";
 import { useAgentEffectReadiness } from "../../state/hooks/use-agent-effect-readiness";
 import { AGENT_REF } from "../../test/agent-identity";
@@ -28,6 +32,7 @@ const quarantined: AgentEffectReadiness = {
     {
       code: "recovery_required",
       message: "An Effect operation requires explicit recovery.",
+      parameters: {},
     },
   ],
   targetId: "target-1",
@@ -55,6 +60,12 @@ function renderBanner(
 }
 
 describe("AgentEffectRecoveryBanner", () => {
+  afterEach(async () => {
+    await act(async () => {
+      await appI18n.changeLanguage("zh-CN");
+    });
+  });
+
   it("refreshes real readiness after recovery and isolates other workspaces and agents", async () => {
     const ready = await readyEffectHandlers().getEffectTargetStatus();
     let recovered = false;
@@ -167,18 +178,27 @@ describe("AgentEffectRecoveryBanner", () => {
     {
       code: "preserved_item_conflict",
       message:
-        "A Preserved Item already occupies the required native identity: grilling.",
+        "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+      parameters: { relativePath: ".agents/skills/grilling" },
+      expectedZh:
+        "存在未由 Ora 管理的旧技能目录，无法覆盖：.agents/skills/grilling",
       hint: /Move the old Skill directories|\u79fb\u8d70/,
     },
     {
       code: "skill_directory_link",
       message:
         "Symbolic links and Windows junctions are not supported: .agents/skills/review/vendor/linked",
+      parameters: { relativePath: ".agents/skills/review/vendor/linked" },
+      expectedZh:
+        "技能目录不支持符号链接或 Windows junction：.agents/skills/review/vendor/linked",
       hint: /Replace the listed symbolic links|\u66ff\u6362\u4e3a\u666e\u901a/,
     },
   ])(
     "shows $code and retries only the affected Target",
-    async ({ code, message, hint }) => {
+    async ({ code, message, parameters, expectedZh, hint }) => {
+      await act(async () => {
+        await appI18n.changeLanguage("zh-CN");
+      });
       const ready = await readyEffectHandlers().getEffectTargetStatus();
       let retried = false;
       const getEffectTargetStatus = vi.fn(async () => ({
@@ -204,6 +224,7 @@ describe("AgentEffectRecoveryBanner", () => {
                   retry: "on_change" as const,
                   generation: 1n,
                   message,
+                  parameters,
                   firstObservedAt: 1n,
                   lastObservedAt: 1n,
                 },
@@ -243,7 +264,8 @@ describe("AgentEffectRecoveryBanner", () => {
       });
 
       const banner = await screen.findByRole("alert");
-      expect(banner).toHaveTextContent(message);
+      expect(banner).toHaveTextContent(expectedZh);
+      expect(banner).not.toHaveTextContent(message);
       expect(banner).toHaveTextContent(hint);
       expect(screen.getByRole("button", { name: "send" })).toBeDisabled();
       await userEvent.click(
@@ -257,6 +279,221 @@ describe("AgentEffectRecoveryBanner", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
   );
+
+  it("localizes same-name preserved conflicts across two roots in Chinese and English", async () => {
+    await act(async () => {
+      await appI18n.changeLanguage("zh-CN");
+    });
+    const ready = await readyEffectHandlers().getEffectTargetStatus();
+    let retried = false;
+    const getEffectTargetStatus = vi.fn(async () => ({
+      status: {
+        ...ready.status!,
+        targetId: "target-1",
+        desiredGeneration: 1,
+        observedGeneration: 1,
+        appliedGeneration: retried ? 1 : 0,
+        readyGeneration: retried ? 1 : 0,
+        phase: retried ? ("current" as const) : ("planning" as const),
+        conditions: retried
+          ? []
+          : [
+              {
+                id: "condition-agents",
+                ownerKind: "resource",
+                ownerId: "resource-agents",
+                subjectKind: "desired_effect",
+                subjectId: "desired-1",
+                code: "preserved_item_conflict",
+                impact: "blocking" as const,
+                retry: "on_change" as const,
+                generation: 1n,
+                message:
+                  "Move the unmanaged directory that occupies the skill directory: .agents/skills/foo",
+                parameters: { relativePath: ".agents/skills/foo" },
+                firstObservedAt: 1n,
+                lastObservedAt: 1n,
+              },
+              {
+                id: "condition-opencode",
+                ownerKind: "resource",
+                ownerId: "resource-opencode",
+                subjectKind: "desired_effect",
+                subjectId: "desired-1",
+                code: "preserved_item_conflict",
+                impact: "blocking" as const,
+                retry: "on_change" as const,
+                generation: 1n,
+                message:
+                  "Move the unmanaged directory that occupies the skill directory: .opencode/skills/foo",
+                parameters: { relativePath: ".opencode/skills/foo" },
+                firstObservedAt: 1n,
+                lastObservedAt: 1n,
+              },
+            ],
+      },
+    }));
+    const retryEffectTarget = vi.fn(async (request: { targetId: string }) => {
+      expect(request).toEqual({ targetId: "target-1" });
+      retried = true;
+      return { requested: true };
+    });
+    const client = createTestClient({
+      ...pluginHandlers(createPluginMemory()),
+      getEffectTargetStatus,
+      retryEffectTarget,
+    });
+    function Gate() {
+      const readiness = useAgentEffectReadiness(
+        "workspace-1",
+        AGENT_REF.opencode,
+      );
+      return (
+        <>
+          <button aria-label="send" disabled={readiness.kind !== "ready"}>
+            Send
+          </button>
+          <AgentEffectRecoveryBanner readiness={readiness} />
+        </>
+      );
+    }
+    render(<Gate />, {
+      wrapper: createHookWrapper(
+        client,
+        createTestQueryClient(),
+        createChatStore(client.session),
+      ),
+    });
+
+    const banner = await screen.findByRole("alert");
+    const zhItems = screen
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(zhItems).toEqual([
+      "存在未由 Ora 管理的旧技能目录，无法覆盖：.agents/skills/foo",
+      "存在未由 Ora 管理的旧技能目录，无法覆盖：.opencode/skills/foo",
+    ]);
+    expect(banner).not.toHaveTextContent("Move the unmanaged directory");
+    expect(banner).toHaveTextContent("请移走上列旧技能目录，然后重新同步。");
+
+    await act(async () => {
+      await appI18n.changeLanguage("en-US");
+    });
+    const enItems = screen
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(enItems).toEqual([
+      "Unmanaged Skill directory cannot be overwritten: .agents/skills/foo",
+      "Unmanaged Skill directory cannot be overwritten: .opencode/skills/foo",
+    ]);
+    expect(banner).toHaveTextContent(
+      "Move the old Skill directories listed above out of the workspace, then retry the sync.",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry sync" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "send" })).toBeEnabled(),
+    );
+    expect(retryEffectTarget).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("localizes known codes and falls back to safe messages when parameters or codes are unknown", async () => {
+    await act(async () => {
+      await appI18n.changeLanguage("zh-CN");
+    });
+    expect(
+      localizeAgentEffectFailureReason(
+        {
+          code: "unsafe_skill_directory",
+          message:
+            "Move the regular file that occupies the skill directory: .agents/skills/review",
+          parameters: { relativePath: ".agents/skills/review" },
+        },
+        appI18n.t,
+      ),
+    ).toBe("技能目录路径不安全或被不受支持的条目占用：.agents/skills/review");
+    expect(
+      localizeAgentEffectFailureReason(
+        {
+          code: "managed_item_drift",
+          message:
+            "A Managed Item changed outside Ora and cannot be overwritten safely.",
+          parameters: { relativePath: ".agents/skills/review" },
+        },
+        appI18n.t,
+      ),
+    ).toBe(
+      "由 Ora 管理的技能目录在外部被修改，无法安全覆盖：.agents/skills/review",
+    );
+    expect(
+      localizeAgentEffectFailureReason(
+        {
+          code: "managed_item_drift",
+          message:
+            "A Managed Item changed outside Ora and cannot be overwritten safely.",
+          parameters: {},
+        },
+        appI18n.t,
+      ),
+    ).toBe("由 Ora 管理的技能目录在外部被修改，无法安全覆盖。");
+    // Legacy persisted conflict rows without parameters preserve the backend safe message.
+    expect(
+      localizeAgentEffectFailureReason(
+        {
+          code: "preserved_item_conflict",
+          message:
+            "A Preserved Item already occupies the required native identity: foo.",
+          parameters: {},
+        },
+        appI18n.t,
+      ),
+    ).toBe(
+      "A Preserved Item already occupies the required native identity: foo.",
+    );
+    expect(
+      localizeAgentEffectFailureReason(
+        {
+          code: "future_condition_code",
+          message: "Backend safe detail.",
+          parameters: {},
+        },
+        appI18n.t,
+      ),
+    ).toBe("Backend safe detail.");
+    expect(
+      localizeAgentEffectFailureSummary(
+        {
+          kind: "failed",
+          message: "Effect recovery is required.",
+          reasons: [],
+          targetId: "target-1",
+          recoveryRequired: true,
+        },
+        appI18n.t,
+      ),
+    ).toBe("存在未完成的技能同步操作，需要手动恢复。");
+    expect(
+      localizeAgentEffectFailureSummary(
+        {
+          kind: "failed",
+          message:
+            "Move the unmanaged directory that occupies the skill directory: .opencode/skills/foo",
+          reasons: [
+            {
+              code: "preserved_item_conflict",
+              message:
+                "Move the unmanaged directory that occupies the skill directory: .opencode/skills/foo",
+              parameters: { relativePath: ".opencode/skills/foo" },
+            },
+          ],
+          targetId: "target-1",
+          recoveryRequired: false,
+        },
+        appI18n.t,
+      ),
+    ).toBe("存在未由 Ora 管理的旧技能目录，无法覆盖：.opencode/skills/foo");
+  });
 
   it("renders only when a failed Target has an action", () => {
     const client = createTestClient({});
@@ -274,6 +511,7 @@ describe("AgentEffectRecoveryBanner", () => {
           {
             code: "managed_item_drift",
             message: "A Managed Item changed outside Ora.",
+            parameters: {},
           },
         ],
         targetId: "target-1",

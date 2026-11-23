@@ -2,6 +2,7 @@ use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
 use crate::git_cleanup::{GatedWorktreeProvisioner, GitCleanupHandle, KeyedResourceLocks};
 use crate::repository_work::spawn_repository_work;
+use crate::workspace::{LocalDirectory, probe_local_directory};
 use crate::{BackendError, ErrorClassification};
 use gitlancer::git::worktree::ResolveWorktreeByBranchRequest;
 use gitlancer::{CliGitRunner, Git, GitlancerError, RepoRoot, Repository};
@@ -421,30 +422,14 @@ pub(crate) fn resolve_project_cwd(
     absolute_project_root(PathBuf::from(path), relative_path_base)
 }
 
-/// Anchors a persisted local Workspace location to the runtime's stable path base.
-///
-/// Relative roots are stored against the directory from which `ORA_DATA_DIR` was
-/// created. Joining them to a live process cwd would miss those directories
-/// whenever the binary is started elsewhere — Desktop `tauri dev` starts in
-/// `src-tauri`.
-pub(crate) fn resolve_local_path(path: PathBuf, relative_path_base: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path
-    } else {
-        relative_path_base.join(path)
-    }
-}
-
 /// Resolves a persisted main Workspace location and requires it to be a directory now.
 pub(crate) fn absolute_project_root(
     path: PathBuf,
     relative_path_base: &Path,
 ) -> Result<PathBuf, BackendError> {
-    let cwd = resolve_local_path(path, relative_path_base);
-    if cwd.is_dir() {
-        Ok(cwd)
-    } else {
-        Err(workspace_unavailable())
+    match probe_local_directory(path, relative_path_base) {
+        LocalDirectory::Present(cwd) => Ok(cwd),
+        LocalDirectory::Missing(_) => Err(workspace_unavailable()),
     }
 }
 

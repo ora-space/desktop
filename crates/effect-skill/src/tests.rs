@@ -411,6 +411,103 @@ fn preserved_item_conflict_names_the_conflicting_native_identity() {
         conditions[0].safe_details.message,
         "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling"
     );
+    assert_eq!(
+        conditions[0].safe_details.parameters,
+        BTreeMap::from([(
+            "relativePath".to_string(),
+            ".agents/skills/grilling".to_string(),
+        )])
+    );
+}
+
+/// Builds one filesystem Resource for an explicit workspace-relative skill root.
+fn resource_at(id: &str, relative_path: &str) -> EffectResource {
+    EffectResource {
+        identity: EffectResourceId::new(id),
+        scope: scope(),
+        resource_key: ResourceKey::parse(format!("filesystem-directory:{relative_path}"))
+            .unwrap_or_else(|error| panic!("resource key: {error}")),
+        adapter: ResourceAdapterIdentity::parse("ora/filesystem-directory")
+            .unwrap_or_else(|error| panic!("adapter identity: {error}")),
+        descriptor: VersionedResourceDescriptor::FilesystemDirectoryV1(
+            FilesystemDirectoryDescriptor {
+                workspace_root: PathBuf::from("/workspace"),
+                relative_path: ResourcePath::parse(relative_path)
+                    .unwrap_or_else(|error| panic!("resource path: {error}")),
+            },
+        ),
+        format: MaterializationFormat::skill_directory_v1(),
+        lifecycle: ResourceLifecycle::Active,
+    }
+}
+
+#[test]
+fn preserved_item_conflict_distinguishes_same_skill_across_two_roots() {
+    let (desired, revision) = desired_skill();
+    let desired_effects = BTreeMap::from([(desired.identity.clone(), desired.clone())]);
+    let revisions = BTreeMap::from([(revision.identity.clone(), revision)]);
+
+    for (resource_id, root, disk_name, expected_path) in [
+        (
+            "resource-agents",
+            ".agents/skills",
+            "grilling",
+            ".agents/skills/grilling",
+        ),
+        (
+            "resource-opencode",
+            ".opencode/skills",
+            "GRILLING",
+            ".opencode/skills/GRILLING",
+        ),
+    ] {
+        let resource = resource_at(resource_id, root);
+        let native_identity = NativeResourceIdentity::parse(disk_name)
+            .unwrap_or_else(|error| panic!("native identity: {error}"));
+        let fingerprint = Fingerprint::sha256(b"old package");
+        let observed = ResourceObservation {
+            occupied_file_names: Default::default(),
+            resource: resource.identity.clone(),
+            items: BTreeMap::from([(
+                native_identity.clone(),
+                ObservedItem {
+                    native_identity,
+                    fingerprint: fingerprint.clone(),
+                    ownership_evidence: OwnershipEvidence::NoOwnershipEvidence,
+                },
+            )]),
+            fingerprint,
+        };
+        let requirement = ResourceRequirement {
+            target: EffectTargetId::new("target-1"),
+            resource: resource.identity.clone(),
+            desired_effects: BTreeSet::from([desired.identity.clone()]),
+            materialization_contract: MaterializationContract::skill_directory_v1(),
+            digest: Digest::sha256(resource_id.as_bytes()),
+        };
+
+        let result = SkillPlanner
+            .plan_resource(ResourcePlanningInput {
+                resource: &resource,
+                generation: Generation::new(1),
+                requirements: &[requirement],
+                desired_effects: &desired_effects,
+                revisions: &revisions,
+                managed: &[],
+                observed: &observed,
+            })
+            .unwrap_or_else(|error| panic!("resource projection: {error}"));
+        let PlanningResult::Blocked(conditions) = result else {
+            panic!("preserved conflict at {expected_path} must block projection");
+        };
+
+        assert_eq!(conditions.len(), 1);
+        assert_eq!(conditions[0].code.as_str(), "preserved_item_conflict");
+        assert_eq!(
+            conditions[0].safe_details.parameters,
+            BTreeMap::from([("relativePath".to_string(), expected_path.to_string())])
+        );
+    }
 }
 
 #[test]

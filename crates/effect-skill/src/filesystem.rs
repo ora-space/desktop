@@ -89,11 +89,16 @@ fn observation_error(
             &display
         }
     );
+    let parameters = if display.is_empty() {
+        BTreeMap::new()
+    } else {
+        BTreeMap::from([("relativePath".to_string(), display)])
+    };
     ResourceAdapterError::new(error).with_observation_blocker(
         ora_effect::StableConditionCode::from_static(code),
         ora_effect::SafeConditionDetails {
             message,
-            parameters: BTreeMap::new(),
+            parameters,
         },
     )
 }
