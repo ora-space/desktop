@@ -614,11 +614,10 @@ where
                     on_cancel: spec.keep_session_on_cancel,
                     on_failure: spec.keep_session_on_failure,
                 },
-                boundary_verified: shared.config.turn_cancel.turn_boundary.iter().any(
-                    |(plugin, version)| {
-                        plugin == &spec.agent_plugin_id && version == &spec.agent_plugin_version
-                    },
-                ),
+                boundary_verified: shared
+                    .config
+                    .turn_cancel
+                    .verifies(&spec.agent_plugin_id, &spec.agent_plugin_version),
                 turn_cancel: &shared.config.turn_cancel,
                 stop_config: &shared.config.stop,
                 cancel_acceptance: &shared.cancel_acceptance,

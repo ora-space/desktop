@@ -4,7 +4,7 @@ use ora_node::{
     AgentSessions, CheckoutResolver, CommandSettlement, InstalledConfigurationError,
     ModelProxyConfig, PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel,
     RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig, SessionHost,
-    SessionLedger, SessionWorkload, TurnCancelConfig,
+    SessionLedger, SessionWorkload, TurnBoundary, TurnBoundaryPlatform, TurnCancelConfig,
 };
 use ora_node_protocol::{
     AgentSessionEnded, AgentSessionSpec, BoundModel, CommandId, ContentBlock, ExecutionId,
@@ -805,7 +805,7 @@ impl Fixture {
     /// windows, so a stopped turn can keep the session within a test.
     pub fn verify_turn_boundary(&mut self) {
         self.turn_cancel.turn_boundary =
-            vec![(PluginId::new(PLUGIN_ID), PluginVersion::new(PLUGIN_VERSION))];
+            vec![boundary(PLUGIN_VERSION, TurnBoundaryPlatform::Linux)];
         self.turn_cancel.quiet = Duration::from_millis(300);
     }
 
@@ -970,5 +970,14 @@ pub async fn until<T>(mut probe: impl FnMut() -> Option<T>) -> T {
             "condition was not reached in time"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// The echo plugin's entry on the turn-boundary list, for one version and platform.
+pub fn boundary(version: &str, platform: TurnBoundaryPlatform) -> TurnBoundary {
+    TurnBoundary {
+        plugin: PluginId::new(PLUGIN_ID),
+        version: PluginVersion::new(version),
+        platform,
     }
 }

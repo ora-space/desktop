@@ -21,6 +21,7 @@ mod resume;
 mod scheduled;
 pub(crate) mod stop;
 mod thread;
+mod turn_cancel;
 mod workload;
 pub(crate) use workload::storage::validate as validate_workload_storage;
 
@@ -30,6 +31,7 @@ pub use ports::{
     PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel, RestoreFailure,
     RestoreRequest, Restored, SessionCommand, SessionHost, SessionLedger,
 };
+pub use turn_cancel::{TurnBoundary, TurnBoundaryPlatform, TurnCancelConfig};
 pub use workload::SessionWorkload;
 pub(crate) use workload::purge_workload_directory;
 
@@ -63,33 +65,6 @@ pub struct SessionConfig {
     pub workload: SessionWorkload,
     /// Timing and Agent eligibility for keeping a session after a turn is cancelled or fails.
     pub turn_cancel: TurnCancelConfig,
-}
-
-/// Parameters of D2 in the cancel-turn decision; both durations are provisional until measured.
-#[derive(Clone, Debug)]
-pub struct TurnCancelConfig {
-    /// G: how long a `CancelTurn` waits for the Agent to answer, from its acceptance.
-    pub grace: Duration,
-    /// Q: how long a stopped turn must stay silent before the next turn is sent.
-    pub quiet: Duration,
-    /// Agent plugin versions whose turn boundary a conformance run verified. A cancelled or
-    /// failed turn of any other Agent ends the session with `turn_boundary_unverified`.
-    pub turn_boundary: Vec<(
-        ora_node_protocol::PluginId,
-        ora_node_protocol::PluginVersion,
-    )>,
-}
-
-impl Default for TurnCancelConfig {
-    /// G 15 s and Q 2 s as first set by the decision; no Agent is verified yet, so every stop of
-    /// a running turn ends the session until conformance runs add versions.
-    fn default() -> Self {
-        Self {
-            grace: Duration::from_secs(15),
-            quiet: Duration::from_secs(2),
-            turn_boundary: Vec::new(),
-        }
-    }
 }
 
 /// State shared by every session execution of one Node.
