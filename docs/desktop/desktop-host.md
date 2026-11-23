@@ -148,34 +148,44 @@ server, the account's display name and the state, through five commands (`cloudC
 plugin webviews get neither.
 
 - **Address**: entered in Settings → Cloud connection and normalized to an origin
-  (`https://host[:port]`, lowercase host, default port dropped). A user name, path, query or fragment
-  is refused; plain http is accepted only for this computer (`127.0.0.1`, `::1`, `localhost`). The
-  address is not secret and is stored as `user_config.cloud_server`. Changing or clearing it cancels a
-  sign-in in progress, deletes the old token and revokes it on the old server in the background.
+  (`https://host[:port]`, lowercase host, default port dropped; a bare host gets `https://`). A user
+  name, path, query or fragment is refused; plain http is accepted only for this computer
+  (`127.0.0.0/8`, `::1`, `localhost`). The address is not secret and is stored as
+  `user_config.cloud_server`. Changing or clearing it cancels a sign-in in progress, deletes the old
+  token and asks the old server to revoke it; `setServer` answers whether that server confirmed, and
+  the panel shows the same "not confirmed" notice as a sign-out when it did not.
 - **Sign-in** (RFC 8252): the host listens on `/callback` at a system-chosen port on `127.0.0.1`,
   creates a `state` and a PKCE verifier, and opens `<server>/desktop/authorize` in the system browser
   with the loopback redirect URI, the `state` and the S256 challenge. Once the server's page, which
   requires a web session, has been approved by a person, the browser returns to the loopback address
-  with a one-time code; a request with the wrong path or `state` gets 404 and does not end the
-  transaction. The host exchanges the code, the verifier and the same redirect URI at
+  with a one-time code, and the loopback page says only "Authorization received. Return to Ora.", since
+  the code is not exchanged yet. Cancelling on the approval page returns with `error=access_denied`
+  and ends the sign-in as denied. A request with the wrong path or `state` gets 404 and does not end
+  the transaction. The host exchanges the code, the verifier and the same redirect URI at
   `POST /auth/desktop/token`. A transaction times out after five minutes, can be cancelled and is the
   only one at a time; success, failure, cancellation, timeout and exit all close the listener.
-- **Token**: kept only in host memory and the operating system's secure store (Windows Credential
-  Manager, Linux Secret Service; the entry's service is `space.ora.desktop.cloud` and its account is
-  the server origin), never in SQLite, the webview, logs or URLs. When the secure store is unusable the
-  state is `storageUnavailable` with the reason and Cloud features are off; there is no plain-text
-  fallback.
+- **Token**: kept only in host memory and the operating system's secure store, never in SQLite, the
+  webview, logs or URLs. An entry belongs to the operating-system user and one server origin. On Linux
+  it is a Secret Service item (service `space.ora.desktop.cloud`, account the origin); on Windows it is
+  a generic Credential Manager credential named `<origin>.space.ora.desktop.cloud`, written with
+  `CRED_PERSIST_LOCAL_MACHINE` so it stays on this computer and does not roam with a roaming profile.
+  Debug and packaged builds share the app identifier and therefore the same entry; the instance lock
+  keeps one of them running. When the secure store is unusable the state is `storageUnavailable` with
+  the reason and Cloud features are off; there is no plain-text fallback, and a token the store
+  refused right after the exchange is revoked on the server (best effort).
 - **Requests and expiry**: requests with the token go only to the saved origin and follow no
   redirects; certificates are checked with the platform verifier, and the proxy comes from the
-  environment (`NO_PROXY` and loopback connect directly), not from the proxy setting that applies to
-  marketplace sources. Only `401` ends the session: the token is deleted and the state becomes
-  `needsSignIn`. Network errors, timeouts, redirects and 5xx only mark it `unreachable` and keep the
+  environment (`NO_PROXY` and loopback connect directly, and reqwest's own proxy lookup is off), not
+  from the proxy setting that applies to marketplace sources. Only `401` ends the session: the state
+  becomes `needsSignIn` and the token is deleted, but only when that answer ended the session it was
+  asked about, so a late `401` for an older token never deletes a newer sign-in. Network errors, timeouts, redirects and 5xx only mark it `unreachable` and keep the
   token. The
   token is checked with `GET /api/v1/me` at startup and when the main window regains focus (at most
   once a minute).
 - **Sign-out**: the local token is deleted first, then `POST /auth/desktop/logout` is called; when the
   server is unreachable the device is still signed out, and the panel says the server did not confirm
-  the revocation.
+  the revocation. When the secure store refuses the delete, the server is still asked to revoke and the
+  state is `storageUnavailable` instead of signed out.
 
 ## Bundled sidecars
 
