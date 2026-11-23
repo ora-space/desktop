@@ -10,22 +10,17 @@ use gitlancer::{
     SnapshotWorktreeRequest,
 };
 use ora_application::{
-    ApplicationError, FileChange, NodeType, WorkflowGraph, WorkflowRepository,
-    WorkflowRunEngineRepository, WorkflowRunRepository, resume_unit_member_ids,
-    resume_unit_owner_id, running_row_blocks_resume,
+    ApplicationError, FileChange, NodeType, WorkflowGraph, WorkflowRunEngineRepository,
+    WorkflowRunRepository, resume_unit_member_ids, resume_unit_owner_id, running_row_blocks_resume,
 };
 use ora_contracts::{
     EmptyErrorParams, PreviewWorkflowRunResumeRequest, PreviewWorkflowRunResumeResponse,
     PublicError, ResumeFailedNodePreview, ResumeRollbackMode, ResumeWorkflowRunRequest,
     ResumeWorkflowRunResponse, WorkflowFileChange,
 };
-use ora_db::{
-    RepositoryPool, SqliteWorkflowRepository, SqliteWorkflowRunEngineRepository,
-    SqliteWorkflowRunRepository,
-};
+use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository};
 use ora_domain::{
-    WorkflowNodeRun, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkflowSnapshotId,
-    WorkspaceId,
+    WorkflowNodeRun, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkspaceId,
 };
 use ora_logging::ora_info;
 use std::cmp::Ordering;
@@ -385,10 +380,13 @@ pub(super) fn apply_rollback(
 }
 
 /// Plans and applies rollback, then optionally switches snapshot, then resumes through the engine.
+///
+/// A resume re-executes the graph the run ends up pinned to, so it validates the same dependencies
+/// a start does: a Skill or MCP plugin uninstalled after the run failed cannot be routed around by
+/// resuming instead of restarting. The precheck runs before any worktree mutation.
 pub(super) fn resume_from_failure(
-    pool: &RepositoryPool,
+    dependencies: super::precheck::DependencySources<'_>,
     agent_runtime: &AgentRuntimeManager,
-    skills_root: &Path,
     engine: &ConcreteWorkflowRunControl,
     transitions: &super::transitions::WorkflowRunTransitions,
     request: ResumeWorkflowRunRequest,
@@ -396,52 +394,29 @@ pub(super) fn resume_from_failure(
 ) -> Result<ResumeWorkflowRunResponse, BackendError> {
     let mode = request.rollback.unwrap_or(ResumeRollbackMode::Keep);
     let run_id = WorkflowRunId::new(&request.run_id);
-    // Refuse an incompatible snapshot before any worktree mutation so a stale preview cannot
-    // pair checkpoint restore with a graph that will not resume.
-    if let Some(snapshot_id) = request.snapshot_id.as_deref() {
-        let context = super::snapshot_switch::load_context(pool, &run_id)?;
-        if snapshot_id != context.run.snapshot_id.as_ref() {
-            let target = SqliteWorkflowRepository::new(pool.clone())
-                .find_snapshot_by_id(&context.workflow.id, &WorkflowSnapshotId::new(snapshot_id))
-                .map_err(|error| BackendError::internal("failed to load target snapshot", error))?
-                .ok_or_else(|| {
-                    BackendError::from(ApplicationError::WorkflowSnapshotNotFoundById {
-                        snapshot_id: snapshot_id.to_string(),
-                    })
-                })?;
-            super::snapshot_switch::check_switch(pool, &context, &target)?;
-        }
-    }
-    let needs_workspace = mode != ResumeRollbackMode::Keep || request.snapshot_id.is_some();
-    let workspace_root = if needs_workspace {
-        let workspace_id = load_workspace_id(pool, &run_id)?;
-        Some(agent_runtime.workspace_cwd(&workspace_id)?)
-    } else {
-        None
-    };
+    let pool = dependencies.pool;
     // Re-plan from live rows for every mode, including Keep, so a concurrent or stale
     // resume cannot bypass availability (a running sibling, already-resumed run, etc.).
     let plan = plan_rollback(pool, &run_id)?;
     if !plan.resumable() {
         return Err(not_resumable());
     }
-    let pre_rollback_checkpoint = match (mode, workspace_root.as_deref()) {
-        (ResumeRollbackMode::Keep, _) => None,
-        (_, Some(workspace_root)) => apply_rollback(workspace_root, &plan, mode, &run_id, now)?,
-        (_, None) => return Err(not_resumable()),
+    let switch = super::snapshot_switch::prepare_resume(
+        pool,
+        &run_id,
+        request.snapshot_id.as_deref(),
+        |graph| dependencies.resolve_graph(graph),
+    )?;
+    let pre_rollback_checkpoint = if mode == ResumeRollbackMode::Keep {
+        None
+    } else {
+        let workspace_id = load_workspace_id(pool, &run_id)?;
+        let workspace_root = agent_runtime.workspace_cwd(&workspace_id)?;
+        apply_rollback(&workspace_root, &plan, mode, &run_id, now)?
     };
-    if let Some(workspace_root) = workspace_root.as_deref() {
-        let switched = super::snapshot_switch::switch_if_requested(
-            pool,
-            skills_root,
-            workspace_root,
-            &run_id,
-            request.snapshot_id.as_deref(),
-            now,
-        )?;
-        if switched {
-            transitions.publish_run_invalidated(&run_id);
-        }
+    if let Some(switch) = switch {
+        switch.apply(pool, now)?;
+        transitions.publish_run_invalidated(&run_id);
     }
     let ResumeWorkflowRunResponse { run, .. } = engine.resume_from_failure(request)?;
     Ok(ResumeWorkflowRunResponse {

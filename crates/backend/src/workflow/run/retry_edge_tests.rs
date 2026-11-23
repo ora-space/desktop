@@ -3,7 +3,7 @@
 
 use super::retry_tests::{Harness, linear, retry, siblings};
 use super::rollback::preview;
-use super::snapshot_switch::switch_if_requested;
+use super::test_fixture::switch_if_requested;
 use ora_application::{
     CancelWorkflowRunResult, DeleteWorkflowRunResult, NodeAutoRetry, NodeFailure, NodeFailureKind,
     PublishSnapshotResult, RestartWorkflowRunResult, ResumeWorkflowRunResult, UpdateDraftResult,

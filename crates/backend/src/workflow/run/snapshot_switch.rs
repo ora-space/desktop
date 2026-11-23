@@ -1,12 +1,10 @@
 //! Loads, validates, and applies a published-snapshot switch before a failed run resumes.
 
-use super::prerequisites::SkillRoleWorkspaceInitializer;
 use crate::error::BackendError;
 use ora_application::{
-    ApplicationError, SnapshotIncompatibility, SnapshotSwitchPlan, StartPrerequisitesError,
+    ApplicationError, SkillMaterializationReceipt, SnapshotIncompatibility, SnapshotSwitchPlan,
     WorkflowGraph, WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunPayload,
-    WorkflowRunRepository, WorkflowRunWorkspaceInitializer, WorkflowVariablePool,
-    plan_snapshot_switch,
+    WorkflowRunRepository, WorkflowVariablePool, plan_snapshot_switch,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_db::{
@@ -15,7 +13,6 @@ use ora_db::{
 };
 use ora_domain::{Workflow, WorkflowRun, WorkflowRunId, WorkflowSnapshot, WorkflowSnapshotId};
 use ora_logging::ora_info;
-use std::path::Path;
 
 const DRAFT_VERSION: &str = "draft";
 
@@ -94,30 +91,73 @@ pub(super) fn check_switch(
     )
 }
 
-/// Rebuilds skill materialization, persists the migrated payload, and retargets `snapshot_id`.
-pub(super) fn apply_switch(
+/// The exact validated snapshot and receipt that may be committed after rollback succeeds.
+pub(super) struct PreparedSwitch {
+    context: SnapshotSwitchContext,
+    target: WorkflowSnapshot,
+    payload_json: String,
+}
+
+impl PreparedSwitch {
+    /// Commits the prevalidated payload without re-reading plugins after the worktree changes.
+    pub(super) fn apply(self, pool: &RepositoryPool, now: i64) -> Result<(), BackendError> {
+        let switched = SqliteWorkflowRunEngineRepository::new(pool.clone())
+            .switch_run_snapshot(
+                &self.context.run.id,
+                &self.target.id,
+                &self.payload_json,
+                now,
+            )
+            .map_err(|error| {
+                BackendError::internal("failed to switch workflow run snapshot", error)
+            })?;
+        if !switched {
+            return Err(BackendError::from(
+                ApplicationError::WorkflowRunNotResumable,
+            ));
+        }
+        ora_info!(
+            run_id = %self.context.run.id,
+            old_snapshot_id = %self.context.current.id,
+            old_version = %self.context.current.version,
+            new_snapshot_id = %self.target.id,
+            new_version = %self.target.version,
+            "switched workflow run snapshot for resume"
+        );
+        Ok(())
+    }
+}
+
+/// Validates the graph the resume will dispatch and prepares a switch only when its pin changes.
+pub(super) fn prepare_resume(
     pool: &RepositoryPool,
-    skills_root: &Path,
-    workspace_root: &Path,
-    context: &SnapshotSwitchContext,
-    target: &WorkflowSnapshot,
-    plan: SnapshotSwitchPlan,
-    now: i64,
-) -> Result<(), BackendError> {
+    run_id: &WorkflowRunId,
+    snapshot_id: Option<&str>,
+    resolve: impl FnOnce(&WorkflowGraph) -> Result<SkillMaterializationReceipt, BackendError>,
+) -> Result<Option<PreparedSwitch>, BackendError> {
+    let context = load_context(pool, run_id)?;
+    let Some(snapshot_id) = snapshot_id.filter(|id| *id != context.run.snapshot_id.as_ref()) else {
+        let graph = WorkflowGraph::parse(&context.current.graph).map_err(ApplicationError::from)?;
+        resolve(&graph)?;
+        return Ok(None);
+    };
+    let target = SqliteWorkflowRepository::new(pool.clone())
+        .find_snapshot_by_id(&context.workflow.id, &WorkflowSnapshotId::new(snapshot_id))
+        .map_err(|error| BackendError::internal("failed to load target snapshot", error))?
+        .ok_or_else(|| {
+            BackendError::from(ApplicationError::WorkflowSnapshotNotFoundById {
+                snapshot_id: snapshot_id.to_string(),
+            })
+        })?;
     if target.version == DRAFT_VERSION {
         return Err(incompatible("draft_snapshot"));
     }
     if target.workflow_id != context.workflow.id {
         return Err(incompatible("snapshot_not_in_workflow"));
     }
+    let plan = check_switch(pool, &context, &target)?;
     let new_graph = WorkflowGraph::parse(&target.graph).map_err(ApplicationError::from)?;
-    let initializer = SkillRoleWorkspaceInitializer::new(skills_root.to_path_buf(), pool.clone())
-        .map_err(|error| ApplicationError::WorkflowRunStartFailed {
-        message: error.to_string(),
-    })?;
-    let receipt = initializer
-        .initialize_workspace(&new_graph, workspace_root)
-        .map_err(start_prerequisites_error)?;
+    let receipt = resolve(&new_graph)?;
     let mut payload = parsed_payload(context.run.payload.as_deref());
     payload.skill_materialization = receipt;
     payload.variable_pool = plan.variable_pool;
@@ -127,89 +167,11 @@ pub(super) fn apply_switch(
             message: format!("failed to serialize switched workflow run payload: {error}"),
         }
     })?;
-    let switched = SqliteWorkflowRunEngineRepository::new(pool.clone())
-        .switch_run_snapshot(&context.run.id, &target.id, &payload_json, now)
-        .map_err(|error| BackendError::internal("failed to switch workflow run snapshot", error))?;
-    if !switched {
-        return Err(BackendError::from(
-            ApplicationError::WorkflowRunNotResumable,
-        ));
-    }
-    ora_info!(
-        run_id = %context.run.id,
-        old_snapshot_id = %context.current.id,
-        old_version = %context.current.version,
-        new_snapshot_id = %target.id,
-        new_version = %target.version,
-        "switched workflow run snapshot for resume"
-    );
-    Ok(())
-}
-
-/// Applies `target` when it differs from the run's current snapshot.
-///
-/// Returns `true` when a snapshot switch committed so callers can publish a run invalidation.
-pub(super) fn switch_if_requested(
-    pool: &RepositoryPool,
-    skills_root: &Path,
-    workspace_root: &Path,
-    run_id: &WorkflowRunId,
-    snapshot_id: Option<&str>,
-    now: i64,
-) -> Result<bool, BackendError> {
-    let Some(snapshot_id) = snapshot_id else {
-        return Ok(false);
-    };
-    let context = load_context(pool, run_id)?;
-    if snapshot_id == context.run.snapshot_id.as_ref() {
-        return Ok(false);
-    }
-    let target = SqliteWorkflowRepository::new(pool.clone())
-        .find_snapshot_by_id(&context.workflow.id, &WorkflowSnapshotId::new(snapshot_id))
-        .map_err(|error| BackendError::internal("failed to load target snapshot", error))?
-        .ok_or_else(|| {
-            BackendError::from(ApplicationError::WorkflowSnapshotNotFoundById {
-                snapshot_id: snapshot_id.to_string(),
-            })
-        })?;
-    let plan = check_switch(pool, &context, &target)?;
-    apply_switch(
-        pool,
-        skills_root,
-        workspace_root,
-        &context,
-        &target,
-        plan,
-        now,
-    )?;
-    Ok(true)
-}
-
-fn start_prerequisites_error(error: StartPrerequisitesError) -> ApplicationError {
-    match error {
-        StartPrerequisitesError::WorkflowSkillNotFound { skill_id } => {
-            ApplicationError::WorkflowSkillNotFound { skill_id }
-        }
-        StartPrerequisitesError::WorkflowRoleNotFound { role_id } => {
-            ApplicationError::WorkflowRoleNotFound { role_id }
-        }
-        StartPrerequisitesError::SkillMaterializationError { message } => {
-            ApplicationError::WorkflowRunStartFailed { message }
-        }
-        StartPrerequisitesError::AgentSkillDeliveryUnsupported { agent_ref } => {
-            ApplicationError::WorkflowRunStartFailed {
-                message: format!("agent {agent_ref} does not support workflow-managed skills"),
-            }
-        }
-        StartPrerequisitesError::AgentSkillDeliveryError { agent_ref, message } => {
-            ApplicationError::WorkflowRunStartFailed {
-                message: format!("failed to resolve skill delivery for {agent_ref}: {message}"),
-            }
-        }
-        StartPrerequisitesError::Repository(source) => {
-            ApplicationError::WorkflowRunRepository { source }
-        }
-    }
+    Ok(Some(PreparedSwitch {
+        context,
+        target,
+        payload_json,
+    }))
 }
 
 fn incompatible(reason: &str) -> BackendError {

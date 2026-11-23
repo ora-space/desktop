@@ -247,8 +247,18 @@ pub enum ApplicationError {
     WorkflowRunValidation(#[from] WorkflowValidationError),
     #[error("workflow run input for {variable} was rejected: {reason}")]
     WorkflowRunInputInvalid { variable: String, reason: String },
-    #[error("workflow skill not found: {skill_id}")]
-    WorkflowSkillNotFound { skill_id: String },
+    #[error("workflow skill for node {node_id} not found: {skill_id}")]
+    WorkflowSkillNotFound {
+        node_id: String,
+        node_title: String,
+        skill_id: String,
+    },
+    #[error("workflow MCP for node {node_id} is not installed: {mcp_id}")]
+    WorkflowMcpNotFound {
+        node_id: String,
+        node_title: String,
+        mcp_id: String,
+    },
     #[error("workflow role not found: {role_id}")]
     WorkflowRoleNotFound { role_id: String },
     #[error("workflow run start failed: {message}")]
@@ -465,11 +475,26 @@ impl ApplicationError {
     }
 
     /// Maps deploy-time worktree-initialization failures into stable application errors.
-    pub(crate) fn from_start_prerequisites_error(error: StartPrerequisitesError) -> Self {
+    pub fn from_start_prerequisites_error(error: StartPrerequisitesError) -> Self {
         match error {
-            StartPrerequisitesError::WorkflowSkillNotFound { skill_id } => {
-                Self::WorkflowSkillNotFound { skill_id }
-            }
+            StartPrerequisitesError::WorkflowSkillNotFound {
+                node_id,
+                node_title,
+                skill_id,
+            } => Self::WorkflowSkillNotFound {
+                node_id,
+                node_title,
+                skill_id,
+            },
+            StartPrerequisitesError::WorkflowMcpNotFound {
+                node_id,
+                node_title,
+                mcp_id,
+            } => Self::WorkflowMcpNotFound {
+                node_id,
+                node_title,
+                mcp_id,
+            },
             StartPrerequisitesError::WorkflowRoleNotFound { role_id } => {
                 Self::WorkflowRoleNotFound { role_id }
             }
@@ -689,9 +714,29 @@ impl PartialEq for ApplicationError {
                 WorkflowNodeNotAwaitingInput { node_id: right },
             ) => left == right,
             (
-                WorkflowSkillNotFound { skill_id: left },
-                WorkflowSkillNotFound { skill_id: right },
-            ) => left == right,
+                WorkflowSkillNotFound {
+                    node_id: left_node,
+                    node_title: left_title,
+                    skill_id: left_skill,
+                },
+                WorkflowSkillNotFound {
+                    node_id: right_node,
+                    node_title: right_title,
+                    skill_id: right_skill,
+                },
+            ) => left_node == right_node && left_title == right_title && left_skill == right_skill,
+            (
+                WorkflowMcpNotFound {
+                    node_id: left_node,
+                    node_title: left_title,
+                    mcp_id: left_mcp,
+                },
+                WorkflowMcpNotFound {
+                    node_id: right_node,
+                    node_title: right_title,
+                    mcp_id: right_mcp,
+                },
+            ) => left_node == right_node && left_title == right_title && left_mcp == right_mcp,
             (WorkflowRoleNotFound { role_id: left }, WorkflowRoleNotFound { role_id: right }) => {
                 left == right
             }

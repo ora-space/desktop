@@ -1663,8 +1663,12 @@ fn skill_plugins_bound_to_agent_nodes_reach_the_prompt() -> TestResult {
                 .ok_or("run creation accepted an enabled binding to a missing skill")?;
             assert_eq!(
                 error.public_error().clone(),
-                PublicError::WorkflowSkillNotFound(EmptyErrorParams {}),
-                "missing skill must fail run creation with the named public error"
+                PublicError::WorkflowSkillNotFound(Box::new(WorkflowSkillNotFoundParams {
+                    node_id: "reviewer".to_string(),
+                    node_title: "reviewer".to_string(),
+                    skill_id: "nonexistent_skill".to_string(),
+                })),
+                "missing skill must fail run creation with the node and skill named"
             );
             Ok(())
         })
