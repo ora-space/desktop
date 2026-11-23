@@ -31,7 +31,7 @@ pub(super) async fn drain_idle_events(
             break;
         };
         traffic |= is_turn_traffic(&event);
-        if let SessionEvent::Update(update) = &event
+        if let SessionEvent::Update(update, _) = &event
             && let Some(title_updates) = title_updates.upgrade()
         {
             let _ = title_updates.send(RuntimeCommand::TitleUpdate {
@@ -50,7 +50,7 @@ pub(super) async fn drain_idle_events(
 /// runtime does not know, and every permission request does.
 pub(super) fn is_turn_traffic(event: &SessionEvent) -> bool {
     match event {
-        SessionEvent::Update(update) => !session_level(&update.update),
+        SessionEvent::Update(update, _) => !session_level(&update.update),
         SessionEvent::Permission(_) => true,
         SessionEvent::Response(_) => false,
     }
@@ -79,7 +79,7 @@ pub(super) async fn settle_idle_event(client: &AgentAcpClient, event: SessionEve
                 )
                 .await;
         }
-        SessionEvent::Update(_) | SessionEvent::Response(_) => {}
+        SessionEvent::Update(_, _) | SessionEvent::Response(_) => {}
     }
 }
 
@@ -97,7 +97,7 @@ where
 {
     loop {
         match channel.events.recv().await {
-            Some(SessionEvent::Update(update)) => {
+            Some(SessionEvent::Update(update, _)) => {
                 *saw_output |= produced_output(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
@@ -142,7 +142,7 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
             break;
         };
         match event {
-            SessionEvent::Update(update) => {
+            SessionEvent::Update(update, _) => {
                 *saw_output |= produced_output(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);

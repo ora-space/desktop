@@ -334,10 +334,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
             };
             match input {
-                ActiveInput::Event(SessionEvent::Update(update)) => {
+                ActiveInput::Event(SessionEvent::Update(update, arrived)) => {
                     self.observe_session_update(&update.update);
                     deadline.as_mut().reset(Instant::now() + window);
-                    settle_idle_event(&client, SessionEvent::Update(update)).await;
+                    settle_idle_event(&client, SessionEvent::Update(update, arrived)).await;
                 }
                 ActiveInput::Event(SessionEvent::Permission(permission)) => {
                     let _ = client

@@ -327,7 +327,7 @@ async fn ready_response<H: AgentRuntimeHost>(
     });
     for event in before {
         match event {
-            SessionEvent::Update(update) => {
+            SessionEvent::Update(update, _) => {
                 *saw_output |= produced_output(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
@@ -405,7 +405,7 @@ mod tests {
         };
         let (sender, mut events) = tokio::sync::mpsc::channel(4);
         let update = || {
-            SessionEvent::Update(SessionNotification::new(
+            SessionEvent::update(SessionNotification::new(
                 "session-1",
                 SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
             ))

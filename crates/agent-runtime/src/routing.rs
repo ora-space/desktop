@@ -12,16 +12,21 @@ use tokio::sync::mpsc::error::TrySendError;
 /// Carries normal session traffic in the same order observed on the ACP connection.
 #[derive(Debug)]
 pub(super) enum SessionEvent {
-    Update(SessionNotification),
+    Update(SessionNotification, tokio::time::Instant),
     Permission(PermissionRequest),
     Response(SessionResponse),
 }
 
 impl SessionEvent {
+    /// Capture arrival before actor scheduling can delay progress past its deadline.
+    pub(super) fn update(update: SessionNotification) -> Self {
+        Self::Update(update, tokio::time::Instant::now())
+    }
+
     /// Returns the provider session id used to select the destination route.
     fn session_id(&self) -> &str {
         match self {
-            Self::Update(update) => &update.session_id.0,
+            Self::Update(update, _) => &update.session_id.0,
             Self::Permission(permission) => &permission.request.session_id.0,
             Self::Response(response) => &response.session_id().0,
         }
@@ -96,7 +101,7 @@ impl RouteRegistry {
         let mut retained = VecDeque::new();
         while let Some(update) = pending.pop_front() {
             if update.session_id.0.as_ref() == session_id {
-                let _ = events.try_send(SessionEvent::Update(update));
+                let _ = events.try_send(SessionEvent::update(update));
             } else {
                 retained.push_back(update);
             }
@@ -135,7 +140,7 @@ impl RouteRegistry {
                 Ok(()) => Ok(()),
             },
             None if self.setup_count.load(Ordering::Acquire) > 0 => match event {
-                SessionEvent::Update(update) => {
+                SessionEvent::Update(update, _) => {
                     if pending.len() == super::CONTRACT_QUEUE_CAPACITY {
                         pending.pop_front();
                     }
@@ -340,12 +345,12 @@ pub(crate) mod tests {
 
         assert!(
             routes
-                .route_event(SessionEvent::Update(update.clone()))
+                .route_event(SessionEvent::update(update.clone()))
                 .is_ok()
         );
 
         match first_receiver.recv().await {
-            Some(SessionEvent::Update(received)) => assert_eq!(received, update),
+            Some(SessionEvent::Update(received, _)) => assert_eq!(received, update),
             Some(SessionEvent::Permission(_) | SessionEvent::Response(_)) | None => {
                 panic!("expected session update")
             }
@@ -368,13 +373,13 @@ pub(crate) mod tests {
 
         assert!(
             routes
-                .route_event(SessionEvent::Update(update.clone()))
+                .route_event(SessionEvent::update(update.clone()))
                 .is_ok()
         );
         assert!(routes.route_event(SessionEvent::Response(response)).is_ok());
 
         match events_receiver.recv().await {
-            Some(SessionEvent::Update(received)) => assert_eq!(received, update),
+            Some(SessionEvent::Update(received, _)) => assert_eq!(received, update),
             Some(SessionEvent::Permission(_) | SessionEvent::Response(_)) | None => {
                 panic!("expected session update")
             }
@@ -401,7 +406,7 @@ pub(crate) mod tests {
         match routes.route_event(SessionEvent::Permission(permission.clone())) {
             Err(event) => match *event {
                 SessionEvent::Permission(received) => assert_eq!(received, permission),
-                SessionEvent::Update(_) | SessionEvent::Response(_) => {
+                SessionEvent::Update(_, _) | SessionEvent::Response(_) => {
                     panic!("expected permission request")
                 }
             },
@@ -420,7 +425,7 @@ pub(crate) mod tests {
         );
         assert!(
             routes
-                .route_event(SessionEvent::Update(update.clone()))
+                .route_event(SessionEvent::update(update.clone()))
                 .is_ok()
         );
         let (updates, mut receiver) = mpsc::channel(1);
@@ -430,7 +435,7 @@ pub(crate) mod tests {
         drop(setup);
 
         match receiver.recv().await {
-            Some(SessionEvent::Update(received)) => assert_eq!(received, update),
+            Some(SessionEvent::Update(received, _)) => assert_eq!(received, update),
             Some(SessionEvent::Permission(_) | SessionEvent::Response(_)) | None => {
                 panic!("expected setup update")
             }
@@ -452,7 +457,7 @@ pub(crate) mod tests {
         );
 
         routes
-            .route_event(SessionEvent::Update(update))
+            .route_event(SessionEvent::update(update))
             .expect("buffer setup update");
 
         setup.activity().wait().await;
@@ -475,7 +480,7 @@ pub(crate) mod tests {
         );
 
         routes
-            .route_event(SessionEvent::Update(update))
+            .route_event(SessionEvent::update(update))
             .expect("route live update");
 
         assert!(
@@ -502,10 +507,10 @@ pub(crate) mod tests {
 
         assert!(
             routes
-                .route_event(SessionEvent::Update(update.clone()))
+                .route_event(SessionEvent::update(update.clone()))
                 .is_ok()
         );
-        assert!(routes.route_event(SessionEvent::Update(update)).is_err());
+        assert!(routes.route_event(SessionEvent::update(update)).is_err());
 
         assert!(matches!(
             controls_receiver.recv().await,

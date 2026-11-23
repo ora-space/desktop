@@ -42,6 +42,21 @@ pub(super) struct ActiveInputState {
 }
 
 impl ActiveInputState {
+    /// After the queued events have drained, surface an already accepted terminal control.
+    pub(super) fn terminal_control(
+        &mut self,
+        controls: &mut mpsc::UnboundedReceiver<SessionControl>,
+    ) -> Option<ActiveInput> {
+        if let Some(control) = self.deferred_control.take() {
+            return Some(control.into_input());
+        }
+        match controls.try_recv() {
+            Ok(control) => Some(ActiveInput::Control(control)),
+            Err(TryRecvError::Disconnected) => Some(ActiveInput::ControlsClosed),
+            Err(TryRecvError::Empty) => None,
+        }
+    }
+
     /// Receives active actor input without letting a live event stream starve commands.
     ///
     /// Connection and overflow controls are emitted only after their route is detached. If a
@@ -122,7 +137,7 @@ mod tests {
         let (_controls_sender, mut controls) = mpsc::unbounded_channel();
         let (_commands_sender, mut commands) = mpsc::unbounded_channel();
         events_sender
-            .send(SessionEvent::Update(SessionNotification::new(
+            .send(SessionEvent::update(SessionNotification::new(
                 "session-1",
                 SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
             )))
@@ -135,7 +150,7 @@ mod tests {
 
         assert!(matches!(
             state.recv(&mut events, &mut controls, &mut commands).await,
-            ActiveInput::Event(SessionEvent::Update(_))
+            ActiveInput::Event(SessionEvent::Update(_, _))
         ));
         assert!(matches!(
             state.recv(&mut events, &mut controls, &mut commands).await,
@@ -152,7 +167,7 @@ mod tests {
         let (commands_sender, mut commands) = mpsc::unbounded_channel();
         for index in 0..=MAX_EVENTS_BEFORE_COMMAND_POLL {
             events_sender
-                .send(SessionEvent::Update(SessionNotification::new(
+                .send(SessionEvent::update(SessionNotification::new(
                     "session-1",
                     SessionUpdate::SessionInfoUpdate(
                         SessionInfoUpdate::new().title(format!("Update {index}")),
@@ -165,7 +180,7 @@ mod tests {
         for _ in 0..MAX_EVENTS_BEFORE_COMMAND_POLL {
             assert!(matches!(
                 state.recv(&mut events, &mut controls, &mut commands).await,
-                ActiveInput::Event(SessionEvent::Update(_))
+                ActiveInput::Event(SessionEvent::Update(_, _))
             ));
         }
         commands_sender

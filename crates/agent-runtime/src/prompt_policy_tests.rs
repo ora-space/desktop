@@ -395,7 +395,7 @@ fn title_polling_admission_preserves_a_waiting_prompt_policy() {
             .manager
             .prompt_session_with_inactivity_policy(
                 prompt("waiting"),
-                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+                PromptInactivityPolicy::Unbounded,
             )
             .await
             .unwrap();
@@ -540,7 +540,7 @@ fn waiting_prompt_survives_silence_while_default_session_retries() {
             .manager
             .prompt_session_with_inactivity_policy(
                 prompt("waiting"),
-                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+                PromptInactivityPolicy::Unbounded,
             )
             .await
             .unwrap();
@@ -898,7 +898,7 @@ fn dropping_a_waiting_prompt_cancels_its_owner() {
             .manager
             .prompt_session_with_inactivity_policy(
                 prompt("waiting"),
-                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+                PromptInactivityPolicy::Unbounded,
             )
             .await
             .unwrap();
@@ -914,6 +914,39 @@ fn dropping_a_waiting_prompt_cancels_its_owner() {
             })
             .await
             .unwrap();
+        fixture.shutdown().await;
+    });
+}
+
+/// A provider-confirmed timeout releases the caller only after the same session is reusable.
+#[test]
+fn confirmed_bounded_timeout_can_prompt_again_without_reloading() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(1800)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(
+            stream.recv().await.unwrap().unwrap_err().public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        let mut next = fixture
+            .manager
+            .prompt_session(prompt("waiting"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture
+            .agent
+            .send(AgentInput::Finish("waiting".into(), StopReason::EndTurn))
+            .unwrap();
+        assert_eq!(completion(&mut next).await, StopReason::EndTurn);
         fixture.shutdown().await;
     });
 }
@@ -986,7 +1019,7 @@ fn provider_disconnect_ends_a_waiting_prompt() {
             .manager
             .prompt_session_with_inactivity_policy(
                 prompt("waiting"),
-                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+                PromptInactivityPolicy::Unbounded,
             )
             .await
             .unwrap();
@@ -1013,7 +1046,7 @@ fn releasing_the_host_and_stream_ends_a_silent_waiting_actor() {
             .manager
             .prompt_session_with_inactivity_policy(
                 prompt("waiting"),
-                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+                PromptInactivityPolicy::Unbounded,
             )
             .await
             .unwrap();

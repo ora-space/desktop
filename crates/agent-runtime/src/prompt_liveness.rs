@@ -57,8 +57,16 @@ pub(super) struct PromptLiveness {
 struct WaitProgress {
     last: Instant,
     limit: Duration,
-    tools: HashMap<ToolCallId, ToolCallStatus>,
-    plan: Option<agent_client_protocol_schema::v1::Plan>,
+    tools: HashMap<ToolCallId, ToolProgress>,
+    plans: HashMap<Option<String>, Vec<agent_client_protocol_schema::v1::PlanEntry>>,
+}
+
+/// Last reported fields of a tool within this send, including partial updates.
+#[derive(Default)]
+struct ToolProgress {
+    status: Option<ToolCallStatus>,
+    content: Vec<agent_client_protocol_schema::v1::ToolCallContent>,
+    output: Option<serde_json::Value>,
 }
 
 /// Identifies one automatic re-send of a stalled prompt, counted from the first retry.
@@ -108,7 +116,7 @@ impl PromptLiveness {
             last: Instant::now(),
             limit,
             tools: HashMap::new(),
-            plan: None,
+            plans: HashMap::new(),
         });
         state
     }
@@ -120,11 +128,17 @@ impl PromptLiveness {
 
     /// Captures the exact window and tool ownership used by an inactivity decision.
     pub(super) fn snapshot(&self) -> PromptLivenessSnapshot {
-        let window = self.windows[self.attempt];
+        let (window, last) = self.wait_progress.as_ref().map_or_else(
+            || {
+                let window = self.windows[self.attempt];
+                (window, self.deadline - window)
+            },
+            |wait| (wait.limit, wait.last),
+        );
         PromptLivenessSnapshot {
             attempt: self.attempt + 1,
             window,
-            silent_elapsed: Instant::now().saturating_duration_since(self.deadline - window),
+            silent_elapsed: Instant::now().saturating_duration_since(last),
             running_tools: self.running_tools.len(),
             pending_tools: self.pending_tools.len(),
         }
@@ -175,11 +189,13 @@ impl PromptLiveness {
     }
 
     /// Applies only activity that proves the current prompt, rather than session chrome, moved.
+    #[cfg(test)]
     pub(super) fn observe(&mut self, update: &SessionUpdate) {
         self.observe_at(update, Instant::now());
     }
 
-    fn observe_at(&mut self, update: &SessionUpdate, now: Instant) {
+    /// Apply progress at route arrival, independent of actor scheduling delays.
+    pub(super) fn observe_at(&mut self, update: &SessionUpdate, now: Instant) {
         // A display projection is not proof that this prompt awaits that child. Parent delegate
         // tools keep their existing in-progress pause; child output cannot create another pause.
         let (meta, tool) = match update {
@@ -261,21 +277,24 @@ impl PromptLiveness {
             // always rearm.
             Projection::Parent => {
                 self.projected_tools.remove(&tool.tool_call_id);
-                self.permission_progress();
+                self.permission_progress(&tool.tool_call_id);
             }
             Projection::Inherited => {
                 if !self.projected_tools.contains(&tool.tool_call_id) {
-                    self.permission_progress();
+                    self.permission_progress(&tool.tool_call_id);
                 }
             }
         }
     }
 
     /// An answered parent permission advances both clocks.
-    fn permission_progress(&mut self) {
+    fn permission_progress(&mut self, id: &ToolCallId) {
         let now = Instant::now();
         self.reset_at(now);
-        if let Some(wait) = &mut self.wait_progress {
+        if (self.pending_tools.contains(id) || self.running_tools.contains(id))
+            && let Some(wait) = &mut self.wait_progress
+            && now < wait.last + wait.limit
+        {
             wait.last = now;
         }
     }
@@ -312,25 +331,83 @@ impl WaitProgress {
     /// Renew on new output or a state transition, even for a running tool. Repeated status
     /// broadcasts and session housekeeping cannot keep a stalled turn alive.
     fn observe(&mut self, update: &SessionUpdate, now: Instant) {
+        if now < self.last || now >= self.last + self.limit {
+            return;
+        }
         let advanced = match update {
             SessionUpdate::AgentMessageChunk(chunk) | SessionUpdate::AgentThoughtChunk(chunk) => {
                 !matches!(&chunk.content, agent_client_protocol_schema::v1::ContentBlock::Text(text) if text.text.is_empty())
             }
-            SessionUpdate::Plan(plan) if self.plan.as_ref() != Some(plan) => {
-                self.plan = Some(plan.clone());
-                true
+            SessionUpdate::Plan(plan) => {
+                let source = ora_history::child_source_id(plan.meta.as_ref()).map(str::to_owned);
+                let mut entries = plan.entries.clone();
+                for entry in &mut entries {
+                    entry.meta = None;
+                }
+                if self.plans.get(&source) == Some(&entries) {
+                    false
+                } else {
+                    self.plans.insert(source, entries);
+                    true
+                }
             }
-            SessionUpdate::ToolCall(call) => {
-                self.tools.insert(call.tool_call_id.clone(), call.status) != Some(call.status)
-            }
-            SessionUpdate::ToolCallUpdate(call) => call.fields.status.is_some_and(|status| {
-                self.tools.insert(call.tool_call_id.clone(), status) != Some(status)
-            }),
+            SessionUpdate::ToolCall(call) => self
+                .tools
+                .entry(call.tool_call_id.clone())
+                .or_default()
+                .observe(
+                    Some(call.status),
+                    Some(&call.content),
+                    call.raw_output.as_ref(),
+                ),
+            SessionUpdate::ToolCallUpdate(call) => self
+                .tools
+                .entry(call.tool_call_id.clone())
+                .or_default()
+                .observe(
+                    call.fields.status,
+                    call.fields.content.as_ref(),
+                    call.fields.raw_output.as_ref(),
+                ),
             _ => false,
         };
         if advanced {
             self.last = now;
         }
+    }
+}
+
+impl ToolProgress {
+    /// Compare only fields actually present in this tool update.
+    fn observe(
+        &mut self,
+        status: Option<ToolCallStatus>,
+        content: Option<&Vec<agent_client_protocol_schema::v1::ToolCallContent>>,
+        output: Option<&serde_json::Value>,
+    ) -> bool {
+        let mut changed = false;
+        if let Some(status) = status {
+            changed |= self.status.replace(status) != Some(status);
+        }
+        if let Some(content) = content
+            && self.content != *content
+        {
+            changed |= !content.is_empty();
+            self.content.clone_from(content);
+        }
+        if let Some(output) = output
+            && self.output.as_ref() != Some(output)
+        {
+            changed |= match output {
+                serde_json::Value::Null => false,
+                serde_json::Value::String(text) => !text.is_empty(),
+                serde_json::Value::Array(items) => !items.is_empty(),
+                serde_json::Value::Object(fields) => !fields.is_empty(),
+                _ => true,
+            };
+            self.output = Some(output.clone());
+        }
+        changed
     }
 }
 
@@ -357,10 +434,8 @@ mod tests {
     /// its current status or reporting only token usage cannot postpone the eventual expiry.
     #[tokio::test(start_paused = true)]
     async fn bounded_wait_renews_only_for_progress_and_expires_with_a_running_tool() {
-        let mut live = PromptLiveness::for_policy(
-            &SINGLE_WINDOW,
-            ora_domain::PromptInactivityPolicy::WaitMinutes(1u16.try_into().unwrap()),
-        );
+        let mut live =
+            PromptLiveness::for_policy(&SINGLE_WINDOW, ora_domain::PromptInactivityPolicy::Wait);
         let tool = SessionUpdate::ToolCall(
             ToolCall::new("tool", "scan").status(ToolCallStatus::InProgress),
         );
@@ -378,13 +453,58 @@ mod tests {
         live.observe(&tool);
         live.observe(&SessionUpdate::UsageUpdate(UsageUpdate::new(1, 100)));
         assert!(
-            tokio::time::timeout(Duration::from_secs(9), live.wait())
+            tokio::time::timeout(Duration::from_secs(1749), live.wait())
                 .await
                 .is_err()
         );
         tokio::time::timeout(Duration::from_secs(1), live.wait())
             .await
             .expect("expired despite the stuck tool");
+    }
+
+    /// A delayed consumer uses arrival time, and metadata-only deltas cannot extend a turn.
+    #[tokio::test(start_paused = true)]
+    async fn bounded_tool_output_uses_arrival_time_and_only_renews_for_changes() {
+        let mut live =
+            PromptLiveness::for_policy(&SINGLE_WINDOW, ora_domain::PromptInactivityPolicy::Wait);
+        let base = Instant::now();
+        let window = Duration::from_secs(1800);
+        tokio::time::advance(window).await;
+        let mut delta =
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"tool","rawOutput":{"lines":1}});
+        let received = base + window - Duration::from_secs(1);
+        live.observe_at(&serde_json::from_value(delta.clone()).unwrap(), received);
+        assert_eq!(live.wait_deadline(), Some(received + window));
+        delta["title"] = json!("renamed");
+        live.observe_at(
+            &serde_json::from_value(delta.clone()).unwrap(),
+            Instant::now(),
+        );
+        assert_eq!(live.wait_deadline(), Some(received + window));
+        delta["rawOutput"] = json!({"lines":2});
+        live.observe_at(&serde_json::from_value(delta).unwrap(), received + window);
+        assert_eq!(live.wait_deadline(), Some(received + window));
+    }
+
+    /// Interleaved parent and child plan metadata cannot manufacture progress.
+    #[tokio::test(start_paused = true)]
+    async fn bounded_plans_compare_entries_per_source() {
+        let mut live =
+            PromptLiveness::for_policy(&SINGLE_WINDOW, ora_domain::PromptInactivityPolicy::Wait);
+        live.observe(&parent_delegate(ToolCallStatus::Pending));
+        let parent = json!({"sessionUpdate":"plan","entries":[{"content":"parent","priority":"high","status":"pending"}]});
+        live.observe(&serde_json::from_value(parent.clone()).unwrap());
+        let mut child = parent.clone();
+        child["_meta"] = json!({"_subagent/update":{"sessionId":"sess-1","taskId":"task-1","toolCallId":"call-1"}});
+        child["entries"][0]["content"] = json!("child");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        live.observe(&serde_json::from_value(child.clone()).unwrap());
+        let deadline = live.wait_deadline();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        live.observe(&serde_json::from_value(parent).unwrap());
+        child["entries"][0]["_meta"] = json!({"event":2});
+        live.observe(&serde_json::from_value(child).unwrap());
+        assert_eq!(live.wait_deadline(), deadline);
     }
 
     /// Builds the metadata one update carries for the `opencode/child-session` namespace.

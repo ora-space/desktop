@@ -243,7 +243,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 // that became ready at the same time.
                 biased;
                 event = channel.events.recv() => match event {
-                    Some(SessionEvent::Update(update)) => {
+                    Some(SessionEvent::Update(update, _)) => {
                         // The agent is reciting history Ora already owns. Draining it keeps the
                         // queue clear and proves the provider is still working.
                         self.observe_session_update(&update.update);

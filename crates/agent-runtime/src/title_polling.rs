@@ -235,7 +235,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 event = channel.events.recv() => {
                     match event {
-                        Some(SessionEvent::Update(update)) => {
+                        Some(SessionEvent::Update(update, _)) => {
                             self.observe_session_update(&update.update);
                             channel.pending_updates.push_back(update);
                         }

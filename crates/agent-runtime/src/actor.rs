@@ -89,7 +89,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             if super::events::is_turn_traffic(&event) {
                                 self.turn_cancel.note_idle_traffic();
                             }
-                            if let SessionEvent::Update(update) = &event
+                            if let SessionEvent::Update(update, _) = &event
                                 && let Some(command_sender) = command_sender.upgrade()
                             {
                                 let _ = command_sender.send(RuntimeCommand::TitleUpdate {

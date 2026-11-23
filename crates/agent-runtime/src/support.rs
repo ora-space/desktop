@@ -19,7 +19,7 @@ pub(super) async fn respond_permission(
     request: RespondToPermissionRequest,
     permissions: &mut HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
 ) -> Result<RespondToPermissionResponse, RuntimeError> {
-    let Some((request_id, options)) = permissions.remove(&request.permission_request_id) else {
+    let Some((request_id, options)) = permissions.get(&request.permission_request_id) else {
         return Err(RuntimeError::new(
             ErrorClassification::Conflict,
             PublicError::PermissionRequestNotPending(EmptyErrorParams {}),
@@ -27,7 +27,6 @@ pub(super) async fn respond_permission(
         ));
     };
     if !options.contains(&request.option_id) {
-        permissions.insert(request.permission_request_id, (request_id, options));
         return Err(RuntimeError::new(
             ErrorClassification::InvalidRequest,
             PublicError::PermissionOptionInvalid(EmptyErrorParams {}),
@@ -38,9 +37,10 @@ pub(super) async fn respond_permission(
         PermissionOptionId::new(request.option_id),
     ));
     client
-        .respond(&request_id, &RequestPermissionResponse::new(outcome))
+        .respond(request_id, &RequestPermissionResponse::new(outcome))
         .await
         .map_err(map_acp_error)?;
+    permissions.remove(&request.permission_request_id);
     Ok(RespondToPermissionResponse {})
 }
 

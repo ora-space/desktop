@@ -282,6 +282,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 return;
             }
         };
+        #[cfg(feature = "test-support")]
+        let windows = self
+            .test_prompt_inactivity_windows
+            .unwrap_or(&PROMPT_INACTIVITY_WINDOWS);
+        #[cfg(not(feature = "test-support"))]
+        let windows = &PROMPT_INACTIVITY_WINDOWS;
+        let mut liveness = PromptLiveness::for_policy(windows, inactivity_policy);
         if settles_handoff {
             // Accepting the request is the last thing Ora can observe about delivery:
             // past it the frame is on the agent's stdin and what the agent does with
@@ -306,39 +313,90 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let mut permissions = HashMap::new();
         let mut input_state = ActiveInputState::default();
         let mut saw_output = false;
-        #[cfg(feature = "test-support")]
-        let windows = self
-            .test_prompt_inactivity_windows
-            .unwrap_or(&PROMPT_INACTIVITY_WINDOWS);
-        #[cfg(not(feature = "test-support"))]
-        let windows = &PROMPT_INACTIVITY_WINDOWS;
-        let mut liveness = PromptLiveness::for_policy(windows, inactivity_policy);
         let mut tool_timings = ToolTimings::default();
+        let mut boundary_inputs = None;
         loop {
-            let input = tokio::select! {
-                input = input_state.recv(
-                    &mut channel.events,
-                    &mut channel.controls,
-                    &mut self.commands,
-                ) => Some(input),
-                () = liveness.wait(), if inactivity_policy != PromptInactivityPolicy::Unbounded => None,
+            // At expiry, drain only the inputs already ready at the boundary. A flowing
+            // queue of unrelated notifications must not postpone a timeout indefinitely.
+            let input = if let Some(deadline) = liveness.wait_deadline() {
+                if tokio::time::Instant::now() >= deadline {
+                    let (events_left, commands_left) = boundary_inputs
+                        .get_or_insert_with(|| (channel.events.len(), self.commands.len()));
+                    if *events_left > 0 {
+                        *events_left -= 1;
+                        channel.events.try_recv().ok().map(ActiveInput::Event)
+                    } else if let Some(control) =
+                        input_state.terminal_control(&mut channel.controls)
+                    {
+                        Some(control)
+                    } else if *commands_left > 0 {
+                        *commands_left -= 1;
+                        self.commands.try_recv().ok().map(ActiveInput::Command)
+                    } else if self.turn_cancel.deadline().is_some() {
+                        Some(ActiveInput::Command(RuntimeCommand::CancelActivePrompt))
+                    } else {
+                        None
+                    }
+                } else {
+                    boundary_inputs = None;
+                    tokio::select! {
+                        biased;
+                        () = tokio::time::sleep_until(deadline) => continue,
+                        input = input_state.recv(&mut channel.events, &mut channel.controls, &mut self.commands) => Some(input),
+                    }
+                }
+            } else {
+                tokio::select! {
+                    input = input_state.recv(&mut channel.events, &mut channel.controls, &mut self.commands) => Some(input),
+                    () = liveness.wait(), if inactivity_policy == PromptInactivityPolicy::Timeout => None,
+                }
             };
             let Some(input) = input else {
                 if let Some(limit) = inactivity_policy.wait_limit() {
-                    ora_warn!(session_id = %self.session.id, limit_seconds = limit.as_secs(), "workflow prompt exceeded its silence limit");
+                    let snapshot = liveness.snapshot();
                     end_report.record(PromptEndCause::InactivityTimeout);
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                    followers.finish(StopReason::Cancelled);
-                    let _ = events.try_send(Err(agent_timed_out(format!(
+                    let settled = timeout(CANCELLATION_GRACE, async {
+                        self.cancel(&client, &permissions).await;
+                        super::events::settle_cancelled_prompt(
+                            self,
+                            &mut channel,
+                            &client,
+                            pending,
+                            &events,
+                            &mut saw_output,
+                        )
+                        .await
+                    })
+                    .await;
+                    let cancellation_result = match &settled {
+                        Ok(Some(Ok(response))) if response.stop_reason == StopReason::Cancelled => {
+                            "confirmed"
+                        }
+                        Ok(Some(Ok(_))) => "other_response",
+                        Ok(Some(Err(_))) => "request_error",
+                        Ok(None) => "channel_closed",
+                        Err(_) => "grace_expired",
+                    };
+                    ora_warn!(session_id = %self.session.id, operation_id, policy = ?inactivity_policy,
+                        attempt = snapshot.attempt, window_ms = snapshot.window.as_secs_f64() * 1000.0,
+                        silent_elapsed_ms = snapshot.silent_elapsed.as_secs_f64() * 1000.0,
+                        running_tools = snapshot.running_tools, pending_tools = snapshot.pending_tools,
+                        end_cause = "inactivity_timeout", cancellation_result,
+                        "workflow prompt exceeded its silence limit");
+                    let mut error = agent_timed_out(format!(
                         "workflow agent reported no progress for {} minutes",
                         limit.as_secs() / 60
-                    ))));
-                    // End the turn before provider I/O. Cleanup cannot hold its owner or followers
-                    // hostage if the provider also ignores cancellation.
-                    drop(events);
-                    drop(pending);
-                    let _ = timeout(CANCELLATION_GRACE, self.cancel(&client, &permissions)).await;
-                    self.isolate_channel(channel).await;
+                    ));
+                    if cancellation_result == "confirmed" {
+                        self.record_cleanup(operation_id, Ok(()));
+                        self.channel = Some(channel);
+                        error = error.answered();
+                    } else {
+                        self.isolate_channel(channel).await;
+                    }
+                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                    followers.finish(StopReason::Cancelled);
+                    let _ = events.try_send(Err(error));
                     return;
                 }
                 match retry_stalled_prompt(
@@ -403,13 +461,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
             };
             match input {
-                ActiveInput::Event(SessionEvent::Update(update)) => {
+                ActiveInput::Event(SessionEvent::Update(update, arrived)) => {
                     saw_output |= produced_output(&update.update);
                     // Record before forwarding: a client that drops mid-turn must not also cost
                     // the durable record of what the provider produced.
                     self.observe_session_update(&update.update);
                     let update = update.update;
-                    liveness.observe(&update);
+                    liveness.observe_at(
+                        &update,
+                        if inactivity_policy == PromptInactivityPolicy::Wait {
+                            arrived
+                        } else {
+                            tokio::time::Instant::now()
+                        },
+                    );
                     let tool_timing = tool_timings.observe(&update);
                     let outcome = match &tool_timing {
                         Some(timing) => self.recorder.record_timed_update(&update, timing),
