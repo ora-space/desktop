@@ -2,7 +2,7 @@ use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
 use crate::git_cleanup::GitCleanupHandle;
 use crate::repository_work::spawn_repository_work;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use ora_application::{
@@ -20,7 +20,6 @@ use ora_db::{
     SqliteTaskRepository, SqliteWorktreeRepository,
 };
 use ora_domain::ProjectId;
-use std::path::Path;
 
 use crate::{BackendError, ErrorClassification};
 use gitlancer::git::base_branch::{ListWorktreeBasesRequest, ListWorktreeBasesResponse};
@@ -106,16 +105,26 @@ impl ProjectApi {
         &self,
         request: CreateProjectRequest,
     ) -> Result<CreateProjectResponse, BackendError> {
-        // A blank root joins to the base directory itself and would pass the directory check.
-        if request.main_workspace_path.trim().is_empty()
-            || matches!(
-                crate::workspace::probe_local_directory(
-                    PathBuf::from(&request.main_workspace_path),
-                    &self.relative_path_base,
-                ),
-                crate::workspace::LocalDirectory::Missing(_)
-            )
-        {
+        let root = PathBuf::from(&request.main_workspace_path);
+        // A root naming no folder ("", ".", "./", "..", "/") or a relative one that anchors back
+        // to the base would pass the directory check while silently rooting the project at the
+        // base (Ora's start directory in production) or above it. An absolute root equal to the
+        // base is an explicit choice, such as starting Ora inside the repository and picking it.
+        let names_a_folder = !request.main_workspace_path.trim().is_empty()
+            && root
+                .components()
+                .any(|component| matches!(component, Component::Normal(_)));
+        let accepted = names_a_folder
+            && match crate::workspace::probe_local_directory(root.clone(), &self.relative_path_base)
+            {
+                crate::workspace::LocalDirectory::Present(resolved) => {
+                    root.is_absolute()
+                        || std::fs::canonicalize(resolved).ok()
+                            != std::fs::canonicalize(&self.relative_path_base).ok()
+                }
+                crate::workspace::LocalDirectory::Missing(_) => false,
+            };
+        if !accepted {
             return Err(BackendError::new(
                 ErrorClassification::InvalidRequest,
                 PublicError::ProjectWorkspaceNotDirectory(EmptyErrorParams {}),
@@ -314,6 +323,7 @@ mod tests {
                 .expect("open shared backend");
             let file = temporary.path().join("README.md");
             std::fs::write(&file, "not a directory").expect("write file fixture");
+            std::fs::create_dir(temporary.path().join("nested")).expect("create nested folder");
             let rejected = [
                 temporary
                     .path()
@@ -323,6 +333,14 @@ mod tests {
                 file.to_string_lossy().into_owned(),
                 String::new(),
                 "   ".to_string(),
+                // Each of these anchors to the relative path base or above it.
+                ".".to_string(),
+                "./".to_string(),
+                "..".to_string(),
+                PathBuf::from("nested")
+                    .join("..")
+                    .to_string_lossy()
+                    .into_owned(),
             ];
 
             for main_workspace_path in rejected {
@@ -385,6 +403,36 @@ mod tests {
                     .resolve_workspace_cwd(&workspace_id)
                     .expect("resolve relative root"),
                 temporary.path().join(relative_root)
+            );
+        });
+    }
+
+    /// Accepts an absolute root equal to the relative path base: only relative anchoring is suspect.
+    ///
+    /// In production the base is Ora's start directory, so starting Ora inside a repository and
+    /// picking that repository yields exactly this root.
+    #[test]
+    fn accepts_an_absolute_main_workspace_equal_to_the_relative_path_base() {
+        ora_logging::with_trace_logging(|| {
+            let temporary = TempDir::new().expect("create temporary backend directory");
+            let backend = Backend::open(backend_paths(temporary.path(), temporary.path()))
+                .expect("open shared backend");
+
+            backend
+                .projects()
+                .create(CreateProjectRequest {
+                    name: "Base".to_string(),
+                    main_workspace_path: temporary.path().to_string_lossy().into_owned(),
+                })
+                .expect("create project at the base chosen explicitly");
+            let workspace_id = only_workspace(&backend).id;
+
+            assert_eq!(
+                backend
+                    .workspaces()
+                    .resolve_workspace_cwd(&workspace_id)
+                    .expect("resolve the base root"),
+                temporary.path()
             );
         });
     }
