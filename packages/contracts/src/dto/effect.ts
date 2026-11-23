@@ -24,6 +24,7 @@ export type EffectConditionDto = {
   retry: EffectConditionRetryDto;
   generation: bigint | null;
   message: string;
+  parameters: { [key in string]: string };
   firstObservedAt: bigint;
   lastObservedAt: bigint;
 };

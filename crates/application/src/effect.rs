@@ -355,6 +355,7 @@ fn map_condition(condition: EffectCondition) -> EffectConditionDto {
             ConditionGeneration::At(generation) => Some(generation.value()),
         },
         message: condition.safe_details.message,
+        parameters: condition.safe_details.parameters,
         first_observed_at: condition.first_observed_at.millis(),
         last_observed_at: condition.last_observed_at.millis(),
     }

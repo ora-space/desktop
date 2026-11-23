@@ -143,6 +143,12 @@ fn assert_blocked_then_repaired(relative: &str, entry: Entry) {
         condition.safe_details.message,
         format!("{message}: {display}")
     );
+    let expected_parameters = if relative.is_empty() {
+        BTreeMap::new()
+    } else {
+        BTreeMap::from([("relativePath".to_string(), relative.to_string())])
+    };
+    assert_eq!(condition.safe_details.parameters, expected_parameters);
     assert!(
         !condition
             .safe_details
@@ -290,6 +296,10 @@ fn occupied_skill_name_blocks_without_a_journal_and_retries_after_cleanup() {
             condition.safe_details.message,
             format!("{message}: .agents/skills/{name}")
         );
+        assert_eq!(
+            condition.safe_details.parameters,
+            BTreeMap::from([("relativePath".to_string(), format!(".agents/skills/{name}"),)])
+        );
         assert_eq!(consumer.journal_count(), 0);
         assert!(consumer.calls.borrow().is_empty());
         assert!(repository.load_unfinished_operations().unwrap().is_empty());
@@ -335,4 +345,125 @@ fn occupied_skill_name_blocks_without_a_journal_and_retries_after_cleanup() {
                 .is_empty()
         );
     }
+}
+
+/// Same-name Skill conflicts across two roots persist distinct workspace-relative paths.
+#[test]
+fn preserved_conflicts_across_two_roots_persist_distinct_relative_paths() {
+    use super::consumer_handover::{ReservationProbe, quiesce_declaration, skill_package};
+
+    let (directory, pool, workspace) = fixture();
+    let workspace_root = directory.path().join("workspace");
+    let roots = [".agents/skills", ".opencode/skills"];
+    for root in roots {
+        let conflicting = workspace_root.join(root).join("review");
+        fs::create_dir_all(&conflicting).unwrap();
+        fs::write(conflicting.join("notes.txt"), b"user skill").unwrap();
+    }
+    let projection = skill_package(
+        directory.path(),
+        "package",
+        b"---\nname: review\ndescription: Reviews changes\n---\n",
+    );
+    let clock = crate::test_clock::TestClock::new(1);
+    SqliteSkillRepository::with_clock(pool.clone(), clock.clone())
+        .replace_plugin_skills(
+            &PluginId::new("official", "review").unwrap(),
+            "1.0.0",
+            &[projection],
+            /*updated_at*/ 1,
+        )
+        .unwrap();
+    let mut multi_root = quiesce_declaration("official/opencode");
+    multi_root.resources.push(FilesystemResourceTemplate {
+        ownership_relative_path: None,
+        relative_path: ResourcePath::parse(".opencode/skills").unwrap(),
+        materialization_format: MaterializationFormat::skill_directory_v1(),
+        materialization_contract: MaterializationContract::skill_directory_v1(),
+        accepts: CapabilityRequirement::default(),
+        coordination: CoordinationRequirement::QuiesceBeforeMutation(
+            CoordinationContract::agent_restart_v1(),
+        ),
+    });
+    let repository = SqliteEffectRepository::with_clock(pool.clone(), clock);
+    repository
+        .declare_consumer(&multi_root, &[workspace])
+        .unwrap();
+    let worker = WorkerIdentity::parse("worker").unwrap();
+    let lease = LocalTimestamp::from_millis(100);
+    let (target, claim) = repository
+        .claim_due_targets(
+            &worker,
+            LocalTimestamp::from_millis(11),
+            lease,
+            /*limit*/ 1,
+        )
+        .unwrap()
+        .remove(0);
+    let consumer = ReservationProbe {
+        pool,
+        should_fail: false,
+        calls: Default::default(),
+    };
+    let reconciler = EffectReconciler::new(
+        &repository,
+        &SkillPlanner,
+        &consumer,
+        &SkillDirectoryResourceAdapter,
+        &FixedTimestamp,
+    );
+
+    assert!(matches!(
+        reconciler.reconcile(&target, &claim, lease).unwrap(),
+        ReconcileOutcome::Blocked { .. }
+    ));
+    let status = repository.load_target_status(&target).unwrap().unwrap();
+    assert_eq!(status.conditions.len(), 2);
+    let mut paths = status
+        .conditions
+        .iter()
+        .map(|condition| {
+            assert_eq!(condition.code.as_str(), "preserved_item_conflict");
+            condition
+                .safe_details
+                .parameters
+                .get("relativePath")
+                .cloned()
+                .expect("relativePath parameter")
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    assert_eq!(paths, [".agents/skills/review", ".opencode/skills/review"]);
+
+    for (index, root) in roots.iter().enumerate() {
+        let occupied = workspace_root.join(root).join("review");
+        let moved = directory.path().join(format!("moved-{index}"));
+        fs::rename(&occupied, &moved).unwrap();
+    }
+    assert!(
+        repository
+            .request_reconcile(&target, LocalTimestamp::from_millis(12))
+            .unwrap()
+    );
+    let (_, claim) = repository
+        .claim_due_targets(
+            &worker,
+            LocalTimestamp::from_millis(13),
+            lease,
+            /*limit*/ 1,
+        )
+        .unwrap()
+        .remove(0);
+    assert!(matches!(
+        reconciler.reconcile(&target, &claim, lease).unwrap(),
+        ReconcileOutcome::Mutated { .. }
+    ));
+    assert!(
+        repository
+            .load_target_status(&target)
+            .unwrap()
+            .unwrap()
+            .conditions
+            .is_empty()
+    );
 }
