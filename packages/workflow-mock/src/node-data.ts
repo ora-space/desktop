@@ -1,3 +1,6 @@
+/** Fixed workflow silence window shared by the editor and frozen-run inspector. */
+export const WORKFLOW_WAIT_MINUTES = 30;
+
 /** Lists the node variants supported by the workflow demo. */
 export const WORKFLOW_NODE_KINDS = [
   "start",
