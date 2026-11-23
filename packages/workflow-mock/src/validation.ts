@@ -193,6 +193,7 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
     (config.promptInactivity == null ||
       config.promptInactivity === "timeout" ||
       config.promptInactivity === "wait" ||
+      config.promptInactivity === "unbounded" ||
       (typeof config.promptInactivity === "object" &&
         Object.keys(config.promptInactivity).length === 1 &&
         Number.isInteger(config.promptInactivity.waitMinutes) &&

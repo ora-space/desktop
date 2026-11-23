@@ -321,7 +321,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     &mut channel.controls,
                     &mut self.commands,
                 ) => Some(input),
-                () = liveness.wait() => None,
+                () = liveness.wait(), if inactivity_policy != PromptInactivityPolicy::Unbounded => None,
             };
             let Some(input) = input else {
                 if let Some(limit) = inactivity_policy.wait_limit() {

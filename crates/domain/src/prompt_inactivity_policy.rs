@@ -12,6 +12,8 @@ pub enum PromptInactivityPolicy {
     Timeout,
     /// Wait for the default workflow silence window without resending the prompt.
     Wait,
+    /// Send once without imposing a silence deadline.
+    Unbounded,
     /// Single-send wait with a node-specific silence limit.
     #[serde(rename = "waitMinutes")]
     WaitMinutes(std::num::NonZeroU16),
@@ -21,7 +23,7 @@ impl PromptInactivityPolicy {
     /// Returns a deadline budget for single-send turns. Ordinary prompts use a retry schedule.
     pub fn wait_limit(self) -> Option<std::time::Duration> {
         let minutes = match self {
-            Self::Timeout => return None,
+            Self::Timeout | Self::Unbounded => return None,
             Self::Wait => 30,
             Self::WaitMinutes(minutes) => minutes.get(),
         };
@@ -44,6 +46,7 @@ mod tests {
         for (policy, wire) in [
             (PromptInactivityPolicy::Timeout, "\"timeout\""),
             (PromptInactivityPolicy::Wait, "\"wait\""),
+            (PromptInactivityPolicy::Unbounded, "\"unbounded\""),
         ] {
             assert_eq!(serde_json::to_string(&policy).unwrap(), wire);
             assert_eq!(

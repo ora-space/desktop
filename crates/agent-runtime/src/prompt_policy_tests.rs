@@ -834,7 +834,7 @@ fn parent_permission_rearms_the_prompt_window() {
 
 /// Explicit cancellation still obtains the actual provider fence after an arbitrarily long wait.
 #[test]
-fn waiting_prompt_remains_cancellable_and_reusable() {
+fn unbounded_prompt_remains_cancellable_and_reusable() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
@@ -842,11 +842,31 @@ fn waiting_prompt_remains_cancellable_and_reusable() {
             .manager
             .prompt_session_with_inactivity_policy(
                 prompt("waiting"),
-                PromptInactivityPolicy::WaitMinutes(180u16.try_into().unwrap()),
+                PromptInactivityPolicy::Unbounded,
             )
             .await
             .unwrap();
-        fixture.next_frame().await;
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(7200)).await;
+        assert!(stream.try_recv().is_none());
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "waiting".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::Unbounded,
+            )
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(7200)).await;
         stream.cancel_and_wait().await.unwrap();
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");

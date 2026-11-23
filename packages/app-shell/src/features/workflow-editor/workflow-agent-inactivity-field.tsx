@@ -31,7 +31,11 @@ export function WorkflowAgentInactivityField({
       <Select
         value={value}
         onValueChange={(promptInactivity) => {
-          if (promptInactivity === "timeout" || promptInactivity === "wait") {
+          if (
+            promptInactivity === "timeout" ||
+            promptInactivity === "wait" ||
+            promptInactivity === "unbounded"
+          ) {
             onChange({ ...config, promptInactivity });
           }
         }}
@@ -51,6 +55,9 @@ export function WorkflowAgentInactivityField({
           </SelectItem>
           <SelectItem value="wait">
             {t("settings.workflow.promptInactivity.wait")}
+          </SelectItem>
+          <SelectItem value="unbounded">
+            {t("settings.workflow.promptInactivity.unbounded")}
           </SelectItem>
         </SelectContent>
       </Select>

@@ -234,6 +234,7 @@ export const workflowRunTranslations = {
     "workflowRun.inspector.promptInactivityTimeout": "按默认超时规则处理",
     "workflowRun.inspector.promptInactivityWait":
       "持续等待，无进展 {{minutes}} 分钟后失败",
+    "workflowRun.inspector.promptInactivityUnbounded": "无限等待（需手动停止）",
     "workflowRun.inspector.retryNone": "不重试（最多重试次数为 0）",
     "workflowRun.inspector.retryInteractive": "不重试（交互模式节点）",
     "workflowRun.inspector.saveDraft": "保存",
@@ -794,6 +795,8 @@ export const workflowRunTranslations = {
       "Use default timeout handling",
     "workflowRun.inspector.promptInactivityWait":
       "Keep waiting, fail after {{minutes}} minutes without progress",
+    "workflowRun.inspector.promptInactivityUnbounded":
+      "Wait indefinitely (stop manually)",
     "workflowRun.inspector.retryNone": "Not retried (max retries is 0)",
     "workflowRun.inspector.retryInteractive": "Not retried (interactive node)",
     "workflowRun.inspector.saveDraft": "Save",

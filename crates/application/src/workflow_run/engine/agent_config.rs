@@ -516,6 +516,7 @@ mod tests {
             (json!(null), PromptInactivityPolicy::Timeout),
             (json!("timeout"), PromptInactivityPolicy::Timeout),
             (json!("wait"), PromptInactivityPolicy::Wait),
+            (json!("unbounded"), PromptInactivityPolicy::Unbounded),
             (
                 json!({"waitMinutes":75}),
                 PromptInactivityPolicy::WaitMinutes(75u16.try_into().unwrap()),

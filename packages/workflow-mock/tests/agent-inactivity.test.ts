@@ -2,27 +2,31 @@ import { describe, expect, it } from "vitest";
 import { createMockWorkflow, parseDemoWorkflow } from "../src";
 
 describe("Agent prompt inactivity configuration", () => {
-  it.each([undefined, null, "timeout", "wait", { waitMinutes: 75 }])(
-    "imports and preserves the accepted policy %s",
-    (promptInactivity) => {
-      const workflow = createMockWorkflow("en-US");
-      const config = workflow.nodes.find((node) => node.data.kind === "agent")!
-        .data.agentConfig!;
-      if (promptInactivity !== undefined) {
-        Object.assign(config, { promptInactivity });
-      }
+  it.each([
+    undefined,
+    null,
+    "timeout",
+    "wait",
+    "unbounded",
+    { waitMinutes: 75 },
+  ])("imports and preserves the accepted policy %s", (promptInactivity) => {
+    const workflow = createMockWorkflow("en-US");
+    const config = workflow.nodes.find((node) => node.data.kind === "agent")!
+      .data.agentConfig!;
+    if (promptInactivity !== undefined) {
+      Object.assign(config, { promptInactivity });
+    }
 
-      const imported = parseDemoWorkflow(JSON.parse(JSON.stringify(workflow)));
+    const imported = parseDemoWorkflow(JSON.parse(JSON.stringify(workflow)));
 
-      expect(imported).toEqual(workflow);
-      if (promptInactivity === undefined) {
-        expect(
-          imported.nodes.find((node) => node.data.kind === "agent")!.data
-            .agentConfig,
-        ).not.toHaveProperty("promptInactivity");
-      }
-    },
-  );
+    expect(imported).toEqual(workflow);
+    if (promptInactivity === undefined) {
+      expect(
+        imported.nodes.find((node) => node.data.kind === "agent")!.data
+          .agentConfig,
+      ).not.toHaveProperty("promptInactivity");
+    }
+  });
 
   it.each([
     "forever",

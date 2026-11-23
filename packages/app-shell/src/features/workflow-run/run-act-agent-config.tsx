@@ -213,14 +213,16 @@ export function RunActAgentConfig({
         </p>
         <StaticValue
           value={
-            config.promptInactivity && config.promptInactivity !== "timeout"
-              ? t("workflowRun.inspector.promptInactivityWait", {
-                  minutes:
-                    typeof config.promptInactivity === "object"
-                      ? config.promptInactivity.waitMinutes
-                      : 30,
-                })
-              : t("workflowRun.inspector.promptInactivityTimeout")
+            config.promptInactivity === "unbounded"
+              ? t("workflowRun.inspector.promptInactivityUnbounded")
+              : config.promptInactivity && config.promptInactivity !== "timeout"
+                ? t("workflowRun.inspector.promptInactivityWait", {
+                    minutes:
+                      typeof config.promptInactivity === "object"
+                        ? config.promptInactivity.waitMinutes
+                        : 30,
+                  })
+                : t("workflowRun.inspector.promptInactivityTimeout")
           }
         />
       </div>

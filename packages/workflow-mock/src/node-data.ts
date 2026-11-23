@@ -97,7 +97,8 @@ export interface WorkflowAgentConfig {
   /** Accept an agent signal after the turn settles without waiting for the user. */
   autoAcceptAgentCompletion?: boolean;
   /** Silence handling for this node's prompts; absent or null keeps the default timeout. */
-  promptInactivity?: "timeout" | "wait" | { waitMinutes: number } | null;
+  promptInactivity?:
+    "timeout" | "wait" | "unbounded" | { waitMinutes: number } | null;
   /** Additional typed variables exposed beside the node's stable raw `output`. */
   outputContract?: WorkflowAgentOutputContract;
   /** Optional deliverables checked when the node completes; requires schemaVersion 4. */

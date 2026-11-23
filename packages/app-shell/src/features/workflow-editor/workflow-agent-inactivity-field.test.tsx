@@ -188,6 +188,28 @@ describe("Agent prompt inactivity settings", () => {
     await waitFor(() => expect(savedConfig().promptInactivity).toBe("wait"));
   });
 
+  it("requires an explicit choice to save unbounded waiting", async () => {
+    await appI18n.changeLanguage("en-US");
+    const user = userEvent.setup();
+    render(<Harness config={{ promptInactivity: "wait" }} />);
+    const select = screen.getByRole("combobox", {
+      name: "When no progress is reported",
+    });
+    expect(select).toHaveTextContent("Keep waiting");
+    await user.click(select);
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Wait indefinitely (stop manually)",
+      }),
+    );
+    await waitFor(() =>
+      expect(savedConfig().promptInactivity).toBe("unbounded"),
+    );
+    expect(
+      screen.queryByRole("spinbutton", { name: "Silence limit (minutes)" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("saves a custom silence limit and restores invalid input on blur", async () => {
     await appI18n.changeLanguage("en-US");
     const user = userEvent.setup();

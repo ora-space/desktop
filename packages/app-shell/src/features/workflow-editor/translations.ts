@@ -480,6 +480,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.promptInactivity": "长时间未收到进展时",
     "settings.workflow.promptInactivity.timeout": "按默认超时规则处理",
     "settings.workflow.promptInactivity.wait": "持续等待",
+    "settings.workflow.promptInactivity.unbounded": "无限等待（需手动停止）",
     "settings.workflow.promptInactivity.minutes": "无进展等待上限（分钟）",
     "settings.workflow.promptInactivity.hint":
       "持续等待时，收到进展会重新计时。到达无进展上限后本轮失败；节点按失败重试设置处理。",
@@ -1132,6 +1133,8 @@ export const workflowEditorTranslations = {
     "settings.workflow.promptInactivity.timeout":
       "Use default timeout handling",
     "settings.workflow.promptInactivity.wait": "Keep waiting",
+    "settings.workflow.promptInactivity.unbounded":
+      "Wait indefinitely (stop manually)",
     "settings.workflow.promptInactivity.minutes": "Silence limit (minutes)",
     "settings.workflow.promptInactivity.hint":
       "Progress renews the wait. The turn fails at the silence limit and the node follows its retry-on-failure setting.",

@@ -433,6 +433,12 @@ describe("RunActInspector frozen inactivity setting", () => {
       label: "When no progress is reported",
       text: "Keep waiting, fail after 75 minutes without progress",
     },
+    {
+      locale: "en-US",
+      config: { promptInactivity: "unbounded" },
+      label: "When no progress is reported",
+      text: "Wait indefinitely (stop manually)",
+    },
   ] as const)(
     "shows the snapshot policy $config in $locale",
     async ({ locale, config, label, text }) => {
