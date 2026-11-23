@@ -23,23 +23,23 @@ use super::{FIRST_RECHECK, files, marks, next_recheck, spawner::SessionAttemptSp
 use crate::managed::attempt_lock::StopEvidence;
 use ora_node_db::AttemptId;
 use ora_node_protocol::ExecutionId;
-use ora_utils::process::MarkScope;
+use ora_utils::process::{MarkScan, MarkScope};
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-/// How long the re-check before a `stopped` settlement may take, waiting for the worker included.
-/// It only scans, so it needs far less than the fence; a worker held past it reads as Unknown.
-pub(in crate::session) const RECHECK_BUDGET: Duration = Duration::from_secs(1);
-
 /// Reads the boot clock in the ticks process start times use.
 type Clock = fn() -> std::io::Result<u64>;
+
+/// Observes one turn scope once; the evidence of the fence and the re-check is built from it.
+type Scan = fn(&MarkScope) -> std::io::Result<MarkScan>;
 
 /// Where one session's turns start and how their processes are stopped.
 #[derive(Clone)]
 pub(in crate::session) struct TurnProcesses {
     spawner: SessionAttemptSpawner,
     clock: Clock,
+    scan: Scan,
 }
 
 /// When and in which attempt one turn's prompt was admitted.
@@ -75,12 +75,25 @@ enum Round {
 
 impl TurnProcesses {
     pub(in crate::session) fn new(spawner: SessionAttemptSpawner) -> Self {
-        Self::with_clock(spawner, ora_utils::process::linux_boot_ticks)
+        Self::with_sources(
+            spawner,
+            ora_utils::process::linux_boot_ticks,
+            MarkScope::scan,
+        )
     }
 
-    /// Uses `clock` in place of the boot clock, so a test can make it fail.
-    pub(in crate::session) fn with_clock(spawner: SessionAttemptSpawner, clock: Clock) -> Self {
-        Self { spawner, clock }
+    /// Uses `clock` in place of the boot clock and `scan` in place of the procfs scan the
+    /// evidence is built from, so a test can make either fail. Killing always scans procfs.
+    pub(in crate::session) fn with_sources(
+        spawner: SessionAttemptSpawner,
+        clock: Clock,
+        scan: Scan,
+    ) -> Self {
+        Self {
+            spawner,
+            clock,
+            scan,
+        }
     }
 
     /// Records the start of the turn whose prompt is being admitted now. Every process the
@@ -110,6 +123,7 @@ impl TurnProcesses {
             return UNKNOWN;
         };
         let deadline = tokio::time::Instant::now() + bound;
+        let scan = self.scan;
         let evidence = observe_until(deadline, || {
             let (files, attempt) = (self.spawner.files(), attempt.clone());
             async move {
@@ -117,7 +131,7 @@ impl TurnProcesses {
                 let round = files::off_runtime(files::budget_until(deadline), move || {
                     turn_scope(&files, &attempt, since_ticks).map_or(Round::NoScope, |scope| {
                         let _ = scope.kill();
-                        Round::Observed(marks::evidence(|| scope.scan()))
+                        Round::Observed(marks::evidence(|| scan(&scope)))
                     })
                 })
                 .await;
@@ -135,19 +149,21 @@ impl TurnProcesses {
         conclude(execution, "fence", evidence)
     }
 
-    /// Scans the turn's processes once more, killing nothing, just before the stop settles.
+    /// Scans the turn's processes once more, killing nothing, just before the stop settles, and
+    /// within `budget`, waiting for the worker included. A worker held past it reads as Unknown.
     pub(in crate::session) async fn recheck(
         &self,
         execution: &ExecutionId,
         start: Option<&TurnStart>,
+        budget: Duration,
     ) -> TurnStop {
         let Some((attempt, since_ticks)) = self.recorded(execution, start) else {
             return UNKNOWN;
         };
-        let files = self.spawner.files();
-        let round = files::off_runtime(RECHECK_BUDGET, move || {
+        let (files, scan) = (self.spawner.files(), self.scan);
+        let round = files::off_runtime(budget, move || {
             turn_scope(&files, &attempt, since_ticks).map_or(Round::NoScope, |scope| {
-                Round::Observed(marks::evidence(|| scope.scan()))
+                Round::Observed(marks::evidence(|| scan(&scope)))
             })
         })
         .await;

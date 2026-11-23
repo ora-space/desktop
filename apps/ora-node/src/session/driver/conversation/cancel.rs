@@ -332,7 +332,11 @@ impl<L: SessionLedger> Conversation<'_, L> {
         // clean now.
         if let TurnStop::Unstopped { .. } = self
             .processes
-            .recheck(self.execution, stopped.start.get())
+            .recheck(
+                self.execution,
+                stopped.start.get(),
+                self.turn_cancel.process_recheck,
+            )
             .await
         {
             return Judged::End(SessionEnd::agent_failed("turn_processes_unstopped"));

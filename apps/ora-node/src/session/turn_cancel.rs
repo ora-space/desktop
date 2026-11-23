@@ -19,6 +19,10 @@ pub struct TurnCancelConfig {
     /// F: how long the turn process fence may take, after the answer, to show that the turn's
     /// processes are gone. Past it the session ends with `turn_processes_unstopped`.
     pub process_fence: Duration,
+    /// R: how long the scan-only re-check right before a `stopped` settlement may take, waiting
+    /// for the Node's stop worker included. Past it the session ends with
+    /// `turn_processes_unstopped`.
+    pub process_recheck: Duration,
     /// Agent plugin versions whose turn boundary a conformance run verified, per platform. A
     /// cancelled or failed turn of any other Agent ends the session with
     /// `turn_boundary_unverified`.
@@ -69,13 +73,14 @@ impl TurnCancelConfig {
 }
 
 impl Default for TurnCancelConfig {
-    /// G 15 s, Q 2 s and F 5 s as first set by the decisions, and the versions that passed
-    /// conformance.
+    /// G 15 s, Q 2 s, F 5 s and R 1 s as first set by the decisions, and the versions that
+    /// passed conformance.
     fn default() -> Self {
         Self {
             grace: Duration::from_secs(15),
             quiet: Duration::from_secs(2),
             process_fence: Duration::from_secs(5),
+            process_recheck: Duration::from_secs(1),
             turn_boundary: vec![
                 // OpenCode CLI 1.19.3, the package v2 deploys. Conformance: the standalone
                 // `turn_boundary_conformance` test, five runs of each probe scenario (shell,
