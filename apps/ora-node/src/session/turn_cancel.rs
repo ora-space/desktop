@@ -62,14 +62,26 @@ impl TurnCancelConfig {
 }
 
 impl Default for TurnCancelConfig {
-    /// G 15 s, Q 2 s and F 5 s as first set by the decisions; no Agent is verified yet, so every
-    /// stop of a running turn ends the session until conformance runs add versions.
+    /// G 15 s, Q 2 s and F 5 s as first set by the decisions, and the versions that passed
+    /// conformance.
     fn default() -> Self {
         Self {
             grace: Duration::from_secs(15),
             quiet: Duration::from_secs(2),
             process_fence: Duration::from_secs(5),
-            turn_boundary: Vec::new(),
+            turn_boundary: vec![
+                // OpenCode CLI 1.19.3, the package v2 deploys. Conformance: the standalone
+                // `turn_boundary_conformance` test, five runs of each probe scenario (shell,
+                // subagent, background, detached, error) through a Node with the turn process
+                // fence on x86_64 Linux, package sha256
+                // 88c00f81997fc7fe892f2d58a686f535678e562c7e000d33eb7ee3b1d0f754b5; measurements
+                // in ora-space/circus#1340.
+                TurnBoundary {
+                    plugin: PluginId::new("official/ora-space.opencode"),
+                    version: PluginVersion::new("0.6.11"),
+                    platform: TurnBoundaryPlatform::Linux,
+                },
+            ],
         }
     }
 }
@@ -80,16 +92,12 @@ mod tests {
     use ora_node_protocol::{PluginId, PluginVersion};
     use pretty_assertions::assert_eq;
 
-    /// Only the exact plugin, version and platform of an entry are verified: another version of
-    /// a listed plugin, an unlisted plugin, or a version listed only for another platform is not.
+    /// Only the exact plugin, version and platform of an entry are verified: the default lists
+    /// OpenCode 0.6.11 on Linux, not Claude Code 0.4.5, another OpenCode version, or a version
+    /// listed only for another platform.
     #[test]
     fn a_boundary_is_verified_for_its_exact_version_and_platform() {
         let mut config = TurnCancelConfig::default();
-        config.turn_boundary.push(TurnBoundary {
-            plugin: PluginId::new("official/ora-space.opencode"),
-            version: PluginVersion::new("0.6.11"),
-            platform: TurnBoundaryPlatform::Linux,
-        });
         config.turn_boundary.push(TurnBoundary {
             plugin: PluginId::new("official/ora-space.windows-only"),
             version: PluginVersion::new("1.0.0"),
