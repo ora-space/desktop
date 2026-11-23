@@ -170,8 +170,11 @@ bash 工具和 Claude 的 Bash 都这样启动每条命令），而插件、Agen
 `turn_processes_unstopped` 结束。栅栏排在 Q 之前，这样 Q 也能看到 Agent 对进程被杀的反应。栅栏干净之后，豁免进程
 仍可能在自己的新会话里起作业，例如语言服务在 Q 期间悄悄起一个自己的 worker，不发任何轮次流量。所以在 Q 和空闲期
 流量检查之后、写 `stopped` 结算之前，Node 对同一个范围再扫描一次：连续两次扫描、不杀任何进程，在停止 worker 上
-1 秒之内完成（等 worker 的时间也算在内）。发现进程或证据为 Unknown 时，会话以 `turn_processes_unstopped` 结束，
-会话停止会把它连同整个尝试一起杀掉。因此结论在第一个取消受理后 G + F + Q 再加这 1 秒之内落账。栅栏不写任何持久状态：
+R（暂定 1 秒）之内完成（等 worker 的时间也算在内）。发现进程或证据为 Unknown 时，会话以 `turn_processes_unstopped`
+结束，会话停止会把它连同整个尝试一起杀掉。复查之后 Node 才读取这期间受理的命令：Q 末尾或复查期间受理的
+`EndSession` 优先，不写 `stopped`，并入的取消都得到 `session_ending`；这一轮的 `CancelTurn` 并入这次停止，和第一个
+取消一样得到 `stopped`。因此结论在第一个取消受理后 G + F + Q + R（目前为 23 秒）之内落账。G、Q、F、R 都是
+`TurnCancelConfig` 的字段。栅栏不写任何持久状态：
 Node 重启后会话以 `interrupted` 结束，重启恢复会停止整个尝试。留在更早进程会话里的作业（例如插件请 Node 代为
 启动的进程）、清空了环境的孤儿进程都够不到，这是尝试标记本身的限制。
 

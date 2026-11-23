@@ -256,7 +256,8 @@ impl<L: SessionLedger> Conversation<'_, L> {
     /// sends turn traffic then. The next turn and the `stopped` settlement both wait for the
     /// fence. An `EndSession` or a cancel that arrives meanwhile is served once the bounded fence
     /// returns: its wake-up stays pending, and the quiet window and the final merge read it.
-    /// Right before the settlement, a scan-only re-check of the same scope must still be clean.
+    /// Right before the settlement, a scan-only re-check of the same scope must still be clean,
+    /// and commands accepted until then are served first.
     pub(super) async fn judge(&self, mut stopped: StoppedTurn) -> Judged {
         let chosen = match stopped.cause {
             StopCause::Cancel => self.keep.on_cancel,
@@ -321,12 +322,6 @@ impl<L: SessionLedger> Conversation<'_, L> {
             }
         }
         self.mirror.fence().fence_turn();
-        // The quiet window may have ended just as a cancel's wake arrived: every cancel of this
-        // turn accepted by now merges into this stop and shares its conclusion.
-        match self.settle_cancels(Some(&stopped.turn_id)) {
-            Ok(cancels) => merge(&mut stopped.merged, cancels),
-            Err(end) => return Judged::End(end),
-        }
         // An exempt process may have started a job in a session of its own while Q ran, after
         // the fence came back clean; the stop settles `stopped` only if the turn's scope is still
         // clean now.
@@ -340,6 +335,20 @@ impl<L: SessionLedger> Conversation<'_, L> {
             .await
         {
             return Judged::End(SessionEnd::agent_failed("turn_processes_unstopped"));
+        }
+        // Commands accepted while the quiet window ended or the re-check ran are read only now:
+        // an `EndSession` takes precedence over this stop, so its decision settles the merged
+        // cancels as `session_ending`, and every cancel of this turn merges into this stop and
+        // shares its conclusion. One accepted between these reads and the settlement below is
+        // served by the next pass of the conversation.
+        match self.queued_end() {
+            Ok(Some(end)) => return Judged::EndRequested(end),
+            Ok(None) => {}
+            Err(end) => return Judged::End(end),
+        }
+        match self.settle_cancels(Some(&stopped.turn_id)) {
+            Ok(cancels) => merge(&mut stopped.merged, cancels),
+            Err(end) => return Judged::End(end),
         }
         // A turn stopped by failure already had its own result when a cancel merged into it.
         let outcome = match stopped.cause {

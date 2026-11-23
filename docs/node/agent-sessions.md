@@ -238,10 +238,14 @@ sees an Agent that reacts to losing its processes. An exempt process can still s
 session of its own after the fence came back clean, for example a language server that launches a
 worker of its own while Q runs, without any turn traffic. So, after Q and the idle-traffic check and
 right before the `stopped` settlement, the Node scans the same scope once more: two scans in a row,
-killing nothing, within one second on the stop worker, waiting for the worker included. Anything it
-finds, or Unknown evidence, ends the session with `turn_processes_unstopped`, and the session's stop
-kills it with the rest of the attempt. A conclusion therefore arrives within G + F + Q plus that
-second after the first cancel's acceptance. The fence keeps nothing durable: a restart ends the
+killing nothing, within R (1 s for now) on the stop worker, waiting for the worker included.
+Anything it finds, or Unknown evidence, ends the session with `turn_processes_unstopped`, and the
+session's stop kills it with the rest of the attempt. Only after the re-check does the Node read
+the commands accepted meanwhile: an `EndSession` accepted during the quiet window's end or the
+re-check takes precedence, so no `stopped` is written and every merged cancel settles
+`session_ending`; a `CancelTurn` of the turn merges into this stop and settles `stopped` with the
+first. A conclusion therefore arrives within G + F + Q + R (23 s for now) after the first cancel's
+acceptance. G, Q, F and R are all fields of `TurnCancelConfig`. The fence keeps nothing durable: a restart ends the
 session as `interrupted` and restart recovery stops the whole attempt. A job in the session of an
 earlier process, such as one the plugin asked the Node to spawn, or an orphan that cleared its
 environment, is not reached; that limit is the attempt mark's.
