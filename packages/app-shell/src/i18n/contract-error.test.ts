@@ -94,6 +94,46 @@ describe("plugin package failures", () => {
   });
 });
 
+describe("workflow dependency failures", () => {
+  it("names the node and the dependency a start could not resolve", () => {
+    const skill = new RemoteContractError(
+      {
+        code: "workflow_skill_not_found",
+        requestId: "00000000-0000-4000-8000-000000000005",
+        params: {
+          nodeId: "reviewer",
+          nodeTitle: "Code review",
+          skillId: "code_review",
+        },
+      },
+      {},
+    );
+    const mcp = new RemoteContractError(
+      {
+        code: "workflow_mcp_not_found",
+        requestId: "00000000-0000-4000-8000-000000000006",
+        params: {
+          nodeId: "reviewer",
+          nodeTitle: "Code review",
+          mcpId: "local/github",
+        },
+      },
+      {},
+    );
+
+    expect(localizeContractError(skill, appI18n.t)).toBe(
+      activeLocale() === "zh-CN"
+        ? "节点「Code review」需要的技能 code_review 不可用，请安装或恢复该技能后重试。"
+        : "The skill code_review required by node 'Code review' is unavailable. Install or restore the skill, then retry.",
+    );
+    expect(localizeContractError(mcp, appI18n.t)).toBe(
+      activeLocale() === "zh-CN"
+        ? "节点「Code review」需要的 MCP local/github 不可用，请安装或修复该 MCP 插件后重试。"
+        : "The MCP local/github required by node 'Code review' is unavailable. Install or repair the MCP plugin, then retry.",
+    );
+  });
+});
+
 describe("diagnostic request IDs", () => {
   it("offers logs only for remote failures whose message asks for a request ID", () => {
     const internal = new RemoteContractError(

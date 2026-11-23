@@ -146,10 +146,23 @@ impl WorkflowRunInvalidationPublisher for NoRunInvalidations {
 }
 
 /// Failures raised while setting up a run workspace's initial state at deploy time.
+///
+/// Every dependency failure names both the node that declared the dependency and the dependency
+/// itself, because the run cannot start and the operator has to know what to restore.
 #[derive(Debug, Error)]
 pub enum StartPrerequisitesError {
-    #[error("workflow skill not found: {skill_id}")]
-    WorkflowSkillNotFound { skill_id: String },
+    #[error("workflow skill not found for node {node_id}: {skill_id}")]
+    WorkflowSkillNotFound {
+        node_id: String,
+        node_title: String,
+        skill_id: String,
+    },
+    #[error("workflow MCP not installed for node {node_id}: {mcp_id}")]
+    WorkflowMcpNotFound {
+        node_id: String,
+        node_title: String,
+        mcp_id: String,
+    },
     #[error("workflow role not found: {role_id}")]
     WorkflowRoleNotFound { role_id: String },
     #[error("skill materialization failed: {message}")]

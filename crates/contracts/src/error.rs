@@ -88,6 +88,33 @@ pub struct WorkflowRunInputInvalidParams {
     pub reason: String,
 }
 
+/// Names the workflow node and the Skill its frozen graph declares, for a run that cannot start.
+///
+/// A Skill is a deploy dependency: when the plugin that provided it is gone, starting or
+/// restarting the run must fail and tell the operator which node needs which skill back, instead
+/// of running the node without it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowSkillNotFoundParams {
+    pub node_id: String,
+    /// Node label to show; equal to `node_id` when the node carries no title.
+    pub node_title: String,
+    pub skill_id: String,
+}
+
+/// Names the workflow node and the MCP plugin its frozen graph declares, for a run that cannot
+/// start because the MCP plugin is no longer installed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowMcpNotFoundParams {
+    pub node_id: String,
+    /// Node label to show; equal to `node_id` when the node carries no title.
+    pub node_title: String,
+    pub mcp_id: String,
+}
+
 /// Identifies one settled turn by the positions of its user message and its `TurnEnded`.
 ///
 /// Carried in the two completion-conflict errors so a client can show which turn it validated
@@ -386,7 +413,8 @@ pub enum PublicError {
     WorkflowRunGraphParse(EmptyErrorParams),
     WorkflowRunValidation(EmptyErrorParams),
     WorkflowRunInputInvalid(WorkflowRunInputInvalidParams),
-    WorkflowSkillNotFound(EmptyErrorParams),
+    WorkflowSkillNotFound(Box<WorkflowSkillNotFoundParams>),
+    WorkflowMcpNotFound(Box<WorkflowMcpNotFoundParams>),
     WorkflowRoleNotFound(EmptyErrorParams),
     WorkflowRunStartFailed(EmptyErrorParams),
     WorkflowRunNotRestartable(EmptyErrorParams),
@@ -531,6 +559,7 @@ impl PublicError {
             Self::WorkflowRunValidation(_) => "workflow_run_validation",
             Self::WorkflowRunInputInvalid(_) => "workflow_run_input_invalid",
             Self::WorkflowSkillNotFound(_) => "workflow_skill_not_found",
+            Self::WorkflowMcpNotFound(_) => "workflow_mcp_not_found",
             Self::WorkflowRoleNotFound(_) => "workflow_role_not_found",
             Self::WorkflowRunStartFailed(_) => "workflow_run_start_failed",
             Self::WorkflowRunNotRestartable(_) => "workflow_run_not_restartable",
@@ -587,10 +616,11 @@ mod tests {
         OpenLocationFailedParams, OpenLocationTarget, PackMemberParams,
         PluginConfigurationValidationParams, PluginPackageInvalidParams, PublicError, RequestId,
         SessionMcpSetupFailedParams, SkillFolderConflictParams, TaskBaseBranchNotFoundParams,
-        WorkflowNodeCompletionBlocker, WorkflowNodeCompletionBlockerKind,
-        WorkflowNodeCompletionBlockerParams, WorkflowNodeIncompleteParams,
-        WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
-        WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey, WorkflowRunInputInvalidParams,
+        WorkflowMcpNotFoundParams, WorkflowNodeCompletionBlocker,
+        WorkflowNodeCompletionBlockerKind, WorkflowNodeCompletionBlockerParams,
+        WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams,
+        WorkflowNodeSignalChangedParams, WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
+        WorkflowRunInputInvalidParams, WorkflowSkillNotFoundParams,
         WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
@@ -775,6 +805,16 @@ mod tests {
                 variable: "count".to_string(),
                 reason: "value does not match the declared type number".to_string(),
             }),
+            PublicError::WorkflowSkillNotFound(Box::new(WorkflowSkillNotFoundParams {
+                node_id: "review".to_string(),
+                node_title: "Review".to_string(),
+                skill_id: "code_review".to_string(),
+            })),
+            PublicError::WorkflowMcpNotFound(Box::new(WorkflowMcpNotFoundParams {
+                node_id: "review".to_string(),
+                node_title: "Review".to_string(),
+                mcp_id: "ora-space.github".to_string(),
+            })),
             PublicError::WorkflowNodeNotFound(empty),
             PublicError::WorkflowNodeNotAwaitingInput(empty),
             PublicError::WorkflowNodeNotDiagnosable(empty),
@@ -925,6 +965,7 @@ mod tests {
                 | PublicError::WorkflowRunValidation(_)
                 | PublicError::WorkflowRunInputInvalid(_)
                 | PublicError::WorkflowSkillNotFound(_)
+                | PublicError::WorkflowMcpNotFound(_)
                 | PublicError::WorkflowRoleNotFound(_)
                 | PublicError::WorkflowRunStartFailed(_)
                 | PublicError::WorkflowRunNotRestartable(_)
@@ -948,7 +989,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 123);
+        assert_eq!(samples.len(), 125);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();
