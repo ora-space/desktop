@@ -210,7 +210,7 @@ describe("WorkspaceDialogs project creation", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /项目文件夹不存在或不是目录|The project folder does not exist or is not a directory/,
+      /请选择一个具体的、已存在的项目文件夹|Choose a specific, existing project folder/,
     );
     expect(requestedPaths).toEqual(["D:\\Projects\\Missing"]);
     expect(state.projects).toEqual([]);

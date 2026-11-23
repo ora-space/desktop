@@ -107,9 +107,10 @@ impl ProjectApi {
     ) -> Result<CreateProjectResponse, BackendError> {
         let root = PathBuf::from(&request.main_workspace_path);
         // A root naming no folder ("", ".", "./", "..", "/") or a relative one that anchors back
-        // to the base would pass the directory check while silently rooting the project at the
-        // base (Ora's start directory in production) or above it. An absolute root equal to the
-        // base is an explicit choice, such as starting Ora inside the repository and picking it.
+        // to the base or one of its ancestors ("nested/..", "nested/../..") would pass the
+        // directory check while silently rooting the project at the base (Ora's start directory
+        // in production) or above it. An absolute root equal to the base is an explicit choice,
+        // such as starting Ora inside the repository and picking it.
         let names_a_folder = !request.main_workspace_path.trim().is_empty()
             && root
                 .components()
@@ -119,8 +120,17 @@ impl ProjectApi {
             {
                 crate::workspace::LocalDirectory::Present(resolved) => {
                     root.is_absolute()
-                        || std::fs::canonicalize(resolved).ok()
-                            != std::fs::canonicalize(&self.relative_path_base).ok()
+                        || match (
+                            std::fs::canonicalize(resolved),
+                            std::fs::canonicalize(&self.relative_path_base),
+                        ) {
+                            // Component-wise prefix: the base lies at or below the root exactly
+                            // when the root is the base itself or one of its ancestors.
+                            (Ok(resolved), Ok(base)) => !base.starts_with(resolved),
+                            // A directory that cannot be canonicalized cannot be shown to stay
+                            // below the base, so it is refused rather than guessed at.
+                            (Err(_), _) | (_, Err(_)) => false,
+                        }
                 }
                 crate::workspace::LocalDirectory::Missing(_) => false,
             };
@@ -128,7 +138,7 @@ impl ProjectApi {
             return Err(BackendError::new(
                 ErrorClassification::InvalidRequest,
                 PublicError::ProjectWorkspaceNotDirectory(EmptyErrorParams {}),
-                "project main workspace must be an existing directory",
+                "project main workspace must be a specific existing directory",
             ));
         }
         let response = self.create.handle(request)?;
@@ -338,6 +348,11 @@ mod tests {
                 "./".to_string(),
                 "..".to_string(),
                 PathBuf::from("nested")
+                    .join("..")
+                    .to_string_lossy()
+                    .into_owned(),
+                PathBuf::from("nested")
+                    .join("..")
                     .join("..")
                     .to_string_lossy()
                     .into_owned(),

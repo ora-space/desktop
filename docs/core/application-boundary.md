@@ -184,14 +184,14 @@ written.
 
 - A project's Main Workspace location is fixed at creation; `UpdateProjectHandler` renames only.
 - Project creation rejects a local Main Workspace path that is blank, names no folder (`.`, `./`,
-  `..`, `/`), is relative and anchors back to the base directory itself, or is not an existing
-  directory, with `project_workspace_not_directory`, and persists nothing. Creation, cwd resolution
-  and the `listWorkspaces` probe below share one anchoring and directory check, so a relative path
-  is judged against the base that later cwd resolution uses. Branch listing and Effect
-  materialization still read the stored location with their own path handling. A local Main
-  Workspace is `active` from creation: Ora never provisions a local checkout, so a folder that
-  disappears later is reported through `directory` and `workspace_unavailable`, never frozen into
-  the lifecycle.
+  `..`, `/`), is relative and anchors back to the base directory itself or one of its ancestors, or
+  is not an existing directory, with `project_workspace_not_directory`, and persists nothing.
+  Creation, cwd resolution and the `listWorkspaces` probe below share one anchoring and directory
+  check, so a relative path is judged against the base that later cwd resolution uses. Branch
+  listing and Effect materialization still read the stored location with their own path handling. A
+  local Main Workspace is `active` from creation: Ora never provisions a local checkout, so a folder
+  that disappears later is reported through `directory` and `workspace_unavailable`, never frozen
+  into the lifecycle.
 - Whether a local Workspace folder exists is a runtime fact, not lifecycle state: users delete or
   move folders without telling Ora. `listWorkspaces` probes each local location on every call and
   reports `directory` as `present`, `missing` (with the resolved path) or `remote`. Session start,
