@@ -206,6 +206,9 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("project_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("project_workspace_not_directory"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("task_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -601,6 +604,9 @@ export const contractErrorSchema = z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("project_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("project_workspace_not_directory"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("task_not_found"),

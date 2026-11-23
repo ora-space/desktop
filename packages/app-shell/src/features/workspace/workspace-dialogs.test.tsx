@@ -163,6 +163,59 @@ describe("WorkspaceDialogs project creation", () => {
       expect.any(String),
     );
   });
+
+  it("keeps the dialog open with the host's reason when it rejects the folder", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    const requestedPaths: string[] = [];
+    const client: ContractsClient = createTestClient({
+      ...createFixtureHandlers(state),
+      createProject: async (request) => {
+        requestedPaths.push(request.mainWorkspacePath);
+        throw new RemoteContractError(
+          {
+            code: "project_workspace_not_directory",
+            params: {},
+            requestId: "550e8400-e29b-41d4-a716-446655440000",
+          },
+          null,
+        );
+      },
+    });
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useUiStore.getState().setDialog({ kind: "project" });
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceDialogs />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await user.type(
+      screen.getByLabelText(/项目文件夹|Project folder/),
+      "  D:\\Projects\\Missing  ",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /添加项目|Add project/ }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /请选择一个具体的、已存在的项目文件夹|Choose a specific, existing project folder/,
+    );
+    expect(requestedPaths).toEqual(["D:\\Projects\\Missing"]);
+    expect(state.projects).toEqual([]);
+    expect(useUiStore.getState().dialog).toEqual({ kind: "project" });
+  });
 });
 
 describe("WorkspaceDialogs task creation", () => {
