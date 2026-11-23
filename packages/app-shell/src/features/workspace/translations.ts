@@ -22,6 +22,8 @@ export const workspaceTranslations = {
     "errors.task_worktree_unavailable": "任务工作树当前不可用。",
     "errors.worktree_root_not_absolute": "工作树根目录必须是绝对路径。",
     "errors.worktree_root_not_directory": "工作树根目录必须是已存在的目录。",
+    "errors.project_workspace_not_directory":
+      "请选择一个具体的、已存在的项目文件夹。",
     "dialog.addProject": "添加项目",
     "dialog.editProject": "编辑项目",
     "dialog.projectDescription": "将代码仓库连接到 Ora 工作区。",
@@ -135,6 +137,8 @@ export const workspaceTranslations = {
       "The worktree root must be an absolute path.",
     "errors.worktree_root_not_directory":
       "The worktree root must be an existing directory.",
+    "errors.project_workspace_not_directory":
+      "Choose a specific, existing project folder.",
     "dialog.addProject": "Add project",
     "dialog.editProject": "Edit project",
     "dialog.projectDescription": "Connect a repository to the Ora workspace.",
