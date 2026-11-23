@@ -216,6 +216,8 @@ A stopped turn keeps the session only when all of these hold, checked in this or
 4. The turn process fence shows the turn's processes gone; otherwise `turn_processes_unstopped`.
 5. No turn traffic arrives in the quiet window Q (2 s for now; title, usage, mode, command and
    config notifications do not count); otherwise `turn_not_quiescent`.
+6. A scan-only re-check of the same turn scope, right before the stop settles, is still clean;
+   otherwise `turn_processes_unstopped`.
 
 **The turn process fence.** The admission commit records, in memory, when the turn starts and in
 which attempt, just before the prompt is written. After the Agent answered a cancel or failed, the
@@ -232,7 +234,14 @@ The `stopped` settlement and the next turn wait for the fence, and an `EndSessio
 arrives meanwhile is served once it returns. Unknown evidence, a job that keeps coming back until F,
 or an attempt that MCP lifecycle replaced during the turn ends the session with
 `turn_processes_unstopped`, through the normal session stop. The fence runs before Q so that Q also
-sees an Agent that reacts to losing its processes. It keeps nothing durable: a restart ends the
+sees an Agent that reacts to losing its processes. An exempt process can still start a job in a
+session of its own after the fence came back clean, for example a language server that launches a
+worker of its own while Q runs, without any turn traffic. So, after Q and the idle-traffic check and
+right before the `stopped` settlement, the Node scans the same scope once more: two scans in a row,
+killing nothing, within one second on the stop worker, waiting for the worker included. Anything it
+finds, or Unknown evidence, ends the session with `turn_processes_unstopped`, and the session's stop
+kills it with the rest of the attempt. A conclusion therefore arrives within G + F + Q plus that
+second after the first cancel's acceptance. The fence keeps nothing durable: a restart ends the
 session as `interrupted` and restart recovery stops the whole attempt. A job in the session of an
 earlier process, such as one the plugin asked the Node to spawn, or an orphan that cleared its
 environment, is not reached; that limit is the attempt mark's.
