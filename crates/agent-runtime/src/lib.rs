@@ -26,6 +26,7 @@ mod operations;
 mod plugin_agent;
 mod prompt;
 mod prompt_liveness;
+mod prompt_permissions;
 mod prompt_retry;
 mod prompt_wait;
 mod record;

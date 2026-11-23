@@ -310,7 +310,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 self.settle_record(outcome);
             }
         }
-        let mut permissions = HashMap::new();
+        let mut permissions = crate::prompt_permissions::PromptPermissions::default();
         let mut input_state = ActiveInputState::default();
         let mut saw_output = false;
         let mut tool_timings = ToolTimings::default();
@@ -326,6 +326,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         &mut self.commands,
                         &self.turn_cancel,
                     )
+                } else if self.turn_cancel.deadline().is_none()
+                    && let Some(permission) = permissions.take_deferred()
+                {
+                    Some(ActiveInput::Event(SessionEvent::Permission(permission)))
                 } else {
                     tokio::select! {
                         biased;
@@ -348,7 +352,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         crate::turn_cancel::PromptStop {
                             operation_id,
                             client: &client,
-                            permissions: &permissions,
+                            permissions: &permissions.pending,
                             events: &events,
                             end_report: &end_report,
                             followers: &mut followers,
@@ -365,7 +369,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     pending,
                     &events,
                     &mut liveness,
-                    &mut permissions,
+                    &mut permissions.pending,
                     &mut request,
                     record_prompt.attempt_instruction.as_deref(),
                     &mut saw_output,
@@ -453,73 +457,24 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         end_report.record(PromptEndCause::StreamDropped);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
-                        self.cancel(&client, &permissions).await;
+                        self.cancel(&client, &permissions.pending).await;
                         self.isolate_channel(channel).await;
                         return;
                     }
                 }
                 ActiveInput::Event(SessionEvent::Permission(permission)) => {
-                    let public_id = permission.request_id.to_string();
-                    let option_ids = permission
-                        .request
-                        .options
-                        .iter()
-                        .map(|option| option.option_id.to_string())
-                        .collect::<Vec<_>>();
-                    ora_debug!(session_id = %self.session.id, tool_call = ?permission.request.tool_call, option_count = option_ids.len(), request_id = %public_id, "permission requested");
-                    // Ora has no user-configurable approval policy yet, so every request is
-                    // granted through the same `respond_permission` path a real user's choice
-                    // would take, instead of being left pending for
-                    // `RuntimeCommand::RespondToPermission`. A future policy can gate this
-                    // auto-response and leave the request in `permissions` for the frontend to
-                    // answer instead.
-                    let auto_option_id = pick_auto_allow_option(&permission.request.options)
-                        .map(|option| option.option_id.to_string());
-                    permissions.insert(public_id.clone(), (permission.request_id, option_ids));
-                    let wait_deadline = liveness.wait_deadline();
-                    if wait_deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+                    if let Err(error) = permissions
+                        .answer(&client, &self.session.id, permission, &mut liveness)
+                        .await
                     {
-                        // Settlement will cancel this pending request along with the turn.
-                        continue;
-                    }
-                    let Some(option_id) = auto_option_id else {
-                        ora_warn!(session_id = %self.session.id, request_id = %public_id, "permission request offered no allow option");
+                        ora_warn!(session_id = %self.session.id, error = %error, "failed to answer permission request");
                         end_report.record(PromptEndCause::Unknown);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
-                        self.cancel(&client, &permissions).await;
-                        self.isolate_channel(channel).await;
-                        return;
-                    };
-                    let reply = respond_permission(
-                        &client,
-                        RespondToPermissionRequest {
-                            session_id: self.session.id.to_string(),
-                            permission_request_id: public_id,
-                            option_id,
-                        },
-                        &mut permissions,
-                    );
-                    let auto_response = if let Some(deadline) = wait_deadline {
-                        tokio::select! {
-                            biased;
-                            // Keep the request pending for cancellation even if a write is ready.
-                            () = tokio::time::sleep_until(deadline) => continue,
-                            response = reply => response,
-                        }
-                    } else {
-                        reply.await
-                    };
-                    if let Err(error) = auto_response {
-                        ora_warn!(session_id = %self.session.id, error = %error, "failed to auto-allow permission request");
-                        end_report.record(PromptEndCause::Unknown);
-                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                        followers.finish(StopReason::Cancelled);
-                        self.cancel(&client, &permissions).await;
+                        self.cancel(&client, &permissions.pending).await;
                         self.isolate_channel(channel).await;
                         return;
                     }
-                    liveness.permission_settled(&permission.request.tool_call);
                 }
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {
@@ -641,7 +596,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     end_report.record(PromptEndCause::Unknown);
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
-                    self.cancel(&client, &permissions).await;
+                    self.cancel(&client, &permissions.pending).await;
                     let _ = events.try_send(Err(session_event_overflow(
                         "session event queue overflowed",
                     )));
@@ -656,7 +611,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     return;
                 }
                 ActiveInput::Command(RuntimeCommand::RespondToPermission { request, response }) => {
-                    let result = respond_permission(&client, request, &mut permissions).await;
+                    let result =
+                        respond_permission(&client, request, &mut permissions.pending).await;
                     let _ = response.send(result);
                 }
                 ActiveInput::Command(RuntimeCommand::Cancel {
@@ -692,7 +648,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         crate::turn_cancel::PromptStop {
                             operation_id,
                             client: &client,
-                            permissions: &permissions,
+                            permissions: &permissions.pending,
                             events: &events,
                             end_report: &end_report,
                             followers: &mut followers,
@@ -707,7 +663,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Command(RuntimeCommand::Stop { response }) => {
                     end_report.record(PromptEndCause::Unknown);
-                    self.cancel(&client, &permissions).await;
+                    self.cancel(&client, &permissions.pending).await;
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
                     self.isolate_channel(channel).await;
@@ -791,7 +747,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::CommandsClosed => {
                     end_report.record(PromptEndCause::SessionCrashed);
-                    self.cancel(&client, &permissions).await;
+                    self.cancel(&client, &permissions.pending).await;
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
                     self.isolate_channel(channel).await;
@@ -803,93 +759,5 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{current_model, produced_output, stale_load_retry_allowed};
-    use crate::attach::LoadRestoration;
-    use agent_client_protocol_schema::v1::{
-        ContentBlock, ContentChunk, Plan, SessionUpdate, TextContent, ToolCall, ToolCallUpdate,
-        ToolCallUpdateFields,
-    };
-    use agent_client_protocol_schema::v1::{
-        SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-        SessionConfigSelect, SessionConfigSelectOption, SessionConfigSelectOptions,
-        SessionConfigValueId,
-    };
-
-    #[test]
-    fn a_stale_load_retry_requires_no_output_and_only_one_attempt() {
-        assert!(stale_load_retry_allowed(
-            true,
-            false,
-            true,
-            LoadRestoration::Restored
-        ));
-        assert!(!stale_load_retry_allowed(
-            true,
-            true,
-            true,
-            LoadRestoration::Restored
-        ));
-        assert!(!stale_load_retry_allowed(
-            true,
-            false,
-            false,
-            LoadRestoration::Restored
-        ));
-        assert!(!stale_load_retry_allowed(
-            false,
-            false,
-            true,
-            LoadRestoration::Restored
-        ));
-    }
-
-    #[test]
-    fn output_classification_covers_text_tools_and_controls() {
-        let text = || {
-            SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
-                TextContent::new("hello"),
-            )))
-        };
-        for update in [
-            text(),
-            SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::Text(
-                TextContent::new("thinking"),
-            ))),
-            SessionUpdate::ToolCall(ToolCall::new("tool", "Tool")),
-            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new("tool", ToolCallUpdateFields::new())),
-        ] {
-            assert!(produced_output(&update), "{update:?}");
-        }
-        // A plan can fail without any assistant output or tool side effect and is retryable.
-        assert!(!produced_output(&SessionUpdate::Plan(
-            Plan::new(Vec::new())
-        )));
-    }
-
-    /// An empty configuration report carries no model and must not terminate the actor.
-    #[test]
-    fn an_empty_provider_report_has_no_rebuild_model() {
-        pretty_assertions::assert_eq!(current_model(&[]), None);
-    }
-
-    #[test]
-    fn the_rebuild_model_comes_from_the_restored_provider() {
-        let option = SessionConfigOption::new(
-            SessionConfigId::new("model"),
-            "Model",
-            SessionConfigKind::Select(SessionConfigSelect::new(
-                SessionConfigValueId::new("deepseek/deepseek-v4-pro"),
-                SessionConfigSelectOptions::Ungrouped(vec![SessionConfigSelectOption::new(
-                    "deepseek/deepseek-v4-pro",
-                    "DeepSeek V4 Pro",
-                )]),
-            )),
-        )
-        .category(SessionConfigOptionCategory::Model);
-        assert_eq!(
-            current_model(&[option]),
-            Some("deepseek/deepseek-v4-pro".to_string())
-        );
-    }
-}
+#[path = "actor_prompt/tests.rs"]
+mod tests;
