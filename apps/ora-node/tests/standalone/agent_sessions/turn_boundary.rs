@@ -7,7 +7,13 @@
 //! probe scenario and is cancelled while it runs (`error` fails on its own instead), and a plain
 //! turn follows. The run passes only when the stopped turn kept the session, nothing the turn
 //! started outside the sessions of the Agent's earlier processes was alive when the stop settled,
-//! no marker was written afterwards, and the next turn completed.
+//! no marker was written afterwards, and the next turn completed. A failed turn settles no
+//! cancel, so for `error` the processes are sampled at the next turn's first event, which the
+//! Node writes only after it judged the failed turn and ran the fence.
+//!
+//! The test finds the turn's processes the way the Node does, by the attempt mark, so it shares
+//! the mark's blind spot: an orphan that cleared or rewrote its environment is invisible to both.
+//! The probe's markers are what catch such a job, when it writes one within the observation.
 //!
 //! The Node keeps a session only for a version on its turn-boundary list, so measuring a version
 //! the list does not name needs it added locally first. Inputs, all required:
@@ -203,6 +209,8 @@ struct Turn {
     session_end: Option<(AgentSessionEndReason, Option<String>)>,
     /// Marked processes alive when the stop settled, or when the turn ended without a cancel.
     alive_at_end: Vec<Marked>,
+    /// Marked processes alive when the turn's first Thread event arrived.
+    alive_at_first_event: Option<Vec<Marked>>,
 }
 
 /// Receives until the turn has ended and, with `command` given, its cancel settled, or until
@@ -212,6 +220,9 @@ async fn follow(stream: &mut UnixStream, command: Option<&str>, attempt: &str) -
     loop {
         match receive(stream).await {
             NodeToControllerMessage::ThreadEvent(event) => {
+                if turn.alive_at_first_event.is_none() {
+                    turn.alive_at_first_event = Some(marked(attempt));
+                }
                 send(stream, ack(event.sequence.value())).await;
                 if event
                     .payload
@@ -377,8 +388,14 @@ fn turn_boundary_conformance() {
             };
             let earlier_sessions: std::collections::BTreeSet<u32> =
                 earlier.iter().map(|process| process.session).collect();
-            let escaped: Vec<&Marked> = target
-                .alive_at_end
+            let sampled = if failing {
+                next.as_ref()
+                    .and_then(|next| next.alive_at_first_event.clone())
+                    .unwrap_or_default()
+            } else {
+                target.alive_at_end.clone()
+            };
+            let escaped: Vec<&Marked> = sampled
                 .iter()
                 .filter(|process| !earlier.contains(process))
                 .filter(|process| !earlier_sessions.contains(&process.session))

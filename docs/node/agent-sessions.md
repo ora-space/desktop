@@ -290,7 +290,12 @@ It serves the same loopback model through `apps/ora-node/tests/turn_boundary/ser
 plain turn, the cancelled (or failing) target turn and another plain turn, and writes the Node log
 and `summary.json` to the output directory. It passes only when the stop settled `stopped`, nothing
 the turn started outside the sessions of the Agent's earlier processes was alive then, no marker
-was written within six seconds, and the next turn completed. A finite observation does not register
+was written within six seconds, and the next turn completed. A failed turn settles no cancel, so for
+`error` the processes are sampled at the next turn's first event, which the Node writes only after
+it judged the failed turn. The test finds the turn's processes by the attempt mark, as the Node
+does, so it shares the mark's blind spot: an orphan that cleared or rewrote its environment is
+invisible to both, and only the probe's marker files catch such a job, when it writes within the
+observation. A finite observation does not register
 a version automatically: repeat every scenario and keep the measurements in the circus run issue
 before committing the entry, with the package digest beside it.
 

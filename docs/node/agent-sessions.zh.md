@@ -211,6 +211,9 @@ ORA_PROBE_PACKAGE=/path/to/extracted-agent-package ORA_PROBE_AGENT=opencode \
 它通过 `apps/ora-node/tests/turn_boundary/serve.py` 提供同一个本地模型，依次运行一轮普通对话、被取消（或失败）
 的目标轮次和又一轮普通对话，把 Node 日志和 `summary.json` 写到输出目录。只有以下条件都成立才通过：停止结算为
 `stopped`；那一刻这一轮在 Agent 更早进程的会话之外启动的进程都已不在；六秒内没有写出标记文件；下一轮正常完成。
+失败的一轮没有取消结算，所以 `error` 场景在下一轮的第一个事件时采样，Node 要判定完失败的一轮才会写出它。这个测试
+和 Node 一样靠尝试标记找本轮进程，所以盲区也相同：清空或改写了环境的孤儿进程两者都看不到，只有在观察时间内写出
+探针标记文件时才会被发现。
 有限时间内没有观察到违约，不自动登记版本：每个场景重复运行，实测数据写入 circus 运行 issue，再提交清单条目，并在
 条目旁注明包的摘要。
 
