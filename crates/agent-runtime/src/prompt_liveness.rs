@@ -486,6 +486,42 @@ mod tests {
         assert_eq!(live.wait_deadline(), Some(received + window));
     }
 
+    /// Only an open parent tool earns permission progress. Neither empty chunks nor late
+    /// delegated traffic extend a completed call.
+    #[tokio::test(start_paused = true)]
+    async fn bounded_wait_tracks_owned_permissions_and_finished_delegations() {
+        let mut live =
+            PromptLiveness::for_policy(&SINGLE_WINDOW, ora_domain::PromptInactivityPolicy::Wait);
+        let initial = live.wait_deadline().unwrap();
+        let permission = |id: &str| ToolCallUpdate::new(id.to_owned(), ToolCallUpdateFields::new());
+        tokio::time::advance(Duration::from_secs(10)).await;
+        live.permission_settled(&permission("unknown"));
+        assert_eq!(live.wait_deadline(), Some(initial));
+        live.observe(&parent_delegate(ToolCallStatus::Pending));
+        tokio::time::advance(Duration::from_secs(10)).await;
+        live.permission_settled(&permission("call-1"));
+        assert_eq!(
+            live.wait_deadline(),
+            Some(initial + Duration::from_secs(20))
+        );
+        live.observe(&parent_delegate(ToolCallStatus::Completed));
+        tokio::time::advance(Duration::from_secs(10)).await;
+        live.permission_settled(&permission("call-1"));
+        live.observe(&subagent_chunk(Some("call-1")));
+        for kind in ["agent_message_chunk", "agent_thought_chunk"] {
+            live.observe(
+                &serde_json::from_value(
+                    json!({"sessionUpdate":kind,"content":{"type":"text","text":""}}),
+                )
+                .unwrap(),
+            );
+        }
+        assert_eq!(
+            live.wait_deadline(),
+            Some(initial + Duration::from_secs(20))
+        );
+    }
+
     /// Interleaved parent and child plan metadata cannot manufacture progress.
     #[tokio::test(start_paused = true)]
     async fn bounded_plans_compare_entries_per_source() {

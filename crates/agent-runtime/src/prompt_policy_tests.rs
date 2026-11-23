@@ -154,7 +154,7 @@ struct Fixture {
     agent: mpsc::UnboundedSender<AgentInput>,
     frames: mpsc::UnboundedReceiver<Value>,
     routed: tokio::task::JoinHandle<()>,
-    _state: watch::Sender<ConnectionState>,
+    state: watch::Sender<ConnectionState>,
     scheduler: ora_scheduler::Scheduler,
 }
 
@@ -281,7 +281,7 @@ impl Fixture {
             agent,
             frames,
             routed,
-            _state: state,
+            state,
             scheduler,
         }
     }
@@ -531,7 +531,7 @@ async fn completion(stream: &mut SessionEventStream<PromptSessionEvent>) -> Stop
 /// A hidden child can stay silent for hours without changing another session's default timer.
 /// See specs/test-cases/desktop/core/workflow/prompt-inactivity.md#a-silent-waiting-prompt-remains-cancellable-and-session-local.
 #[test]
-fn waiting_prompt_survives_silence_while_default_session_retries() {
+fn unbounded_prompt_survives_silence_while_default_session_retries() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
@@ -951,11 +951,91 @@ fn confirmed_bounded_timeout_can_prompt_again_without_reloading() {
     });
 }
 
+/// A queued progress frame keeps the clock it received at ingress while the actor was busy.
+#[test]
+fn wait_uses_the_routed_arrival_time_even_when_processed_after_the_deadline() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(1799)).await;
+        let arrived = tokio::time::Instant::now();
+        let update = serde_json::from_value(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"progress"}})).unwrap();
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::Update(
+                SessionNotification::new("waiting", update),
+                arrived,
+            ))
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::SessionUpdate { .. }
+        ));
+        tokio::time::advance(Duration::from_secs(1790)).await;
+        let cancel = tokio::time::timeout(Duration::from_secs(1), fixture.next_frame())
+            .await
+            .expect("expiry follows receipt, including time spent queued");
+        assert_eq!(cancel["method"], "session/cancel");
+        assert!(stream.recv().await.unwrap().is_err());
+        fixture.shutdown().await;
+    });
+}
+
+/// An outstanding permission belongs to cancellation when its window has already closed.
+#[test]
+fn bounded_settlement_cancels_a_pending_permission_at_the_boundary() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        let request = ora_acp::PermissionRequest {
+            request_id: serde_json::from_value(json!("pending")).unwrap(),
+            request: serde_json::from_value(
+                json!({"sessionId":"waiting","toolCall":{"toolCallId":"pending"},"options":[]}),
+            )
+            .unwrap(),
+        };
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::Permission(request))
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(1800)).await;
+        let reply = fixture.next_frame().await;
+        assert_eq!(reply["id"], "pending");
+        assert_eq!(reply["result"]["outcome"]["outcome"], "cancelled");
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(
+            stream.recv().await.unwrap().unwrap_err().public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        fixture.shutdown().await;
+    });
+}
+
 /// Expiry settles the owner even if the CLI also ignores cancellation.
 #[test]
 fn waiting_prompt_times_out_without_a_cancellation_acknowledgement() {
     run_case(async {
         let mut fixture = Fixture::new().await;
+        let mut connection = fixture.supervisor.current().unwrap();
+        connection.close_session_supported = true;
+        fixture
+            .state
+            .send_replace(ConnectionState::Ready(connection));
         fixture.add_session("waiting");
         let mut stream = fixture
             .manager
@@ -983,26 +1063,79 @@ fn waiting_prompt_times_out_without_a_cancellation_acknowledgement() {
         tokio::time::advance(Duration::from_secs(1799)).await;
         assert!(stream.try_recv().is_none());
         tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        fixture
+            .manager
+            .cancel_turn_prompt(
+                "waiting",
+                tokio::time::Instant::now() + Duration::from_secs(60),
+            )
+            .unwrap();
+        tokio::time::advance(crate::limits::CANCELLATION_GRACE - Duration::from_millis(1)).await;
+        assert!(
+            stream.try_recv().is_none(),
+            "the node must wait for the outstanding cancellation"
+        );
+        let close = fixture.next_frame().await;
+        assert_eq!(close["method"], "session/close");
+        assert!(
+            stream.try_recv().is_none(),
+            "the node must wait for isolation to settle"
+        );
+        fixture
+            .agent
+            .send(AgentInput::RawFrame(
+                json!({"jsonrpc":"2.0","id":close["id"],"result":{}}),
+            ))
+            .unwrap();
         let err = stream.recv().await.unwrap().unwrap_err();
         assert_eq!(
             err.public_error(),
             &PublicError::AgentTimedOut(EmptyErrorParams {})
         );
-        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
         assert!(stream.recv().await.is_none());
-        let mut ended = 0;
-        while let Some(event) = follower.recv().await {
-            if matches!(
-                event.unwrap(),
-                ora_contracts::LoadSessionEvent::TurnEnded {
+        let mut ended = false;
+        loop {
+            let event = follower
+                .recv()
+                .await
+                .expect("the timeout must reach the follower");
+            match event {
+                Ok(ora_contracts::LoadSessionEvent::TurnEnded {
                     stop_reason: StopReason::Cancelled,
                     ..
+                }) => {
+                    assert!(!ended);
+                    ended = true;
                 }
-            ) {
-                ended += 1;
+                Err(error) => {
+                    assert!(
+                        ended,
+                        "the follower must receive the turn boundary before its error"
+                    );
+                    assert_eq!(error.public_error(), err.public_error());
+                    break;
+                }
+                Ok(ora_contracts::LoadSessionEvent::Completed) => {
+                    panic!("a timed-out follower cannot complete successfully")
+                }
+                Ok(_) => {}
             }
         }
-        assert_eq!(ended, 1);
+        assert!(ended);
+        assert!(follower.recv().await.is_none());
+        let late = SessionNotification::new(
+            "waiting",
+            SessionUpdate::Plan(agent_client_protocol_schema::v1::Plan::new(Vec::new())),
+        );
+        assert!(
+            fixture
+                .supervisor
+                .routes
+                .route_event(crate::routing::SessionEvent::update(late))
+                .is_err(),
+            "the old route must be detached before the owner sees failure"
+        );
         assert_eq!(stream.end_cause(), Some(PromptEndCause::InactivityTimeout));
         assert!(fixture.frames.try_recv().is_err());
         fixture.shutdown().await;
@@ -1011,7 +1144,7 @@ fn waiting_prompt_times_out_without_a_cancellation_acknowledgement() {
 
 /// A real provider EOF terminates an opted-out prompt through the generation's failure control.
 #[test]
-fn provider_disconnect_ends_a_waiting_prompt() {
+fn provider_disconnect_ends_an_unbounded_prompt() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
@@ -1060,7 +1193,7 @@ fn releasing_the_host_and_stream_ends_a_silent_waiting_actor() {
             routed,
             scheduler,
             _directory,
-            _state,
+            state,
             agent,
         } = fixture;
         drop(manager);
@@ -1071,7 +1204,7 @@ fn releasing_the_host_and_stream_ends_a_silent_waiting_actor() {
         routed.await.unwrap();
         plugin.shutdown_and_wait().await;
         scheduler.shutdown().await;
-        drop((agent, _state, _directory));
+        drop((agent, state, _directory));
     });
 }
 
@@ -1320,6 +1453,7 @@ impl<S: tracing::Subscriber> Layer<S> for InactivityLogs {
             Some(
                 "prompt inactive; cancelling stalled attempt"
                     | "inactive prompt cancellation settled"
+                    | "workflow prompt exceeded its silence limit"
             )
         ) {
             fields.0.insert(
@@ -1352,6 +1486,49 @@ impl Visit for LogFields {
         self.0
             .insert(field.name().to_string(), json!(format!("{value:?}")));
     }
+}
+
+/// The bounded timeout has one structured, content-free record for the operation.
+#[test]
+fn bounded_timeout_logs_the_window_and_settlement_outcome() {
+    let logs = InactivityLogs::default();
+    ora_logging::initialize_test_clock();
+    ora_logging::with_recorded_trace_logging(logs.clone(), || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(/*start_paused*/ true)
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut fixture = Fixture::new().await;
+                fixture.add_session("waiting");
+                let mut stream = fixture
+                    .manager
+                    .prompt_session_with_inactivity_policy(
+                        prompt("waiting"),
+                        PromptInactivityPolicy::Wait,
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+                tokio::time::advance(Duration::from_secs(1800)).await;
+                assert!(stream.recv().await.unwrap().is_err());
+                fixture.shutdown().await;
+            });
+    });
+    let records = logs.0.lock().unwrap();
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert!(record["operation_id"].as_u64().is_some_and(|id| id > 0));
+    assert_eq!(
+        serde_json::to_value(record).unwrap(),
+        json!({
+            "message":"workflow prompt exceeded its silence limit", "level":"WARN", "method":"finish_expired_wait",
+            "session_id":"waiting", "operation_id":record["operation_id"], "policy":"Wait", "attempt":1,
+            "window_ms":1800000.0, "silent_elapsed_ms":1800000.0, "running_tools":0, "pending_tools":0,
+            "end_cause":"inactivity_timeout", "cancellation_result":"confirmed"
+        })
+    );
 }
 
 /// Diagnostics independently identify the inactivity decision and provider cancellation fence.

@@ -340,7 +340,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
             };
             let Some(input) = input else {
-                if inactivity_policy == PromptInactivityPolicy::Wait {
+                if liveness.wait_deadline().is_some() {
                     self.finish_expired_wait(
                         channel,
                         pending,
@@ -429,7 +429,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     let update = update.update;
                     liveness.observe_at(
                         &update,
-                        if inactivity_policy == PromptInactivityPolicy::Wait {
+                        if liveness.wait_deadline().is_some() {
                             arrived
                         } else {
                             tokio::time::Instant::now()
@@ -476,6 +476,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     let auto_option_id = pick_auto_allow_option(&permission.request.options)
                         .map(|option| option.option_id.to_string());
                     permissions.insert(public_id.clone(), (permission.request_id, option_ids));
+                    let wait_deadline = liveness.wait_deadline();
+                    if wait_deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+                    {
+                        // Settlement will cancel this pending request along with the turn.
+                        continue;
+                    }
                     let Some(option_id) = auto_option_id else {
                         ora_warn!(session_id = %self.session.id, request_id = %public_id, "permission request offered no allow option");
                         end_report.record(PromptEndCause::Unknown);
@@ -494,11 +500,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         },
                         &mut permissions,
                     );
-                    let auto_response = if let Some(deadline) = liveness.wait_deadline() {
-                        match tokio::time::timeout_at(deadline, reply).await {
-                            Ok(response) => response,
-                            // The deadline is still expired; let the turn's timeout branch finish it.
-                            Err(_) => continue,
+                    let auto_response = if let Some(deadline) = wait_deadline {
+                        tokio::select! {
+                            biased;
+                            // Keep the request pending for cancellation even if a write is ready.
+                            () = tokio::time::sleep_until(deadline) => continue,
+                            response = reply => response,
                         }
                     } else {
                         reply.await

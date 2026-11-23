@@ -34,12 +34,19 @@ pub(super) enum ActiveInput {
     CommandsClosed,
 }
 
+/// Counts only inputs that were ready when this deadline fired.
+struct WaitBoundary {
+    deadline: tokio::time::Instant,
+    events_left: usize,
+    commands_left: usize,
+}
+
 /// Preserves terminal-control ordering while bounding command latency during event bursts.
 #[derive(Default)]
 pub(super) struct ActiveInputState {
     deferred_control: Option<DeferredControl>,
     events_since_command_poll: usize,
-    wait_boundary: Option<(tokio::time::Instant, usize, usize)>,
+    wait_boundary: Option<WaitBoundary>,
 }
 
 impl ActiveInputState {
@@ -56,17 +63,21 @@ impl ActiveInputState {
         if self
             .wait_boundary
             .as_ref()
-            .is_none_or(|entry| entry.0 != deadline)
+            .is_none_or(|entry| entry.deadline != deadline)
         {
-            self.wait_boundary = Some((deadline, events.len(), commands.len()));
+            self.wait_boundary = Some(WaitBoundary {
+                deadline,
+                events_left: events.len(),
+                commands_left: commands.len(),
+            });
         }
-        let (_, events_left, commands_left) = self.wait_boundary.as_mut()?;
-        if *events_left > 0 {
-            *events_left -= 1;
+        let boundary = self.wait_boundary.as_mut()?;
+        if boundary.events_left > 0 {
+            boundary.events_left -= 1;
             return events.try_recv().ok().map(ActiveInput::Event);
         }
-        if *commands_left > 0 {
-            *commands_left -= 1;
+        if boundary.commands_left > 0 {
+            boundary.commands_left -= 1;
             return commands.try_recv().ok().map(ActiveInput::Command);
         }
         self.terminal_control(controls).or_else(|| {

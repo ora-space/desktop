@@ -19,7 +19,10 @@ pub enum PromptInactivityPolicy {
 impl PromptInactivityPolicy {
     /// Returns a deadline budget for single-send turns. Ordinary prompts use a retry schedule.
     pub fn wait_limit(self) -> Option<std::time::Duration> {
-        (self == Self::Wait).then_some(std::time::Duration::from_secs(30 * 60))
+        match self {
+            Self::Wait => Some(std::time::Duration::from_secs(30 * 60)),
+            Self::Unbounded | Self::Timeout => None,
+        }
     }
 }
 
