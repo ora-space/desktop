@@ -2,8 +2,7 @@
 //!
 //! A published `start -> worker -> output` graph is started through `WorkflowRuns`; the executor
 //! creates the node session, drives the prompt through the real agent runtime, and records the
-//! failure through the production transitions. Retry is disabled so the assertions observe the
-//! final result instead of a scheduled workflow retry.
+//! failure through the production transitions, including node-level retry when configured.
 
 use super::abnormal_support::{
     CRASH_MARKER, DROP_MARKER, SILENT_MARKER, open_abnormal_backend, prompt_marker_count,
@@ -240,16 +239,65 @@ fn a_bounded_wait_fails_the_workflow_node_without_resending() -> TestResult {
     })
 }
 
+/// Each node attempt sends once. The configured noninteractive retry owns the second attempt.
+#[test]
+fn bounded_wait_consumes_the_configured_noninteractive_node_retry() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let mut config = agent_config(SILENT_MARKER);
+        config["interactive"] = json!(false);
+        config["promptInactivity"] = json!("wait");
+        config["retry"] = json!({"enabled":true,"maxRetries":1,"initialDelaySeconds":0});
+        let run_id = start_run(&backend, &workspace_id, config)?;
+        for attempt in 1..=2 {
+            tokio::time::timeout(RUN_DEADLINE, async {
+                while prompt_marker_count(&package, SILENT_MARKER) < attempt {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+            })
+            .await?;
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(1801)).await;
+            tokio::time::resume();
+        }
+        let detail = settle_failed(&backend, &run_id).await?;
+        let (row, _) = worker(&detail)?;
+        assert_eq!(row.status, WorkflowNodeStatus::Failed);
+        assert!(
+            row.error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("no progress for 30 minutes")
+        );
+        assert_eq!(detail.failed_attempts.as_ref().map_or(0, Vec::len), 1);
+        assert_eq!(prompt_marker_count(&package, SILENT_MARKER), 2);
+        Ok(())
+    })
+}
+
 /// A workflow session crash fails the node with the provider-connection diagnostic.
 #[test]
 fn a_crashed_workflow_first_turn_fails_the_node_without_parking() -> TestResult {
+    check_first_turn_crash(agent_config(CRASH_MARKER))
+}
+
+/// The finite wait also attributes provider death to the session immediately.
+#[test]
+fn a_crashed_bounded_first_turn_fails_the_node_without_parking() -> TestResult {
+    let mut config = agent_config(CRASH_MARKER);
+    config["promptInactivity"] = json!("wait");
+    check_first_turn_crash(config)
+}
+
+fn check_first_turn_crash(config: Value) -> TestResult {
     run_case(async {
         let setup = DesktopTestSetup::new()?;
         let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
         let backend = open_ready_backend(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
-        let mut config = agent_config(CRASH_MARKER);
-        config["promptInactivity"] = json!("wait");
         let run_id = start_run(&backend, &workspace_id, config)?;
         assert_frozen_worker_is_interactive(&backend, &run_id)?;
 

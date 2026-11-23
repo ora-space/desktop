@@ -36,7 +36,7 @@ const AGENT_CLI: &str = "official/ora-space.opencode";
 ///
 /// `prompt` is the workflow's own opening turn; a case that needs to stop it in flight asks for the
 /// fake agent's hold marker.
-fn interactive_graph(prompt: &str) -> Value {
+pub(super) fn interactive_graph(prompt: &str) -> Value {
     json!({
         "nodes": [
             {"id": "start", "data": {"kind": "start"}},
@@ -69,11 +69,20 @@ fn start_interactive_run_with_prompt(
     workspace_id: &str,
     prompt: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    start_interactive_graph(backend, workspace_id, interactive_graph(prompt))
+}
+
+/// Publishes an interactive graph and creates a run from its frozen snapshot.
+pub(super) fn start_interactive_graph(
+    backend: &Backend,
+    workspace_id: &str,
+    graph: Value,
+) -> Result<String, Box<dyn std::error::Error>> {
     let workflow = backend
         .workflows()
         .create(CreateWorkflowRequest {
             name: "Interactive".to_string(),
-            graph: Some(interactive_graph(prompt).to_string()),
+            graph: Some(graph.to_string()),
         })?
         .workflow;
     backend.workflows().publish(PublishWorkflowRequest {

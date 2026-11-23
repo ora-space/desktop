@@ -188,6 +188,47 @@ fn a_timed_out_human_turn_parks_as_abnormal_with_prompt_timed_out() -> TestResul
     })
 }
 
+/// A human turn inherits the frozen Wait policy and parks after a single provider send.
+#[test]
+fn bounded_human_turn_parks_with_prompt_timed_out() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let mut graph = super::workflow_interactive::interactive_graph("review the plan");
+        graph["nodes"][1]["data"]["agentConfig"]["promptInactivity"] = json!("wait");
+        let run_id =
+            super::workflow_interactive::start_interactive_graph(&backend, &workspace_id, graph)?;
+        let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending
+        })
+        .await?;
+        let session = parked
+            .session_id
+            .ok_or("interactive node must own a session")?;
+        let mut stream = send_human_prompt(&backend, &session, SILENT_MARKER).await?;
+        wait_for_prompt_marker(&package, SILENT_MARKER).await?;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(1801)).await;
+        tokio::time::resume();
+        let (retries, error) =
+            tokio::time::timeout(RUN_DEADLINE, drain_until_error(&mut stream)).await?;
+        assert_eq!(retries, 0);
+        assert_eq!(
+            error.ok_or("missing bounded timeout")?.public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        drop(stream);
+        let parked = wait_for_abnormal_park(&backend, &run_id).await?;
+        assert_eq!(parked.session_id.as_deref(), Some(session.as_str()));
+        assert_abnormal_snapshot(&parked, "prompt_timed_out");
+        assert_default_completion_rejected(&backend, &run_id).await;
+        assert_eq!(prompt_marker_count(&package, SILENT_MARKER), 1);
+        Ok(())
+    })
+}
+
 /// A process crash is reported as a crashed session, not as a stream its owner dropped.
 #[test]
 fn a_crashed_human_turn_parks_as_abnormal_with_session_crashed() -> TestResult {
