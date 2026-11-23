@@ -10,10 +10,11 @@ pub(crate) enum LocalDirectory {
 
 /// Anchors a local Workspace location to the runtime's stable path base and probes it now.
 ///
-/// This is the only rule for whether a local folder is usable. Project creation, the
-/// `directory` reported by `listWorkspaces`, and every cwd resolution go through it, so a folder
-/// accepted at creation or reported present is exactly one that session start and model
-/// discovery resolve.
+/// Cwd resolution, the `directory` reported by `listWorkspaces`, and project creation share this
+/// rule, so a folder accepted at creation or reported present is exactly one that session start
+/// and model discovery resolve. Branch listing and Effect materialization still read the stored
+/// location with their own path handling (no anchoring; Effect also refuses a symlinked root), so
+/// they can disagree for a relative or symlinked root.
 ///
 /// Relative roots are stored against the directory from which `ORA_DATA_DIR` was
 /// created. Joining them to a live process cwd would miss those directories

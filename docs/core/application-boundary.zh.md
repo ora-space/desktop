@@ -121,7 +121,7 @@ Backend 把最高层的语义 `ApplicationError` 穷尽地映射为一个公开�
 ## 不变量
 
 - 项目的 Main Workspace 位置在创建时确定；`UpdateProjectHandler` 只改名。
-- 创建项目时，本地 Main Workspace 路径为空或不是已存在的目录会被拒绝，返回 `project_workspace_not_directory`，不写入任何数据。校验与下文运行时探测使用同一套路径锚定和目录检查，因此相对路径按后续解析 cwd 时相同的基准目录判断。本地 Main Workspace 从创建起就是 `active`：Ora 从不为本地 checkout 做 provisioning，之后目录消失时通过 `directory` 和 `workspace_unavailable` 报告，而不是固化进生命周期。
+- 创建项目时，本地 Main Workspace 路径为空或不是已存在的目录会被拒绝，返回 `project_workspace_not_directory`，不写入任何数据。创建校验、cwd 解析和下文 `listWorkspaces` 的探测共用一套路径锚定和目录检查，因此相对路径按后续解析 cwd 时相同的基准目录判断。分支列表和 Effect 物化仍按各自的方式处理保存的位置。本地 Main Workspace 从创建起就是 `active`：Ora 从不为本地 checkout 做 provisioning，之后目录消失时通过 `directory` 和 `workspace_unavailable` 报告，而不是固化进生命周期。
 - 本地 Workspace 目录是否存在属于运行时事实，不是生命周期状态：用户可能在 Ora 不知情的情况下删除或移动目录。`listWorkspaces` 每次调用都会探测每个本地位置，并在 `directory` 中报告 `present`、`missing`（附带解析后的路径）或 `remote`。会话启动、模型发现和文件操作会各自重新检查，目录缺失时以 `workspace_unavailable` 拒绝。客户端会在侧边栏标记该项目，在聊天区上方写明缺失的目录，禁止发送，并用原因替代空的模型列表。窗口重新获得焦点、用户点击“重新检查”、或某个请求以 `workspace_unavailable` 被拒绝时，客户端都会重新探测。
 - 会话的 Workspace 不可变。生命周期操作只改 `status` 和 `updated_at`。
 - `UpdateTaskRequest` 不能修改项目或 Workspace 归属。
