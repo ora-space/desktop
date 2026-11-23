@@ -210,7 +210,7 @@ describe("Agent prompt inactivity settings", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the Chinese choices and explains manual stopping separately from failure retries", async () => {
+  it("renders the Chinese choices and explains the fixed silence window and node retry behavior", async () => {
     await appI18n.changeLanguage("zh-CN");
     const user = userEvent.setup();
     render(<Harness />);
