@@ -8,6 +8,7 @@ import { useInstalledPlugins } from "./use-installed-plugins";
 export type AgentEffectFailureReason = {
   code: string;
   message: string;
+  parameters: Record<string, string>;
 };
 
 /** Send-gate state derived from one complete persisted Effect Target. */
@@ -139,6 +140,7 @@ export function useAgentEffectReadiness(
       .map((condition) => ({
         code: condition.code,
         message: condition.message,
+        parameters: condition.parameters,
       }));
     return {
       kind: "failed",
