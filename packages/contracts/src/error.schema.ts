@@ -38,6 +38,18 @@ export const workflowRunInputInvalidParamsSchema = z.object({
     reason: z.string()
 });
 
+export const workflowSkillNotFoundParamsSchema = z.object({
+    nodeId: z.string(),
+    nodeTitle: z.string(),
+    skillId: z.string()
+});
+
+export const workflowMcpNotFoundParamsSchema = z.object({
+    nodeId: z.string(),
+    nodeTitle: z.string(),
+    mcpId: z.string()
+});
+
 export const workflowSnapshotIncompatibleWithResumeParamsSchema = z.object({
     reason: z.string()
 });
@@ -450,7 +462,10 @@ export const publicErrorSchema = z.union([z.object({
         "params": workflowRunInputInvalidParamsSchema
     }), z.object({
         "code": z.literal("workflow_skill_not_found"),
-        "params": emptyErrorParamsSchema
+        "params": workflowSkillNotFoundParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_mcp_not_found"),
+        "params": workflowMcpNotFoundParamsSchema
     }), z.object({
         "code": z.literal("workflow_role_not_found"),
         "params": emptyErrorParamsSchema
@@ -847,7 +862,10 @@ export const contractErrorSchema = z.object({
         "params": workflowRunInputInvalidParamsSchema
     }), z.object({
         "code": z.literal("workflow_skill_not_found"),
-        "params": emptyErrorParamsSchema
+        "params": workflowSkillNotFoundParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_mcp_not_found"),
+        "params": workflowMcpNotFoundParamsSchema
     }), z.object({
         "code": z.literal("workflow_role_not_found"),
         "params": emptyErrorParamsSchema

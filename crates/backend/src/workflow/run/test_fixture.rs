@@ -185,13 +185,22 @@ pub(crate) fn bootstrap() -> (TempDir, RepositoryPool) {
     (temp, pool)
 }
 
-/// Seeds a project, workflow, snapshot, and a `Pending` run without starting it, so callers
-/// can start the run through their own engine composition.
-pub(crate) fn seeded_pending_run(
+/// The workspace, workflow, and published snapshot every workflow-run fixture executes against.
+pub(crate) struct SeededWorkflow {
+    pub workspace_id: String,
+    pub workflow_id: String,
+    pub snapshot_id: String,
+}
+
+/// Seeds a project, workflow, and published snapshot with deployment-ready dependencies.
+///
+/// The main workspace directory exists before the project row is created, which is what marks its
+/// provisioning as ready, so a run created through the public use case is admissible.
+pub(crate) fn seeded_workflow(
     temp: &TempDir,
     pool: &RepositoryPool,
     graph: &str,
-) -> WorkflowRunId {
+) -> SeededWorkflow {
     let workspace_path = temp.path().join("fixture-project");
     std::fs::create_dir_all(&workspace_path).unwrap();
     let project = SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
@@ -248,6 +257,28 @@ pub(crate) fn seeded_pending_run(
         .find_main_workspace(&ProjectId::new("project-1"))
         .unwrap()
         .unwrap();
+    SeededWorkflow {
+        workspace_id: workspace.id.to_string(),
+        workflow_id: "workflow-1".to_string(),
+        snapshot_id: "snapshot-1".to_string(),
+    }
+}
+
+/// Seeds the workflow fixture together with a `Pending` run that no engine has started yet.
+pub(crate) fn seeded_pending_run(
+    temp: &TempDir,
+    pool: &RepositoryPool,
+    graph: &str,
+) -> WorkflowRunId {
+    let SeededWorkflow {
+        workflow_id,
+        snapshot_id,
+        ..
+    } = seeded_workflow(temp, pool, graph);
+    let workspace = SqliteWorkspaceRepository::new(pool.clone())
+        .find_main_workspace(&ProjectId::new("project-1"))
+        .unwrap()
+        .unwrap();
     SqliteSessionRepository::new(pool.clone())
         .create_session(Session::new(
             SessionId::new("session-1"),
@@ -270,8 +301,8 @@ pub(crate) fn seeded_pending_run(
     let run = WorkflowRun::new(
         run_id.clone(),
         workspace.id,
-        workflow.id,
-        snapshot.id,
+        WorkflowId::new(workflow_id),
+        WorkflowSnapshotId::new(snapshot_id),
         "Workflow run",
         WorkflowRunStatus::Pending,
         Some("{\"current_nodes\":[]}".to_string()),
@@ -475,4 +506,30 @@ pub(crate) fn run_test(test: impl std::future::Future<Output = ()>) {
             .expect("test runtime")
             .block_on(test);
     });
+}
+
+/// Drives snapshot switching in engine-level fixtures that do not compose a plugin host.
+pub(super) fn switch_if_requested(
+    pool: &RepositoryPool,
+    skills_root: &Path,
+    workspace_root: &Path,
+    run_id: &WorkflowRunId,
+    snapshot_id: Option<&str>,
+    now: i64,
+) -> Result<bool, crate::error::BackendError> {
+    use super::prerequisites::SkillRoleWorkspaceInitializer;
+    use ora_application::{ApplicationError, WorkflowRunWorkspaceInitializer};
+    let initializer =
+        SkillRoleWorkspaceInitializer::new(skills_root.to_path_buf(), pool.clone()).unwrap();
+    let switch = super::snapshot_switch::prepare_resume(pool, run_id, snapshot_id, |graph| {
+        Ok(initializer
+            .initialize_workspace(graph, workspace_root)
+            .map_err(ApplicationError::from_start_prerequisites_error)?)
+    })?;
+    if let Some(switch) = switch {
+        switch.apply(pool, now)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }

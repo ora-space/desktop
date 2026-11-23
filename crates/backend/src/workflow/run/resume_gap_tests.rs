@@ -6,7 +6,7 @@
 use super::last_failure::previous_failure_for_injection;
 use super::prompt::{WorkflowPromptRequest, assemble_workflow_prompt, render_previous_failure};
 use super::recovery::sweep_one_run;
-use super::snapshot_switch::switch_if_requested;
+use super::test_fixture::switch_if_requested;
 use super::test_fixture::{
     AGENT_GRAPH, ClockAt, RecordingExecutor, SeqGen, bootstrap, started_run_with,
 };
