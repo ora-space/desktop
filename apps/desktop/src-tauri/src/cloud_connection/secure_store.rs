@@ -36,7 +36,11 @@ pub(crate) trait SecureStore: Send + Sync + 'static {
     fn delete(&self, server: &CloudServer) -> Result<(), StoreError>;
 }
 
-/// Windows Credential Manager or the Linux Secret Service, through `keyring`.
+/// Windows Credential Manager or the Linux Secret Service.
+///
+/// An entry belongs to the operating-system user and one Cloud origin. Debug and packaged builds
+/// share the app identifier, and with it the same entry; the single-instance lock keeps only one
+/// of them running at a time.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct KeyringStore;
 
@@ -49,26 +53,22 @@ struct EntryValue {
     display_name: String,
 }
 
-impl KeyringStore {
-    /// Opens the entry for one server.
-    fn entry(server: &CloudServer) -> Result<keyring::Entry, StoreError> {
-        keyring::Entry::new(KEYRING_SERVICE, server.origin()).map_err(store_error)
-    }
-}
+/// Windows writes the entry itself, so it can keep the credential on this computer.
+#[cfg(windows)]
+#[path = "secure_store/windows_credential.rs"]
+mod platform;
 
-/// Keeps the platform's explanation without anything that could be the secret.
-fn store_error(error: keyring::Error) -> StoreError {
-    StoreError(error.to_string())
-}
+/// Linux goes through `keyring` to the Secret Service.
+#[cfg(not(windows))]
+#[path = "secure_store/secret_service.rs"]
+mod platform;
 
 impl SecureStore for KeyringStore {
     /// An unreadable entry is reported rather than treated as signed out, so a corrupted or
     /// foreign value is never silently overwritten by the next sign-in's assumptions.
     fn load(&self, server: &CloudServer) -> Result<Option<StoredSession>, StoreError> {
-        let raw = match Self::entry(server)?.get_password() {
-            Ok(raw) => raw,
-            Err(keyring::Error::NoEntry) => return Ok(None),
-            Err(error) => return Err(store_error(error)),
+        let Some(raw) = platform::read(KEYRING_SERVICE, server.origin())? else {
+            return Ok(None);
         };
         let value: EntryValue = serde_json::from_str(&raw)
             .map_err(|_| StoreError("the stored Cloud credential is unreadable".to_owned()))?;
@@ -89,16 +89,11 @@ impl SecureStore for KeyringStore {
             display_name: session.account.display_name.clone(),
         })
         .map_err(|error| StoreError(error.to_string()))?;
-        Self::entry(server)?
-            .set_password(&value)
-            .map_err(store_error)
+        platform::write(KEYRING_SERVICE, server.origin(), &value)
     }
 
     /// Deletes the entry if present.
     fn delete(&self, server: &CloudServer) -> Result<(), StoreError> {
-        match Self::entry(server)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(store_error(error)),
-        }
+        platform::delete(KEYRING_SERVICE, server.origin())
     }
 }

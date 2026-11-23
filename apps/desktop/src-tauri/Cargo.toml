@@ -65,18 +65,15 @@ url = "2"
 urlencoding = "2"
 tauri-plugin-single-instance = "2"
 
-# Windows Credential Manager and the Linux Secret Service (pure-Rust D-Bus, so builds need no
-# libdbus). Desktop ships for Windows and Linux only.
-[target.'cfg(windows)'.dependencies.keyring]
-version = "3"
-features = ["windows-native"]
-
+# The Linux Secret Service (pure-Rust D-Bus, so builds need no libdbus). Windows Credential
+# Manager is written directly through windows-sys so the entry does not roam. Desktop ships for
+# Windows and Linux only.
 [target.'cfg(target_os = "linux")'.dependencies.keyring]
 version = "3"
 features = ["async-secret-service", "tokio", "crypto-rust"]
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_System_Console"] }
+windows-sys = { workspace = true, features = ["Win32_Security_Credentials", "Win32_System_Console"] }
 
 [dev-dependencies]
 ora-fs = { workspace = true, features = ["test-support"] }
