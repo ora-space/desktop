@@ -324,7 +324,10 @@ mod tests {
     /// A new-session reach keeps the later processes outside the sessions of earlier claimed
     /// ones: a later job that left for its own session is reported, one in the session of an
     /// earlier claimed helper is not, and a session whose earlier members are all unclaimed
-    /// exempts nothing. Claiming still runs through the earlier parent.
+    /// exempts nothing. Claiming still runs through the earlier parent, and only later processes
+    /// count as undecided: the start tick is what keeps an earlier unreadable one out.
+    ///
+    /// Evidence for specs/test-cases/node/protocol/turn-process-fence.md case 3.
     #[test]
     fn a_new_session_reach_spares_the_sessions_of_earlier_claimed_processes() {
         let with_session = |pid, parent, session, environ| Candidate {
@@ -338,6 +341,9 @@ mod tests {
                 with_session(4, 2, 4, Environ::Marked),
                 // An earlier unmarked process in session 6 claims nothing and exempts nothing.
                 with_session(6, 1, 6, Environ::Unmarked),
+                // An earlier unreadable process in session 7 started before the period, so it is
+                // never undecided for it, although nothing exempts its session.
+                with_session(7, 1, 7, Environ::Unreadable),
                 // Later: a child of the launcher in its session, one in the helper's session,
                 // a cleared-environment job that called setsid, and one joining session 6.
                 with_session(10, 2, 2, Environ::Marked),
@@ -365,7 +371,7 @@ mod tests {
         );
         assert_eq!(
             (pids(claimed), undecided, pids(all), all_undecided),
-            (vec![12, 13], 1, vec![2, 4, 10, 11, 12, 13], 2)
+            (vec![12, 13], 1, vec![2, 4, 10, 11, 12, 13], 3)
         );
     }
 }
