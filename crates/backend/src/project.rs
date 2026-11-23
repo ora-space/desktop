@@ -94,8 +94,9 @@ impl ProjectApi {
     ///
     /// The main Workspace root must already be a directory: nothing provisions a local checkout
     /// later, so accepting a missing one would only defer the failure to every model listing,
-    /// session start, and Effect pass in that project. The check reuses the cwd resolver so a
-    /// relative root is judged against the same base it will be resolved against afterwards.
+    /// session start, and Effect pass in that project. The check is the same probe behind
+    /// `listWorkspaces`' `directory` and cwd resolution, so a relative root is judged against the
+    /// base it will be resolved against afterwards and an accepted root starts out `present`.
     ///
     /// The new main Workspace needs the Effect Targets every running Consumer already declared,
     /// and no declaration will fire again on its own. Waking here is a latency optimization only:
@@ -107,11 +108,13 @@ impl ProjectApi {
     ) -> Result<CreateProjectResponse, BackendError> {
         // A blank root joins to the base directory itself and would pass the directory check.
         if request.main_workspace_path.trim().is_empty()
-            || crate::task::absolute_project_root(
-                PathBuf::from(&request.main_workspace_path),
-                &self.relative_path_base,
+            || matches!(
+                crate::task::probe_local_directory(
+                    PathBuf::from(&request.main_workspace_path),
+                    &self.relative_path_base,
+                ),
+                crate::task::LocalDirectory::Missing(_)
             )
-            .is_err()
         {
             return Err(BackendError::new(
                 ErrorClassification::InvalidRequest,

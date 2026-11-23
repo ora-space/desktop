@@ -1,6 +1,6 @@
 use crate::error::{BackendError, ErrorClassification};
 use crate::settings::Settings;
-use crate::task::resolve_workspace_cwd;
+use crate::task::{LocalDirectory, resolve_workspace_cwd};
 use ora_application::{
     CommitWorkspaceChangesHandler, GitWorkspaceDiffReader, GitWorkspaceGitWriter,
     PushWorkspaceBranchHandler, ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope,
@@ -360,19 +360,17 @@ impl WorkspaceApi {
 
 /// Probes the directory behind one Workspace location at list time.
 ///
-/// Uses the same anchoring as cwd resolution, so a workspace reported `Present` is exactly one
-/// that session start and model discovery can resolve, and a `Missing` path is the one they
-/// would refuse.
+/// Shares the probe cwd resolution uses, so a workspace reported `Present` is exactly one that
+/// session start and model discovery can resolve, and a `Missing` path is the one they would
+/// refuse.
 fn probe_directory(location: &WorkspaceLocation, relative_path_base: &Path) -> WorkspaceDirectory {
     match location {
         WorkspaceLocation::LocalFilesystem { path } => {
-            let resolved = crate::task::resolve_local_path(PathBuf::from(path), relative_path_base);
-            if resolved.is_dir() {
-                WorkspaceDirectory::Present
-            } else {
-                WorkspaceDirectory::Missing {
+            match crate::task::probe_local_directory(PathBuf::from(path), relative_path_base) {
+                LocalDirectory::Present(_) => WorkspaceDirectory::Present,
+                LocalDirectory::Missing(resolved) => WorkspaceDirectory::Missing {
                     path: resolved.to_string_lossy().into_owned(),
-                }
+                },
             }
         }
         WorkspaceLocation::Ssh { .. } | WorkspaceLocation::RemoteTarget { .. } => {
