@@ -474,7 +474,8 @@ pub enum ConditionGeneration {
     At(Generation),
 }
 
-/// Safe explanatory fields that exclude raw configuration, paths, and error chains by contract.
+/// Safe explanatory fields that exclude raw configuration, absolute or sensitive paths, and error
+/// chains by contract; project-relative paths such as the `relativePath` parameter are allowed.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SafeConditionDetails {
     pub message: String,

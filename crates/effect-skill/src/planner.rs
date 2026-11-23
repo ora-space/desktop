@@ -148,15 +148,16 @@ impl EffectPlanner for SkillPlanner {
             .collect::<BTreeMap<_, _>>();
         let resource_path = resource_relative_path(&input.resource.descriptor);
         for item in items.values() {
-            if let ora_effect::VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) =
-                &input.resource.descriptor
-                && let Some(name) = input
-                    .observed
-                    .occupied_file_names
-                    .iter()
-                    .find(|name| name.eq_ignore_ascii_case(item.native_identity.as_str()))
+            if matches!(
+                &input.resource.descriptor,
+                ora_effect::VersionedResourceDescriptor::FilesystemDirectoryV1(_)
+            ) && let Some(name) = input
+                .observed
+                .occupied_file_names
+                .iter()
+                .find(|name| name.eq_ignore_ascii_case(item.native_identity.as_str()))
             {
-                let occupied_path = format!("{}/{name}", descriptor.relative_path);
+                let occupied_path = item_relative_path(resource_path, name);
                 conditions.push(blocking_condition_with_parameters(
                     owner.clone(),
                     ConditionSubject::DesiredEffect(item.desired_effect.clone()),
@@ -171,7 +172,7 @@ impl EffectPlanner for SkillPlanner {
             } else if let Some(preserved) =
                 preserved_by_canonical_name.get(item.native_identity.as_str())
             {
-                let conflict_path = format!("{resource_path}/{}", preserved.native_identity);
+                let conflict_path = item_relative_path(resource_path, &preserved.native_identity);
                 conditions.push(blocking_condition_with_parameters(
                     owner.clone(),
                     ConditionSubject::DesiredEffect(item.desired_effect.clone()),
@@ -275,7 +276,7 @@ fn plan_changes(
         if let Some(current) = current
             && current.fingerprint != managed_item.fingerprint
         {
-            let drifted_path = format!("{resource_path}/{}", managed_item.native_identity);
+            let drifted_path = item_relative_path(resource_path, &managed_item.native_identity);
             conditions.push(blocking_condition_with_parameters(
                 owner.clone(),
                 ConditionSubject::ManagedItem(managed_item.identity.clone()),
@@ -399,6 +400,17 @@ fn resource_relative_path(
             &descriptor.relative_path
         }
     }
+}
+
+/// Builds a `/`-separated project-relative `relativePath` parameter for one skill entry.
+///
+/// Joins the validated workspace-relative `ResourcePath` with one skill entry name and never
+/// produces an absolute filesystem path.
+fn item_relative_path(
+    resource_path: &ora_effect::ResourcePath,
+    name: impl std::fmt::Display,
+) -> String {
+    format!("{resource_path}/{name}")
 }
 
 /// Constructs one deterministic blocking fact without leaking adapter-specific details.
