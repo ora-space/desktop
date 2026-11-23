@@ -91,6 +91,7 @@ pub(super) async fn settle_cancelled_prompt<Response, H: AgentRuntimeHost>(
     pending: ora_acp::PendingSessionRequest<Response>,
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     saw_output: &mut bool,
+    followers: &mut crate::session_followers::SessionFollowers,
 ) -> Option<Result<Response, ora_acp::AcpError>>
 where
     Response: serde::de::DeserializeOwned,
@@ -102,6 +103,7 @@ where
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);
+                followers.send_update(&update.update, None);
                 let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
                     update: update.update,
                     tool_timing: None,
@@ -133,6 +135,7 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
     client: &AgentAcpClient,
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     saw_output: &mut bool,
+    followers: &mut crate::session_followers::SessionFollowers,
 ) {
     // Only drain the snapshot that was accepted before isolation was requested. Events
     // arriving after this point belong to the abandoned provider request.
@@ -147,6 +150,7 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);
+                followers.send_update(&update.update, None);
                 let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
                     update: update.update,
                     tool_timing: None,

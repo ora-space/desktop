@@ -31,7 +31,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let cleanup_deadline = tokio::time::Instant::now() + CANCELLATION_GRACE;
         let settled = tokio::time::timeout_at(cleanup_deadline, async {
             self.cancel(client, permissions).await;
-            settle_cancelled_prompt(self, &mut channel, client, pending, events, saw_output).await
+            settle_cancelled_prompt(
+                self,
+                &mut channel,
+                client,
+                pending,
+                events,
+                saw_output,
+                followers,
+            )
+            .await
         })
         .await;
         let cancellation_result = match &settled {
@@ -58,7 +67,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         } else {
             let _ = tokio::time::timeout_at(
                 cleanup_deadline,
-                drain_queued_prompt_events(self, &mut channel, client, events, saw_output),
+                drain_queued_prompt_events(
+                    self,
+                    &mut channel,
+                    client,
+                    events,
+                    saw_output,
+                    followers,
+                ),
             )
             .await;
             self.isolate_channel(channel).await;

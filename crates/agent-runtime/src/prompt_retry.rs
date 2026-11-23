@@ -52,6 +52,7 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         &(dyn Fn() -> agent_client_protocol_schema::v1::ContentBlock + Send + Sync),
     >,
     saw_output: &mut bool,
+    followers: &mut crate::session_followers::SessionFollowers,
 ) -> StalledPrompt {
     let snapshot = liveness.snapshot();
     ora_warn!(
@@ -71,7 +72,9 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
     let turn_cancel = Arc::clone(&actor.turn_cancel);
     let watchdog_deadline = Instant::now() + CANCELLATION_GRACE;
     let settled = {
-        let settle = settle_cancelled_prompt(actor, channel, &client, pending, events, saw_output);
+        let settle = settle_cancelled_prompt(
+            actor, channel, &client, pending, events, saw_output, followers,
+        );
         tokio::pin!(settle);
         loop {
             // One snapshot decides both the timer and whether to keep listening, so a cancel that
@@ -91,7 +94,8 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
             Ok(Some(Ok(_))) | Ok(Some(Err(ora_acp::AcpError::RequestFailed(_))))
         );
         if !reusable {
-            drain_queued_prompt_events(actor, channel, &client, events, saw_output).await;
+            drain_queued_prompt_events(actor, channel, &client, events, saw_output, followers)
+                .await;
         }
         let session_invalid = matches!(&settled, Ok(Some(Err(error))) if super::support::provider_session_invalid(error));
         return StalledPrompt::Cancelled {
@@ -131,7 +135,8 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
             Ok(Some(Ok(_))) | Ok(Some(Err(ora_acp::AcpError::RequestFailed(_))))
         );
         if !matches!(settled, Ok(Some(_))) {
-            drain_queued_prompt_events(actor, channel, &client, events, saw_output).await;
+            drain_queued_prompt_events(actor, channel, &client, events, saw_output, followers)
+                .await;
         }
         let failure = agent_timed_out("agent prompt made no progress");
         return StalledPrompt::Failed(if answered {

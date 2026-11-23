@@ -318,14 +318,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             // At expiry, drain only the inputs already ready at the boundary. A flowing
             // queue of unrelated notifications must not postpone a timeout indefinitely.
             let input = if let Some(deadline) = liveness.wait_deadline() {
-                if tokio::time::Instant::now() >= deadline {
-                    input_state.at_wait_deadline(
-                        deadline,
+                let boundary = input_state.boundary_deadline().unwrap_or(deadline);
+                if tokio::time::Instant::now() >= boundary {
+                    let next = input_state.at_wait_deadline(
+                        boundary,
                         &mut channel.events,
                         &mut channel.controls,
                         &mut self.commands,
                         &self.turn_cancel,
-                    )
+                    );
+                    if next.is_none() && boundary != deadline {
+                        input_state.clear_wait_boundary();
+                        continue;
+                    }
+                    next
                 } else if self.turn_cancel.deadline().is_none()
                     && let Some(permission) = permissions.take_deferred()
                 {
@@ -373,6 +379,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     &mut request,
                     record_prompt.attempt_instruction.as_deref(),
                     &mut saw_output,
+                    &mut followers,
                 )
                 .await
                 {
@@ -464,7 +471,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Event(SessionEvent::Permission(permission)) => {
                     if let Err(error) = permissions
-                        .answer(&client, &self.session.id, permission, &mut liveness)
+                        .answer(
+                            &client,
+                            &self.session.id,
+                            permission,
+                            &mut liveness,
+                            input_state.boundary_deadline(),
+                        )
                         .await
                     {
                         ora_warn!(session_id = %self.session.id, error = %error, "failed to answer permission request");
@@ -479,6 +492,17 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {
                         continue;
+                    }
+                    if !permissions.pending.is_empty() {
+                        // The prompt answered during arbitration. Release its deferred requests before reusing the channel.
+                        let _ = tokio::time::timeout(
+                            CANCELLATION_GRACE,
+                            crate::prompt_permissions::cancel_pending(
+                                &client,
+                                &permissions.pending,
+                            ),
+                        )
+                        .await;
                     }
                     match pending.finish(response) {
                         Ok(response) => {

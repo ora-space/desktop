@@ -22,7 +22,6 @@ use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{
     CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate, SessionUpdate,
 };
-use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_logging::{ora_debug, ora_warn};
 use tokio::time::timeout;
 

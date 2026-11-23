@@ -50,6 +50,18 @@ pub(super) struct ActiveInputState {
 }
 
 impl ActiveInputState {
+    /// The original snapshot must finish even if its first progress frame renews the clock.
+    pub(super) fn boundary_deadline(&self) -> Option<tokio::time::Instant> {
+        self.wait_boundary
+            .as_ref()
+            .map(|boundary| boundary.deadline)
+    }
+
+    /// Release the drained snapshot before returning to the renewed clock.
+    pub(super) fn clear_wait_boundary(&mut self) {
+        self.wait_boundary = None;
+    }
+
     /// Resolve the finite queue that was ready when this deadline fired. New unrelated traffic
     /// cannot starve expiry, while a ready terminal response retains its FIFO ordering.
     pub(super) fn at_wait_deadline(
@@ -207,6 +219,36 @@ mod tests {
             Some(ActiveInput::Command(
                 crate::RuntimeCommand::CancelActivePrompt
             ))
+        ));
+    }
+
+    /// A renewal changes the progress clock but leaves the original FIFO snapshot in charge.
+    #[tokio::test(start_paused = true)]
+    async fn renewed_wait_finishes_the_original_batch_before_resuming_work() {
+        let (sender, mut events) = mpsc::channel(/*buffer*/ 2);
+        let (_controls, mut controls) = mpsc::unbounded_channel();
+        let (_commands, mut commands) = mpsc::unbounded_channel();
+        let terminal = crate::routing::tests::session_response("session-1").await;
+        sender
+            .try_send(SessionEvent::update(SessionNotification::new(
+                "session-1",
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+            )))
+            .unwrap();
+        sender.try_send(SessionEvent::Response(terminal)).unwrap();
+        let mut state = ActiveInputState::default();
+        let cancel = crate::turn_cancel::TurnCancelState::default();
+        let original = tokio::time::Instant::now();
+        assert!(matches!(
+            state.at_wait_deadline(original, &mut events, &mut controls, &mut commands, &cancel),
+            Some(ActiveInput::Event(SessionEvent::Update(_, _)))
+        ));
+        let renewed = original + std::time::Duration::from_secs(1800);
+        let boundary = state.boundary_deadline().unwrap_or(renewed);
+        assert_eq!(boundary, original);
+        assert!(matches!(
+            state.at_wait_deadline(boundary, &mut events, &mut controls, &mut commands, &cancel),
+            Some(ActiveInput::Event(SessionEvent::Response(_)))
         ));
     }
 

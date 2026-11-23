@@ -1079,6 +1079,55 @@ fn renewed_wait_resumes_a_deferred_permission() {
     });
 }
 
+/// A ready provider completion wins the whole batch, including a deferred request with no selectable option.
+#[test]
+fn renewed_wait_settles_a_ready_terminal_before_deferred_work() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(1799)).await;
+        let terminal = crate::routing::tests::session_response("waiting").await;
+        let request = ora_acp::PermissionRequest {
+            request_id: serde_json::from_value(json!("inert")).unwrap(),
+            request: serde_json::from_value(
+                json!({"sessionId":"waiting","toolCall":{"toolCallId":"fixture"},"options":[]}),
+            )
+            .unwrap(),
+        };
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::Permission(request))
+            .unwrap();
+        let progress = serde_json::from_value(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"continuing"}})).unwrap();
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::update(
+                SessionNotification::new("waiting", progress),
+            ))
+            .unwrap();
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::Response(terminal))
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let reply = fixture.next_frame().await;
+        assert_eq!(reply["id"], "inert");
+        assert_eq!(reply["result"]["outcome"]["outcome"], "cancelled");
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        assert!(fixture.frames.try_recv().is_err());
+        fixture.shutdown().await;
+    });
+}
+
 /// Traffic already queued behind a non-cancel response is recorded before the old route closes.
 #[test]
 fn unconfirmed_wait_drains_the_queued_tail_before_failure() {
@@ -1091,6 +1140,13 @@ fn unconfirmed_wait_drains_the_queued_tail_before_failure() {
             .await
             .unwrap();
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        let mut follower = fixture
+            .manager
+            .load_session(ora_contracts::LoadSessionRequest {
+                session_id: "waiting".into(),
+            })
+            .await
+            .unwrap();
         let (configured, done) = oneshot::channel();
         fixture
             .agent
@@ -1105,7 +1161,13 @@ fn unconfirmed_wait_drains_the_queued_tail_before_failure() {
         tokio::time::advance(Duration::from_secs(1800)).await;
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");
         let routes = &fixture.supervisor.routes;
-        // Both events are ready in a single actor poll, with terminal first in FIFO order.
+        let settling: SessionUpdate = serde_json::from_value(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"settling"}})).unwrap();
+        routes
+            .route_event(crate::routing::SessionEvent::update(
+                SessionNotification::new("waiting", settling.clone()),
+            ))
+            .unwrap();
+        // Settlement consumes the first update and the response. The drain consumes the tail.
         routes
             .route_event(crate::routing::SessionEvent::Response(terminal))
             .unwrap();
@@ -1116,6 +1178,9 @@ fn unconfirmed_wait_drains_the_queued_tail_before_failure() {
             ))
             .unwrap();
         assert!(
+            matches!(stream.recv().await.unwrap().unwrap(), PromptSessionEvent::SessionUpdate { update, .. } if update == settling)
+        );
+        assert!(
             matches!(stream.recv().await.unwrap().unwrap(), PromptSessionEvent::SessionUpdate { update, .. } if update == tail)
         );
         assert_eq!(
@@ -1123,6 +1188,32 @@ fn unconfirmed_wait_drains_the_queued_tail_before_failure() {
             &PublicError::AgentTimedOut(EmptyErrorParams {})
         );
         assert!(stream.recv().await.is_none());
+        let mut received = Vec::new();
+        loop {
+            match follower
+                .recv()
+                .await
+                .expect("follower error after the boundary")
+                .unwrap()
+            {
+                ora_contracts::LoadSessionEvent::SessionUpdate { update, .. }
+                    if update == tail || update == settling =>
+                {
+                    received.push(update)
+                }
+                ora_contracts::LoadSessionEvent::TurnEnded {
+                    stop_reason: StopReason::Cancelled,
+                    ..
+                } => break,
+                _ => {}
+            }
+        }
+        assert_eq!(received, vec![settling, tail]);
+        assert_eq!(
+            follower.recv().await.unwrap().unwrap_err().public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        assert!(follower.recv().await.is_none());
         fixture.shutdown().await;
     });
 }

@@ -3,7 +3,9 @@ use crate::RuntimeError;
 use crate::connection::AgentAcpClient;
 use crate::prompt_liveness::PromptLiveness;
 use crate::support::{pick_auto_allow_option, respond_permission, runtime_unavailable_because};
-use agent_client_protocol_schema::v1::RequestId;
+use agent_client_protocol_schema::v1::{
+    RequestId, RequestPermissionOutcome, RequestPermissionResponse,
+};
 use ora_acp::PermissionRequest;
 use ora_contracts::RespondToPermissionRequest;
 use ora_domain::SessionId;
@@ -35,6 +37,7 @@ impl PromptPermissions {
         session_id: &SessionId,
         permission: PermissionRequest,
         liveness: &mut PromptLiveness,
+        boundary_deadline: Option<Instant>,
     ) -> Result<(), RuntimeError> {
         let id = permission.request_id.to_string();
         self.pending.entry(id.clone()).or_insert_with(|| {
@@ -48,7 +51,7 @@ impl PromptPermissions {
                     .collect(),
             )
         });
-        let deadline = liveness.wait_deadline();
+        let deadline = boundary_deadline.or(liveness.wait_deadline());
         if deadline.is_some_and(|end| Instant::now() >= end) {
             self.deferred.push_back(permission);
             return Ok(());
@@ -80,5 +83,20 @@ impl PromptPermissions {
         }
         liveness.permission_settled(&permission.request.tool_call);
         Ok(())
+    }
+}
+
+/// Release pending requests without cancelling a prompt that already has a terminal result.
+pub(super) async fn cancel_pending(
+    client: &AgentAcpClient,
+    permissions: &HashMap<String, (RequestId, Vec<String>)>,
+) {
+    for (request_id, _) in permissions.values() {
+        let _ = client
+            .respond(
+                request_id,
+                &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+            )
+            .await;
     }
 }
