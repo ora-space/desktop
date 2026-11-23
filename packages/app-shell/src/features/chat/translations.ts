@@ -377,6 +377,18 @@ export const chatTranslations = {
     "chat.agentEffectRecovery.refused":
       "恢复未完成：{{message}}。外部状态与记录不一致，请检查工作区目录后重试。",
     "chat.agentEffectFailure.title": "Agent 技能同步失败",
+    "chat.agentEffectFailure.reason.preserved_item_conflict":
+      "存在未由 Ora 管理的旧技能目录，无法覆盖：{{relativePath}}",
+    "chat.agentEffectFailure.reason.skill_directory_link":
+      "技能目录不支持符号链接或 Windows junction：{{relativePath}}",
+    "chat.agentEffectFailure.reason.unsafe_skill_directory":
+      "技能目录路径不安全或被不受支持的条目占用：{{relativePath}}",
+    "chat.agentEffectFailure.reason.managed_item_drift":
+      "由 Ora 管理的技能目录在外部被修改，无法安全覆盖：{{relativePath}}",
+    "chat.agentEffectFailure.reason.managed_item_drift_generic":
+      "由 Ora 管理的技能目录在外部被修改，无法安全覆盖。",
+    "chat.agentEffectFailure.reason.recovery_required":
+      "存在未完成的技能同步操作，需要手动恢复。",
     "chat.agentEffectFailure.preservedHint":
       "请移走上列旧技能目录，然后重新同步。",
     "chat.agentEffectFailure.linkHint":
@@ -842,6 +854,18 @@ export const chatTranslations = {
     "chat.agentEffectRecovery.refused":
       "Recovery did not complete: {{message}}. External state no longer matches the journal; check the workspace directory and try again.",
     "chat.agentEffectFailure.title": "Agent Skill sync failed",
+    "chat.agentEffectFailure.reason.preserved_item_conflict":
+      "Unmanaged Skill directory cannot be overwritten: {{relativePath}}",
+    "chat.agentEffectFailure.reason.skill_directory_link":
+      "Symbolic links and Windows junctions are not supported: {{relativePath}}",
+    "chat.agentEffectFailure.reason.unsafe_skill_directory":
+      "Skill directory path is unsafe or occupied by an unsupported entry: {{relativePath}}",
+    "chat.agentEffectFailure.reason.managed_item_drift":
+      "A Skill directory managed by Ora changed outside Ora and cannot be overwritten safely: {{relativePath}}",
+    "chat.agentEffectFailure.reason.managed_item_drift_generic":
+      "A Skill directory managed by Ora changed outside Ora and cannot be overwritten safely.",
+    "chat.agentEffectFailure.reason.recovery_required":
+      "An incomplete Skill sync operation requires manual recovery.",
     "chat.agentEffectFailure.preservedHint":
       "Move the old Skill directories listed above out of the workspace, then retry the sync.",
     "chat.agentEffectFailure.linkHint":

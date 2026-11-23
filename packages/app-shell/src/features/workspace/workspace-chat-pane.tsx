@@ -11,6 +11,7 @@ import { useStore } from "zustand";
 import { useChatStore } from "../../chat-store-context";
 import type { AgentEffectReadiness } from "../../state/hooks/use-agent-effect-readiness";
 import type { AgentReadiness } from "../../state/hooks/use-target-agent-readiness";
+import { localizeAgentEffectFailureSummary } from "../chat/agent-effect-failure-reason";
 import { ChatView } from "../chat/chat-view";
 import { ComposerContextBar } from "../chat/composer-context-bar";
 import { SessionHistoryBanner } from "../chat/session-history-banner";
@@ -131,7 +132,7 @@ export function WorkspaceChatPane({
       ? t("chat.workspaceDirectoryMissing")
       : canChat && agentEffectReadiness.kind === "failed"
         ? t("chat.agentEffectsFailed", {
-            message: agentEffectReadiness.message,
+            message: localizeAgentEffectFailureSummary(agentEffectReadiness, t),
           })
         : canChat && agentEffectReadiness.kind === "blocked"
           ? t("chat.agentEffectsNotReady")

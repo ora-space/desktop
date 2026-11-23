@@ -146,6 +146,7 @@ describe("useAgentEffectReadiness", () => {
           retry: "manual" as const,
           generation: 1n,
           message: "A Managed Item changed outside Ora.",
+          parameters: { relativePath: ".agents/skills/grilling" },
           firstObservedAt: 1n,
           lastObservedAt: 1n,
         },
@@ -166,12 +167,13 @@ describe("useAgentEffectReadiness", () => {
           code: "preserved_item_conflict",
           retry: "on_change" as const,
           message:
-            "A Preserved Item already occupies the required native identity: grilling.",
+            "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+          parameters: { relativePath: ".agents/skills/grilling" },
         },
       ],
     };
     expect(effectTargetFailureMessage(preserved)).toBe(
-      "A Preserved Item already occupies the required native identity: grilling.",
+      "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
     );
     expect(effectTargetStatusPollInterval(preserved)).toBe(10_000);
 
@@ -236,7 +238,24 @@ describe("useAgentEffectReadiness", () => {
             retry: "on_change" as const,
             generation: 1n,
             message:
-              "A Preserved Item already occupies the required native identity: grilling.",
+              "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+            parameters: { relativePath: ".agents/skills/grilling" },
+            firstObservedAt: 1n,
+            lastObservedAt: 1n,
+          },
+          {
+            id: "condition-2",
+            ownerKind: "resource",
+            ownerId: "resource-2",
+            subjectKind: "desired_effect",
+            subjectId: "desired-1",
+            code: "preserved_item_conflict",
+            impact: "blocking" as const,
+            retry: "on_change" as const,
+            generation: 1n,
+            message:
+              "Move the unmanaged directory that occupies the skill directory: .opencode/skills/grilling",
+            parameters: { relativePath: ".opencode/skills/grilling" },
             firstObservedAt: 1n,
             lastObservedAt: 1n,
           },
@@ -253,12 +272,19 @@ describe("useAgentEffectReadiness", () => {
       expect(result.current).toEqual({
         kind: "failed",
         message:
-          "A Preserved Item already occupies the required native identity: grilling.",
+          "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
         reasons: [
           {
             code: "preserved_item_conflict",
             message:
-              "A Preserved Item already occupies the required native identity: grilling.",
+              "Move the unmanaged directory that occupies the skill directory: .agents/skills/grilling",
+            parameters: { relativePath: ".agents/skills/grilling" },
+          },
+          {
+            code: "preserved_item_conflict",
+            message:
+              "Move the unmanaged directory that occupies the skill directory: .opencode/skills/grilling",
+            parameters: { relativePath: ".opencode/skills/grilling" },
           },
         ],
         targetId: status.status!.targetId,

@@ -146,6 +146,7 @@ impl EffectPlanner for SkillPlanner {
             .iter()
             .map(|item| (item.native_identity.as_str().to_ascii_lowercase(), item))
             .collect::<BTreeMap<_, _>>();
+        let resource_path = resource_relative_path(&input.resource.descriptor);
         for item in items.values() {
             if let ora_effect::VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) =
                 &input.resource.descriptor
@@ -155,37 +156,31 @@ impl EffectPlanner for SkillPlanner {
                     .iter()
                     .find(|name| name.eq_ignore_ascii_case(item.native_identity.as_str()))
             {
-                conditions.push(blocking_condition(
+                let occupied_path = format!("{}/{name}", descriptor.relative_path);
+                conditions.push(blocking_condition_with_parameters(
                     owner.clone(),
                     ConditionSubject::DesiredEffect(item.desired_effect.clone()),
                     "unsafe_skill_directory",
                     input.generation,
                     format!(
-                        "Move the regular file that occupies the skill directory: {}/{name}",
-                        descriptor.relative_path
+                        "Move the regular file that occupies the skill directory: {occupied_path}"
                     ),
+                    BTreeMap::from([("relativePath".to_string(), occupied_path)]),
                     ConditionRetry::OnChange,
                 ));
             } else if let Some(preserved) =
                 preserved_by_canonical_name.get(item.native_identity.as_str())
             {
-                let relative_path = match &input.resource.descriptor {
-                    ora_effect::VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) => {
-                        &descriptor.relative_path
-                    }
-                    ora_effect::VersionedResourceDescriptor::FilesystemFileV1(descriptor) => {
-                        &descriptor.relative_path
-                    }
-                };
-                conditions.push(blocking_condition(
+                let conflict_path = format!("{resource_path}/{}", preserved.native_identity);
+                conditions.push(blocking_condition_with_parameters(
                     owner.clone(),
                     ConditionSubject::DesiredEffect(item.desired_effect.clone()),
                     "preserved_item_conflict",
                     input.generation,
                     format!(
-                        "Move the unmanaged directory that occupies the skill directory: {relative_path}/{}",
-                        preserved.native_identity
+                        "Move the unmanaged directory that occupies the skill directory: {conflict_path}"
                     ),
+                    BTreeMap::from([("relativePath".to_string(), conflict_path)]),
                     ConditionRetry::OnChange,
                 ));
             }
@@ -210,6 +205,7 @@ impl EffectPlanner for SkillPlanner {
         };
         let changes = plan_changes(
             input.generation,
+            resource_path,
             input.managed,
             &observed_managed,
             &projection,
@@ -265,6 +261,7 @@ fn classify_observation<'a>(
 /// Plans only ledger-authorized mutations and reports drift instead of guessing external state.
 fn plan_changes(
     generation: Generation,
+    resource_path: &ora_effect::ResourcePath,
     managed: &[ManagedItem],
     observed: &BTreeMap<ManagedIdentity, &ora_effect::ObservedItem>,
     projection: &ResourceProjection,
@@ -278,12 +275,14 @@ fn plan_changes(
         if let Some(current) = current
             && current.fingerprint != managed_item.fingerprint
         {
-            conditions.push(blocking_condition(
+            let drifted_path = format!("{resource_path}/{}", managed_item.native_identity);
+            conditions.push(blocking_condition_with_parameters(
                 owner.clone(),
                 ConditionSubject::ManagedItem(managed_item.identity.clone()),
                 "managed_item_drift",
                 generation,
                 "A Managed Item changed outside Ora and cannot be overwritten safely.",
+                BTreeMap::from([("relativePath".to_string(), drifted_path)]),
                 ConditionRetry::Manual,
             ));
             continue;
@@ -388,6 +387,20 @@ fn materialize_change(
     }))
 }
 
+/// Returns the declared workspace-relative root path of a filesystem Resource.
+fn resource_relative_path(
+    descriptor: &ora_effect::VersionedResourceDescriptor,
+) -> &ora_effect::ResourcePath {
+    match descriptor {
+        ora_effect::VersionedResourceDescriptor::FilesystemDirectoryV1(descriptor) => {
+            &descriptor.relative_path
+        }
+        ora_effect::VersionedResourceDescriptor::FilesystemFileV1(descriptor) => {
+            &descriptor.relative_path
+        }
+    }
+}
+
 /// Constructs one deterministic blocking fact without leaking adapter-specific details.
 pub(super) fn blocking_condition(
     owner: ConditionOwner,
@@ -395,6 +408,27 @@ pub(super) fn blocking_condition(
     code: &'static str,
     generation: Generation,
     message: impl Into<String>,
+    retry: ConditionRetry,
+) -> ConditionProposal {
+    blocking_condition_with_parameters(
+        owner,
+        subject,
+        code,
+        generation,
+        message,
+        BTreeMap::new(),
+        retry,
+    )
+}
+
+/// Constructs one deterministic blocking fact with safe localization parameters.
+pub(super) fn blocking_condition_with_parameters(
+    owner: ConditionOwner,
+    subject: ConditionSubject,
+    code: &'static str,
+    generation: Generation,
+    message: impl Into<String>,
+    parameters: BTreeMap<String, String>,
     retry: ConditionRetry,
 ) -> ConditionProposal {
     ConditionProposal {
@@ -406,7 +440,7 @@ pub(super) fn blocking_condition(
         generation: ConditionGeneration::At(generation),
         safe_details: SafeConditionDetails {
             message: message.into(),
-            parameters: BTreeMap::new(),
+            parameters,
         },
     }
 }
