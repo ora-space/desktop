@@ -1,6 +1,6 @@
 use crate::error::{BackendError, ErrorClassification};
 use crate::settings::Settings;
-use crate::task::{LocalDirectory, resolve_workspace_cwd};
+use crate::task::resolve_workspace_cwd;
 use ora_application::{
     CommitWorkspaceChangesHandler, GitWorkspaceDiffReader, GitWorkspaceGitWriter,
     PushWorkspaceBranchHandler, ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope,
@@ -23,6 +23,10 @@ use ora_db::{RepositoryPool, SqliteWorkspaceRepository, SqliteWorktreeRepository
 use ora_domain::{Workspace, WorkspaceId, WorkspaceLocation};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+
+mod local_directory;
+
+pub(crate) use local_directory::{LocalDirectory, probe_local_directory};
 
 /// Owns workspace queries, live checkout resolution, root configuration, and Git review.
 ///
@@ -366,7 +370,7 @@ impl WorkspaceApi {
 fn probe_directory(location: &WorkspaceLocation, relative_path_base: &Path) -> WorkspaceDirectory {
     match location {
         WorkspaceLocation::LocalFilesystem { path } => {
-            match crate::task::probe_local_directory(PathBuf::from(path), relative_path_base) {
+            match probe_local_directory(PathBuf::from(path), relative_path_base) {
                 LocalDirectory::Present(_) => WorkspaceDirectory::Present,
                 LocalDirectory::Missing(resolved) => WorkspaceDirectory::Missing {
                     path: resolved.to_string_lossy().into_owned(),

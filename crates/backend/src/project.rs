@@ -109,11 +109,11 @@ impl ProjectApi {
         // A blank root joins to the base directory itself and would pass the directory check.
         if request.main_workspace_path.trim().is_empty()
             || matches!(
-                crate::task::probe_local_directory(
+                crate::workspace::probe_local_directory(
                     PathBuf::from(&request.main_workspace_path),
                     &self.relative_path_base,
                 ),
-                crate::task::LocalDirectory::Missing(_)
+                crate::workspace::LocalDirectory::Missing(_)
             )
         {
             return Err(BackendError::new(
