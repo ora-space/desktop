@@ -44,9 +44,16 @@ pub enum TurnBoundaryPlatform {
 }
 
 impl TurnBoundaryPlatform {
-    /// The platform this Node runs on; the Node is built for Linux only.
-    pub fn current() -> Self {
-        Self::Linux
+    /// The platform this Node is built for; `None` on one no entry can name, where no version
+    /// is verified.
+    pub fn current() -> Option<Self> {
+        if cfg!(target_os = "linux") {
+            Some(Self::Linux)
+        } else if cfg!(target_os = "windows") {
+            Some(Self::Windows)
+        } else {
+            None
+        }
     }
 }
 
@@ -56,7 +63,7 @@ impl TurnCancelConfig {
         self.turn_boundary.iter().any(|boundary| {
             &boundary.plugin == plugin
                 && &boundary.version == version
-                && boundary.platform == TurnBoundaryPlatform::current()
+                && Some(boundary.platform) == TurnBoundaryPlatform::current()
         })
     }
 }
