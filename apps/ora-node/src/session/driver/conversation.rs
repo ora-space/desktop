@@ -1,9 +1,11 @@
 //! Serialized conversation and turn outcomes.
 use super::*;
 mod admission;
+mod book;
 mod cancel;
 use crate::session::stop::turn::{TurnProcesses, TurnStartCell, TurnStop};
-pub(super) use cancel::{Acceptance, Keep, TurnBook, pending_cancel_bound, settle_before_start};
+pub(super) use book::{Acceptance, TurnBook, pending_cancel_bound, settle_before_start};
+pub(super) use cancel::Keep;
 use ora_node_protocol::TurnCancelOutcome;
 
 /// How one running turn stopped.
@@ -49,7 +51,7 @@ pub(super) struct Conversation<'a, L: SessionLedger> {
     pub(super) processes: TurnProcesses,
     pub(super) turn_cancel: &'a crate::session::TurnCancelConfig,
     /// Acceptance times of pending cancels, written by the protocol side at durable acceptance.
-    pub(super) cancel_acceptance: &'a cancel::Acceptance,
+    pub(super) cancel_acceptance: &'a book::Acceptance,
     /// The stop clock the end decision anchors together with itself.
     pub(super) stop_config: &'a crate::SessionStopConfig,
     /// Turns that already have their own result, so a later cancel of one is `already_ended`,
