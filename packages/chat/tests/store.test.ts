@@ -122,6 +122,83 @@ test("loads provider history and reconstructs turns from message boundaries", as
   });
 });
 
+test("a follower timeout preserves replay and fails only the ended live turn", async () => {
+  const timeout = new RemoteContractError(
+    {
+      code: "agent_timed_out",
+      params: {},
+      requestId: "00000000-0000-4000-8000-000000000000",
+    },
+    null,
+  );
+  const store = createChatStore(
+    {
+      load: async function* () {
+        yield textEvent("user_message_chunk", "earlier", "user-1");
+        yield { type: "turn_ended", stopReason: "end_turn" } as const;
+        yield textEvent("user_message_chunk", "current", "user-2");
+        yield textEvent("agent_message_chunk", "partial output", "agent-2");
+        yield { type: "turn_ended", stopReason: "cancelled" } as const;
+        throw timeout;
+      },
+      prompt: () => events<PromptSessionEvent>([]),
+      respondToPermission: async () => ({}),
+      setConfig: async () => ({ configOptions: [] }),
+    },
+    { describeError: () => "turn timed out" },
+  );
+  await store.getState().loadSession("ora-1");
+  const conversation = store.getState().conversations["ora-1"]!;
+  assert.equal(conversation.isLoaded, true);
+  assert.equal(conversation.isLoading, false);
+  assert.equal(conversation.isResponding, false);
+  assert.equal(conversation.error, null);
+  assert.deepEqual(
+    conversation.turns.map((turn) => [
+      turn.userMessage.content,
+      turn.status,
+      turn.error,
+    ]),
+    [
+      ["earlier", "completed", null],
+      ["current", "failed", "turn timed out"],
+    ],
+  );
+  assert.equal(conversation.turns[1]?.items[0]?.kind, "message");
+});
+
+test("a timeout during historical replay still fails the load", async () => {
+  const timeout = new RemoteContractError(
+    {
+      code: "agent_timed_out",
+      params: {},
+      requestId: "00000000-0000-4000-8000-000000000000",
+    },
+    null,
+  );
+  const store = createChatStore({
+    load: async function* () {
+      yield textEvent("user_message_chunk", "from history", "old");
+      yield {
+        type: "turn_ended",
+        stopReason: "cancelled",
+        recordedAt: "2026-11-23T00:00:00Z",
+      } as const;
+      throw timeout;
+    },
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  });
+  await assert.rejects(
+    store.getState().loadSession("ora-1"),
+    (error) => error === timeout,
+  );
+  const conversation = store.getState().conversations["ora-1"]!;
+  assert.equal(conversation.isLoaded, false);
+  assert.deepEqual(conversation.turns, []);
+});
+
 test("restores bubble times from recordedAt instead of the load clock", async () => {
   const recordedAt = "2026-09-02T09:15:00+08:00";
   const expected = Date.parse(recordedAt);
