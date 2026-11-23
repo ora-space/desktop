@@ -36,46 +36,50 @@ where
             return;
         };
         let result = self.inner.ports.api.me(&server, &stored.token).await;
-        if matches!(result, Err(CallError::Rejected)) {
-            // Deleting first means a crash right after leaves no token that is known to be dead.
-            if let Err(error) = self.delete(&server).await {
-                ora_warn!(operation = "cloud_connection.check", error = %error, "failed to delete a rejected Cloud token");
-            }
-        }
-        let renamed = self.change(|state| {
+        let (renamed, ended) = self.change(|state| {
             if state.epoch != epoch {
-                return None;
+                return (None, false);
             }
-            let (_, session) = state.phase.configured()?;
+            let Some((_, session)) = state.phase.configured() else {
+                return (None, false);
+            };
             let Session::Active { stored: current, reach } = session else {
-                return None;
+                return (None, false);
             };
             if current.token != stored.token {
-                return None;
+                return (None, false);
             }
             match result {
                 Ok(account) => {
                     *reach = Reach::Confirmed;
-                    (current.account != account).then(|| {
+                    let renamed = (current.account != account).then(|| {
                         current.account = account;
                         current.clone()
-                    })
+                    });
+                    (renamed, false)
                 }
                 Err(CallError::Rejected) => {
                     *session = Session::NeedsSignIn;
-                    None
+                    (None, true)
                 }
                 Err(CallError::Unreachable(message)) => {
                     ora_info!(operation = "cloud_connection.check", outcome = "unreachable", error = %message, "Cloud server unreachable");
                     *reach = Reach::Unreachable;
-                    None
+                    (None, false)
                 }
                 Err(CallError::Request(message)) => {
                     ora_warn!(operation = "cloud_connection.check", error = %message, "unexpected Cloud answer");
-                    None
+                    (None, false)
                 }
             }
         });
+        // The entry is deleted only when this answer ended the session it was asked about: a
+        // late 401 for a token that was since signed out and replaced must not delete the entry
+        // the newer sign-in wrote. A crash before the delete leaves a dead token that the next
+        // startup check rejects again.
+        if ended && let Err(error) = self.delete(&server).await {
+            ora_warn!(operation = "cloud_connection.check", error = %error, "failed to delete a rejected Cloud token");
+        }
         if let Some(stored) = renamed
             && let Err(error) = self.save(&server, stored).await
         {
@@ -131,8 +135,16 @@ where
                 };
                 match self.save(&server, stored.clone()).await {
                     // Without the secure store there is nowhere safe to keep the token, so it is
-                    // dropped rather than held in memory or written in plain text.
-                    Err(error) => Session::StorageUnavailable { reason: error.0 },
+                    // dropped rather than held in memory or written in plain text, and the server
+                    // is asked (best effort) to revoke the token it just issued.
+                    Err(error) => {
+                        if let Err(revoke) =
+                            self.inner.ports.api.logout(&server, &stored.token).await
+                        {
+                            ora_info!(operation = "cloud_connection.login", outcome = "revoke_unconfirmed", error = ?revoke, "could not revoke a token the secure store refused");
+                        }
+                        Session::StorageUnavailable { reason: error.0 }
+                    }
                     Ok(()) => Session::Active {
                         stored,
                         reach: Reach::Confirmed,
@@ -155,23 +167,27 @@ where
         }
     }
 
-    /// Revokes a token on its server and deletes it locally; reports whether the server confirmed.
+    /// Deletes a token locally, then asks its server to revoke it with the copy still in memory,
+    /// whether or not the delete worked. Returns whether the server confirmed, and the delete's
+    /// outcome.
     pub(super) async fn forget(
         &self,
         server: CloudServer,
         stored: StoredSession,
-    ) -> CloudRevocation {
-        if let Err(error) = self.delete(&server).await {
+    ) -> (CloudRevocation, Result<(), StoreError>) {
+        let deleted = self.delete(&server).await;
+        if let Err(error) = &deleted {
             ora_warn!(operation = "cloud_connection.logout", error = %error, "failed to delete the Cloud token");
         }
-        match self.inner.ports.api.logout(&server, &stored.token).await {
+        let revocation = match self.inner.ports.api.logout(&server, &stored.token).await {
             // 401 means the server no longer knows the token, which is what revoking wants.
             Ok(()) | Err(CallError::Rejected) => CloudRevocation::Confirmed,
             Err(CallError::Unreachable(message) | CallError::Request(message)) => {
                 ora_info!(operation = "cloud_connection.logout", outcome = "unconfirmed", error = %message, "Cloud revocation not confirmed");
                 CloudRevocation::Unconfirmed
             }
-        }
+        };
+        (revocation, deleted)
     }
 
     /// Reads the secure store off the async workers.

@@ -264,8 +264,9 @@ where
         self.snapshot()
     }
 
-    /// Signs out: revokes the token on the server (best effort), deletes it from the secure store
-    /// and forgets it in memory. The local state is cleared even when the server is unreachable.
+    /// Signs out: deletes the token from the secure store, forgets it in memory and asks the
+    /// server to revoke it. The local state is cleared even when the server is unreachable; when
+    /// the secure store refuses the delete, the session reports the store instead of "signed out".
     pub(crate) async fn logout(&self) -> LogoutCloudResponse {
         self.wait_ready().await;
         let held = self.change(|state| {
@@ -275,7 +276,7 @@ where
             let previous = std::mem::replace(session, Session::SignedOut { failure: None });
             state.epoch += 1;
             match previous {
-                Session::Active { stored, .. } => Some((server, stored)),
+                Session::Active { stored, .. } => Some((state.epoch, server, stored)),
                 Session::SignedOut { .. }
                 | Session::SigningIn { .. }
                 | Session::NeedsSignIn
@@ -283,7 +284,22 @@ where
             }
         });
         let revocation = match held {
-            Some((server, stored)) => self.forget(server, stored).await,
+            Some((epoch, server, stored)) => {
+                let (revocation, deleted) = self.forget(server, stored).await;
+                if let Err(error) = deleted {
+                    self.change(|state| {
+                        if state.epoch != epoch {
+                            return;
+                        }
+                        if let Some((_, session)) = state.phase.configured()
+                            && matches!(session, Session::SignedOut { failure: None })
+                        {
+                            *session = Session::StorageUnavailable { reason: error.0 };
+                        }
+                    });
+                }
+                revocation
+            }
             None => CloudRevocation::Confirmed,
         };
         LogoutCloudResponse {

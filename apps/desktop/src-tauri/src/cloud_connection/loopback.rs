@@ -20,8 +20,9 @@ const MAX_REQUEST_HEAD: usize = 8 * 1024;
 /// connections; each is handled on its own task, so a silent one only holds itself.
 const REQUEST_HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 
-const SIGNED_IN_PAGE: &str = "<!doctype html><meta charset=\"utf-8\"><title>Ora</title>\
-<p>已登录，可以回到 Ora 了。</p><p>Signed in. You can return to Ora.</p>";
+/// Shown before the code is exchanged, so it claims only that the approval arrived.
+const RECEIVED_PAGE: &str = "<!doctype html><meta charset=\"utf-8\"><title>Ora</title>\
+<p>已收到授权，请回到 Ora。</p><p>Authorization received. Return to Ora.</p>";
 const DENIED_PAGE: &str = "<!doctype html><meta charset=\"utf-8\"><title>Ora</title>\
 <p>登录没有完成，可以回到 Ora 重试。</p><p>Sign-in did not complete. Return to Ora to try again.</p>";
 
@@ -100,7 +101,7 @@ async fn serve(mut stream: TcpStream, state: &str) -> Delivery {
     let delivery = classify(&target, state);
     let (status, body) = match &delivery {
         Delivery::Ignored => ("404 Not Found", ""),
-        Delivery::Code(_) => ("200 OK", SIGNED_IN_PAGE),
+        Delivery::Code(_) => ("200 OK", RECEIVED_PAGE),
         Delivery::Denied => ("200 OK", DENIED_PAGE),
     };
     let response = format!(

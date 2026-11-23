@@ -318,6 +318,13 @@ async fn a_rejected_token_is_deleted() {
     *h.api.me.lock().expect("me") = Err(CallError::Rejected);
     h.service.window_focused();
     eventually(&h.service, configured(CloudSession::NeedsSignIn)).await;
+    // The entry goes right after the session ends, outside the state lock.
+    for _ in 0..500 {
+        if h.store.token(SERVER).is_none() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert_eq!(h.store.token(SERVER), None);
 }
 
@@ -360,6 +367,14 @@ async fn an_unusable_secure_store_turns_cloud_off() {
     )
     .await;
     assert_eq!(h.store.entries.lock().expect("entries").len(), 0);
+    // The token the server just issued is not left alive with nobody holding it.
+    assert!(
+        h.api
+            .calls
+            .lock()
+            .expect("calls")
+            .contains(&format!("logout {SERVER} ora_dt_issued"))
+    );
 
     // A store failing at startup is reported as such rather than as signed out.
     let failing = MemoryStore::default();
@@ -510,4 +525,100 @@ async fn a_browser_that_cannot_start_changes_nothing() {
     );
     let unconfigured = harness(None, None, BrowserAction::Record, Timing::default());
     assert!(unconfigured.service.start_login().await.is_err());
+}
+
+/// A 401 that arrives after the token was signed out and replaced by a new sign-in neither
+/// deletes the new entry nor ends the new session.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_late_rejection_leaves_a_newer_sign_in_alone() {
+    let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+    let store = MemoryStore::default();
+    store.entries.lock().expect("entries").insert(
+        SERVER.to_owned(),
+        StoredSession {
+            token: SessionToken::new("ora_dt_old".to_owned()),
+            account: alice(),
+        },
+    );
+    let setting = MemorySetting::default();
+    *setting.origin.lock().expect("origin") = Some(SERVER.to_owned());
+    let api = ScriptedApi::new(alice());
+    *api.me.lock().expect("me") = Err(CallError::Rejected);
+    *api.me_gate.lock().expect("gate") = Some(gate.clone());
+    let service: TestService = CloudConnectionService::start(
+        Ports {
+            store: store.clone(),
+            api: api.clone(),
+            browser: FakeBrowser::new(BrowserAction::Approve("code-2")),
+            setting,
+            observer: RecordingObserver::default(),
+        },
+        Timing::default(),
+        Handle::current(),
+    );
+    // The startup check of the old token is now waiting with its 401; later checks succeed.
+    assert_eq!(
+        service.connection().await,
+        configured(CloudSession::SignedIn { account: alice() })
+    );
+    for _ in 0..500 {
+        if api.me_gate.lock().expect("gate").is_none() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    *api.me.lock().expect("me") = Ok(alice());
+    service.logout().await;
+    service.start_login().await.expect("start");
+    eventually(
+        &service,
+        configured(CloudSession::SignedIn { account: alice() }),
+    )
+    .await;
+    assert_eq!(store.token(SERVER), Some("ora_dt_issued".to_owned()));
+
+    gate.notify_one();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        (service.connection().await, store.token(SERVER)),
+        (
+            configured(CloudSession::SignedIn { account: alice() }),
+            Some("ora_dt_issued".to_owned())
+        )
+    );
+}
+
+/// When the secure store refuses to delete on sign-out, the server is still asked to revoke and
+/// the panel reports the store rather than a clean sign-out.
+#[tokio::test(flavor = "multi_thread")]
+async fn signing_out_with_a_failing_store_still_revokes_and_says_so() {
+    let h = harness(
+        Some(SERVER),
+        Some("ora_dt_old"),
+        BrowserAction::Record,
+        Timing::default(),
+    );
+    eventually(
+        &h.service,
+        configured(CloudSession::SignedIn { account: alice() }),
+    )
+    .await;
+    *h.store.failure.lock().expect("failure") = Some("locked".to_owned());
+    let response = h.service.logout().await;
+    assert_eq!(
+        (response.connection, response.revocation),
+        (
+            configured(CloudSession::StorageUnavailable {
+                reason: "locked".to_owned()
+            }),
+            CloudRevocation::Confirmed
+        )
+    );
+    assert!(
+        h.api
+            .calls
+            .lock()
+            .expect("calls")
+            .contains(&format!("logout {SERVER} ora_dt_old"))
+    );
 }

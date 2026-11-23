@@ -77,6 +77,8 @@ pub(super) struct ScriptedApi {
     pub(super) exchange: Arc<Mutex<Result<String, CallError>>>,
     pub(super) me: Arc<Mutex<Result<CloudAccount, CallError>>>,
     pub(super) logout: Arc<Mutex<Result<(), CallError>>>,
+    /// When set, the next `me` call waits for this before answering, holding a check in flight.
+    pub(super) me_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     pub(super) calls: Arc<Mutex<Vec<String>>>,
     pub(super) exchanges: Arc<Mutex<Vec<(String, String, String)>>>,
 }
@@ -88,6 +90,7 @@ impl ScriptedApi {
             exchange: Arc::new(Mutex::new(Ok("ora_dt_issued".to_owned()))),
             me: Arc::new(Mutex::new(Ok(account))),
             logout: Arc::new(Mutex::new(Ok(()))),
+            me_gate: Arc::default(),
             calls: Arc::default(),
             exchanges: Arc::default(),
         }
@@ -136,7 +139,12 @@ impl CloudApi for ScriptedApi {
         token: &SessionToken,
     ) -> Result<CloudAccount, CallError> {
         self.record("me", server, token.expose());
-        self.me.lock().expect("me lock").clone()
+        let answer = self.me.lock().expect("me lock").clone();
+        let gate = self.me_gate.lock().expect("gate lock").take();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
+        answer
     }
 
     /// Returns the canned revocation.
