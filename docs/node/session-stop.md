@@ -70,7 +70,10 @@ the session's Agent process, every live process carrying that attempt's mark, or
 parent that carries it, is killed before the stop is confirmed. That covers what the Agent started
 and what keeps its environment: tool background jobs, dev servers and watchers that run as
 ordinary programs, MCP and language servers, and shared daemons such as a Gradle daemon or an
-sccache server that a tool in the session launched. Nothing is killed between turns. A user who
+sccache server that a tool in the session launched. Nothing is killed between turns, with one
+exception: before a session outlives a turn that ended by cancel or failure, the turn process fence
+kills what that turn started in sessions of its own, through the same mark narrowed to the turn
+(see [Cancelling one turn](agent-sessions.md#cancelling-one-turn)). A user who
 needs a daemon to outlive the session must start it outside Ora; one started by the Agent dies with
 the session even when other sessions or programs use it. Not every daemon is covered; see the
 limits below.

@@ -146,11 +146,31 @@ Controller 的 `EndSession` 时，待结算的取消把这段等待限制在它�
   写出之后的任何回应（即使是 `end_turn`）都是对取消的回应：写 `TurnEnded{cancelled}`，再判定这次停止；没有回应时以 `turn_cancel_unanswered` 结束会话。
 - **已结束、已被丢弃、已超时失败或不存在**：`already_ended` 或 `unknown`，不做其他事。
 
-停下的一轮只有同时满足下列条件才保留会话：会话选择了对应的结束方式；Agent 插件版本在 Node 已验证的轮次边界
-清单里（目前为空：在一致性测试加入版本之前，这类停止都以 `turn_boundary_unverified` 结束会话）；这一轮的每个
-工具调用都是 `completed` 或 `failed`，且没有子代理投影；静默窗口 Q（暂定 2 秒）内没有轮次流量（标题、用量、
-模式、命令和配置通知不算）。否则会话以 `turn_not_quiescent` 结束。之后的轮次中引用已停下轮次的工具调用或子代理
-来源的更新不记入任何一轮，会话以 `turn_leak_detected` 结束。
+停下的一轮只有以下条件全部成立才保留会话，按顺序检查：
+
+1. 会话选择了对应的结束方式。
+2. 插件版本在 Node 所在平台的已验证轮次边界清单里，否则以 `turn_boundary_unverified` 结束会话。清单按插件、
+   版本、平台登记，目前只有 Linux 上的 `official/ora-space.opencode` 0.6.11。Claude Code 0.4.5 不在清单里：
+   它的后台任务被杀之后，它会自己发起一轮。
+3. 这一轮的每个工具调用都是 `completed` 或 `failed`，且没有子代理投影，否则以 `turn_not_quiescent` 结束。
+4. 轮次进程栅栏证明这一轮的进程已经停止，否则以 `turn_processes_unstopped` 结束。
+5. 静默窗口 Q（暂定 2 秒）内没有轮次流量（标题、用量、模式、命令和配置通知不算），否则以 `turn_not_quiescent`
+   结束。
+
+**轮次进程栅栏。** 准入提交时，也就是 prompt 写给 Agent 之前，Node 在内存里记下这一轮从何时开始、属于哪个尝试。
+Agent 回应了取消或以失败回应之后，Node 把尝试标记（见 [Agent 停止责任](session-stop.zh.md)）收窄到这一轮开始
+之后启动、且所在会话（session）里没有本尝试更早进程的那些进程，冻结并杀掉它们，并要求在 F（暂定 5 秒）之内连续
+两次扫描都干净；这些工作和会话停止共用同一个停止 worker。于是调用过 `setsid` 的工具作业会被杀掉（OpenCode 的
+bash 工具和 Claude 的 Bash 都这样启动每条命令），而插件、Agent CLI、之前启动的 MCP 服务和语言服务，以及 Agent
+在这一轮里在它们的会话中启动的进程（例如懒启动的语言服务）照常运行，之前各轮留下的作业也不受影响。被停下的这一轮
+在自己会话里启动的开发服务器或作业会随这一轮结束；正常完成的一轮不杀任何进程。从回应到杀掉之间的写入算作被停下
+这一轮的。`stopped` 结算和下一轮都等栅栏完成，其间到达的 `EndSession` 或取消在栅栏返回后处理。证据为 Unknown、
+作业在 F 之内反复重新出现、或 MCP 生命周期在这一轮中替换了尝试时，会话按正常停止路径以
+`turn_processes_unstopped` 结束。栅栏排在 Q 之前，这样 Q 也能看到 Agent 对进程被杀的反应。栅栏不写任何持久状态：
+Node 重启后会话以 `interrupted` 结束，重启恢复会停止整个尝试。留在更早进程会话里的作业（例如插件请 Node 代为
+启动的进程）、清空了环境的孤儿进程都够不到，这是尝试标记本身的限制。
+
+之后的轮次中引用已停下轮次的工具调用或子代理来源的更新不记入任何一轮，会话以 `turn_leak_detected` 结束。
 
 ACP 请求报错时，Agent 进程可能仍在，但 provider 会话已经失效。Agent 明确报告会话已关闭或不存在时，运行时
 丢弃这个会话的连接；下一轮先恢复，再发送 `session/prompt`。MCP 生命周期模式只恢复原 provider ID，load 失败时
@@ -159,7 +179,7 @@ ACP 请求报错时，Agent 进程可能仍在，但 provider 会话已经失效
 
 `apps/ora-node/tests/turn_boundary/probe.py` 是手动运行的 Linux 一致性探针，通过 Deno 和插件真实的 framed ACP
 桥接调用解包后未修改的 Agent 包。`PATH` 需要 Python 3.10+ 和 Deno。本地模型 fixture 驱动真实 Agent 的工具，
-不需要模型凭据，也不调用外部模型。逐项运行 `shell`、`subagent`、`background`、`error`：
+不需要模型凭据，也不调用外部模型。逐项运行 `shell`、`subagent`、`background`、`detached`、`error`：
 
 ```sh
 python3 apps/ora-node/tests/turn_boundary/probe.py --agent opencode \
@@ -167,8 +187,27 @@ python3 apps/ora-node/tests/turn_boundary/probe.py --agent opencode \
 ```
 
 Claude 包使用 `--agent claude`。每次指定新的输出目录，保存包文件哈希、ACP 流量、模型请求和总结。退出码 1
-表示发现违约，或探针没能实际触发目标场景。有限时间内没有观察到违约，不自动登记版本：修改轮次边界清单前要
-综合所有场景、工具收尾与后台工作。实测数据写入 circus 运行 issue。
+表示发现违约，或探针没能实际触发目标场景。`detached` 在普通 shell 调用里把作业放到后台；回应时这一轮还留有
+存活进程，探针也判为失败。
+
+探针只说明 Agent 单独会留下什么。登记版本需要清单承诺的组合，即 Agent 的回应加上 Node 的栅栏：先在本地构建里
+把候选版本加进清单，再用手动运行的 standalone 测试经由真实 Node 逐个场景运行（`shell`、`subagent`、
+`background`、`detached`、`error`）：
+
+```sh
+cargo build --locked -p ora-reaper -p ora-node
+ORA_PROBE_PACKAGE=/path/to/extracted-agent-package ORA_PROBE_AGENT=opencode \
+  ORA_PROBE_SCENARIO=background ORA_PROBE_DENO="$(command -v deno)" \
+  ORA_PROBE_OUTPUT=/path/to/new-output-directory \
+  cargo test --locked -p ora-node --test standalone -- --ignored --exact \
+  repository::agent_sessions::turn_boundary::turn_boundary_conformance
+```
+
+它通过 `apps/ora-node/tests/turn_boundary/serve.py` 提供同一个本地模型，依次运行一轮普通对话、被取消（或失败）
+的目标轮次和又一轮普通对话，把 Node 日志和 `summary.json` 写到输出目录。只有以下条件都成立才通过：停止结算为
+`stopped`；那一刻这一轮在 Agent 更早进程的会话之外启动的进程都已不在；六秒内没有写出标记文件；下一轮正常完成。
+有限时间内没有观察到违约，不自动登记版本：每个场景重复运行，实测数据写入 circus 运行 issue，再提交清单条目，并在
+条目旁注明包的摘要。
 
 每当会话决定结束，这份结束决定、所有未解除停止责任的停止时钟和所有待结算取消的 `session_ending` 在一个事务中
 写入，然后才向 Agent 发停止信号，所以重启后原因和时钟都不变。原因还不确定时（模型授权在 Controller 的
@@ -224,7 +263,8 @@ stdio 关闭而退出；忽略这一点的后代进程会一直运行到重启�
 进程（见 [Agent 停止责任](session-stop.zh.md)）。
 
 会话结束时（任何结束方式），以及 MCP 生命周期替换 Agent 进程时，Agent 启动且保留了尝试标记的进程都会被杀掉：工具后台作业、
-开发服务器、MCP 服务和语言服务，以及从会话中启动的共享守护进程（例如 Gradle daemon 或 sccache 服务）。轮次之间不会杀任何进程。
+开发服务器、MCP 服务和语言服务，以及从会话中启动的共享守护进程（例如 Gradle daemon 或 sccache 服务）。轮次之间不会杀任何进程，
+只有被停下的一轮在保留会话之前，由轮次进程栅栏清理它留下的进程。
 需要在会话结束后继续运行的守护进程，请在 Ora 之外启动。清空或改写了环境（PostgreSQL、nginx 会用进程标题改写它）或换了用户的
 孤儿程序找不到，会继续运行；限制与部署前提见 [Agent 停止责任](session-stop.zh.md)。
 
