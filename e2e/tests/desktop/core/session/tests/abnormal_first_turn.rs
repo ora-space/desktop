@@ -226,15 +226,15 @@ fn a_bounded_wait_fails_the_workflow_node_without_resending() -> TestResult {
         let backend = open_ready_backend(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
         let mut config = agent_config(SILENT_MARKER);
-        config["promptInactivity"] = json!({"waitMinutes":1});
+        config["promptInactivity"] = json!("wait");
         let run_id = start_run(&backend, &workspace_id, config)?;
         wait_for_prompt_marker(&package, SILENT_MARKER).await?;
         // Only advance the actor's clock after the external process confirms delivery.
         tokio::time::pause();
-        tokio::time::advance(Duration::from_secs(61)).await;
+        tokio::time::advance(Duration::from_secs(1801)).await;
         tokio::time::resume();
         let detail = settle_failed(&backend, &run_id).await?;
-        assert_failed_without_parking(&detail, "session", &["no progress for 1 minute"])?;
+        assert_failed_without_parking(&detail, "session", &["no progress for 30 minutes"])?;
         assert_eq!(prompt_marker_count(&package, SILENT_MARKER), 1);
         Ok(())
     })

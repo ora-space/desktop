@@ -14,20 +14,12 @@ pub enum PromptInactivityPolicy {
     Wait,
     /// Send once without imposing a silence deadline.
     Unbounded,
-    /// Single-send wait with a node-specific silence limit.
-    #[serde(rename = "waitMinutes")]
-    WaitMinutes(std::num::NonZeroU16),
 }
 
 impl PromptInactivityPolicy {
     /// Returns a deadline budget for single-send turns. Ordinary prompts use a retry schedule.
     pub fn wait_limit(self) -> Option<std::time::Duration> {
-        let minutes = match self {
-            Self::Timeout | Self::Unbounded => return None,
-            Self::Wait => 30,
-            Self::WaitMinutes(minutes) => minutes.get(),
-        };
-        Some(std::time::Duration::from_secs(u64::from(minutes) * 60))
+        (self == Self::Wait).then_some(std::time::Duration::from_secs(30 * 60))
     }
 }
 

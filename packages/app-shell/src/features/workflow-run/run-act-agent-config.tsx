@@ -215,12 +215,9 @@ export function RunActAgentConfig({
           value={
             config.promptInactivity === "unbounded"
               ? t("workflowRun.inspector.promptInactivityUnbounded")
-              : config.promptInactivity && config.promptInactivity !== "timeout"
+              : config.promptInactivity === "wait"
                 ? t("workflowRun.inspector.promptInactivityWait", {
-                    minutes:
-                      typeof config.promptInactivity === "object"
-                        ? config.promptInactivity.waitMinutes
-                        : 30,
+                    minutes: 30,
                   })
                 : t("workflowRun.inspector.promptInactivityTimeout")
           }

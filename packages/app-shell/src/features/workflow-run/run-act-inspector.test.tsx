@@ -429,9 +429,9 @@ describe("RunActInspector frozen inactivity setting", () => {
     },
     {
       locale: "en-US",
-      config: { promptInactivity: { waitMinutes: 75 }, interactive: true },
+      config: { promptInactivity: "wait", interactive: true },
       label: "When no progress is reported",
-      text: "Keep waiting, fail after 75 minutes without progress",
+      text: "Keep waiting, fail after 30 minutes without progress",
     },
     {
       locale: "en-US",

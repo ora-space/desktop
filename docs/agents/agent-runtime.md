@@ -216,10 +216,10 @@ rearm the deadline, so an agent that reports progress is never cut off and a sil
 ### Prompt inactivity and retries
 
 Each prompt has a `PromptInactivityPolicy`. `Timeout` (ordinary chat and the default) applies the
-inactivity windows. `Wait` sends once and ends a turn after its workflow silence limit (30 minutes by default).
-Workflow Agent nodes can choose `Wait`, see [Workflow runs](../workflows/workflow-runs.md#prompt-inactivity).
+inactivity windows. `Wait` sends once and ends a turn after its workflow silence limit (fixed at 30 minutes).
+For finite waits, tools and pending permissions keep counting toward the deadline. Only attributable changes renew it. Select `Unbounded` for long silent work. See [Workflow runs](../workflows/workflow-runs.md#prompt-inactivity).
 
-Agent messages, thoughts, plans and tool lifecycle updates rearm the window; session chrome
+Under `Timeout`, agent messages, thoughts, plans and tool lifecycle updates rearm the window; session chrome
 (`available_commands_update`, `current_mode_update`, `config_option_update`,
 `session_info_update`, `usage_update`) does not. A running tool pauses the window until the last
 parallel tool settles and a permission wait pauses it until answered, so a long tool can run for

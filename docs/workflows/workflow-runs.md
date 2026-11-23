@@ -119,10 +119,8 @@ parsing or validation fails. The session history is the only source of the full 
 ### Prompt inactivity
 
 A workflow Agent configured with `promptInactivity: "wait"` fails its turn after 30 consecutive
-minutes without progress. The node editor can override the limit in minutes. Model output, changed
-plans, tool status transitions, and answered permissions renew the window. A tool stalled in progress
-still reaches the deadline. The turn sends the prompt once. The ordinary node retry policy applies
-after failure. The frozen setting covers all node attempts, loop rounds, and interactive follow-ups.
+minutes without progress. Select unbounded waiting explicitly to disable the silence deadline. Nonempty output, changes to a source’s plan, tool status or output, and completed parent-tool permission replies renew the window. A tool stalled in progress
+still reaches the deadline. Silence never resends the prompt. A noninteractive node applies its retry policy after cancellation settles or the old channel is isolated. An interactive first turn fails directly. A human follow-up parks with its session and history. The frozen setting covers all node attempts, loop rounds, and interactive follow-ups.
 See [Agent runtime](../agents/agent-runtime.md#prompt-inactivity-and-retries).
 
 ### Interactive nodes
