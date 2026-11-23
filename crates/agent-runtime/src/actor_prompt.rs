@@ -314,31 +314,19 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let mut input_state = ActiveInputState::default();
         let mut saw_output = false;
         let mut tool_timings = ToolTimings::default();
-        let mut boundary_inputs = None;
         loop {
             // At expiry, drain only the inputs already ready at the boundary. A flowing
             // queue of unrelated notifications must not postpone a timeout indefinitely.
             let input = if let Some(deadline) = liveness.wait_deadline() {
                 if tokio::time::Instant::now() >= deadline {
-                    let (events_left, commands_left) = boundary_inputs
-                        .get_or_insert_with(|| (channel.events.len(), self.commands.len()));
-                    if *events_left > 0 {
-                        *events_left -= 1;
-                        channel.events.try_recv().ok().map(ActiveInput::Event)
-                    } else if let Some(control) =
-                        input_state.terminal_control(&mut channel.controls)
-                    {
-                        Some(control)
-                    } else if *commands_left > 0 {
-                        *commands_left -= 1;
-                        self.commands.try_recv().ok().map(ActiveInput::Command)
-                    } else if self.turn_cancel.deadline().is_some() {
-                        Some(ActiveInput::Command(RuntimeCommand::CancelActivePrompt))
-                    } else {
-                        None
-                    }
+                    input_state.at_wait_deadline(
+                        deadline,
+                        &mut channel.events,
+                        &mut channel.controls,
+                        &mut self.commands,
+                        &self.turn_cancel,
+                    )
                 } else {
-                    boundary_inputs = None;
                     tokio::select! {
                         biased;
                         () = tokio::time::sleep_until(deadline) => continue,
@@ -352,51 +340,23 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
             };
             let Some(input) = input else {
-                if let Some(limit) = inactivity_policy.wait_limit() {
-                    let snapshot = liveness.snapshot();
-                    end_report.record(PromptEndCause::InactivityTimeout);
-                    let settled = timeout(CANCELLATION_GRACE, async {
-                        self.cancel(&client, &permissions).await;
-                        super::events::settle_cancelled_prompt(
-                            self,
-                            &mut channel,
-                            &client,
-                            pending,
-                            &events,
-                            &mut saw_output,
-                        )
-                        .await
-                    })
+                if inactivity_policy == PromptInactivityPolicy::Wait {
+                    self.finish_expired_wait(
+                        channel,
+                        pending,
+                        liveness.snapshot(),
+                        crate::turn_cancel::PromptStop {
+                            operation_id,
+                            client: &client,
+                            permissions: &permissions,
+                            events: &events,
+                            end_report: &end_report,
+                            followers: &mut followers,
+                            tool_timings: &tool_timings,
+                            saw_output: &mut saw_output,
+                        },
+                    )
                     .await;
-                    let cancellation_result = match &settled {
-                        Ok(Some(Ok(response))) if response.stop_reason == StopReason::Cancelled => {
-                            "confirmed"
-                        }
-                        Ok(Some(Ok(_))) => "other_response",
-                        Ok(Some(Err(_))) => "request_error",
-                        Ok(None) => "channel_closed",
-                        Err(_) => "grace_expired",
-                    };
-                    ora_warn!(session_id = %self.session.id, operation_id, policy = ?inactivity_policy,
-                        attempt = snapshot.attempt, window_ms = snapshot.window.as_secs_f64() * 1000.0,
-                        silent_elapsed_ms = snapshot.silent_elapsed.as_secs_f64() * 1000.0,
-                        running_tools = snapshot.running_tools, pending_tools = snapshot.pending_tools,
-                        end_cause = "inactivity_timeout", cancellation_result,
-                        "workflow prompt exceeded its silence limit");
-                    let mut error = agent_timed_out(format!(
-                        "workflow agent reported no progress for {} minutes",
-                        limit.as_secs() / 60
-                    ));
-                    if cancellation_result == "confirmed" {
-                        self.record_cleanup(operation_id, Ok(()));
-                        self.channel = Some(channel);
-                        error = error.answered();
-                    } else {
-                        self.isolate_channel(channel).await;
-                    }
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                    followers.finish(StopReason::Cancelled);
-                    let _ = events.try_send(Err(error));
                     return;
                 }
                 match retry_stalled_prompt(

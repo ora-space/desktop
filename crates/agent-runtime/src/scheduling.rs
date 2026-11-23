@@ -39,11 +39,45 @@ pub(super) enum ActiveInput {
 pub(super) struct ActiveInputState {
     deferred_control: Option<DeferredControl>,
     events_since_command_poll: usize,
+    wait_boundary: Option<(tokio::time::Instant, usize, usize)>,
 }
 
 impl ActiveInputState {
+    /// Resolve the finite queue that was ready when this deadline fired. New unrelated traffic
+    /// cannot starve expiry, while a ready terminal response retains its FIFO ordering.
+    pub(super) fn at_wait_deadline(
+        &mut self,
+        deadline: tokio::time::Instant,
+        events: &mut mpsc::Receiver<SessionEvent>,
+        controls: &mut mpsc::UnboundedReceiver<SessionControl>,
+        commands: &mut mpsc::UnboundedReceiver<RuntimeCommand>,
+        cancel: &crate::turn_cancel::TurnCancelState,
+    ) -> Option<ActiveInput> {
+        if self
+            .wait_boundary
+            .as_ref()
+            .is_none_or(|entry| entry.0 != deadline)
+        {
+            self.wait_boundary = Some((deadline, events.len(), commands.len()));
+        }
+        let (_, events_left, commands_left) = self.wait_boundary.as_mut()?;
+        if *events_left > 0 {
+            *events_left -= 1;
+            return events.try_recv().ok().map(ActiveInput::Event);
+        }
+        if *commands_left > 0 {
+            *commands_left -= 1;
+            return commands.try_recv().ok().map(ActiveInput::Command);
+        }
+        self.terminal_control(controls).or_else(|| {
+            cancel
+                .deadline()
+                .map(|_| ActiveInput::Command(RuntimeCommand::CancelActivePrompt))
+        })
+    }
+
     /// After the queued events have drained, surface an already accepted terminal control.
-    pub(super) fn terminal_control(
+    fn terminal_control(
         &mut self,
         controls: &mut mpsc::UnboundedReceiver<SessionControl>,
     ) -> Option<ActiveInput> {
@@ -130,6 +164,41 @@ mod tests {
     use agent_client_protocol_schema::v1::{SessionInfoUpdate, SessionUpdate};
     use tokio::sync::mpsc;
 
+    /// At the deadline a ready answer wins, and newly queued updates cannot defer expiry.
+    #[tokio::test(start_paused = true)]
+    async fn bounded_deadline_takes_ready_response_before_expiry() {
+        let (sender, mut events) = mpsc::channel(/*buffer*/ 4);
+        let (_controls, mut controls) = mpsc::unbounded_channel();
+        let (_commands, mut commands) = mpsc::unbounded_channel();
+        let response = crate::routing::tests::session_response("session-1").await;
+        sender.try_send(SessionEvent::Response(response)).unwrap();
+        let cancel = crate::turn_cancel::TurnCancelState::default();
+        let deadline = tokio::time::Instant::now();
+        let mut state = ActiveInputState::default();
+        assert!(matches!(
+            state.at_wait_deadline(deadline, &mut events, &mut controls, &mut commands, &cancel),
+            Some(ActiveInput::Event(SessionEvent::Response(_)))
+        ));
+        sender
+            .try_send(SessionEvent::update(SessionNotification::new(
+                "session-1",
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+            )))
+            .unwrap();
+        assert!(
+            state
+                .at_wait_deadline(deadline, &mut events, &mut controls, &mut commands, &cancel)
+                .is_none()
+        );
+        cancel.request(deadline);
+        assert!(matches!(
+            state.at_wait_deadline(deadline, &mut events, &mut controls, &mut commands, &cancel),
+            Some(ActiveInput::Command(
+                crate::RuntimeCommand::CancelActivePrompt
+            ))
+        ));
+    }
+
     /// Verifies a terminal control cannot overtake events already accepted by the session FIFO.
     #[tokio::test]
     async fn drains_queued_events_before_a_terminal_control() {
@@ -144,6 +213,7 @@ mod tests {
             .await
             .expect("queue session event");
         let mut state = ActiveInputState {
+            wait_boundary: None,
             deferred_control: Some(DeferredControl::Message(SessionControl::QueueOverflow)),
             events_since_command_poll: 0,
         };
