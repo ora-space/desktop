@@ -71,6 +71,17 @@ export type LogoutCloudResponse = {
 export type SetCloudServerRequest = { server: string | null };
 
 /**
+ * The connection after saving or forgetting the server address.
+ *
+ * `revocation` is present only when the previous server had a token: it was deleted on this
+ * device and the previous server was asked to revoke it, which it may not have confirmed.
+ */
+export type SetCloudServerResponse = {
+  connection: CloudConnection;
+  revocation: CloudRevocation | null;
+};
+
+/**
  * Opens the system browser on the configured server's approval page.
  */
 export type StartCloudLoginRequest = Record<symbol, never>;

@@ -4,7 +4,7 @@ use super::run_async_backend;
 
 use ora_contracts::{
     CancelCloudLoginRequest, CloudConnection, GetCloudConnectionRequest, LogoutCloudRequest,
-    LogoutCloudResponse, SetCloudServerRequest, StartCloudLoginRequest,
+    LogoutCloudResponse, SetCloudServerRequest, SetCloudServerResponse, StartCloudLoginRequest,
 };
 use tauri::State;
 
@@ -31,7 +31,7 @@ pub async fn get_cloud_connection(
 pub async fn set_cloud_server(
     state: State<'_, DesktopState>,
     request: SetCloudServerRequest,
-) -> Result<CloudConnection, CommandError> {
+) -> Result<SetCloudServerResponse, CommandError> {
     let connection = state.cloud_connection.clone();
     run_async_backend(
         "set_cloud_server",

@@ -37,7 +37,7 @@ export const settingsTranslations = {
     "settings.cloud.signOut": "退出登录",
     "settings.cloud.startError": "无法打开浏览器登录，请重试。",
     "settings.cloud.revocationUnconfirmed":
-      "已在本机退出，但服务器暂时连不上，没有确认登录已吊销。",
+      "已在本机退出，但原服务器暂时连不上，没有确认登录已吊销。",
     "settings.cloud.status.notConfigured": "尚未设置服务器。",
     "settings.cloud.status.signedOut": "未登录。",
     "settings.cloud.status.signingIn": "请在浏览器中完成登录并点「允许」。",
@@ -47,7 +47,8 @@ export const settingsTranslations = {
     "settings.cloud.status.needsSignIn": "登录已失效，请重新登录。",
     "settings.cloud.status.storageUnavailable":
       "系统凭据存储不可用（{{reason}}），无法保存登录，Cloud 功能已关闭。",
-    "settings.cloud.failure.denied": "浏览器中没有完成授权，未登录。",
+    "settings.cloud.failure.denied":
+      "已在浏览器中取消登录，或授权没有完成，未登录。",
     "settings.cloud.failure.timedOut": "等待浏览器授权超时，未登录。",
     "settings.cloud.failure.rejected": "服务器拒绝了这次登录，请重试。",
     "settings.cloud.failure.unreachable": "登录时连不上服务器，请稍后重试。",
@@ -201,7 +202,7 @@ export const settingsTranslations = {
     "settings.cloud.startError":
       "Could not open the browser to sign in. Try again.",
     "settings.cloud.revocationUnconfirmed":
-      "Signed out on this device, but the server could not be reached to confirm the sign-in was revoked.",
+      "Signed out on this device, but the previous server could not be reached to confirm the sign-in was revoked.",
     "settings.cloud.status.notConfigured": "No server is set.",
     "settings.cloud.status.signedOut": "Not signed in.",
     "settings.cloud.status.signingIn":
@@ -213,7 +214,8 @@ export const settingsTranslations = {
       "Your sign-in has expired. Sign in again.",
     "settings.cloud.status.storageUnavailable":
       "The system credential store is unavailable ({{reason}}), so the sign-in cannot be kept and Cloud features are off.",
-    "settings.cloud.failure.denied": "The browser did not approve the sign-in.",
+    "settings.cloud.failure.denied":
+      "The sign-in was cancelled in the browser or not approved.",
     "settings.cloud.failure.timedOut":
       "Timed out waiting for approval in the browser.",
     "settings.cloud.failure.rejected":

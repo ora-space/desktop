@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { CloudConnection } from "@ora/contracts";
+import type { CloudConnection, CloudRevocation } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
 import { useOptionalPlatform } from "../../platform";
 import { settingsKeys } from "../data/settings";
@@ -20,6 +20,10 @@ export function useCloudConnection() {
   });
   const adopt = (connection: CloudConnection) =>
     queryClient.setQueryData(settingsKeys.cloudConnection, connection);
+  // Whether the server confirmed revoking the token the latest sign-out or server change gave up.
+  const [lastRevocation, setLastRevocation] = useState<CloudRevocation | null>(
+    null,
+  );
 
   const cloudConnection = platform?.cloudConnection;
   useEffect(() => {
@@ -45,11 +49,17 @@ export function useCloudConnection() {
   const setServer = useMutation({
     mutationFn: (server: string | null) =>
       client.cloudConnection.setServer({ server }),
-    onSuccess: adopt,
+    onSuccess: (response) => {
+      setLastRevocation(response.revocation);
+      adopt(response.connection);
+    },
   });
   const startLogin = useMutation({
     mutationFn: () => client.cloudConnection.startLogin({}),
-    onSuccess: adopt,
+    onSuccess: (connection) => {
+      setLastRevocation(null);
+      adopt(connection);
+    },
   });
   const cancelLogin = useMutation({
     mutationFn: () => client.cloudConnection.cancelLogin({}),
@@ -57,7 +67,10 @@ export function useCloudConnection() {
   });
   const logout = useMutation({
     mutationFn: () => client.cloudConnection.logout({}),
-    onSuccess: (response) => adopt(response.connection),
+    onSuccess: (response) => {
+      setLastRevocation(response.revocation);
+      adopt(response.connection);
+    },
   });
 
   return {
@@ -72,7 +85,7 @@ export function useCloudConnection() {
     startError: startLogin.error,
     cancelLogin: () => cancelLogin.mutateAsync(),
     logout: () => logout.mutateAsync(),
-    lastLogout: logout.data ?? null,
+    lastRevocation,
     isBusy:
       setServer.isPending ||
       startLogin.isPending ||

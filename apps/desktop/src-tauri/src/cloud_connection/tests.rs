@@ -414,17 +414,21 @@ async fn changing_the_server_signs_out_of_the_old_one() {
         configured(CloudSession::SignedIn { account: alice() }),
     )
     .await;
+    *h.api.logout.lock().expect("logout") = Err(CallError::Unreachable("offline".to_owned()));
     let next = h
         .service
         .set_server(Some("https://Other.Example/".to_owned()))
         .await
         .expect("switch");
     assert_eq!(
-        next,
-        CloudConnection::Configured {
-            server: "https://other.example".to_owned(),
-            session: CloudSession::SignedOut { failure: None },
-        }
+        (next.connection, next.revocation),
+        (
+            CloudConnection::Configured {
+                server: "https://other.example".to_owned(),
+                session: CloudSession::SignedOut { failure: None },
+            },
+            Some(CloudRevocation::Unconfirmed)
+        )
     );
     assert_eq!(h.store.token(SERVER), None);
     assert!(
@@ -438,9 +442,11 @@ async fn changing_the_server_signs_out_of_the_old_one() {
         *h.setting.origin.lock().expect("origin"),
         Some("https://other.example".to_owned())
     );
+    // Nothing was signed in to the second server, so there is nothing to revoke.
+    let forgotten = h.service.set_server(None).await.expect("forget");
     assert_eq!(
-        h.service.set_server(None).await.expect("forget"),
-        CloudConnection::NotConfigured
+        (forgotten.connection, forgotten.revocation),
+        (CloudConnection::NotConfigured, None)
     );
     assert!(
         h.service

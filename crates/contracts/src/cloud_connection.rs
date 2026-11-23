@@ -20,7 +20,8 @@ pub struct CloudAccount {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "cloud-connection.ts")]
 pub enum CloudLoginFailure {
-    /// The browser page was cancelled or returned an error instead of a code.
+    /// The person cancelled on the server's approval page (it redirects with
+    /// `error=access_denied`), or the page returned another error instead of a code.
     Denied,
     /// Nobody approved in the browser within the time allowed.
     TimedOut,
@@ -119,6 +120,18 @@ pub struct LogoutCloudResponse {
     pub revocation: CloudRevocation,
 }
 
+/// The connection after saving or forgetting the server address.
+///
+/// `revocation` is present only when the previous server had a token: it was deleted on this
+/// device and the previous server was asked to revoke it, which it may not have confirmed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "cloud-connection.ts")]
+pub struct SetCloudServerResponse {
+    pub connection: CloudConnection,
+    pub revocation: Option<CloudRevocation>,
+}
+
 /// Exports the Cloud connection DTO family.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     CloudAccount::export(config)?;
@@ -132,5 +145,6 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     LogoutCloudRequest::export(config)?;
     CloudRevocation::export(config)?;
     LogoutCloudResponse::export(config)?;
+    SetCloudServerResponse::export(config)?;
     Ok(())
 }

@@ -18,7 +18,7 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         namespace: NAMESPACE,
         member_name: "setServer",
         request_type: "SetCloudServerRequest",
-        response_type: "CloudConnection",
+        response_type: "SetCloudServerResponse",
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {

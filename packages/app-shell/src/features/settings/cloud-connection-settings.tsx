@@ -112,18 +112,28 @@ function SessionRow({
   controller: CloudConnectionController;
 }) {
   const { t } = useTranslation();
+  const unconfirmedNotice = (
+    <p className="text-xs text-muted-foreground">
+      {t("settings.cloud.revocationUnconfirmed")}
+    </p>
+  );
   if (connection.kind === "notConfigured") {
     return (
-      <p role="status" className="text-sm text-muted-foreground">
-        {t("settings.cloud.status.notConfigured")}
-      </p>
+      <section className="space-y-2">
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("settings.cloud.status.notConfigured")}
+        </p>
+        {controller.lastRevocation === "unconfirmed" && unconfirmedNotice}
+      </section>
     );
   }
   const session = connection.session;
   const action = sessionAction(session);
+  // After a sign-out or a server change the old token is gone here even when the server could
+  // not confirm revoking it; say so until the next sign-in.
   const revocationUnconfirmed =
-    session.kind === "signedOut" &&
-    controller.lastLogout?.revocation === "unconfirmed";
+    (session.kind === "signedOut" || session.kind === "storageUnavailable") &&
+    controller.lastRevocation === "unconfirmed";
 
   return (
     <section className="space-y-2 border-y border-border py-4">
@@ -158,11 +168,7 @@ function SessionRow({
           </Button>
         )}
       </div>
-      {revocationUnconfirmed && (
-        <p className="text-xs text-muted-foreground">
-          {t("settings.cloud.revocationUnconfirmed")}
-        </p>
-      )}
+      {revocationUnconfirmed && unconfirmedNotice}
       {controller.startError !== null && session.kind !== "signingIn" && (
         <p role="alert" className="text-xs text-destructive">
           {t("settings.cloud.startError")}

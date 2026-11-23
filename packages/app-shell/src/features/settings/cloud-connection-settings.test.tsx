@@ -26,6 +26,12 @@ function createHost(initial: CloudConnection) {
     getCloudConnection: async () => host.connection,
     setCloudServer: async ({ server }) => {
       host.servers.push(server);
+      // A token held for the previous server is revoked there; this host cannot reach it.
+      const previous = host.connection;
+      const held =
+        previous.kind === "configured" &&
+        (previous.session.kind === "signedIn" ||
+          previous.session.kind === "unreachable");
       host.connection =
         server === null
           ? { kind: "notConfigured" }
@@ -34,7 +40,10 @@ function createHost(initial: CloudConnection) {
               server: server.toLowerCase(),
               session: { kind: "signedOut", failure: null },
             };
-      return host.connection;
+      return {
+        connection: host.connection,
+        revocation: held ? "unconfirmed" : null,
+      };
     },
     startCloudLogin: async () => {
       host.connection = {
@@ -208,4 +217,36 @@ it("cancels a sign-in in progress and stops listening when unmounted", async () 
   ).toBeInTheDocument();
   view.unmount();
   expect(stop).toHaveBeenCalled();
+});
+
+it("says the previous server did not confirm when changing the address signs out", async () => {
+  const { host, client } = createHost({
+    kind: "configured",
+    server: SERVER,
+    session: { kind: "signedIn", account: alice },
+  });
+  const { platform } = platformWithEvents();
+  const user = userEvent.setup();
+  await renderPanel(client, platform);
+
+  const input = screen.getByLabelText(/服务器地址|Server address/);
+  await user.clear(input);
+  await user.type(input, "https://other.example");
+  await user.click(screen.getByRole("button", { name: /^(保存|Save)$/ }));
+  expect(
+    await screen.findByText(
+      /没有确认登录已吊销|could not be reached to confirm/,
+    ),
+  ).toBeInTheDocument();
+  expect(host.servers).toEqual(["https://other.example"]);
+
+  // Forgetting an address that held no token has nothing to revoke.
+  await user.clear(screen.getByLabelText(/服务器地址|Server address/));
+  await user.click(screen.getByRole("button", { name: /^(保存|Save)$/ }));
+  expect(
+    await screen.findByText(/尚未设置服务器|No server is set/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText(/没有确认登录已吊销|could not be reached to confirm/),
+  ).not.toBeInTheDocument();
 });

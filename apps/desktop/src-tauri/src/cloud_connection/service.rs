@@ -11,6 +11,7 @@ use std::time::Duration;
 use ora_backend::{BackendError, ErrorClassification};
 use ora_contracts::{
     CloudConnection, CloudRevocation, EmptyErrorParams, LogoutCloudResponse, PublicError,
+    SetCloudServerResponse,
 };
 use ora_logging::{ora_info, ora_warn};
 use tokio::runtime::Handle;
@@ -124,11 +125,11 @@ where
     }
 
     /// Saves a new server (or forgets it). The previous server's sign-in is cancelled and its
-    /// token deleted here and revoked on that server in the background.
+    /// token deleted here and revoked on that server; the answer says whether it confirmed.
     pub(crate) async fn set_server(
         &self,
         input: Option<String>,
-    ) -> Result<CloudConnection, BackendError> {
+    ) -> Result<SetCloudServerResponse, BackendError> {
         let target = match input.as_deref().map(str::trim) {
             None | Some("") => None,
             Some(text) => Some(
@@ -141,7 +142,10 @@ where
             Phase::Starting | Phase::NotConfigured => None,
         });
         if current == target {
-            return Ok(self.snapshot());
+            return Ok(SetCloudServerResponse {
+                connection: self.snapshot(),
+                revocation: None,
+            });
         }
         self.inner
             .ports
@@ -174,10 +178,16 @@ where
                 Phase::Starting | Phase::NotConfigured => None,
             }
         });
-        if let Some((server, stored)) = previous {
-            self.forget(server, stored).await;
-        }
-        Ok(self.snapshot())
+        let revocation = match previous {
+            // The old entry is keyed by the old origin, so a failed delete there cannot sign the
+            // new server in; it is logged, and the old server is still asked to revoke.
+            Some((server, stored)) => Some(self.forget(server, stored).await.0),
+            None => None,
+        };
+        Ok(SetCloudServerResponse {
+            connection: self.snapshot(),
+            revocation,
+        })
     }
 
     /// Opens the browser on the server's approval page and waits for the redirect in the
