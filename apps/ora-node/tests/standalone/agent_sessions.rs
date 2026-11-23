@@ -26,6 +26,8 @@ mod support;
 mod turn_boundary;
 #[path = "agent_sessions/turn_cancel.rs"]
 mod turn_cancel;
+#[path = "agent_sessions/turn_fence_restart.rs"]
+mod turn_fence_restart;
 #[path = "agent_sessions/unknown_delivery.rs"]
 mod unknown_delivery;
 #[path = "agent_sessions/window.rs"]

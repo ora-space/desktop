@@ -18,7 +18,15 @@
 //!   a language server lazily, and records its PID in `helper.pid`; a later `[helper]` reports
 //!   whether that same helper still runs;
 //! - `[respawn]` makes the Agent restart a `setsid` job each time it dies, until the Agent exits,
-//!   as an Agent that supervises a tool job and keeps it running after it answered.
+//!   as an Agent that supervises a tool job and keeps it running after it answered;
+//!   `[respawn-for <ms>]` stops restarting once `<ms>` milliseconds passed after the answer;
+//! - `[late-job <ms>]` starts a helper in the Agent's session that, `<ms>` milliseconds after the
+//!   Agent answered a cancel, silently starts a `setsid` job and records its PID in
+//!   `late-job.pid`, as a language server that launches a worker of its own later;
+//! - `[watch-job]` starts a `setsid` job the Agent watches, recorded in `watch-job.pid`; once it
+//!   dies after a cancel was answered, the Agent reports that in a message.
+//!
+//! The Agent writes `answered` in the session's directory whenever it answers a cancel.
 
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -121,32 +129,59 @@ pub(super) fn helper(cwd: &Path, prompt: &str) -> std::io::Result<Option<String>
     Ok(Some(format!("helper {} started", child.id())))
 }
 
-/// Starts the `[respawn]` supervisor on its own thread; it runs until the Agent exits.
+/// A long sleep in a session of its own, as a tool shell that calls `setsid` starts it.
+fn session_job(cwd: &Path) -> Command {
+    let mut command = Command::new("/bin/sleep");
+    command
+        .arg("60")
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // SAFETY: setsid is async-signal-safe and touches only the forked child.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    command
+}
+
+/// The delay a `[<marker> <ms>]` marker of `prompt` names.
+fn delay(prompt: &str, marker: &str) -> Option<Duration> {
+    let rest = prompt.split(&format!("[{marker} ")).nth(1)?;
+    rest.split(']')
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+        .map(Duration::from_millis)
+}
+
+/// Starts the `[respawn]` supervisor on its own thread; it runs until the Agent exits, or until
+/// the `[respawn-for <ms>]` delay passed after the answer.
 pub(super) fn respawn(cwd: &Path, prompt: &str) {
-    if !prompt.contains("[respawn]") {
+    let limit = delay(prompt, "respawn-for");
+    if !prompt.contains("[respawn]") && limit.is_none() {
         return;
     }
     let cwd = cwd.to_path_buf();
     std::thread::spawn(move || {
+        let mut answered_at = None;
         loop {
-            let mut command = Command::new("/bin/sleep");
-            command
-                .arg("60")
-                .current_dir(&cwd)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            // SAFETY: setsid is async-signal-safe and touches only the forked child.
-            unsafe {
-                command.pre_exec(|| {
-                    if libc::setsid() < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
+            if let Some(limit) = limit {
+                if answered_at.is_none() && cwd.join("answered").exists() {
+                    answered_at = Some(std::time::Instant::now());
+                }
+                if answered_at.is_some_and(|at| at.elapsed() >= limit) {
+                    return;
+                }
             }
             // One job at a time: the next one starts as soon as the last one died.
-            match command.spawn() {
+            match session_job(&cwd).spawn() {
                 Ok(mut job) => {
                     let _ = job.wait();
                 }
@@ -154,4 +189,34 @@ pub(super) fn respawn(cwd: &Path, prompt: &str) {
             }
         }
     });
+}
+
+/// Starts the `[late-job <ms>]` helper in the Agent's own session.
+pub(super) fn late_job(cwd: &Path, prompt: &str) -> std::io::Result<()> {
+    let Some(delay) = delay(prompt, "late-job") else {
+        return Ok(());
+    };
+    // No new session: the helper stays where the Agent runs, so it is exempt; only the job it
+    // starts later leaves for a session of its own.
+    Command::new("/bin/sh")
+        .args([
+            "-c",
+            "while [ ! -e answered ]; do sleep 0.01; done; sleep \"$0\"; \
+             /usr/bin/setsid /bin/sleep 60 & echo $! > late-job.pid.tmp; \
+             mv late-job.pid.tmp late-job.pid; wait",
+        ])
+        .arg(format!("{:.3}", delay.as_secs_f64()))
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+/// Starts the `[watch-job]` job and records its PID.
+pub(super) fn watched_job(cwd: &Path) -> std::io::Result<std::process::Child> {
+    let job = session_job(cwd).spawn()?;
+    std::fs::write(cwd.join("watch-job.pid"), job.id().to_string())?;
+    Ok(job)
 }

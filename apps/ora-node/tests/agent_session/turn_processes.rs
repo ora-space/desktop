@@ -1,6 +1,9 @@
 //! The turn process fence against the echo agent's real processes: what a stopped turn started in
 //! sessions of its own dies before the session is kept, while the Agent's own processes, what the
 //! Agent starts in their sessions, and what earlier turns left keep running.
+//!
+//! Evidence for specs/test-cases/node/protocol/turn-process-fence.md; each test names the case it
+//! covers.
 
 use super::support::*;
 use ora_node::{SessionCommand, TurnBoundaryPlatform};
@@ -9,6 +12,9 @@ use ora_utils::process::{LinuxPidFd, linux_process};
 use pretty_assertions::assert_eq;
 use std::path::Path;
 use std::time::{Duration, Instant};
+
+#[path = "turn_processes/order.rs"]
+mod order;
 
 const CANCEL: Keep = Keep {
     on_cancel: true,
@@ -109,7 +115,7 @@ fn assert_never_wrote(checkout: &Path, since: Instant, delay: Duration) {
     assert!(!checkout.join("background-leak").exists(), "the job wrote");
 }
 
-/// A kept cancel kills the turn's `setsid` tool job before the cancel settles `stopped`, so its
+/// Case 1: a kept cancel kills the turn's `setsid` tool job before the cancel settles `stopped`, so its
 /// delayed write never happens, and the session takes the next turn.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_kept_cancel_kills_the_turns_setsid_job_before_it_settles() {
@@ -140,7 +146,7 @@ async fn a_kept_cancel_kills_the_turns_setsid_job_before_it_settles() {
     );
 }
 
-/// A helper the Agent starts in its own session during the turn, as a lazily started language
+/// Case 2: a helper the Agent starts in its own session during the turn, as a lazily started language
 /// server, survives the kept cancel and is the same process the next turn finds; the turn's
 /// `setsid` job beside it dies.
 #[tokio::test(flavor = "multi_thread")]
@@ -179,7 +185,7 @@ async fn the_agents_own_helper_survives_a_kept_cancel() {
     );
 }
 
-/// A turn that ends normally kills nothing, and a `setsid` job it left predates the next turn,
+/// Cases 2 and 6: a turn that ends normally kills nothing, and a `setsid` job it left predates the next turn,
 /// so that turn's kept cancel leaves it running too. Only the end of the session kills it.
 #[tokio::test(flavor = "multi_thread")]
 async fn jobs_of_a_finished_turn_survive_the_next_turns_cancel() {
@@ -220,7 +226,7 @@ async fn jobs_of_a_finished_turn_survive_the_next_turns_cancel() {
     );
 }
 
-/// An Agent that keeps starting `setsid` jobs after it answered never lets two scans in a row
+/// Cases 4 and 8: an Agent that keeps starting `setsid` jobs after it answered never lets two scans in a row
 /// come back clean: past the fence's bound the session ends with `turn_processes_unstopped`
 /// instead of being kept, and its stop kills the jobs that remain.
 #[tokio::test(flavor = "multi_thread")]
@@ -247,7 +253,7 @@ async fn jobs_that_keep_coming_back_end_the_session() {
     );
 }
 
-/// A fence that cannot tell the turn's processes from others, here because the attempt's mark
+/// Case 4: a fence that cannot tell the turn's processes from others, here because the attempt's mark
 /// scope is gone, never keeps the session: it ends with `turn_processes_unstopped`. The scope is
 /// put back once the end is decided, so the session's own stop can be proven.
 #[tokio::test(flavor = "multi_thread")]
@@ -282,7 +288,7 @@ async fn an_unknown_fence_ends_the_session() {
     );
 }
 
-/// A version listed only for another platform is not verified on this Node: the cancel ends the
+/// Case 5: a version listed only for another platform is not verified on this Node: the cancel ends the
 /// session with `turn_boundary_unverified`, and the fence never runs.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_version_verified_only_on_another_platform_is_unverified() {
