@@ -38,9 +38,10 @@ pub(crate) trait SecureStore: Send + Sync + 'static {
 
 /// Windows Credential Manager or the Linux Secret Service.
 ///
-/// An entry belongs to the operating-system user and one Cloud origin. Debug and packaged builds
-/// share the app identifier, and with it the same entry; the single-instance lock keeps only one
-/// of them running at a time.
+/// An entry belongs to the operating-system user and one Cloud origin, nothing else: a debug build
+/// with its own `ORA_DATA_DIR` and the packaged app share it, so signing in or out of the same
+/// origin in one overwrites or deletes the other's entry. The single-instance plugin, keyed by the
+/// app identifier, keeps the two from running at once.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct KeyringStore;
 

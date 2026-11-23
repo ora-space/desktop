@@ -169,8 +169,10 @@ plugin webviews get neither.
   it is a Secret Service item (service `space.ora.desktop.cloud`, account the origin); on Windows it is
   a generic Credential Manager credential named `<origin>.space.ora.desktop.cloud`, written with
   `CRED_PERSIST_LOCAL_MACHINE` so it stays on this computer and does not roam with a roaming profile.
-  Debug and packaged builds share the app identifier and therefore the same entry; the instance lock
-  keeps one of them running. When the secure store is unusable the state is `storageUnavailable` with
+  The entry is keyed only by the operating-system user and origin, so a debug build (`task run:desktop`
+  sets its own `ORA_DATA_DIR`, hence its own local settings) and the packaged app share it: signing in
+  or out of the same origin in a debug build overwrites or deletes the packaged app's entry. The
+  single-instance plugin, keyed by the app identifier, keeps the two from running at once. When the secure store is unusable the state is `storageUnavailable` with
   the reason and Cloud features are off; there is no plain-text fallback, and a token the store
   refused right after the exchange is revoked on the server (best effort).
 - **Requests and expiry**: requests with the token go only to the saved origin and follow no
