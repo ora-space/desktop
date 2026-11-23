@@ -200,50 +200,91 @@ fn crash(node: &mut ChildGuard, stream: UnixStream) {
     node.kill();
 }
 
-/// The Node is killed while the fence has a job frozen: the job stays stopped, since nothing
-/// continues it, and the restarted Node kills it with the rest of the attempt.
+/// What one Node killed during the fence left, and what its restart did.
+#[derive(Debug, Eq, PartialEq)]
+struct FenceCrash {
+    /// Whether a job of the attempt was stopped when the Node was gone.
+    frozen_at_kill: bool,
+    /// Those stopped jobs still alive after the restart.
+    frozen_left: Vec<u32>,
+    settled: Vec<TurnCancelOutcome>,
+    ended: AgentSessionEndReason,
+    remaining: Vec<(u32, char)>,
+}
+
+/// Cancels a turn whose Agent then starts `setsid` jobs every millisecond, kills the Node the
+/// moment one of them is seen stopped, and restarts it.
+///
+/// Each freezing pass of the fence finds new jobs, so the jobs it froze earlier stay stopped
+/// across many scans, until the passes go quiet or the freeze bound passes. The attempt's
+/// processes are refreshed from their marks and only their states are polled in between, for up
+/// to F. A test thread descheduled between seeing a stopped job and killing the Node can still
+/// find the batch killed by then; nothing continues a job once the Node that froze it is gone, so
+/// a stopped job found after the kill was frozen when the Node died.
+fn kill_during_the_fence() -> FenceCrash {
+    let listed = Listed::new();
+    let mut node = launch(&listed.fixture, &listed.config);
+    let runtime = runtime();
+    let mut stream = runtime.block_on(listed.start("[storm 600] [hold]"));
+    let attempt = listed.attempt();
+    runtime.block_on(async {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        send(&mut stream, cancel("cancel-fence", "first")).await;
+    });
+    let deadline = Instant::now() + ora_node::TurnCancelConfig::default().process_fence;
+    let mut seen_stopped = false;
+    while !seen_stopped && Instant::now() < deadline {
+        let jobs: Vec<u32> = marked(&attempt).into_iter().map(|(pid, _)| pid).collect();
+        let refresh = Instant::now() + Duration::from_millis(20);
+        while !seen_stopped && Instant::now() < refresh {
+            seen_stopped = jobs.iter().any(|pid| state(*pid) == Some('T'));
+        }
+    }
+    crash(&mut node, stream);
+    let frozen: Vec<u32> = marked(&attempt)
+        .into_iter()
+        .filter(|(_, state)| *state == 'T')
+        .map(|(pid, _)| pid)
+        .collect();
+    let (settled, ended, remaining) = listed.restart(&runtime, &attempt);
+    FenceCrash {
+        frozen_at_kill: !frozen.is_empty(),
+        frozen_left: frozen
+            .into_iter()
+            .filter(|pid| state(*pid).is_some())
+            .collect(),
+        settled,
+        ended,
+        remaining,
+    }
+}
+
+/// The Node is killed while the fence has jobs frozen: they stay stopped, since nothing
+/// continues them, and the restarted Node kills them with the rest of the attempt. A crash that
+/// came just after the fence killed its batch proves less, so the scenario runs again, up to
+/// three times, until one crash finds jobs frozen; every run must end the same way.
 #[test]
 fn a_node_killed_during_the_fence_ends_the_session_and_stops_the_attempt() {
     ora_logging::with_trace_logging(|| {
-        let listed = Listed::new();
-        let mut node = launch(&listed.fixture, &listed.config);
-        let runtime = runtime();
-        let mut stream = runtime.block_on(listed.start("[respawn] [hold]"));
-        let attempt = listed.attempt();
-        listed.recorded("respawn.pid");
-        runtime.block_on(async {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            send(&mut stream, cancel("cancel-fence", "first")).await;
-        });
-        // The supervisor restarts its job each time the fence kills it, and F is 5 s: the fence
-        // freezes job after job. The Node dies the moment one of them is seen stopped, which the
-        // fence keeps it for a whole scan of procfs.
-        let deadline = Instant::now() + Duration::from_secs(4);
-        let mut frozen = None;
-        while frozen.is_none() && Instant::now() < deadline {
-            let current = fs::read_to_string(listed.checkout.join("respawn.pid"))
-                .ok()
-                .and_then(|pid| pid.trim().parse::<u32>().ok());
-            if let Some(pid) = current
-                && state(pid) == Some('T')
-            {
-                frozen = Some(pid);
-            }
+        let mut crashes = Vec::new();
+        while crashes.len() < 3
+            && !crashes
+                .iter()
+                .any(|crash: &FenceCrash| crash.frozen_at_kill)
+        {
+            crashes.push(kill_during_the_fence());
         }
-        crash(&mut node, stream);
-        let frozen = frozen.expect("the fence froze a job while the Node ran");
-        let frozen_at_kill = state(frozen);
-        let (settled, ended, remaining) = listed.restart(&runtime, &attempt);
-        assert_eq!(
-            (frozen_at_kill, state(frozen), settled, ended, remaining),
-            (
-                Some('T'),
-                None,
-                vec![TurnCancelOutcome::SessionEnding],
-                AgentSessionEndReason::Interrupted,
-                Vec::new()
-            )
-        );
+        let ended = |frozen_at_kill| FenceCrash {
+            frozen_at_kill,
+            frozen_left: Vec::new(),
+            settled: vec![TurnCancelOutcome::SessionEnding],
+            ended: AgentSessionEndReason::Interrupted,
+            remaining: Vec::new(),
+        };
+        let expected: Vec<FenceCrash> = (0..crashes.len())
+            .map(|run| ended(run + 1 == crashes.len()))
+            .collect();
+        assert_eq!(crashes, expected);
     });
 }
 

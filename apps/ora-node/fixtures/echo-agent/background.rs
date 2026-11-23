@@ -26,6 +26,9 @@
 //!   job and records its PID in `late-job.pid`, as a language server that launches a worker of
 //!   its own later. Only the turn process fence kills the sentinel, so the second job starts
 //!   after the fence, whatever the fence took;
+//! - `[storm <ms>]` makes the Agent start a new `setsid` job every millisecond, without waiting for
+//!   any, from its answer to a cancel until `<ms>` milliseconds later, so a fence that freezes
+//!   them keeps finding new ones and holds the earlier ones stopped across many scans;
 //! - `[cleared-children]` starts a `setsid` shell that keeps forking children with an empty
 //!   environment, every 50 ms, and appends each child's PID to `cleared.pids`;
 //! - `[watch-job]` starts a `setsid` job the Agent watches, recorded in `watch-job.pid`; once it
@@ -199,6 +202,25 @@ pub(super) fn respawn(cwd: &Path, prompt: &str) {
                 }
                 Err(_) => std::thread::sleep(Duration::from_millis(10)),
             }
+        }
+    });
+}
+
+/// Starts the `[storm <ms>]` spawner on its own thread; it ends once its window passed.
+pub(super) fn storm(cwd: &Path, prompt: &str) {
+    let Some(window) = delay(prompt, "storm") else {
+        return;
+    };
+    let cwd = cwd.to_path_buf();
+    std::thread::spawn(move || {
+        while !cwd.join("answered").exists() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let until = std::time::Instant::now() + window;
+        while std::time::Instant::now() < until {
+            // The handle is dropped: the job runs until something kills it.
+            let _ = session_job(&cwd, "60").spawn();
+            std::thread::sleep(Duration::from_millis(1));
         }
     });
 }
