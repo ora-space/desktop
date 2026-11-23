@@ -4,7 +4,9 @@
 //! reach exactly the origin it was built for. Following a redirect would forward the credential to
 //! wherever the response points, so this client never follows one; the caller sees the redirect
 //! status and decides. Certificates are verified with the platform-aware verifier, and the proxy is
-//! resolved per URL from the caller's configuration.
+//! resolved per URL from the caller's configuration and nowhere else: reqwest's own reading of
+//! `HTTP_PROXY` / `HTTPS_PROXY` is switched off, so a host that the configuration sends direct
+//! (loopback, `NO_PROXY`, the bypass list) is never handed to an environment proxy in plain text.
 
 use std::time::Duration;
 use url::Url;
@@ -35,7 +37,8 @@ pub fn credential_client(
         .use_preconfigured_tls(tls)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(connect_timeout)
-        .timeout(total_timeout);
+        .timeout(total_timeout)
+        .no_proxy();
     if let Some(proxy) = resolve_proxy(url, proxy_config) {
         builder = builder.proxy(proxy_reqwest(proxy).map_err(|_| CredentialClientError::Proxy)?);
     }
@@ -43,3 +46,7 @@ pub fn credential_client(
         .build()
         .map_err(|error| CredentialClientError::Build(flatten_reqwest_error(&error.without_url())))
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;
