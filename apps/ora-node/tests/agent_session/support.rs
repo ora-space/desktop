@@ -4,7 +4,7 @@ use ora_node::{
     AgentSessions, CheckoutResolver, CommandSettlement, InstalledConfigurationError,
     ModelProxyConfig, PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel,
     RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig, SessionHost,
-    SessionLedger, SessionWorkload, TurnCancelConfig,
+    SessionLedger, SessionWorkload, TurnBoundary, TurnBoundaryPlatform, TurnCancelConfig,
 };
 use ora_node_protocol::{
     AgentSessionEnded, AgentSessionSpec, BoundModel, CommandId, ContentBlock, ExecutionId,
@@ -73,6 +73,8 @@ struct LedgerState {
     fail_next_queue_read: bool,
     /// Runs when the named command is settled executed, inside the admission commit.
     on_executed: Option<(CommandId, Box<dyn FnOnce() + Send>)>,
+    /// Runs when the end decision is recorded, before the Agent is signalled.
+    on_decision: Option<Box<dyn FnOnce() + Send>>,
 }
 
 /// The keep choices a session starts with.
@@ -119,6 +121,11 @@ impl MemoryLedger {
     /// The end decision recorded for the execution, the one a restart would publish.
     pub fn decision(&self) -> Option<AgentSessionEnded> {
         self.stops.decision(&ExecutionId::new(EXECUTION))
+    }
+
+    /// Runs `action` when the end decision is recorded, before the Agent is signalled.
+    pub fn on_decision(&self, action: impl FnOnce() + Send + 'static) {
+        self.state().on_decision = Some(Box::new(action));
     }
 
     /// Makes the next queue read fail once.
@@ -326,6 +333,10 @@ impl SessionLedger for MemoryLedger {
     ) -> Result<(), Self::Error> {
         if std::mem::take(&mut self.state().fail_next_decision) {
             return Err(LedgerError("decision write failed".into()));
+        }
+        let action = self.state().on_decision.take();
+        if let Some(action) = action {
+            action();
         }
         self.stops
             .decide(execution, ended, at_ms, bound_at_ms)
@@ -801,12 +812,16 @@ impl Fixture {
         );
     }
 
-    /// Marks the echo agent's version as having a verified turn boundary and shortens the
-    /// windows, so a stopped turn can keep the session within a test.
+    /// Marks the echo agent's version as having a verified turn boundary and shortens the quiet
+    /// window, so a stopped turn can keep the session within a test. The fence and the re-check
+    /// get ten seconds: their budgets include the wait for the Node's one stop worker, which the
+    /// tests of this binary share, and a busy machine must not turn a clean scope into Unknown.
     pub fn verify_turn_boundary(&mut self) {
         self.turn_cancel.turn_boundary =
-            vec![(PluginId::new(PLUGIN_ID), PluginVersion::new(PLUGIN_VERSION))];
+            vec![boundary(PLUGIN_VERSION, TurnBoundaryPlatform::Linux)];
         self.turn_cancel.quiet = Duration::from_millis(300);
+        self.turn_cancel.process_fence = Duration::from_secs(10);
+        self.turn_cancel.process_recheck = Duration::from_secs(10);
     }
 
     /// Starts the session execution with `initial` as its first turn, resuming `prior` if given.
@@ -970,5 +985,14 @@ pub async fn until<T>(mut probe: impl FnMut() -> Option<T>) -> T {
             "condition was not reached in time"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// The echo plugin's entry on the turn-boundary list, for one version and platform.
+pub fn boundary(version: &str, platform: TurnBoundaryPlatform) -> TurnBoundary {
+    TurnBoundary {
+        plugin: PluginId::new(PLUGIN_ID),
+        version: PluginVersion::new(version),
+        platform,
     }
 }

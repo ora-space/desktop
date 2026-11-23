@@ -12,8 +12,8 @@
 //! - `[env]` answers with its working directory and `HOME`, showing where and as what it runs;
 //! - `[large]` answers with a message larger than one Thread record may be;
 //! - `[model]` answers with the model context it was started with, if any;
-//! - `[background <ms>]` and `[background-hidden <ms>]` first leave a tool background job behind
-//!   (see `background.rs`).
+//! - `[background <ms>]` and `[background-hidden <ms>]` first leave a tool background job behind,
+//!   and further markers start helpers and jobs from the Agent itself (see `background.rs`).
 //!
 //! On start it appends its process id to `echo-agent.pids` in its working directory, the package
 //! root, so a test can check that every plugin process it started has exited.

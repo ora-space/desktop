@@ -204,13 +204,54 @@ cancels before it waits for stop evidence.
 - **Finished, already dropped, failed by timeout, or unknown**: `already_ended` or `unknown`, nothing
   else changes.
 
-A stopped turn keeps the session only when the session chose that kind of end, the agent plugin
-version is on the Node's verified turn-boundary list (none yet: such stops end the session with
-`turn_boundary_unverified` until conformance runs add versions), every tool call of the turn is
-`completed` or `failed` and it projected no child, and no turn traffic arrives in the quiet window Q
-(2 s for now; title, usage, mode, command and config notifications do not count). Otherwise the
-session ends with `turn_not_quiescent`. A later turn's update that names a stopped turn's tool call or
-child source joins no turn and ends the session with `turn_leak_detected`.
+A stopped turn keeps the session only when all of these hold, checked in this order:
+
+1. The session chose that kind of end.
+2. The plugin version is on the Node's verified turn-boundary list for the Node's platform;
+   otherwise the session ends with `turn_boundary_unverified`. The list names plugin, version and
+   platform, and today holds only `official/ora-space.opencode` 0.6.11 on Linux. Claude Code 0.4.5
+   is not on it: once its background task is killed it starts a turn by itself.
+3. Every tool call of the turn is `completed` or `failed` and it projected no child; otherwise
+   `turn_not_quiescent`.
+4. The turn process fence shows the turn's processes gone; otherwise `turn_processes_unstopped`.
+5. No turn traffic arrives in the quiet window Q (2 s for now; title, usage, mode, command and
+   config notifications do not count); otherwise `turn_not_quiescent`.
+6. A scan-only re-check of the same turn scope, right before the stop settles, is still clean;
+   otherwise `turn_processes_unstopped`.
+
+**The turn process fence.** The admission commit records, in memory, when the turn starts and in
+which attempt, just before the prompt is written. After the Agent answered a cancel or failed, the
+Node narrows the attempt mark (see [Agent stop ownership](session-stop.md)) to the processes that
+started since then outside every session that a process of the attempt from before the turn still
+belongs to, freezes and kills them, and needs two clean scans in a row within F (5 s for now), on
+the same stop worker a session stop uses. So a tool job that called `setsid` (OpenCode's bash tool
+and Claude's Bash start every command that way) dies, while the plugin, the Agent CLI, MCP and
+language servers it started earlier, and whatever it starts in their sessions during the turn (a
+language server launched lazily, for example) keep running, as do jobs earlier turns left. A dev
+server or job the stopped turn started in a session of its own dies with the turn; a normally
+completed turn kills nothing. Writes between the answer and the kill count as the stopped turn's.
+The `stopped` settlement and the next turn wait for the fence, and an `EndSession` or cancel that
+arrives meanwhile is served once it returns. Unknown evidence, a job that keeps coming back until F,
+or an attempt that MCP lifecycle replaced during the turn ends the session with
+`turn_processes_unstopped`, through the normal session stop. The fence runs before Q so that Q also
+sees an Agent that reacts to losing its processes. An exempt process can still start a job in a
+session of its own after the fence came back clean, for example a language server that launches a
+worker of its own while Q runs, without any turn traffic. So, after Q and the idle-traffic check and
+right before the `stopped` settlement, the Node scans the same scope once more: two scans in a row,
+killing nothing, within R (1 s for now) on the stop worker, waiting for the worker included.
+Anything it finds, or Unknown evidence, ends the session with `turn_processes_unstopped`, and the
+session's stop kills it with the rest of the attempt. Only after the re-check does the Node read
+the commands accepted meanwhile: an `EndSession` accepted during the quiet window's end or the
+re-check takes precedence, so no `stopped` is written and every merged cancel settles
+`session_ending`; a `CancelTurn` of the turn merges into this stop and settles `stopped` with the
+first. A conclusion therefore arrives within G + F + Q + R (23 s for now) after the first cancel's
+acceptance. G, Q, F and R are all fields of `TurnCancelConfig`. The fence keeps nothing durable: a restart ends the
+session as `interrupted` and restart recovery stops the whole attempt. A job in the session of an
+earlier process, such as one the plugin asked the Node to spawn, or an orphan that cleared its
+environment, is not reached; that limit is the attempt mark's.
+
+A later turn's update that names a stopped turn's tool call or child source joins no turn and ends
+the session with `turn_leak_detected`.
 
 An ACP request error can leave the agent process alive while invalidating its provider session.
 When the agent explicitly reports a closed or missing session, the runtime detaches that session;
@@ -222,7 +263,8 @@ Ordinary model or authentication errors keep their existing provider registratio
 The opt-in Linux probe at `apps/ora-node/tests/turn_boundary/probe.py` exercises an extracted,
 unmodified agent package through Deno and the plugin's real framed ACP bridge. Python 3.10+ and
 Deno must be on `PATH`. Its loopback model fixture drives the real Agent's tools; it uses no model
-credentials or external inference. Run each of `shell`, `subagent`, `background`, and `error`:
+credentials or external inference. Run each of `shell`, `subagent`, `background`, `detached` and
+`error`:
 
 ```sh
 python3 apps/ora-node/tests/turn_boundary/probe.py --agent opencode \
@@ -231,9 +273,35 @@ python3 apps/ora-node/tests/turn_boundary/probe.py --agent opencode \
 
 Use `--agent claude` for a Claude package. Each invocation requires a new output directory and
 records package hashes, ACP traffic, model requests and its summary there. Exit status 1 means a
-violation was observed or the probe could not exercise its target. A successful finite observation
-does not automatically register a version: evaluate the complete scenario set, tool cleanup and
-background work before changing the turn-boundary list. Keep measurements in the circus run issue.
+violation was observed or the probe could not exercise its target. `detached` backgrounds a job
+from an ordinary shell call; the probe also fails when the turn left a process alive at the answer.
+
+The probe shows what the Agent alone leaves behind. Registering a version needs the combination the
+list promises, the Agent's answer and the Node's fence, so a candidate is added to the list in a
+local build and then run through the real Node with the opt-in standalone test, once per scenario
+(`shell`, `subagent`, `background`, `detached`, `error`):
+
+```sh
+cargo build --locked -p ora-reaper -p ora-node
+ORA_PROBE_PACKAGE=/path/to/extracted-agent-package ORA_PROBE_AGENT=opencode \
+  ORA_PROBE_SCENARIO=background ORA_PROBE_DENO="$(command -v deno)" \
+  ORA_PROBE_OUTPUT=/path/to/new-output-directory \
+  cargo test --locked -p ora-node --test standalone -- --ignored --exact \
+  repository::agent_sessions::turn_boundary::turn_boundary_conformance
+```
+
+It serves the same loopback model through `apps/ora-node/tests/turn_boundary/serve.py`, runs a
+plain turn, the cancelled (or failing) target turn and another plain turn, and writes the Node log
+and `summary.json` to the output directory. It passes only when the stop settled `stopped`, nothing
+the turn started outside the sessions of the Agent's earlier processes was alive then, no marker
+was written within six seconds, and the next turn completed. A failed turn settles no cancel, so for
+`error` the processes are sampled at the next turn's first event, which the Node writes only after
+it judged the failed turn. The test finds the turn's processes by the attempt mark, as the Node
+does, so it shares the mark's blind spot: an orphan that cleared or rewrote its environment is
+invisible to both, and only the probe's marker files catch such a job, when it writes within the
+observation. A finite observation does not register
+a version automatically: repeat every scenario and keep the measurements in the circus run issue
+before committing the entry, with the package digest beside it.
 
 Whenever the session's end is decided, the decision, the stop clock of every outstanding stop
 responsibility and a `session_ending` settlement for every pending cancel are written in one
@@ -320,8 +388,8 @@ kills every process carrying the attempt mark before it records the stop and rep
 Ending a session kills what its Agent started and what kept the attempt mark, on every end path and
 when MCP lifecycle replaces the Agent process: tool background jobs, dev servers, MCP and language
 servers, and shared daemons (for example a Gradle daemon or an sccache server) launched from the
-session. Nothing is killed between turns. Start a daemon outside Ora when it must outlive the
-session. Orphaned programs that cleared or rewrote their environment (PostgreSQL and nginx rewrite
+session. Between turns nothing is killed, except what a stopped turn left for the turn process
+fence before its session is kept. Start a daemon outside Ora when it must outlive the session. Orphaned programs that cleared or rewrote their environment (PostgreSQL and nginx rewrite
 it with their process title) or changed user are not found and survive; see
 [Agent stop ownership](session-stop.md) for the limits and the deployment prerequisite.
 

@@ -4,6 +4,7 @@
 //! The ledger is the serial settlement boundary. A cancel of a queued turn, the turn's admission
 //! and its MCP wait timeout each commit there, so whichever commits first decides the turn; the
 //! conversation only decides when a cancel takes effect and what outcome it asks the ledger for.
+use super::book::forget_acceptance;
 use super::*;
 use ora_node_protocol::{TurnCancelOutcome, TurnId};
 
@@ -29,6 +30,8 @@ pub(super) struct StoppedTurn {
     pub(super) cause: StopCause,
     /// Cancels merged into this stop, in acceptance order.
     pub(super) merged: Vec<CommandId>,
+    /// Where the turn started; written when its prompt was admitted.
+    pub(super) start: TurnStartCell,
 }
 
 /// What the D2 judgement concluded.
@@ -244,8 +247,17 @@ impl<L: SessionLedger> Conversation<'_, L> {
     }
 
     /// Applies D2 to a stopped turn: the session is kept only if it chose to keep after this
-    /// kind of end, the Agent version has a verified turn boundary, the turn left nothing
-    /// running, and no turn traffic arrives within the quiet window.
+    /// kind of end, the Agent version has a verified turn boundary, the turn left no tool call
+    /// open, the processes it started in sessions of their own are shown gone, and no turn
+    /// traffic arrives within the quiet window.
+    ///
+    /// The process fence runs before the quiet window, so Q also watches the Agent's answer to
+    /// losing those processes: an Agent that starts work by itself when a background task dies
+    /// sends turn traffic then. The next turn and the `stopped` settlement both wait for the
+    /// fence. An `EndSession` or a cancel that arrives meanwhile is served once the bounded fence
+    /// returns: its wake-up stays pending, and the quiet window and the final merge read it.
+    /// Right before the settlement, a scan-only re-check of the same scope must still be clean,
+    /// and commands accepted until then are served first.
     pub(super) async fn judge(&self, mut stopped: StoppedTurn) -> Judged {
         let chosen = match stopped.cause {
             StopCause::Cancel => self.keep.on_cancel,
@@ -263,6 +275,20 @@ impl<L: SessionLedger> Conversation<'_, L> {
         }
         if !self.mirror.fence().turn_settled() {
             return Judged::End(SessionEnd::agent_failed("turn_not_quiescent"));
+        }
+        match self
+            .processes
+            .stop(
+                self.execution,
+                stopped.start.get(),
+                self.turn_cancel.process_fence,
+            )
+            .await
+        {
+            TurnStop::Stopped => {}
+            TurnStop::Unstopped { .. } => {
+                return Judged::End(SessionEnd::agent_failed("turn_processes_unstopped"));
+            }
         }
         let quiet = tokio::time::sleep(self.turn_cancel.quiet);
         tokio::pin!(quiet);
@@ -296,8 +322,30 @@ impl<L: SessionLedger> Conversation<'_, L> {
             }
         }
         self.mirror.fence().fence_turn();
-        // The quiet window may have ended just as a cancel's wake arrived: every cancel of this
-        // turn accepted by now merges into this stop and shares its conclusion.
+        // An exempt process may have started a job in a session of its own while Q ran, after
+        // the fence came back clean; the stop settles `stopped` only if the turn's scope is still
+        // clean now.
+        if let TurnStop::Unstopped { .. } = self
+            .processes
+            .recheck(
+                self.execution,
+                stopped.start.get(),
+                self.turn_cancel.process_recheck,
+            )
+            .await
+        {
+            return Judged::End(SessionEnd::agent_failed("turn_processes_unstopped"));
+        }
+        // Commands accepted while the quiet window ended or the re-check ran are read only now:
+        // an `EndSession` takes precedence over this stop, so its decision settles the merged
+        // cancels as `session_ending`, and every cancel of this turn merges into this stop and
+        // shares its conclusion. One accepted between these reads and the settlement below is
+        // served by the next pass of the conversation.
+        match self.queued_end() {
+            Ok(Some(end)) => return Judged::EndRequested(end),
+            Ok(None) => {}
+            Err(end) => return Judged::End(end),
+        }
         match self.settle_cancels(Some(&stopped.turn_id)) {
             Ok(cancels) => merge(&mut stopped.merged, cancels),
             Err(end) => return Judged::End(end),
@@ -361,147 +409,6 @@ impl<L: SessionLedger> Conversation<'_, L> {
     pub(super) fn turn_ended(&self, turn: &TurnId) {
         self.turns.ended(turn);
     }
-}
-
-/// Which turns of the session already have their own result, kept from before the agent starts
-/// (a prior Revision restore can take long) through the whole conversation.
-#[derive(Default)]
-pub(in crate::session::driver) struct TurnBook {
-    ended: std::sync::Mutex<std::collections::HashSet<TurnId>>,
-    /// The initial turn was dropped by a cancel before the conversation could start it.
-    initial_dropped: std::sync::atomic::AtomicBool,
-}
-
-impl TurnBook {
-    /// Whether the turn already has its own result.
-    fn has_ended(&self, turn: &TurnId) -> bool {
-        self.ended
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(turn)
-    }
-
-    /// Remembers that the turn has its own result.
-    fn ended(&self, turn: &TurnId) {
-        self.ended
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(turn.clone());
-    }
-
-    /// Whether the conversation must skip the initial turn.
-    pub(in crate::session::driver) fn initial_dropped(&self) -> bool {
-        self.initial_dropped
-            .load(std::sync::atomic::Ordering::Acquire)
-    }
-}
-
-/// Settles every queued cancel while the session prepares, before its agent can start: no turn
-/// has been admitted yet, so the initial turn and every queued turn are dropped as `not_started`
-/// at once, without waiting for a restore or the agent (D1). An `EndSession` takes precedence and
-/// its decision settles the cancels instead.
-pub(in crate::session::driver) fn settle_before_start<L: SessionLedger>(
-    ledger: &L,
-    execution: &ExecutionId,
-    initial: &TurnId,
-    turns: &TurnBook,
-    acceptance: &Acceptance,
-) -> Result<(), SessionEnd> {
-    let unavailable = || SessionEnd::agent_failed("ledger_unavailable");
-    let queued = ledger
-        .queued_commands(execution)
-        .map_err(|_| unavailable())?;
-    let ending = |ledger: &L| {
-        ledger.queued_commands(execution).is_ok_and(|queued| {
-            queued
-                .iter()
-                .any(|queued| matches!(queued.command, SessionCommand::EndSession(_)))
-        })
-    };
-    if ending(ledger) {
-        return Ok(());
-    }
-    for queued_cancel in &queued {
-        let SessionCommand::CancelTurn(turn_id) = &queued_cancel.command else {
-            continue;
-        };
-        let target = queued.iter().find_map(|queued| match &queued.command {
-            SessionCommand::SubmitUserTurn(turn) if &turn.turn_id == turn_id => {
-                Some(queued.command_id.clone())
-            }
-            SessionCommand::SubmitUserTurn(_)
-            | SessionCommand::EndSession(_)
-            | SessionCommand::CancelTurn(_) => None,
-        });
-        let initial_waiting = turn_id == initial && !turns.has_ended(turn_id);
-        let outcome = if target.is_some() || initial_waiting {
-            TurnCancelOutcome::NotStarted
-        } else if turns.has_ended(turn_id) {
-            TurnCancelOutcome::AlreadyEnded
-        } else {
-            TurnCancelOutcome::Unknown
-        };
-        match ledger.settle_turn_cancel(
-            execution,
-            &queued_cancel.command_id,
-            outcome,
-            target.as_ref(),
-        ) {
-            Ok(TurnCancelOutcome::NotStarted) => {
-                forget_acceptance(acceptance, execution, &queued_cancel.command_id);
-                turns.ended(turn_id);
-                if initial_waiting {
-                    turns
-                        .initial_dropped
-                        .store(true, std::sync::atomic::Ordering::Release);
-                }
-            }
-            Ok(_) => forget_acceptance(acceptance, execution, &queued_cancel.command_id),
-            Err(_) if ending(ledger) => return Ok(()),
-            Err(_) => return Err(unavailable()),
-        }
-    }
-    Ok(())
-}
-
-/// Acceptance times of pending cancels, by execution and command.
-pub(in crate::session) type Acceptance =
-    std::sync::Mutex<std::collections::HashMap<(ExecutionId, CommandId), tokio::time::Instant>>;
-
-/// Drops the acceptance time of a cancel that has its settlement.
-fn forget_acceptance(acceptance: &Acceptance, execution: &ExecutionId, command: &CommandId) {
-    acceptance
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&(execution.clone(), command.clone()));
-}
-
-/// The latest moment by which the pending cancels need an end decision: the earliest
-/// acceptance plus G. A cancel accepted before a restart has no recorded time and counts from
-/// now.
-pub(in crate::session::driver) fn pending_cancel_bound<L: SessionLedger>(
-    ledger: &L,
-    execution: &ExecutionId,
-    acceptance: &Acceptance,
-    grace: std::time::Duration,
-) -> Result<Option<tokio::time::Instant>, &'static str> {
-    let queued = ledger
-        .queued_commands(execution)
-        .map_err(|_| "ledger_unavailable")?;
-    let times = acceptance
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    Ok(queued
-        .iter()
-        .filter(|queued| matches!(queued.command, SessionCommand::CancelTurn(_)))
-        .map(|queued| {
-            times
-                .get(&(execution.clone(), queued.command_id.clone()))
-                .copied()
-                .unwrap_or_else(tokio::time::Instant::now)
-                + grace
-        })
-        .min())
 }
 
 /// Adds the cancels not yet merged into a stop, keeping acceptance order.

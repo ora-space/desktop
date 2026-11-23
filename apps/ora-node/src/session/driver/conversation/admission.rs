@@ -23,7 +23,8 @@ pub(super) fn mcp_wait_expired(
 }
 
 pub(super) enum Admitted {
-    Stream(SessionEventStream<PromptSessionEvent>),
+    /// The prompt was admitted; the cell holds the turn's start once the prompt is written.
+    Stream(SessionEventStream<PromptSessionEvent>, TurnStartCell),
     Outcome(TurnOutcome),
 }
 
@@ -276,7 +277,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         },
                         result = &mut attempt => {
                             match result {
-                                Ok(stream) => { self.blocked.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&turn.turn_id); return Ok(Admitted::Stream(stream)); },
+                                Ok((stream, start)) => { self.blocked.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&turn.turn_id); return Ok(Admitted::Stream(stream, start)); },
                                 Err(error) if self.control.is_some() && mcp_wait(&error.0) => {
                                     if error.1 {
                                         if let Some(end) = self.queued_end()? { return Ok(Admitted::Outcome(end)); }
@@ -316,7 +317,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
         checkout: &ExecutionId,
         ready_timeout: std::time::Duration,
         gate: Arc<std::sync::Mutex<TurnGate>>,
-    ) -> Result<SessionEventStream<PromptSessionEvent>, (RuntimeError, bool)> {
+    ) -> Result<(SessionEventStream<PromptSessionEvent>, TurnStartCell), (RuntimeError, bool)> {
         if !self.started.load(Ordering::Acquire) {
             tokio::time::timeout(ready_timeout, self.manager.wait_for_agent(agent))
                 .await
@@ -359,6 +360,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
         let grace = self.turn_cancel.grace;
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let commit_failed = Arc::clone(&failed);
+        let processes = self.processes.clone();
+        let start = TurnStartCell::default();
+        let started = Arc::clone(&start);
         self.mirror.set_turn(Some(turn.turn_id.clone()));
         let result = self
             .manager
@@ -408,6 +412,10 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         })??,
                         None => commit()?,
                     }
+                    // The turn starts here, after its admission committed and before the Agent
+                    // can receive the prompt: whatever the prompt makes the Agent start, starts
+                    // later.
+                    let _ = started.set(processes.start());
                     // A cancel accepted while admission committed reaches the runtime before the
                     // prompt is written, so the Agent never receives the turn (D1, admitted but
                     // not yet written); the conversation settles it once the stream ends.
@@ -425,7 +433,9 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 },
             )
             .await;
-        result.map_err(|error| (error, failed.load(Ordering::Acquire)))
+        result
+            .map(|stream| (stream, start))
+            .map_err(|error| (error, failed.load(Ordering::Acquire)))
     }
 }
 

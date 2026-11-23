@@ -101,6 +101,17 @@ pub struct MarkScope {
     mark: EnvironmentMark,
     since_ticks: u64,
     uid: u32,
+    reach: Reach,
+}
+
+/// Which of the claimed processes a scope reports, kills and counts as undecided.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Reach {
+    /// Every claimed process.
+    All,
+    /// Only those that started at or after the tick, in sessions where no claimed process that
+    /// started earlier still runs.
+    NewSessionsSince(u64),
 }
 
 /// One claimed process, named by PID and start tick so it can be pinned again without
@@ -126,6 +137,26 @@ impl MarkScope {
             mark,
             since_ticks,
             uid,
+            reach: Reach::All,
+        }
+    }
+
+    /// Narrows the scope to the processes that started at or after `since_ticks` outside every
+    /// session that a claimed process started before it still belongs to.
+    ///
+    /// A launcher that started long-lived helpers before `since_ticks` keeps them, and keeps what
+    /// they or the launcher start later in their own sessions, while a job of the later period
+    /// that called `setsid` falls inside the narrowed scope. The sessions are read in the same
+    /// pass that claims the processes, so they name sessions that live at that moment: a number
+    /// a dead session left behind never exempts a new one. Claiming still uses the whole scope,
+    /// so a later process is reached through an earlier claimed parent as before.
+    ///
+    /// The exemption is what a process chose: a later job that stays in the session of an
+    /// earlier process, without `setsid`, is outside the narrowed scope.
+    pub fn new_sessions_since(&self, since_ticks: u64) -> Self {
+        Self {
+            reach: Reach::NewSessionsSince(since_ticks),
+            ..self.clone()
         }
     }
 
@@ -133,7 +164,7 @@ impl MarkScope {
     /// to enumerate procfs, running out of descriptors, or an unexpected read failure is an
     /// error rather than an empty scan.
     pub fn scan(&self) -> io::Result<MarkScan> {
-        scan::scan(&self.mark, self.since_ticks, self.uid)
+        scan::scan(&self.mark, self.since_ticks, self.uid, self.reach)
     }
 
     /// Freezes every claimed process, rescanning until a pass finds none it has not frozen, and

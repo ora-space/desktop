@@ -13,6 +13,8 @@ mod mcp;
 mod resume;
 #[path = "agent_session/support.rs"]
 mod support;
+#[path = "agent_session/turn_processes.rs"]
+mod turn_processes;
 #[path = "agent_session/workload.rs"]
 mod workload;
 

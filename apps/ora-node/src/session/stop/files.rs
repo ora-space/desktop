@@ -35,7 +35,7 @@ pub(crate) fn budget_until(deadline: tokio::time::Instant) -> std::time::Duratio
 }
 
 /// Runs one blocking stop observation on the worker; `None` when it did not finish in budget.
-async fn off_runtime<T: Send + 'static>(
+pub(super) async fn off_runtime<T: Send + 'static>(
     budget: std::time::Duration,
     job: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
@@ -99,6 +99,14 @@ impl StopFiles {
             LockDurability::Recorded,
         )?;
         marks::record(&self.directory, attempt, identity)
+    }
+
+    /// The mark scope recorded for the attempt; `None` when it is missing.
+    pub(super) fn mark_scope(
+        &self,
+        attempt: &AttemptId,
+    ) -> io::Result<Option<ora_utils::process::MarkScope>> {
+        marks::scope(&self.directory, attempt)
     }
 
     /// Acquires after recording; the owner serializes this against recovery and dispatch.

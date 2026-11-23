@@ -2,7 +2,8 @@
 //! Real processes show which ones a mark claims, and that killing reaches jobs that left their
 //! parent's process group or cleared their environment.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -140,6 +141,86 @@ fn kill_reaches_orphans_and_env_cleared_children_but_not_strangers() -> TestResu
     stranger.wait()?;
     assert!(survived, "an unmarked process was killed");
     assert!(scope.scan()?.claimed.is_empty());
+    Ok(())
+}
+
+/// Starts a marked long sleep in a new session, as a tool shell that calls `setsid` would.
+fn session_leader(value: &str) -> std::io::Result<Child> {
+    let mut command = Command::new("/bin/sleep");
+    command.arg("60").env(NAME, value);
+    // SAFETY: setsid is async-signal-safe and only changes the forked child.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    command.spawn()
+}
+
+/// Narrowed to new sessions since a tick, killing reaches only what started later outside the
+/// sessions of earlier claimed processes: a later `setsid` job dies, while the earlier processes
+/// and the later ones in their sessions keep running, the helper's child included.
+#[test]
+fn a_new_session_scope_kills_later_jobs_and_spares_earlier_sessions() -> TestResult {
+    let token = token("sessions")?;
+    let mark = EnvironmentMark::new(NAME, &token)?;
+    let scope = scope(&mark)?;
+    // Earlier: one process in this test's session, and a helper that leads its own session and
+    // starts a child there once asked to.
+    let mut earlier = sleeper(Some(&token))?;
+    let mut helper = Command::new("/bin/sh");
+    helper
+        .args(["-c", "read line; /bin/sleep 60 & echo $!; wait"])
+        .env(NAME, &token)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    // SAFETY: setsid is async-signal-safe and only changes the forked child.
+    unsafe {
+        helper.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut helper = helper.spawn()?;
+    // Start times have clock-tick granularity; wait several ticks before the later period.
+    std::thread::sleep(Duration::from_millis(/*millis*/ 60));
+    let later = scope.new_sessions_since(linux_boot_ticks()?);
+    writeln!(helper.stdin.take().ok_or("stdin")?)?;
+    let helper_child = pids(helper.stdout.take().ok_or("stdout")?, 1)?[0];
+    let mut in_session = sleeper(Some(&token))?;
+    let mut job = session_leader(&token)?;
+    let spared = [
+        pin(earlier.id())?,
+        pin(helper.id())?,
+        pin(helper_child)?,
+        pin(in_session.id())?,
+    ];
+    let reported: Vec<_> = later
+        .scan()?
+        .claimed
+        .iter()
+        .map(|process| process.pid)
+        .collect();
+    later.kill()?;
+    job.wait()?;
+    let survived = spared
+        .iter()
+        .map(LinuxPidFd::has_exited)
+        .collect::<Result<Vec<_>, _>>()?;
+    let remaining = later.scan()?.claimed;
+    scope.kill()?;
+    for child in [&mut earlier, &mut helper, &mut in_session] {
+        child.wait()?;
+    }
+    assert_eq!(
+        (reported, survived, remaining),
+        (vec![job.id()], vec![false; 4], Vec::new())
+    );
     Ok(())
 }
 

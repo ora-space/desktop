@@ -11,6 +11,30 @@
 //!
 //! Each job first records its PID in `background.pid`, so a test can pin it before checking that
 //! it never wrote.
+//!
+//! Two markers start processes from the Agent itself instead:
+//!
+//! - `[helper]` starts a long-lived helper in the Agent's own session, the way an Agent launches
+//!   a language server lazily, and records its PID in `helper.pid`; a later `[helper]` reports
+//!   whether that same helper still runs;
+//! - `[respawn]` makes the Agent restart a `setsid` job each time it dies, until the Agent exits,
+//!   as an Agent that supervises a tool job and keeps it running after it answered; it records
+//!   the current job's PID in `respawn.pid`. `[respawn-for <ms>]` instead restarts short-lived
+//!   jobs, each living 200 ms, and starts none once `<ms>` milliseconds passed after the answer;
+//! - `[late-job <ms>]` starts a helper in the Agent's session that starts a `setsid` sentinel job
+//!   at once and, `<ms>` milliseconds after that sentinel died, silently starts another `setsid`
+//!   job and records its PID in `late-job.pid`, as a language server that launches a worker of
+//!   its own later. Only the turn process fence kills the sentinel, so the second job starts
+//!   after the fence, whatever the fence took;
+//! - `[storm <ms>]` makes the Agent start a new `setsid` job every millisecond, without waiting for
+//!   any, from its answer to a cancel until `<ms>` milliseconds later, so a fence that freezes
+//!   them keeps finding new ones and holds the earlier ones stopped across many scans;
+//! - `[cleared-children]` starts a `setsid` shell that keeps forking children with an empty
+//!   environment, every 50 ms, and appends each child's PID to `cleared.pids`;
+//! - `[watch-job]` starts a `setsid` job the Agent watches, recorded in `watch-job.pid`; once it
+//!   dies after a cancel was answered, the Agent reports that in a message.
+//!
+//! The Agent writes `answered` in the session's directory whenever it answers a cancel.
 
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -86,4 +110,161 @@ pub(super) fn run(args: &[String]) -> std::io::Result<()> {
     std::fs::rename("background.pid.tmp", "background.pid")?;
     std::thread::sleep(Duration::from_millis(delay));
     std::fs::write("background-leak", b"written after the session stopped\n")
+}
+
+/// Starts or finds the `[helper]` process; the answer the prompt reports about it, if asked.
+pub(super) fn helper(cwd: &Path, prompt: &str) -> std::io::Result<Option<String>> {
+    if !prompt.contains("[helper]") {
+        return Ok(None);
+    }
+    let record = cwd.join("helper.pid");
+    if let Ok(pid) = std::fs::read_to_string(&record)
+        && let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", pid.trim()))
+        && stat.contains("(sleep) S")
+    {
+        return Ok(Some(format!("helper {} running", pid.trim())));
+    }
+    // No new session or group: the helper stays wherever the Agent runs. The handle is dropped
+    // without waiting, as an Agent that keeps a helper for its lifetime does.
+    let child = Command::new("/bin/sleep")
+        .arg("600")
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    std::fs::write(&record, child.id().to_string())?;
+    Ok(Some(format!("helper {} started", child.id())))
+}
+
+/// A sleep of `seconds` in a session of its own, as a tool shell that calls `setsid` starts it.
+fn session_job(cwd: &Path, seconds: &str) -> Command {
+    let mut command = Command::new("/bin/sleep");
+    command.arg(seconds);
+    in_new_session(cwd, command)
+}
+
+/// Makes `command` start in a session of its own in `cwd`, detached from the Agent's stdio.
+fn in_new_session(cwd: &Path, mut command: Command) -> Command {
+    command
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // SAFETY: setsid is async-signal-safe and touches only the forked child.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    command
+}
+
+/// The delay a `[<marker> <ms>]` marker of `prompt` names.
+fn delay(prompt: &str, marker: &str) -> Option<Duration> {
+    let rest = prompt.split(&format!("[{marker} ")).nth(1)?;
+    rest.split(']')
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+        .map(Duration::from_millis)
+}
+
+/// Starts the `[respawn]` supervisor on its own thread; it runs until the Agent exits, or until
+/// the `[respawn-for <ms>]` delay passed after the answer.
+pub(super) fn respawn(cwd: &Path, prompt: &str) {
+    let limit = delay(prompt, "respawn-for");
+    if !prompt.contains("[respawn]") && limit.is_none() {
+        return;
+    }
+    let cwd = cwd.to_path_buf();
+    std::thread::spawn(move || {
+        let mut answered_at = None;
+        loop {
+            if let Some(limit) = limit {
+                if answered_at.is_none() && cwd.join("answered").exists() {
+                    answered_at = Some(std::time::Instant::now());
+                }
+                if answered_at.is_some_and(|at| at.elapsed() >= limit) {
+                    return;
+                }
+            }
+            // One job at a time: the next one starts as soon as the last one died.
+            let seconds = if limit.is_some() { "0.2" } else { "60" };
+            match session_job(&cwd, seconds).spawn() {
+                Ok(mut job) => {
+                    let _ = std::fs::write(cwd.join("respawn.pid"), job.id().to_string());
+                    let _ = job.wait();
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+    });
+}
+
+/// Starts the `[storm <ms>]` spawner on its own thread; it ends once its window passed.
+pub(super) fn storm(cwd: &Path, prompt: &str) {
+    let Some(window) = delay(prompt, "storm") else {
+        return;
+    };
+    let cwd = cwd.to_path_buf();
+    std::thread::spawn(move || {
+        while !cwd.join("answered").exists() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let until = std::time::Instant::now() + window;
+        while std::time::Instant::now() < until {
+            // The handle is dropped: the job runs until something kills it.
+            let _ = session_job(&cwd, "60").spawn();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+}
+
+/// Starts the `[late-job <ms>]` helper in the Agent's own session.
+pub(super) fn late_job(cwd: &Path, prompt: &str) -> std::io::Result<()> {
+    let Some(delay) = delay(prompt, "late-job") else {
+        return Ok(());
+    };
+    // No new session: the helper stays where the Agent runs, so it is exempt; only the jobs it
+    // starts leave for sessions of their own.
+    Command::new("/bin/sh")
+        .args([
+            "-c",
+            "/usr/bin/setsid /bin/sleep 600 & wait $!; sleep \"$0\"; \
+             /usr/bin/setsid /bin/sleep 60 & echo $! > late-job.pid.tmp; \
+             mv late-job.pid.tmp late-job.pid; wait",
+        ])
+        .arg(format!("{:.3}", delay.as_secs_f64()))
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+/// Starts the `[cleared-children]` shell; it forks until it is killed.
+pub(super) fn cleared_children(cwd: &Path, prompt: &str) -> std::io::Result<()> {
+    if !prompt.contains("[cleared-children]") {
+        return Ok(());
+    }
+    let mut shell = Command::new("/bin/sh");
+    shell.args([
+        "-c",
+        "while :; do env -i /bin/sleep 60 & echo $! >> cleared.pids; sleep 0.05; done",
+    ]);
+    in_new_session(cwd, shell).spawn()?;
+    Ok(())
+}
+
+/// Starts the `[watch-job]` job and records its PID.
+pub(super) fn watched_job(cwd: &Path) -> std::io::Result<std::process::Child> {
+    let job = session_job(cwd, "60").spawn()?;
+    std::fs::write(cwd.join("watch-job.pid"), job.id().to_string())?;
+    Ok(job)
 }

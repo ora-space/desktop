@@ -28,7 +28,7 @@ os.close(write)
 time.sleep(60)";
 
 /// Starts the job through the attempt's own spawn gate and returns it pinned, with its PID.
-async fn detached_job(
+pub(super) async fn detached_job(
     spawner: &stop::spawner::SessionAttemptSpawner,
 ) -> Result<(LinuxPidFd, u32), Box<dyn std::error::Error>> {
     let mut launcher = spawner.spawn(ProcessSpec::new("python3").args(["-c", DETACHED_JOB]))?;

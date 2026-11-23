@@ -55,6 +55,9 @@ enum AfterCancel {
     Title,
     /// Some providers discard their session while returning an error to the cancelled prompt.
     SessionClosed,
+    /// One message chunk once the `[watch-job]` job dies, as an Agent that starts a turn by
+    /// itself when its background task ends.
+    WhenJobDies,
 }
 
 /// Everything the fixture remembers between frames.
@@ -69,6 +72,8 @@ struct EchoAgent {
     committing: Option<PendingPrompt>,
     /// The model context the host started this plugin with, if any.
     model: Option<AgentModelContext>,
+    /// The `[watch-job]` job, whose death the fixture reports after it answered a cancel.
+    watched: Option<std::process::Child>,
 }
 
 /// Runs until the host sends `ora/shutdown` or closes stdin.
@@ -174,22 +179,39 @@ impl EchoAgent {
                     } else {
                         StopReason::Cancelled
                     };
+                    let cwd = self.sessions.get(&held.session_id).cloned();
                     if matches!(held.after_cancel, AfterCancel::SessionClosed) {
                         self.sessions.remove(&held.session_id);
                         acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":held.request_id,"error":{"code":-32603,"message":"Session is closed"}})).await?;
                     } else {
                         respond(output, held.request_id, &PromptResponse::new(stop_reason)).await?;
                     }
+                    // Tells the session's helpers that the cancel was answered.
+                    if let Some(cwd) = cwd {
+                        std::fs::write(cwd.join("answered"), b"")?;
+                    }
                     // Traffic that follows the answer is sent a little later, as an Agent's late
                     // output would be, so the host has settled the answer before it arrives.
-                    if !matches!(
-                        held.after_cancel,
-                        AfterCancel::Nothing | AfterCancel::SessionClosed
-                    ) {
+                    if matches!(held.after_cancel, AfterCancel::Message | AfterCancel::Title) {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                     match held.after_cancel {
                         AfterCancel::Nothing | AfterCancel::SessionClosed => {}
+                        AfterCancel::WhenJobDies => {
+                            if let Some(mut job) = self.watched.take() {
+                                let deadline =
+                                    std::time::Instant::now() + std::time::Duration::from_secs(5);
+                                while job.try_wait()?.is_none()
+                                    && std::time::Instant::now() < deadline
+                                {
+                                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                                }
+                                if job.try_wait()?.is_some() {
+                                    message(output, &held.session_id, "my background task ended")
+                                        .await?;
+                                }
+                            }
+                        }
                         AfterCancel::Message => {
                             message(output, &held.session_id, "still talking").await?;
                         }
@@ -346,6 +368,13 @@ impl EchoAgent {
             return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32603,"message":"Session is closed"}})).await;
         }
         super::background::start(&cwd, &text)?;
+        super::background::respawn(&cwd, &text);
+        super::background::storm(&cwd, &text);
+        super::background::late_job(&cwd, &text)?;
+        super::background::cleared_children(&cwd, &text)?;
+        if let Some(helper) = super::background::helper(&cwd, &text)? {
+            message(output, &session_id, &helper).await?;
+        }
         if text.contains("[mcp]") {
             message(
                 output,
@@ -417,7 +446,12 @@ impl EchoAgent {
             if text.contains("[hold-done-tool]") {
                 tool(output, &session_id, "echo-tool", ToolCallStatus::Completed).await?;
             }
-            let after_cancel = if text.contains("[hold-chatty]") {
+            if text.contains("[watch-job]") {
+                self.watched = Some(super::background::watched_job(&cwd)?);
+            }
+            let after_cancel = if text.contains("[watch-job]") {
+                AfterCancel::WhenJobDies
+            } else if text.contains("[hold-chatty]") {
                 AfterCancel::Message
             } else if text.contains("[hold-titled]") {
                 AfterCancel::Title

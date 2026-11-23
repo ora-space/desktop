@@ -5,7 +5,7 @@
 //! the case it covers.
 
 use super::support::*;
-use ora_node::{CommandSettlement, SessionCommand, SessionHost};
+use ora_node::{CommandSettlement, SessionCommand, SessionHost, TurnBoundaryPlatform};
 use ora_node_protocol::{
     AgentSessionEndReason, EndSessionReason, ExecutionId, TurnCancelOutcome, TurnId,
 };
@@ -677,10 +677,7 @@ async fn a_cancel_during_admission_keeps_the_session_with_the_empty_list() {
 async fn another_version_of_a_listed_plugin_is_not_verified() {
     let mut fixture = Fixture::new();
     fixture.verify_turn_boundary();
-    fixture.turn_cancel.turn_boundary = vec![(
-        ora_node_protocol::PluginId::new(PLUGIN_ID),
-        ora_node_protocol::PluginVersion::new("9.9.9"),
-    )];
+    fixture.turn_cancel.turn_boundary = vec![boundary("9.9.9", TurnBoundaryPlatform::Linux)];
     let sessions = fixture.sessions(PLUGIN_VERSION);
     fixture.start_keeping(&sessions, "[hold]", CANCEL);
     running(&fixture, 0).await;
