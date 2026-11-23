@@ -1,4 +1,4 @@
-use super::prerequisites::{PluginAwareAgentSkillDeliveryProvider, SkillRoleWorkspaceInitializer};
+use super::prerequisites::plugin_initializer;
 use crate::clock::SystemClock;
 use ora_application::{
     ApplicationError, CreateWorkflowRunHandler, DeleteWorkflowRunHandler, GetWorkflowRunHandler,
@@ -60,15 +60,10 @@ impl WorkflowRunApi {
         &self,
         request: CreateWorkflowRunRequest,
     ) -> Result<CreateWorkflowRunResponse, ApplicationError> {
-        let delivery_provider = PluginAwareAgentSkillDeliveryProvider::new(self.plugin_api.clone())
+        let initializer = plugin_initializer(&self.skills_root, &self.pool, &self.plugin_api)
             .map_err(|error| ApplicationError::WorkflowRunStartFailed {
                 message: error.to_string(),
             })?;
-        let initializer = SkillRoleWorkspaceInitializer::with_delivery_provider(
-            self.skills_root.clone(),
-            self.pool.clone(),
-            delivery_provider,
-        );
         let handler = CreateWorkflowRunHandler::new(
             Arc::new(SqliteWorkflowRepository::new(self.pool.clone())),
             Arc::new(SqliteWorkspaceRepository::new(self.pool.clone())),

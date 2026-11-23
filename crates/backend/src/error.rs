@@ -5,7 +5,8 @@ use ora_application::{
 };
 use ora_contracts::{
     ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
-    WorkflowRunInputInvalidParams, WorkflowSnapshotIncompatibleWithResumeParams,
+    WorkflowMcpNotFoundParams, WorkflowRunInputInvalidParams, WorkflowSkillNotFoundParams,
+    WorkflowSnapshotIncompatibleWithResumeParams,
 };
 use ora_plugin_lifecycle::PluginLifecycleError;
 use std::error::Error;
@@ -717,10 +718,31 @@ impl From<ApplicationError> for BackendError {
                 }),
                 "workflow run input value was rejected",
             ),
-            ApplicationError::WorkflowSkillNotFound { .. } => (
+            ApplicationError::WorkflowSkillNotFound {
+                node_id,
+                node_title,
+                skill_id,
+            } => (
                 ErrorClassification::InvalidRequest,
-                PublicError::WorkflowSkillNotFound(EmptyErrorParams {}),
+                PublicError::WorkflowSkillNotFound(Box::new(WorkflowSkillNotFoundParams {
+                    node_id: node_id.clone(),
+                    node_title: node_title.clone(),
+                    skill_id: skill_id.clone(),
+                })),
                 "workflow skill not found",
+            ),
+            ApplicationError::WorkflowMcpNotFound {
+                node_id,
+                node_title,
+                mcp_id,
+            } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowMcpNotFound(Box::new(WorkflowMcpNotFoundParams {
+                    node_id: node_id.clone(),
+                    node_title: node_title.clone(),
+                    mcp_id: mcp_id.clone(),
+                })),
+                "workflow MCP not found",
             ),
             ApplicationError::WorkflowRoleNotFound { .. } => (
                 ErrorClassification::InvalidRequest,

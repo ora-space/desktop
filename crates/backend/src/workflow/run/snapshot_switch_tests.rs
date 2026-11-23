@@ -3,7 +3,8 @@
 
 use super::checkpoint::record_pre_node_checkpoint;
 use super::rollback::{apply_rollback, fill_snapshot_preview, plan_rollback, preview};
-use super::snapshot_switch::{check_switch, load_context, switch_if_requested};
+use super::snapshot_switch::{check_switch, load_context};
+use super::test_fixture::switch_if_requested;
 use super::test_fixture::{
     ClockAt, RecordingExecutor, SeqGen, bootstrap, init_git_workspace, started_run_with,
 };
