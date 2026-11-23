@@ -6,6 +6,8 @@ mod agent_session;
 mod execution;
 #[path = "protocol/framing.rs"]
 mod framing;
+#[path = "protocol/host_mcp.rs"]
+mod host_mcp;
 #[path = "protocol/plugin.rs"]
 mod plugin;
 #[path = "protocol/repository.rs"]
@@ -24,5 +26,12 @@ mod session;
 mod support;
 #[path = "protocol/thread_preview.rs"]
 mod thread_preview;
+#[path = "protocol/turn_cancel.rs"]
+mod turn_cancel;
 #[path = "protocol/worktree.rs"]
 mod worktree;
+
+#[path = "protocol/session_mcp.rs"]
+mod session_mcp;
+#[path = "protocol/session_mcp_lifecycle.rs"]
+mod session_mcp_lifecycle;

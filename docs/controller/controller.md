@@ -21,7 +21,7 @@ fallback for the other.
   run on the blocking pool so fsync never blocks the async runtime. The database has application id
   `0x4f524143`, schema version 1 and exact schema and integrity checks, and an OS lease on the sibling
   `ora-controller.sqlite3.lock` (beside the database so SQLite's own locks never collide with it on
-  macOS or Windows). A different ControllerId or an unknown existing file is rejected; there is no
+  Windows). A different ControllerId or an unknown existing file is rejected; there is no
   HOME-derived location, reset or automatic rebinding. It reconciles, takes over and reports the
   clone dispatches its database already holds; it has no intake of new work.
 - **`CloudStore`** opens no database and takes no file lease: every operation is a call on the
@@ -70,10 +70,7 @@ Invalid flags and configuration fail before any lease is taken.
     "controller_id": "deployment-controller",
     "protected_state_directories": ["/home/node/state", "/home/node/process"],
     "nodes": [
-      {
-        "node_id": "deployment-node",
-        "endpoint": { "kind": "ipc", "path": "/home/node/state/control.sock" }
-      }
+      { "node_id": "deployment-node", "endpoint": { "kind": "ipc", "path": "/home/node/state/control.sock" } }
     ],
     "session": { "io_timeout_ms": 10000, "query_interval_ms": 1000 },
     "reconnect_ms": 1000,
@@ -88,17 +85,17 @@ Invalid flags and configuration fail before any lease is taken.
 }
 ```
 
-- Declare every Node, process host and guardian state root in `protected_state_directories`; IPC
-  socket parents are protected too, and any overlap with Controller state is rejected. Configure the
-  Node's owner to this ControllerId.
+- Declare every Node state root in `protected_state_directories`; IPC socket parents are protected
+  too, and any overlap with Controller state is rejected. Configure the Node's owner to this
+  ControllerId.
 - A Node in a sandbox is reached through its platform WebSocket router:
   `{ "kind": "websocket", "url": "wss://…", "headers": { "ate-target-actor": "atespace/sandbox-id" } }`.
   Headers are sent verbatim and carry vendor addressing and platform credentials; the handshake still
   verifies `node_id`.
 - `--single-node` starts the configured Node, which must use an `ipc` endpoint whose
   `control.controller_id` and `control.listen` match, in its own process group, and waits up to
-  `ready_timeout_ms` for the endpoint. The process host and guardian are prerequisites it does not
-  start. If the hosted Node exits on its own, the Controller exits with failure.
+  `ready_timeout_ms` for the endpoint. If the hosted Node exits on its own, the Controller exits with
+  failure.
 - Normal shutdown stops Node sessions, then the adapter's own work (in the cloud form a bounded lease
   release), then the hosted Node (`SIGTERM`, waiting `stop_timeout_ms`, never `SIGKILL`), then the
   SQLite lease. Accepted Node executions are never cancelled by the Controller stopping.
@@ -157,11 +154,11 @@ Node for good, so work registered under a wrong id would wait forever.
 
 While holding the lease the Controller keeps one `Watch` stream open:
 
-| Stream  | Entered when                                                       | Claims                                                                             |
-| ------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| none    | Start; the stream ended with an error; the lease epoch was dropped | Every `claim_interval_ms`, retrying the stream on each tick                        |
-| live    | Cloud sent its response headers                                    | On opening, on every `WorkAvailable`/`OperationAvailable`, and after every renewal |
-| drained | Cloud sent `Drain` or ended the stream cleanly                     | Never; the lease is kept and sessions continue                                     |
+| Stream | Entered when | Claims |
+|---|---|---|
+| none | Start; the stream ended with an error; the lease epoch was dropped | Every `claim_interval_ms`, retrying the stream on each tick |
+| live | Cloud sent its response headers | On opening, on every `WorkAvailable`/`OperationAvailable`, and after every renewal |
+| drained | Cloud sent `Drain` or ended the stream cleanly | Never; the lease is kept and sessions continue |
 
 Signals only accelerate claiming; ownership is decided when `RecordDispatch` commits, and the renewal
 backstop picks up work whose signal was dropped. A drain means the Cloud instance is stopping: the
@@ -176,15 +173,15 @@ It claims one operation at a time with `ClaimOperation` (Cloud hands back the ol
 decides the step order), records each step's effect plan, executes it and advances or defers the
 operation with the claimed version:
 
-| Step      | What the Controller does                                                                                                            |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| sandbox   | Executes the ensure effect and advances with its evidence (`sandboxInstanceId`, `nodeId`)                                           |
-| node      | Opens a Node session through `router_url` with `ate-target-actor: <atespace>/<externalId>` and waits for Cloud to list it connected |
-| clone     | Forwards the snapshot input Cloud froze (`clone_input`) to `RecordDispatch` and the Node verbatim, and advances once it is ready    |
-| plugin    | Dispatches the frozen plugin install or removal plan, see [Node plugins](../node/plugins.md)                                        |
-| quiesce   | Closes the sandbox's dispatch gate and reports idle only when nothing is pending or unresolved                                      |
-| terminate | Stops the Node session, then executes the terminate effect                                                                          |
-| cleanup   | Executes the data-delete effect                                                                                                     |
+| Step | What the Controller does |
+|---|---|
+| sandbox | Executes the ensure effect and advances with its evidence (`sandboxInstanceId`, `nodeId`) |
+| node | Opens a Node session through `router_url` with `ate-target-actor: <atespace>/<externalId>` and waits for Cloud to list it connected |
+| clone | Forwards the snapshot input Cloud froze (`clone_input`) to `RecordDispatch` and the Node verbatim, and advances once it is ready |
+| plugin | Dispatches the frozen plugin install or removal plan, see [Node plugins](../node/plugins.md) |
+| quiesce | Closes the sandbox's dispatch gate and reports idle only when nothing is pending or unresolved |
+| terminate | Stops the Node session, then executes the terminate effect |
+| cleanup | Executes the data-delete effect |
 
 `effects_url` is the Substrate effect API (`GET`/`PUT /effects/{id}`). The Controller reads an effect
 before writing it and re-reads the same id after a timeout or server error, so an effect whose reply

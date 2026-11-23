@@ -113,6 +113,26 @@ impl UserTurn {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSessionSpec {
+    /// Explicit opt-in; persisted without credentials and compared on duplicate starts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mcp_lifecycle: bool,
+    /// Keep the session after a turn ends through `CancelTurn`; without it `CancelTurn` is
+    /// refused. Set only over a connection that negotiated `turn_cancel`, and compared on
+    /// duplicate starts like every other input.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_session_on_cancel: bool,
+    /// Keep the session after a turn fails (ACP prompt error, watchdog gave up); without it a
+    /// failed turn ends the session as `agent_failed` with its detail.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_session_on_failure: bool,
+    /// Explicit plugin MCP selection; omitted and empty both mean none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp: Vec<super::session_mcp::SessionMcpBinding>,
+    /// Controller-provided HTTP MCP servers attached after the plugin MCP servers on every ACP
+    /// setup; sent only to a Node advertising `session_host_mcp_servers`. Omitted and empty both
+    /// mean none, and they never join the plugin selection above.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_mcp_servers: Vec<super::host_mcp::HostMcpServer>,
     pub node_id: NodeId,
     pub agent_plugin_id: PluginId,
     pub agent_plugin_version: PluginVersion,
@@ -159,6 +179,8 @@ impl AgentSessionSpec {
                 field: "checkout_execution_id",
             });
         }
+        super::session_mcp::validate_bindings(&self.mcp)?;
+        super::host_mcp::validate_host_servers(&self.host_mcp_servers)?;
         self.git_identity.validate()?;
         if self
             .model_binding_id
@@ -217,6 +239,15 @@ pub struct AgentSessionEnded {
     /// Bounded snake_case code such as `agent_plugin_unavailable`; never raw Agent output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// The failing MCP plugin, present only for MCP setup failures that can name one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<Box<PluginId>>,
+    /// The failing MCP Setting id, never its value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setting_id: Option<Box<str>>,
+    /// The failing MCP transport kind, without its resolved command, URL, headers or arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<super::session_mcp::SessionMcpTransport>,
     /// The business result the executor parsed out of the final Assistant turn. Set only for a
     /// scheduled session that ended normally: Cloud admits verification of the values but never
     /// parses the Thread itself.
@@ -248,6 +279,7 @@ impl AgentSessionResult {
         {
             return Err(MessageValidationError::InvalidDetailCode);
         }
+        validate_mcp_failure_metadata(ended)?;
         if let Some(result) = &ended.scheduled_result {
             result.validate()?;
         }
@@ -262,6 +294,25 @@ impl AgentSessionResult {
         let Self::AgentSessionEnded(ended) = self;
         &ended.node
     }
+}
+
+/// Validates the optional identifiers without constraining them to one declaration's grammar.
+fn validate_mcp_failure_metadata(ended: &AgentSessionEnded) -> Result<(), MessageValidationError> {
+    if let Some(plugin_id) = &ended.plugin_id {
+        plugin_id.validate()?;
+        ora_domain::PluginId::parse(plugin_id.as_str())
+            .map_err(|_| MessageValidationError::InvalidPluginId)?;
+    }
+    if ended.setting_id.as_ref().is_some_and(|setting_id| {
+        setting_id.is_empty()
+            || setting_id.len() > super::session_mcp::MAX_SESSION_MCP_SETTINGS_BYTES
+            || setting_id.chars().any(char::is_control)
+    }) || (ended.plugin_id.is_none()
+        && (ended.setting_id.is_some() || ended.transport.is_some()))
+    {
+        return Err(MessageValidationError::InvalidSessionMcp);
+    }
+    Ok(())
 }
 
 /// Accepts short snake_case codes only.

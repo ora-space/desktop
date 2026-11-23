@@ -310,6 +310,10 @@ export const workflowRunTranslations = {
     "workflowRun.stepCard.pausedBadge": "已暂停",
     "workflowRun.stepCard.waitingBadge": "等待参与",
     "workflowRun.stepCard.abnormalBadge": "异常停靠",
+    "workflowRun.stepCard.failedAttemptBadge": "节点运行失败",
+    "workflowRun.stepCard.retryStep": "重试本步",
+    "workflowRun.stepCard.warning.retry_without_result":
+      "自动重试未返回可用结果。",
     "workflowRun.stepCard.userStoppedHint":
       "你主动停止了本轮；可以继续当前步骤，或显式采用当前产出。",
     "workflowRun.stepCard.abnormalHint":
@@ -873,6 +877,10 @@ export const workflowRunTranslations = {
     "workflowRun.stepCard.pausedBadge": "Paused",
     "workflowRun.stepCard.waitingBadge": "Awaiting input",
     "workflowRun.stepCard.abnormalBadge": "Abnormal stop",
+    "workflowRun.stepCard.failedAttemptBadge": "Node execution failed",
+    "workflowRun.stepCard.retryStep": "Retry this step",
+    "workflowRun.stepCard.warning.retry_without_result":
+      "The automatic retry returned no usable result.",
     "workflowRun.stepCard.userStoppedHint":
       "You stopped this turn; you can continue the current step or explicitly accept the current output.",
     "workflowRun.stepCard.abnormalHint":

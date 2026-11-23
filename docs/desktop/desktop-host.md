@@ -114,6 +114,10 @@ the data root's parent (the repository root under `task run:desktop`), not the p
 
 ## Desktop updates
 
+Releases ship for Windows (NSIS installer) and Linux (AppImage and `deb`). macOS is no longer
+supported: v0.6.0 was the last macOS release, and the manifest has no macOS entry, so a macOS
+installation stays on v0.6.0.
+
 Release builds check the signed static manifest
 `https://github.com/ora-space/desktop/releases/latest/download/latest.json` one minute after start
 and then every six hours (`0 0 */6 * * *`) on an `ora-scheduler` job, using the user's configured proxy. Tauri's

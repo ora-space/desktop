@@ -12,9 +12,10 @@ use super::{
     open_ready_backend, seed_workspace,
 };
 use crate::setup::DesktopTestSetup;
-use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, StopReason, TextContent};
 use ora_backend::{Backend, BackendError};
 use ora_contracts::*;
+use ora_history::{HistoryRecord, read_session_history};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -436,6 +437,246 @@ fn a_stopped_step_blocks_completion_and_continues_after_a_restart() -> TestResul
     })
 }
 
+/// A load can succeed against a provider session that is actually gone; the first prompt then
+/// fails before producing output, so the runtime rebuilds and retries it once.
+#[test]
+fn a_stale_loaded_session_rebuilds_and_retries_the_first_prompt() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root: PathBuf =
+            install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let (run_id, session_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let run_id = start_interactive_run(&backend, &workspace_id)?;
+            let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending
+            })
+            .await?;
+            (run_id, parked.session_id.ok_or("the node owns a session")?)
+        };
+
+        let backend = open_ready_backend(&setup)?;
+        drain_load(backend.sessions().load(LoadSessionRequest {
+            session_id: session_id.clone(),
+        }))
+        .await?;
+
+        let mut stream = backend
+            .sessions()
+            .prompt(PromptSessionRequest {
+                session_id: session_id.clone(),
+                prompt: vec![ContentBlock::Text(TextContent::new(
+                    "[fail-times:1] carry on",
+                ))],
+                record_prompt: None,
+                model: None,
+            })
+            .await?;
+        let mut config_option_updates = 0;
+        while let Some(event) = stream.recv().await {
+            if let PromptSessionEvent::SessionUpdate {
+                update: SessionUpdate::ConfigOptionUpdate(_),
+                ..
+            } = event?
+            {
+                config_option_updates += 1;
+            }
+        }
+        drop(stream);
+        assert!(
+            config_option_updates >= 2,
+            "the load and the rebuilt session both publish config setup to the waiting prompt (got {config_option_updates})"
+        );
+        wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending && completion_blockers(node).is_empty()
+        })
+        .await?;
+
+        let sessions_root = setup.backend_paths().app_data_directory.join("sessions");
+        let history = read_session_history(&sessions_root, &session_id)?;
+        let user_messages = history
+            .lines
+            .iter()
+            .filter(|line| match &line.record {
+                HistoryRecord::Update { update, .. } => {
+                    matches!(update.as_ref(), SessionUpdate::UserMessageChunk(_))
+                        && serde_json::to_string(update)
+                            .is_ok_and(|record| record.contains("carry on"))
+                }
+                _ => false,
+            })
+            .count();
+        assert_eq!(
+            user_messages, 1,
+            "the retry must not record the same human prompt twice"
+        );
+
+        let calls = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
+        assert_eq!(
+            calls.matches("session/new").count(),
+            2,
+            "the failed first prompt after a successful load rebuilds the provider session exactly once: {calls}"
+        );
+        let load = calls.find("session/load").ok_or("the restart loads the session")?;
+        let rebuild = calls.rfind("session/new").ok_or("the retry rebuilds")?;
+        assert!(
+            load < rebuild,
+            "the retry rebuilds after the load that claimed success: {calls}"
+        );
+        let prompts = std::fs::read_to_string(package_root.join("acp_prompts.jsonl"))?;
+        assert!(
+            prompts.matches("[fail-times:1]").count() >= 2,
+            "the retry resends the same prompt after the rebuild: {prompts}"
+        );
+        assert!(
+            prompts.contains("previously handled by a different coding agent"),
+            "the retry carries the transcript of the pre-restart conversation: {prompts}"
+        );
+        Ok(())
+    })
+}
+
+/// A failed retry returns the retry's error and never attempts a second rebuild.
+#[test]
+fn a_stale_loaded_session_returns_the_retry_error_without_a_second_rebuild() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root: PathBuf =
+            install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let (run_id, session_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let run_id = start_interactive_run(&backend, &workspace_id)?;
+            let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending
+            })
+            .await?;
+            (run_id, parked.session_id.ok_or("the node owns a session")?)
+        };
+
+        let backend = open_ready_backend(&setup)?;
+        drain_load(backend.sessions().load(LoadSessionRequest {
+            session_id: session_id.clone(),
+        }))
+        .await?;
+
+        let mut stream = backend
+            .sessions()
+            .prompt(PromptSessionRequest {
+                session_id: session_id.clone(),
+                prompt: vec![ContentBlock::Text(TextContent::new(
+                    "[fail-times:2] carry on",
+                ))],
+                record_prompt: None,
+                model: None,
+            })
+            .await?;
+        let mut prompt_error = None;
+        while let Some(event) = stream.recv().await {
+            if let Err(error) = event {
+                prompt_error = Some(error.to_string());
+            }
+        }
+        let prompt_error = prompt_error.ok_or("the retry must surface an error")?;
+        assert!(
+            prompt_error.contains("agent protocol operation failed"),
+            "the retry surfaces an agent protocol error: {prompt_error}"
+        );
+        let failures = std::fs::read_to_string(package_root.join("prompt_failures.txt"))?;
+        assert_eq!(
+            failures.matches("[fail-times:2]").count(),
+            2,
+            "both the first attempt and the retry failed: {failures}"
+        );
+
+        let _ = run_id;
+        let calls = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
+        assert_eq!(
+            calls.matches("session/new").count(),
+            2,
+            "the retry rebuilds once and does not rebuild again after failing: {calls}"
+        );
+        Ok(())
+    })
+}
+
+/// A load follower attached during the first attempt follows the retry to exactly one ending.
+#[test]
+fn a_load_follower_follows_the_stale_load_retry_to_one_terminal_end() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let (_run_id, session_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let run_id = start_interactive_run(&backend, &workspace_id)?;
+            let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending
+            })
+            .await?;
+            (run_id, parked.session_id.ok_or("the node owns a session")?)
+        };
+
+        let backend = open_ready_backend(&setup)?;
+        let mut stream = backend
+            .sessions()
+            .prompt(PromptSessionRequest {
+                session_id: session_id.clone(),
+                prompt: vec![ContentBlock::Text(TextContent::new(
+                    "[fail-times:1] [fail-delay-ms:300] carry on",
+                ))],
+                record_prompt: None,
+                model: None,
+            })
+            .await?;
+        // Give the first attempt time to send its prompt, then attach a follower while it is held.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let mut follower = backend
+            .sessions()
+            .load(LoadSessionRequest {
+                session_id: session_id.clone(),
+            })
+            .await?;
+        let mut live_stop_reasons = Vec::new();
+        let mut live_updates = 0;
+        let mut completed = 0;
+        while let Some(event) = follower.recv().await {
+            match event? {
+                LoadSessionEvent::TurnEnded {
+                    stop_reason,
+                    recorded_at: None,
+                } => live_stop_reasons.push(stop_reason),
+                LoadSessionEvent::SessionUpdate {
+                    recorded_at: None, ..
+                } => live_updates += 1,
+                LoadSessionEvent::Completed => completed += 1,
+                _ => {}
+            }
+        }
+        while let Some(event) = stream.recv().await {
+            event?;
+        }
+
+        assert_eq!(
+            (live_stop_reasons, completed),
+            (vec![StopReason::EndTurn], 1),
+            "the follower must receive exactly one live terminal boundary for the logical turn"
+        );
+        assert!(
+            live_updates > 0,
+            "the follower must receive the retry's live output"
+        );
+        let calls = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
+        assert_eq!(
+            calls.matches("session/new").count(),
+            2,
+            "the initial session and the single retry rebuild are both recorded: {calls}"
+        );
+        Ok(())
+    })
+}
+
 /// A plain conversation saying "继续" advances nothing: only an explicit completion moves a node.
 #[test]
 fn a_plain_conversation_saying_continue_does_not_advance_a_node() -> TestResult {
@@ -491,6 +732,111 @@ fn a_plain_conversation_saying_continue_does_not_advance_a_node() -> TestResult 
         assert!(
             after.nodes.iter().all(|node| node.node_id != "output"),
             "a human turn in the node's session still needs the explicit completion"
+        );
+        Ok(())
+    })
+}
+
+/// A cancelled first prompt consumes the loaded channel's one rebuild retry.
+#[test]
+fn a_cancelled_first_loaded_prompt_consumes_the_rebuild_retry() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let (run_id, session_id) = {
+            let backend = open_ready_backend(&setup)?;
+            let workspace_id = seed_workspace(&setup, &backend)?;
+            let run_id = start_interactive_run(&backend, &workspace_id)?;
+            let parked = wait_for_node(&backend, &run_id, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending
+            })
+            .await?;
+            (run_id, parked.session_id.ok_or("node must own a session")?)
+        };
+        let backend = open_ready_backend(&setup)?;
+        drain_load(backend.sessions().load(LoadSessionRequest {
+            session_id: session_id.clone(),
+        }))
+        .await?;
+
+        // The hold marker must not enter durable history, or a retry would replay it and hold.
+        let marker = "review-771-first-loaded-turn [fake-agent-drop]";
+        let mut first = backend
+            .sessions()
+            .prompt(PromptSessionRequest {
+                session_id: session_id.clone(),
+                prompt: vec![ContentBlock::Text(TextContent::new(marker))],
+                record_prompt: Some(vec![ContentBlock::Text(TextContent::new(
+                    "first human turn",
+                ))]),
+                model: None,
+            })
+            .await?;
+        super::abnormal_support::wait_for_prompt_marker(&package_root, marker).await?;
+        backend
+            .sessions()
+            .cancel_prompt(CancelSessionPromptRequest {
+                session_id: session_id.clone(),
+            })?;
+        tokio::time::timeout(RUN_DEADLINE, async {
+            while let Some(event) = first.recv().await {
+                event?;
+            }
+            Ok::<(), BackendError>(())
+        })
+        .await??;
+        drop(first);
+        wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending
+        })
+        .await?;
+
+        let before = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
+        let before_new = before.matches("session/new").count();
+        let before_load = before.matches("session/load").count();
+        assert_eq!(before_load, 1, "the first human turn used session/load: {before}");
+
+        let mut second = backend
+            .sessions()
+            .prompt(PromptSessionRequest {
+                session_id: session_id.clone(),
+                prompt: vec![ContentBlock::Text(TextContent::new(
+                    "[fail-times:1] second human turn",
+                ))],
+                record_prompt: None,
+                model: None,
+            })
+            .await?;
+        let errors = tokio::time::timeout(RUN_DEADLINE, async {
+            let mut errors = Vec::new();
+            while let Some(event) = second.recv().await {
+                if let Err(error) = event {
+                    errors.push(format!("{error:?}"));
+                }
+            }
+            errors
+        })
+        .await?;
+        drop(second);
+        wait_for_node(&backend, &run_id, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending
+        })
+        .await?;
+
+        let after = std::fs::read_to_string(package_root.join("acp_calls.txt"))?;
+        assert_eq!(
+            after.matches("session/load").count(),
+            before_load,
+            "the second turn reuses the same loaded channel: {after}"
+        );
+        assert_eq!(
+            (after.matches("session/new").count() - before_new, errors.len()),
+            (0, 1),
+            "a cancelled first prompt consumes eligibility; the second failure must surface: {after} {errors:?}"
+        );
+        assert!(
+            errors[0].contains("fake agent failed prompt 1 of 1 on purpose"),
+            "the original second-turn error survives: {errors:?}"
         );
         Ok(())
     })

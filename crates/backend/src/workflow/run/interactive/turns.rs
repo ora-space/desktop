@@ -102,29 +102,19 @@ impl WorkflowSessionTurns {
                 *auto_accept,
             ),
         };
-        // The agent policy needs one token per prompt attempt. It rides on the step boundary so
-        // the recorded user message stays exactly what the user typed.
-        let (step_boundary, attempt_id) = match (&admission, completion_policy) {
+        let (attempt_id, instruction) = match (&admission, completion_policy) {
             (HumanTurnAdmission::Workflow { node_run_id, .. }, CompletionPolicy::Agent) => {
-                let attempt = uuid::Uuid::new_v4().to_string();
-                let token = self
+                let turn = uuid::Uuid::new_v4().to_string();
+                let instruction = self
                     .agent_signals
-                    .issue(&format!("{node_run_id}"), &attempt);
-                let boundary = step_boundary.unwrap_or_default();
-                (
-                    Some(format!(
-                        "{boundary}\n<workflow_completion>\nWhen this step is complete, call the \
-                         tool ora_complete_workflow_step and pass this attemptToken unchanged: \
-                         {token}\n</workflow_completion>"
-                    )),
-                    Some(attempt),
-                )
+                    .prompt_instruction(node_run_id.to_string(), turn.clone());
+                (Some(turn), Some(instruction))
             }
-            _ => (step_boundary, None),
+            _ => (None, None),
         };
         let request = with_step_boundary(request, step_boundary);
         let stream = match agent_runtime
-            .prompt_session_with_inactivity_policy(request, prompt_inactivity)
+            .prompt_session_with_attempt_instruction(request, prompt_inactivity, instruction)
             .await
         {
             Ok(stream) => SessionEventStream::from(stream),

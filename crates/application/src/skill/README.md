@@ -49,8 +49,7 @@ on-disk packages.
   returns still leaves an unowned directory, which reconciliation removes. Mutation-time
   directory fsync is a hard error on Unix; startup recovery treats an unsupported directory fsync
   as best-effort so restoring a valid backup cannot permanently block startup. Windows cannot
-  reliably flush directory metadata, so that flush is best-effort there, and macOS `sync_all` is
-  `fsync` rather than `F_FULLFSYNC`.
+  reliably flush directory metadata, so that flush is best-effort there.
 
 ## Atomicity and recovery model
 

@@ -265,6 +265,9 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
             thread_previews: store.supports_thread_previews(),
+            // This Controller still stops a turn with `EndSession`; it never opts sessions into
+            // the keep choices, so it does not ask for `turn_cancel`.
+            turn_cancel: false,
             controller_id: id.clone(),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
         },
@@ -418,6 +421,12 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                 continue;
             }
             NodeToControllerMessage::SessionCommandRejected(reply) if agent_capable => {
+                if reply.payload.reason
+                    == ora_node_protocol::SessionCommandRejection::McpUpdateRequired
+                {
+                    // This command was not accepted. Do not mark its durable dispatch delivered.
+                    continue;
+                }
                 commands
                     .input
                     .try_send(commands::Reply::Command {

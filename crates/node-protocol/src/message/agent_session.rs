@@ -24,6 +24,9 @@ pub struct StartAgentSession {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubmitUserTurn {
+    /// Required for lifecycle sessions; a floor never asks Node to restore an old target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_generation: Option<u64>,
     pub node_id: NodeId,
     pub command_id: CommandId,
     pub turn: UserTurn,
@@ -60,14 +63,57 @@ pub struct SessionCommandAccepted {
 pub enum SessionCommandRejection {
     /// The session already has a terminal result; Cloud settles by that result.
     SessionEnded,
+    /// Retry the unchanged command after delivering its required configuration generation.
+    McpUpdateRequired,
+    /// `CancelTurn` for a session that did not choose `keep_session_on_cancel`; nothing changed.
+    TurnCancelUnsupported,
 }
 
-/// The Node refused a session command; the Controller still records it as delivered.
+/// Only terminal refusals are delivered; MCP update requirements leave the command retryable.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionCommandRejected {
     pub command_id: CommandId,
     pub reason: SessionCommandRejection,
+}
+
+/// Reliable failure of one admitted turn, separate from Agent-generated Thread records.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionTurnFailed {
+    pub turn_id: crate::TurnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<CommandId>,
+    pub code: SessionTurnFailureCode,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionTurnFailureCode {
+    McpRefreshWaitTimeout,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SessionTurnFailedMessage {
+    pub protocol_version: ProtocolVersion,
+    pub operation_id: OperationId,
+    pub execution_id: ExecutionId,
+    pub sequence: Sequence,
+    pub payload: SessionTurnFailed,
+}
+
+impl ValidateMessage for SessionTurnFailedMessage {
+    /// A failure has its own reliable sequence and only value-free bounded identities.
+    fn validate(&self) -> Result<(), MessageValidationError> {
+        validate_protocol_version(self.protocol_version)?;
+        validate_execution_ids(&self.operation_id, &self.execution_id)?;
+        validate_identity(self.sequence.value() == 0, "sequence")?;
+        validate_identity(self.payload.turn_id.is_empty(), "turn_id")?;
+        if let Some(command) = &self.payload.command_id {
+            validate_identity(command.is_empty(), "command_id")?;
+        }
+        Ok(())
+    }
 }
 
 /// Correlates a session with its IssueRun and durable execution identity.
@@ -165,6 +211,13 @@ impl ValidateMessage for AgentSessionEndedMessage {
 impl ValidateMessage for SubmitUserTurnMessage {
     /// Requires command identity and a bounded turn.
     fn validate(&self) -> Result<(), MessageValidationError> {
+        if self
+            .payload
+            .mcp_generation
+            .is_some_and(|generation| generation > crate::MAX_SESSION_MCP_COUNTER)
+        {
+            return Err(MessageValidationError::InvalidSessionMcp);
+        }
         validate_protocol_version(self.protocol_version)?;
         validate_execution_ids(&self.operation_id, &self.execution_id)?;
         validate_identity(self.payload.node_id.is_empty(), "node_id")?;

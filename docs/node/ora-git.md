@@ -19,9 +19,9 @@ request with its own git-access identity. The decision is
 - `agent.ora_git_directory` requests `ora-git`; without it, or without `git_access`, sessions get no
   socket. It must be an absolute path whose parent only trusted owners control, either missing (the
   Node creates it) or a Node-owned directory nobody else can read or write, and it must not overlap the
-  Node home, the host directory, the clone root or the workload directory; the Node refuses to start
-  otherwise. The Node keeps it at `0711` (traversable but not listable by others) and, when it starts,
-  removes only the sockets an earlier Node process named there.
+  Node home, a configured legacy `process.host_directory`, the clone root or the workload directory;
+  the Node refuses to start otherwise. The Node keeps it at `0711` (traversable but not listable by
+  others) and, when it starts, removes only the sockets an earlier Node process named there.
 - The Node enables `ora-git` only when `process.workload_uid` is set and differs from the Node's
   effective UID. The component refuses both a missing UID and one equal to the Node's UID, without
   falling back to the Node UID. Session behavior depends on the Node passing its other startup checks:

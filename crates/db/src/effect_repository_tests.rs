@@ -2,6 +2,8 @@ mod consumer_handover;
 mod declaration;
 mod recovery;
 mod scope_initialization;
+#[cfg(any(unix, windows))]
+mod skill_directory_blocker;
 mod skill_republish;
 mod stale_status;
 mod time;
@@ -38,6 +40,11 @@ impl TimestampSource for FixedTimestamp {
 struct ReadyConsumer;
 
 impl ConsumerAdapter for ReadyConsumer {
+    /// The test consumer owns no runtime barrier.
+    fn reserve_coordination(&self, _target: &EffectTarget) -> Result<(), ConsumerAdapterError> {
+        Ok(())
+    }
+
     /// Returns a matching barrier receipt if a test declaration opts into coordination.
     fn coordinate(
         &self,
@@ -84,6 +91,11 @@ struct PublishSkillOnVerify {
 }
 
 impl ConsumerAdapter for PublishSkillOnVerify {
+    /// The test consumer owns no runtime barrier.
+    fn reserve_coordination(&self, _target: &EffectTarget) -> Result<(), ConsumerAdapterError> {
+        Ok(())
+    }
+
     /// Uses the same coordination contract while interleaving publication at readiness.
     fn coordinate(
         &self,

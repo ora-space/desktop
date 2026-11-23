@@ -38,8 +38,10 @@ ADR。
 | `runtime_control` | `bind_runtime` 和各个 `controlled_*` 信封 | `runtime_control_state` |
 | `plugin_install` | `install_plugins`、`remove_plugins` | `plugins_result` |
 | `agent_session` | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected` |
+| `shared_checkout_sessions` | 每个 checkout 最多 8 个未结束 Agent 会话，恢复围栏不变 | 拒绝的启动以 `agent_failed{checkout_busy}` 或 `agent_failed{checkout_session_limit}` 结束，不关闭连接 |
 | `model_proxy` | 绑定了模型的会话启动 | `hello_accepted` 中的 `model_adapter`（见下文） |
 | `revision_delivery` | `deliver_revision`、`upload_grant` | `revision_result`、`upload_grant_needed` |
+| `turn_cancel` | `cancel_turn`；会话启动中的 `keep_session_on_cancel` / `keep_session_on_failure` | `turn_cancel_settled`、`session_command_rejected{turn_cancel_unsupported}` |
 | `revision_restore` | 带 `prior_revision` 的 `start_agent_session` | `agent_session_ended` 中的恢复失败代码 |
 
 始终可用：`hello`、`heartbeat`、`get_execution_status` / `execution_status` 和 `event_ack`。编解码器只校验声明；
@@ -77,6 +79,16 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
   `thread_event` 携带一条已定稿的 `ora-history` 记录，作为最多 256 KiB 的不透明 JSON 对象（`truncated` 标记被截短的
   记录），并与终止的 `agent_session_ended` 共享该执行无间隙的序号，后者的 `detail` 是一个简短的 snake_case 代码。
   命令带 `command_id`；它们的回复没有序号，不需要确认，丢失的回复靠重发找回。
+- **取消一轮。** Controller 在 `hello` 中以 `turn_cancel: true` 声明；只有这样，Node 才回 `turn_cancel: true` 并
+  加上 `turn_cancel` 能力。旧 Controller 把能力当作封闭集合解码，看到的握手与之前相同。在这样的连接上，会话启动
+  可以设置 `keep_session_on_cancel` 和 `keep_session_on_failure`（省略即 `false`，参与输入比较）；在没有协商
+  `turn_cancel` 的连接上设置其中任一项属于协议违规，在受理之前就被拒绝。
+  `cancel_turn { node_id, command_id, turn_id }` 与其他会话命令一样受理；会话没有选择 `keep_session_on_cancel` 时以
+  `turn_cancel_unsupported` 拒绝。每个受理的取消恰好得到一条带序号、需确认的 `turn_cancel_settled
+  { command_id, turn_id, outcome }`，`outcome` 为 `stopped`、`not_started`、`already_ended`、`unknown` 或
+  `session_ending`（会话不会保留；不是终态，也不证明 Agent 已停止）。只要还有选择了任一行为、尚未结束或仍有未确认
+  事件的会话，没有协商 `turn_cancel` 的 Controller 就在 `hello_accepted` 之前被以 `4403` 拒绝。见
+  [Agent 会话](agent-sessions.zh.md#取消一轮)。
 - **Revision。** 交付指明已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的一个 ref、Git Server 的
   `git_repository_url`、`refs/ora/deliveries/` 下的 `delivery_ref`、`workspace_ref` 和一个会话历史对象 key。
   `revision_delivered` 要求最终 commit 与基础 commit 不同；`revision_unchanged` 允许等于基础 commit，或在有
@@ -91,6 +103,31 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
   见 [Worktree 执行](worktree-execution.zh.md)。
 
 各结果族在无标签的 `ExecutionResult` 内使用互不相交的 `kind` 标签；Revision 族被装箱，以保持 `ExecutionState` 较小。
+
+## Session MCP 生命周期契约类型
+
+现用帧枚举包含 `UpdateSessionMcp`、`GetSessionMcpState`、`ProbeSessionMcp` 和 `SessionMcpReply`，
+使用 `SessionMcpMessage<P>` 信封。启动时通过 `mcp_lifecycle: true` 显式启用，默认仍为 false。
+支持 Agent 会话的 Node 声明 `session_mcp_lifecycle`。这些帧带 operation/execution 关联和最多 128 个 UTF-8 字节的 request id，
+没有事件序号或确认。直接 serde 转换后仍须调用 `ValidateMessage`。
+
+更新区分 configured 成员（精确版本、配置 revision 和标量 Settings）与 unavailable 成员（id 和封闭的
+缺插件/设置码），同样要求 canonical ID 排序、最多 16 项及 64 KiB。generation 和 revision 不超过
+`2^53 - 1`；新更新从 1 开始，手动探测可针对启动 generation 0，但 probe attempt 必须非零。输入 Debug
+隐藏值；快照身份类型无法表示 Settings、命令或 header，健康与收敛使用不同的封闭错误码。current 快照
+要求 desired/active 身份完全相同，不存在、未启用、已结束的会话或容量拒绝回复不能带快照。配置 revision
+冲突的 code 放在回复自身，与当前 desired 状态的收敛失败分开。授权、不可变选择集合、
+更新顺序与禁止持久化由接收请求的会话 owner 负责，不由这些结构校验器承担。
+
+通过授权校验后，owner 在回复 Accepted 前发布完整的新 desired generation。选择集合不可增减；
+较旧代际返回 stale，相同重传返回 duplicate，仍被持有的配置 revision 不允许换值。更新和健康观察只保存在内存。
+每条连接最多保留 64 个未回答的生命周期请求，超额返回 `capacity_exceeded`，不解析包或保留输入值。
+
+新生命周期 `SubmitUserTurn` 必须携带 `mcp_generation`，缺失或高于当前 desired 的下限返回
+`mcp_update_required`，不进入持久队列；精确重传比较先于该检查。实际 prompt 准入等待最新代际，
+在与更新共用的边界内提交 Executed。前序已准入轮次的业务执行时间不计入排队轮次的 MCP 预算，更新和重试不重置已累计的阻塞时间。轮次因 MCP 阻塞满 300 秒后发出有序可靠的 `SessionTurnFailed`，
+错误码为 `mcp_refresh_wait_timeout`；排队命令的失败状态与 outbox 事件原子提交。会话继续存活，EndSession 优先。
+见[会话生命周期与宿主探测](session-stop.zh.md)。
 
 ## 身份、状态与确认
 

@@ -70,6 +70,7 @@
 Agent 检查器编辑节点的执行器和模型、角色、prompt、Skill 和 MCP 绑定、结构化输出、交互性、重试和 prompt 无活动策略。各项的运行时含义见[工作流运行](workflow-runs.zh.md#agent-节点)；存储的形状如下：
 
 - **MCP 绑定**：`mcps: [{ mcpId, enabled }]`，`mcpId` 是已安装插件的 id。只有启用的 id 构成节点会话的允许列表；没有选择（包括没有 `mcps` 的图）表示没有 MCP server。检查器列出已安装的 `kind: "mcp"` 插件；缺失的插件仍按 id 显示，可以禁用或移除。格式错误的绑定会让可执行解析失败。
+- **没有配置**：工作流图是 JSON，所以 Agent 节点可以带 `"agentConfig": null`，后端会原样导入这样的文档。`null` 表示这个节点没有声明执行器、角色和绑定，与字段缺失同义：编辑器按新 Agent 节点的默认配置打开，运行页检查器不显示 Agent 区块。打开图不会把 `null` 改写成一份具体配置。
 - **重试**：`agentConfig.retry = { enabled, maxRetries, initialDelaySeconds }`，`maxRetries` 为 0–5，`initialDelaySeconds` 为 0–300。缺失或为 `null` 表示 `{ enabled: true, maxRetries: 2, initialDelaySeconds: 10 }`；给出的对象必须完整。交互节点上不显示这一节。
 - **prompt 无活动**：`agentConfig.promptInactivity: "timeout" | "wait"`；缺失或为 `null` 表示 `"timeout"`。打开旧图从不会添加这个字段。
 - **结构化输出**：一个以对象为根的 JSON Schema，可以在对话框中可视化编辑或直接编辑 JSON，只有保存时才更新节点。

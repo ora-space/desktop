@@ -4,6 +4,11 @@ use thiserror::Error;
 /// Explains why a decoded or outbound typed message violates protocol invariants.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum MessageValidationError {
+    #[error("invalid explicit session MCP selection")]
+    InvalidSessionMcp,
+    /// Names only the field: a decoder or validator message could echo a URL or header value.
+    #[error("invalid payload.spec.host_mcp_servers")]
+    InvalidHostMcpServers,
     #[error(
         "unconfirmed-stop evidence must retain original identities and an increasing stop bound"
     )]
@@ -70,6 +75,10 @@ pub enum MessageValidationError {
     VisibleTextTooLarge,
     #[error("thread preview has invalid identities, positions or size")]
     InvalidThreadPreview,
+    #[error(
+        "turn_cancel confirmation must accompany the turn_cancel and agent_session capabilities"
+    )]
+    InvalidTurnCancelNegotiation,
     #[error("session end detail must be a short snake_case code")]
     InvalidDetailCode,
     #[error("thread record exceeds the encoded size limit")]

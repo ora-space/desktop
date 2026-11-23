@@ -37,5 +37,6 @@ export {
   childSessionSource,
   delegationResultCompleted,
   delegationSessionId,
+  delegationToolCallCompleted,
 } from "./item-metadata.ts";
 export type { ChildSessionSource } from "./item-metadata.ts";

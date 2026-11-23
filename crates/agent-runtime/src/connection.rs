@@ -198,6 +198,46 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
             .remove(&agent_ref);
     }
 
+    /// Retires the suspended owner before making a replacement attachment available to a new one.
+    pub(super) async fn retire_mcp_agent(&self, plugin_id: &str) {
+        if let Ok(plugin) = PluginId::parse(plugin_id)
+            && let Ok(old) = self.for_agent(&AgentRef::for_plugin(&plugin))
+        {
+            // Finish the old owner before installing: its cleanup stops by plugin identity,
+            // so a late cleanup could otherwise terminate the replacement process.
+            let mut retired = old.state.clone();
+            let _ = old.shutdown.send(());
+            while retired.changed().await.is_ok() {}
+        }
+    }
+
+    /// Explicit admission may recover a failed host-owned replacement; idle time cannot retry it.
+    pub(super) async fn recover_mcp_replacement(
+        &self,
+        agent: &AgentRef,
+        setup: &H::Setup,
+    ) -> Result<bool, RuntimeError> {
+        use crate::host::SessionSetup;
+        if !setup.preserve_provider_identity() || !is_agent_suspended(&self.suspended, agent) {
+            return Ok(false);
+        }
+        // Resolve before asking for another process, preserving blocked missing-package targets.
+        setup.desired_mcp_revision()?;
+        let plugin = setup
+            .plugin_id_for_agent(agent)
+            .ok_or_else(super::support::runtime_unavailable)?;
+        setup
+            .replace_after_retirement(self.retire_mcp_agent(&plugin.to_string()))
+            .await?;
+        self.resume_plugin_agent(&plugin.to_string());
+        self.sync_plugin_agents();
+        if let Err(error) = self.for_agent(agent)?.ready().await {
+            setup.mcp_failed(&error);
+            return Err(error.during_mcp());
+        }
+        Ok(true)
+    }
+
     /// Reconciles the supervised agents with the packages currently installed.
     ///
     /// Installing a plugin has to make its agent reachable in the running process: the alternative
@@ -527,6 +567,14 @@ async fn run_supervisor<H: AgentRuntimeHost>(context: SupervisorContext<H>) {
                     let _ = state.send(ConnectionState::Unavailable);
                     return;
                 }
+                if !plugin_host.automatic_restarts() {
+                    suspended
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(agent_ref.clone());
+                    let _ = state.send(ConnectionState::Failing);
+                    return;
+                }
                 if restart_circuit.record_failure(Instant::now()) == RestartDecision::Stop {
                     let _ = state.send(ConnectionState::Failing);
                     ora_warn!(
@@ -552,6 +600,14 @@ async fn run_supervisor<H: AgentRuntimeHost>(context: SupervisorContext<H>) {
                 return;
             }
             Err(StartFailure::Retryable(error)) => {
+                if !plugin_host.automatic_restarts() {
+                    suspended
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(agent_ref.clone());
+                    let _ = state.send(ConnectionState::Failing);
+                    return;
+                }
                 let _ = state.send(ConnectionState::Unavailable);
                 // An agent that is simply not installed is an expected local configuration, and
                 // the supervisor keeps retrying it for the whole process lifetime. Logging it
@@ -591,12 +647,18 @@ async fn run_process_generation<A: AgentAttach>(
     routes: &RouteRegistry,
     shutdown: &mut mpsc::UnboundedReceiver<()>,
 ) -> bool {
+    let mut subagent_updates = super::subagent_update::SubagentUpdateTranslator::default();
     loop {
         tokio::select! {
             inbound = process.inbound.recv() => {
                 match inbound {
                     Some(AcpInboundEvent::SessionUpdate(update)) => {
                         let _ = routes.route_event(SessionEvent::Update(update));
+                    }
+                    Some(AcpInboundEvent::ExtensionNotification(extension)) => {
+                        if let Some(update) = subagent_updates.translate(extension) {
+                            let _ = routes.route_event(SessionEvent::Update(update));
+                        }
                     }
                     Some(AcpInboundEvent::PermissionRequest(permission)) => {
                         if let Err(orphan) = routes.route_event(SessionEvent::Permission(permission)) {

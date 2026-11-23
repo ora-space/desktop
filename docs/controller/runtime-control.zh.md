@@ -14,7 +14,7 @@
 | Controller 租约 epoch | 当前协调者的写入资格 |
 | Workspace 运行时代次与沙盒 id | 一个运行实例及其持久目标 |
 | 运行时控制 epoch 与会话 | 一次用户或维护操作的资格 |
-| Node 与宿主 incarnation | 一个运行中的程序实例 |
+| Node incarnation | 一个运行中的程序实例 |
 | execution 与 effect id | 对固定输入的持久责任 |
 
 稳定的 execution id 不是新的授权，也不能拿旧许可换个 id 启动第二个任务。改变代次只拒绝新动作，从不证明旧进程已经停止。
@@ -23,7 +23,7 @@
 
 Cloud–Controller 和 Controller–Node 两段管理链路都认证双向 TLS 的服务身份和目标绑定；消息中声明的 id 只用于一致性检查。Controller 拒绝没有 `management_tls`、Cloud endpoint 不是 HTTPS、effects 不是 HTTPS 或路由器不是 WSS 的 cloud 配置，见 [Controller](controller.zh.md#cloud-形态)。Controller 只拨出，不在 SQLite 中保存任何 Cloud 业务状态。
 
-在 Node 镜像中，root 拥有的管理进程（Node 和进程宿主）把配置、日志和私钥放在只有 root 可访问的 `/run/ora` 下，Git 工作负载和 Agent 插件以 UID/GID 1000 运行，无法读取管理材料或写入控制日志，见[容器镜像](../operations/container-images.zh.md)。静态 Git 配置只能包含非机密的 CA 信任，绝不能有个人凭据助手或 SSH 后备。
+在 Node 镜像中，root 拥有的管理进程（Node）把配置、日志和私钥放在只有 root 可访问的 `/run/ora` 下，Git 工作负载和 Agent 插件以 UID/GID 1000 运行，无法读取管理材料或写入控制日志，见[容器镜像](../operations/container-images.zh.md)。静态 Git 配置只能包含非机密的 CA 信任，绝不能有个人凭据助手或 SSH 后备。
 
 ## 派发、关闭与回报
 

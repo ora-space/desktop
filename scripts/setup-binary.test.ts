@@ -72,11 +72,7 @@ async function fixture(
     root,
     args: [name],
     environment: { TARGET_TRIPLE: target },
-    platform: windows
-      ? "win32"
-      : target.includes("darwin")
-        ? "darwin"
-        : "linux",
+    platform: windows ? "win32" : "linux",
     arch: target.startsWith("aarch64") ? "arm64" : "x64",
     exec,
   };
@@ -97,7 +93,6 @@ for (const [name, target] of [
   ["rg", "x86_64-unknown-linux-gnu"],
   ["deno", "x86_64-pc-windows-msvc"],
   ["rg", "x86_64-pc-windows-msvc"],
-  ["deno", "aarch64-apple-darwin"],
 ] as const) {
   Deno.test(
     `${name} ${target} verifies downloads and reuses only verified cache`,
@@ -278,6 +273,15 @@ Deno.test(
       await assert.rejects(
         setupBinaries({ ...f.options, args: ["unknown"] }),
         /Unsupported binary/,
+      );
+      await assert.rejects(
+        setupBinaries({
+          ...f.options,
+          environment: {},
+          platform: "darwin",
+          arch: "arm64",
+        }),
+        /Unsupported platform: darwin-arm64/,
       );
       await Deno.writeTextFile(
         path.join(root, "scripts", "sidecar-checksums.json"),

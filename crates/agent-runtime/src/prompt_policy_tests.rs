@@ -2,6 +2,10 @@
 
 #[path = "plugin_replacement_tests.rs"]
 mod plugin_replacement_tests;
+#[path = "prompt_policy_tests/restore_replay.rs"]
+mod restore_replay;
+#[path = "turn_cancel_tests.rs"]
+mod turn_cancel_tests;
 
 use super::*;
 use crate::host::SessionStore;
@@ -118,6 +122,7 @@ impl ProcessSpawner for PipeSpawner {
 enum AgentInput {
     Finish(String, StopReason),
     Update(SessionNotification),
+    RawFrame(Value),
     /// Asks the host to approve one tool call, exactly as a provider does mid-turn.
     Permission {
         session_id: String,
@@ -154,8 +159,13 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// Composes the production peer, generation router, and actors over controlled pipes.
+    /// Most policy cases begin with an attached session and need no provider restore.
     async fn new() -> Self {
+        Self::with_load_support(/*load_session_supported*/ false).await
+    }
+
+    /// Composes the production peer, generation router, and actors over controlled pipes.
+    async fn with_load_support(load_session_supported: bool) -> Self {
         let directory = TempDir::new().unwrap();
         let entrypoint = directory.path().join("agent.ts");
         std::fs::write(&entrypoint, "").unwrap();
@@ -209,7 +219,7 @@ impl Fixture {
             client: client.clone(),
             runtime: plugin.clone(),
             generation: 1,
-            load_session_supported: false,
+            load_session_supported,
             http_mcp_supported: false,
             list_session_supported: false,
             close_session_supported: false,
@@ -253,7 +263,7 @@ impl Fixture {
                 },
                 client,
                 inbound,
-                load_session_supported: false,
+                load_session_supported,
                 http_mcp_supported: false,
                 list_session_supported: false,
                 close_session_supported: false,
@@ -276,19 +286,9 @@ impl Fixture {
         }
     }
 
-    /// Seeds an already attached session so the test measures prompt policy rather than setup.
-    fn add_session(&self, id: &str) {
-        self.add_session_with_title_acquisition(id, crate::TitleAcquisition::disabled());
-    }
-
-    /// Retains the title lifecycle established by setup so title admission can also be exercised.
-    fn add_session_with_title_acquisition(
-        &self,
-        id: &str,
-        title_acquisition: crate::TitleAcquisition,
-    ) {
-        let session = self
-            .manager
+    /// Persists the binding that survives a restart, independently of any live actor.
+    fn seed_session(&self, id: &str) -> Session {
+        self.manager
             .inner
             .store
             .create_session(Session::new(
@@ -302,7 +302,21 @@ impl Fixture {
                     /*created_at*/ 0, /*updated_at*/ 0, /*is_deleted*/ false,
                 ),
             ))
-            .unwrap();
+            .unwrap()
+    }
+
+    /// Seeds an already attached session so the test measures prompt policy rather than setup.
+    fn add_session(&self, id: &str) {
+        self.add_session_with_title_acquisition(id, crate::TitleAcquisition::disabled());
+    }
+
+    /// Retains the title lifecycle established by setup so title admission can also be exercised.
+    fn add_session_with_title_acquisition(
+        &self,
+        id: &str,
+        title_acquisition: crate::TitleAcquisition,
+    ) {
+        let session = self.seed_session(id);
         let recorder = self.manager.open_recorder(&session).unwrap().recorder;
         let channel = self.supervisor.open_session_channel(id, id).unwrap();
         self.manager
@@ -435,7 +449,8 @@ async fn fake_agent(
                             (Some(id), CancelReply::Confirm) => Some(json!({"jsonrpc":"2.0","id":id,"result":PromptResponse::new(StopReason::Cancelled)})),
                             (Some(id), CancelReply::EndTurn) => Some(json!({"jsonrpc":"2.0","id":id,"result":PromptResponse::new(StopReason::EndTurn)})),
                             (Some(id), CancelReply::RequestError) => Some(json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"fake cancellation failure"}})),
-                            (None, _) | (Some(_), CancelReply::Ignore) => None,
+                            (Some(id), CancelReply::Ignore) => { pending.insert(session, id); None }
+                            (None, _) => None,
                         }
                     }
                     _ => { frames.send(frame).unwrap(); None }
@@ -444,6 +459,7 @@ async fn fake_agent(
             input = commands.recv() => match input {
                 Some(AgentInput::Finish(session, reason)) => Some(json!({"jsonrpc":"2.0","id":pending.remove(&session).expect("pending prompt"),"result":PromptResponse::new(reason)})),
                 Some(AgentInput::Update(update)) => Some(json!({"jsonrpc":"2.0","method":"session/update","params":update})),
+                Some(AgentInput::RawFrame(frame)) => Some(frame),
                 Some(AgentInput::Permission { session_id, tool_call }) => Some(json!({
                     "jsonrpc":"2.0",
                     "id": format!("permission-{session_id}"),
@@ -1292,4 +1308,920 @@ fn inactivity_diagnostics_record_the_window_tools_and_cancellation_result() {
             ]),
         ]
     );
+}
+
+/// `_subagent/update` frames flow through the real ACP peer and `run_process_generation` router
+/// in wire order beside `session/update` frames and reach the targeted live session actor.
+#[test]
+fn routes_subagent_update_extensions_in_wire_order_through_process_generation() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("main-session");
+        fixture.add_session("other-session");
+
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("main-session"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+
+        for frame in [
+            json!({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": "main-session",
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "call_1",
+                        "title": "Agent",
+                        "status": "in_progress",
+                    },
+                },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "_subagent/update",
+                "params": {
+                    "sessionId": "main-session",
+                    "taskId": "task-explore",
+                    "toolCallId": "call_1",
+                    "agentType": "Explore",
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "call_1",
+                        "title": "Read",
+                        "status": "in_progress",
+                    },
+                    "timestamp": 1001,
+                },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "_subagent/update",
+                "params": {
+                    "sessionId": "main-session",
+                    "taskId": "task-explore",
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "call_1",
+                        "status": "completed",
+                        "rawOutput": "ok",
+                    },
+                    "timestamp": 1002,
+                },
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": "main-session",
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "call_1",
+                        "status": "completed",
+                        "rawOutput": "Subagent summary",
+                    },
+                },
+            }),
+        ] {
+            fixture.agent.send(AgentInput::RawFrame(frame)).unwrap();
+        }
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "main-session".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+
+        let mut observed = Vec::new();
+        while let Some(event) = stream.recv().await {
+            if let Ok(PromptSessionEvent::SessionUpdate { update, .. }) = event {
+                observed.push(update);
+            }
+        }
+        assert_eq!(observed.len(), 4);
+        assert_eq!(
+            observed,
+            vec![
+                serde_json::from_value::<SessionUpdate>(json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "call_1",
+                    "title": "Agent",
+                    "status": "in_progress",
+                }))
+                .unwrap(),
+                serde_json::from_value::<SessionUpdate>(json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "subagent:12:task-explore:call_1",
+                    "title": "Read",
+                    "status": "in_progress",
+                    "_meta": {
+                        "_subagent/update": {
+                            "sessionId": "main-session",
+                            "taskId": "task-explore",
+                            "toolCallId": "call_1",
+                            "agentType": "Explore",
+                        }
+                    },
+                }))
+                .unwrap(),
+                serde_json::from_value::<SessionUpdate>(json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "subagent:12:task-explore:call_1",
+                    "status": "completed",
+                    "rawOutput": "ok",
+                    "_meta": {
+                        "_subagent/update": {
+                            "sessionId": "main-session",
+                            "taskId": "task-explore",
+                            "toolCallId": "call_1",
+                            "agentType": "Explore",
+                        }
+                    },
+                }))
+                .unwrap(),
+                serde_json::from_value::<SessionUpdate>(json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "call_1",
+                    "status": "completed",
+                    "rawOutput": "Subagent summary",
+                }))
+                .unwrap(),
+            ]
+        );
+        fixture.shutdown().await;
+    });
+}
+
+/// Parses the capture's `HH:MM:SS.mmm` time of day into milliseconds; the s1 capture is one day.
+fn captured_millis(at: &str) -> u64 {
+    let time = at
+        .split('T')
+        .nth(1)
+        .expect("timestamp")
+        .trim_end_matches('Z');
+    let (hms, ms) = time.split_once('.').expect("millis");
+    let mut parts = hms
+        .split(':')
+        .map(|part| part.parse::<u64>().expect("clock part"));
+    let hours = parts.next().expect("hours");
+    let minutes = parts.next().expect("minutes");
+    let seconds = parts.next().expect("seconds");
+    (hours * 3600 + minutes * 60 + seconds) * 1000 + ms.parse::<u64>().expect("millis")
+}
+
+/// Loads the redacted real CodeAgent s1 capture (specs `20261118` D6 evidence): the update frames
+/// after `session/prompt` with their real offsets, plus the captured response offset. The first
+/// fixture line anchors the offsets at the captured prompt send; the fixture session is `sess-1`
+/// so the captured frames route verbatim.
+fn s1_real_replay() -> (Vec<(Duration, Value)>, Duration) {
+    let lines: Vec<Value> = include_str!("prompt_policy_tests/s1_complete.jsonl")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("fixture line"))
+        .collect();
+    let anchor = captured_millis(lines[0]["capturedAt"].as_str().expect("anchor"));
+    let mut updates = Vec::new();
+    let mut response_offset = None;
+    for line in &lines[1..] {
+        let offset = Duration::from_millis(
+            captured_millis(line["capturedAt"].as_str().expect("timestamp")) - anchor,
+        );
+        if line["frame"]["method"].is_string() {
+            updates.push((offset, line["frame"].clone()));
+        } else {
+            assert_eq!(line["frame"]["result"]["stopReason"], json!("end_turn"));
+            response_offset = Some(offset);
+        }
+    }
+    (updates, response_offset.expect("captured response"))
+}
+
+/// The captured s1 parent `Task` opening: `pending`, and no `in_progress` ever follows.
+fn s1_parent_open() -> SessionNotification {
+    serde_json::from_value(json!({
+        "sessionId": "sess-1",
+        "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call-1",
+            "title": "Task",
+            "kind": "think",
+            "status": "pending",
+            "rawInput": {},
+            "_meta": { "codeAgentCLI": { "toolName": "Agent" } },
+        },
+    }))
+    .unwrap()
+}
+
+/// One real-shape `_subagent/update` extension frame pointing at the s1 parent delegation.
+fn s1_subagent_frame(update: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "_subagent/update",
+        "params": {
+            "sessionId": "sess-1",
+            "taskId": "task-1",
+            "toolCallId": "call-1",
+            "agentType": "Explore",
+            "update": update,
+            "timestamp": 1795073462666_u64,
+        },
+    })
+}
+
+/// Sends one captured `session/update` or `_subagent/update` frame through the peer/router and
+/// waits until the actor emits its `SessionUpdate` so liveness observes it at the caller's clock.
+async fn send_s1_frame(
+    agent: &mpsc::UnboundedSender<AgentInput>,
+    stream: &mut SessionEventStream<PromptSessionEvent>,
+    frame: &Value,
+) {
+    match frame["method"].as_str().expect("method") {
+        "session/update" => {
+            let notification: SessionNotification =
+                serde_json::from_value(frame["params"].clone()).expect("captured update");
+            agent.send(AgentInput::Update(notification)).unwrap();
+        }
+        "_subagent/update" => {
+            agent.send(AgentInput::RawFrame(frame.clone())).unwrap();
+        }
+        other => panic!("unexpected replay method {other}"),
+    }
+    match stream.recv().await.expect("stream open").expect("no error") {
+        PromptSessionEvent::SessionUpdate { .. } => {}
+        other => panic!("unexpected prompt event during s1 replay: {other:?}"),
+    }
+}
+
+/// D6 evidence on the paused clock with production `PROMPT_INACTIVITY_WINDOWS`: the captured s1
+/// delegation keeps the parent `Task` pending for 62.66 s while child frames arrive at uncompressed
+/// real intervals (16.265 / 19.617 / 3.252 / 0.861 / 14.472 / 6.490 / 1.702 s); renewal must keep
+/// the turn alive until the provider answers.
+#[test]
+fn real_s1_intervals_never_cancel_the_parent_prompt_under_default_timeout() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("sess-1");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("sess-1"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+
+        let (updates, response_offset) = s1_real_replay();
+        let start = tokio::time::Instant::now();
+        for (offset, frame) in &updates {
+            tokio::time::sleep_until(start + *offset).await;
+            send_s1_frame(&fixture.agent, &mut stream, frame).await;
+        }
+        tokio::time::sleep_until(start + response_offset).await;
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "sess-1".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        while let Ok(frame) = fixture.frames.try_recv() {
+            assert_ne!(frame["method"], json!("session/cancel"));
+        }
+        fixture.shutdown().await;
+    });
+}
+
+/// Negative control on the exact `s1_complete` timeline: when `_subagent/update` frames carry an
+/// unrecognized outer `toolCallId`, they do not renew the parent `Task` and the default 45 s
+/// production window cancels the turn 45 s after the parent `Task` entered `pending`.
+#[test]
+fn s1_timeline_with_unknown_outer_id_cancels_after_45s() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("sess-1");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("sess-1"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+
+        let (updates, _) = s1_real_replay();
+        let start = tokio::time::Instant::now();
+        let mut parent_pending_at = None;
+        let mut cancelled_at = None;
+        for (offset, mut frame) in updates {
+            if frame["method"] == "_subagent/update" {
+                frame["params"]["toolCallId"] = json!("unknown-call");
+            }
+            tokio::select! {
+                () = tokio::time::sleep_until(start + offset) => {}
+                outbound = fixture.frames.recv() => {
+                    let outbound = outbound.expect("cancel frame");
+                    assert_eq!(outbound["method"], json!("session/cancel"));
+                    cancelled_at = Some(tokio::time::Instant::now());
+                    break;
+                }
+            }
+            send_s1_frame(&fixture.agent, &mut stream, &frame).await;
+            if frame["method"] == "session/update"
+                && frame["params"]["update"]["sessionUpdate"] == "tool_call"
+                && frame["params"]["update"]["toolCallId"] == "call-1"
+            {
+                parent_pending_at = Some(tokio::time::Instant::now());
+            }
+        }
+        let elapsed = cancelled_at
+            .expect("unknown outer toolCallId must cancel on the first 45 s window")
+            .duration_since(parent_pending_at.expect("parent Task opening observed"));
+        assert_eq!(elapsed, Duration::from_secs(45));
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "sess-1".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        fixture.shutdown().await;
+    });
+}
+
+/// D6 renewal is not a pause: after the last child frame a full silent window still cancels and
+/// retries, so a stuck subagent cannot hold the parent prompt open indefinitely.
+#[test]
+fn a_silent_subagent_still_times_out_after_renewing_the_parent_window() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("sess-1");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("sess-1"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture
+            .agent
+            .send(AgentInput::Update(s1_parent_open()))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+
+        // One child frame 30 s into the first window rearms a full 45 s window.
+        tokio::time::advance(Duration::from_secs(30)).await;
+        fixture
+            .agent
+            .send(AgentInput::RawFrame(s1_subagent_frame(json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "still exploring" },
+            }))))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+
+        // The original 45 s deadline passes without a cancellation; the renewed one is still open.
+        tokio::time::advance(Duration::from_secs(16)).await;
+        assert!(
+            fixture.frames.try_recv().is_err(),
+            "renewal must survive the original first-window deadline"
+        );
+
+        // No further frames arrive: the renewed window expires at t = 75 s and retries.
+        tokio::time::advance(Duration::from_secs(29)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "sess-1".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        fixture.shutdown().await;
+    });
+}
+
+/// D6 stops at the delegation's provider completion: late child frames neither renew nor pause,
+/// while an open delegation's frames do renew (the first assertion fails without the rule).
+#[test]
+fn subagent_frames_stop_renewing_once_the_parent_delegation_completed() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("sess-1");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("sess-1"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture
+            .agent
+            .send(AgentInput::Update(s1_parent_open()))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        fixture
+            .agent
+            .send(AgentInput::RawFrame(s1_subagent_frame(json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "exploring" },
+            }))))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+        // Renewal moved the deadline past the original 45 s window.
+        tokio::time::advance(Duration::from_secs(40)).await;
+        assert!(fixture.frames.try_recv().is_err());
+
+        // The provider completes the delegation; the window rearms from that completion.
+        let completed: SessionNotification = serde_json::from_value(json!({
+            "sessionId": "sess-1",
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-1",
+                "status": "completed",
+                "content": [{ "type": "content", "content": { "type": "text", "text": "done" } }],
+            },
+        }))
+        .unwrap();
+        fixture.agent.send(AgentInput::Update(completed)).unwrap();
+        stream.recv().await.unwrap().unwrap();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        // A late child frame must not renew the closed delegation.
+        fixture
+            .agent
+            .send(AgentInput::RawFrame(s1_subagent_frame(json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "late" },
+            }))))
+            .unwrap();
+        stream.recv().await.unwrap().unwrap();
+        tokio::time::advance(Duration::from_secs(35)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "sess-1".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        fixture.shutdown().await;
+    });
+}
+
+mod restored_sessions {
+    mod follower_retry_tests;
+    use super::*;
+    use pretty_assertions::assert_eq;
+    /// Holds two or more sessions on one real routed ACP peer with a controllable provider.
+    struct ReviewDrainFixture {
+        _directory: TempDir,
+        manager: crate::AgentRuntimeManager<TestHost>,
+        supervisor: ConnectionSupervisor,
+        plugin: PluginRuntime,
+        frames: mpsc::UnboundedReceiver<Value>,
+        routed: tokio::task::JoinHandle<()>,
+        _state: watch::Sender<ConnectionState>,
+        scheduler: ora_scheduler::Scheduler,
+    }
+
+    impl ReviewDrainFixture {
+        /// Composes the production peer, generation router, and actors over controlled pipes.
+        async fn new() -> Self {
+            Self::new_with(review_drain_agent).await
+        }
+
+        /// Shares the real actor and router across tests with different provider response scripts.
+        async fn new_with<Fut>(
+            agent: impl FnOnce(
+                DuplexStream,
+                DuplexStream,
+                mpsc::UnboundedReceiver<AgentInput>,
+                mpsc::UnboundedSender<Value>,
+                watch::Sender<bool>,
+            ) -> Fut,
+        ) -> Self
+        where
+            Fut: Future<Output = ()> + Send + 'static,
+        {
+            let directory = TempDir::new().unwrap();
+            let entrypoint = directory.path().join("agent.ts");
+            std::fs::write(&entrypoint, "").unwrap();
+            let (stdin, agent_reader) = tokio::io::duplex(/*max_buf_size*/ 65536);
+            let (agent_writer, stdout) = tokio::io::duplex(/*max_buf_size*/ 65536);
+            let (exited, _) = watch::channel(false);
+            let spawner = PipeSpawner(Mutex::new(Some(PipeProcess {
+                stdin: Some(stdin),
+                stdout: Some(stdout),
+                exited: exited.clone(),
+            })));
+            let (_agent, input) = mpsc::unbounded_channel();
+            let (sent, frames) = mpsc::unbounded_channel();
+            tokio::spawn(agent(agent_reader, agent_writer, input, sent, exited));
+            let (_level, level) = watch::channel(ora_logging::LogLevel::Info);
+            let (plugin, mut notifications) = PluginRuntime::launch(
+                &spawner,
+                PluginRuntimeConfig {
+                    plugin_id: "official/test.agent".to_string(),
+                    deno_path: directory.path().join("unused-deno"),
+                    entrypoint,
+                    permissions: Vec::new(),
+                    cwd: None,
+                    environment: BTreeMap::new(),
+                    ready_timeout: Duration::from_secs(30),
+                    call_timeout: Duration::from_secs(30),
+                    shutdown_timeout: Duration::from_secs(1),
+                },
+                NoHostRequests,
+                PluginLogSetup {
+                    root: directory.path().join("logs"),
+                    directory: directory.path().join("logs").join("agent"),
+                    host_session_id: "test".to_string(),
+                    generation: 1,
+                    level,
+                },
+            )
+            .await
+            .unwrap();
+            let (messages, inbound) = mpsc::unbounded_channel();
+            tokio::spawn(async move {
+                while let Some(notification) = notifications.recv().await {
+                    if messages.send(Ok(notification.params)).is_err() {
+                        break;
+                    }
+                }
+            });
+            let (client, inbound) =
+                AcpPeer::spawn(inbound, PluginAcpTransport::new(plugin.clone())).into_parts();
+            let connection = RuntimeConnection {
+                client: client.clone(),
+                runtime: plugin.clone(),
+                generation: 1,
+                load_session_supported: true,
+                http_mcp_supported: false,
+                list_session_supported: false,
+                close_session_supported: false,
+                delete_session_supported: false,
+            };
+            let (state, receiver) = watch::channel(ConnectionState::Ready(connection));
+            let (shutdown, mut shutdown_receiver) = mpsc::unbounded_channel();
+            let routes = Arc::new(RouteRegistry::default());
+            let active_generation = Arc::new(AtomicU64::new(1));
+            let supervisor = ConnectionSupervisor {
+                label: Arc::from("test"),
+                state: receiver,
+                active_generation: active_generation.clone(),
+                routes: routes.clone(),
+                shutdown,
+            };
+            let scheduler = ora_scheduler::Scheduler::new(chrono_tz::Asia::Shanghai);
+            let runtime = test_runtime(
+                directory.path(),
+                Vec::new(),
+                MemorySessionStore::default(),
+                scheduler.clone(),
+            );
+            let host = runtime.manager.inner.connections.plugin_host.clone();
+            let plugin_id = PluginId::parse("official/test.agent").unwrap();
+            runtime
+                .manager
+                .inner
+                .connections
+                .supervisors
+                .write()
+                .unwrap()
+                .insert(AgentRef::for_plugin(&plugin_id), supervisor.clone());
+            let process_plugin = plugin.clone();
+            let routed = tokio::spawn(async move {
+                let mut process = startup::SharedProcess {
+                    process: AgentProcess {
+                        plugin_id,
+                        runtime: process_plugin,
+                        host,
+                    },
+                    client,
+                    inbound,
+                    load_session_supported: true,
+                    http_mcp_supported: false,
+                    list_session_supported: false,
+                    close_session_supported: false,
+                    delete_session_supported: false,
+                };
+                run_process_generation(&mut process, &routes, &mut shutdown_receiver).await;
+                active_generation.store(0, Ordering::Release);
+                routes
+                    .fail_generation(1, runtime_unavailable_because("fake provider disconnected"));
+            });
+            Self {
+                _directory: directory,
+                manager: runtime.manager,
+                supervisor,
+                plugin,
+                frames,
+                routed,
+                _state: state,
+                scheduler,
+            }
+        }
+
+        /// Seeds an already attached session so the test measures prompt policy rather than setup.
+        fn add_session(&self, id: &str) {
+            self.add_session_with_title_acquisition(id, crate::TitleAcquisition::disabled());
+        }
+
+        /// Retains the title lifecycle established by setup so title admission can also be exercised.
+        fn add_session_with_title_acquisition(
+            &self,
+            id: &str,
+            title_acquisition: crate::TitleAcquisition,
+        ) {
+            let session = self
+                .manager
+                .inner
+                .store
+                .create_session(Session::new(
+                    SessionId::new(id),
+                    WorkspaceId::new("workspace"),
+                    AgentRef::parse("official/test.agent").unwrap(),
+                    id,
+                    SessionStatus::Running,
+                    SessionMcpSelection::Automatic,
+                    AuditFields::new(
+                        /*created_at*/ 0, /*updated_at*/ 0, /*is_deleted*/ false,
+                    ),
+                ))
+                .unwrap();
+            let recorder = self.manager.open_recorder(&session).unwrap().recorder;
+            self.manager
+                .insert_actor(
+                    session,
+                    ActorSetup {
+                        session_mcp: NoSessionMcp::default(),
+                        cwd: self._directory.path().to_path_buf(),
+                        connection: self.supervisor.clone(),
+                        channel: None,
+                        recorder,
+                        handoff: crate::HandoffDebt::Settled,
+                        title_acquisition,
+                        live_mcp: LiveMcpState::Active(crate::SessionMcpRevision::default()),
+                        config_options: Vec::new(),
+                    },
+                )
+                .unwrap();
+        }
+
+        /// Observes a frame emitted by the actual plugin transport, without reading actor internals.
+        async fn next_frame(&mut self) -> Value {
+            self.frames.recv().await.expect("agent frame")
+        }
+
+        /// Ends every actor and the provider while retaining normal ownership cleanup.
+        async fn shutdown(self) {
+            for id in self
+                .manager
+                .inner
+                .store
+                .list_sessions()
+                .unwrap()
+                .into_iter()
+                .map(|session| session.id.to_string())
+            {
+                let _ = self
+                    .manager
+                    .stop_session(ora_contracts::StopSessionRequest { session_id: id })
+                    .await;
+            }
+            self.manager.inner.actors.write().unwrap().clear();
+            self.plugin.shutdown_and_wait().await;
+            self.routed.await.unwrap();
+            self.scheduler.shutdown().await;
+        }
+    }
+
+    /// A controllable protocol peer: successful load, output during cancellation settlement,
+    /// failed inactivity resend, and (only if erroneously requested) successful replacement.
+    async fn review_drain_agent(
+        mut reader: DuplexStream,
+        mut writer: DuplexStream,
+        _commands: mpsc::UnboundedReceiver<AgentInput>,
+        frames: mpsc::UnboundedSender<Value>,
+        exited: watch::Sender<bool>,
+    ) {
+        write_message(
+            &mut writer,
+            &json!({"jsonrpc":"2.0","method":"ora/register",
+        "params":{"methods":[],"emits":["agent/acp"]}}),
+        )
+        .await
+        .unwrap();
+        let mut prompt_count = 0;
+        let mut held = Value::Null;
+        while let Ok(Some(envelope)) = read_message(&mut reader).await {
+            if envelope["method"] == "ora/shutdown" {
+                break;
+            }
+            let frame = envelope["params"].clone();
+            frames.send(frame.clone()).unwrap();
+            let session = frame["params"]["sessionId"].as_str().unwrap_or("restored");
+            let response = match frame["method"].as_str() {
+                Some("session/load") => Some(json!({"jsonrpc":"2.0","id":frame["id"],"result":{}})),
+                Some("session/new") => Some(json!({"jsonrpc":"2.0","id":frame["id"],
+                "result":{"sessionId":"unwanted-replacement"}})),
+                Some("session/prompt") => {
+                    prompt_count += 1;
+                    if prompt_count == 1 {
+                        held = frame["id"].clone();
+                        None
+                    } else if prompt_count == 2 {
+                        Some(json!({"jsonrpc":"2.0","id":frame["id"],"error":{
+                        "code":-32000,"message":"request failed after cancellation output"}}))
+                    } else {
+                        Some(json!({"jsonrpc":"2.0","id":frame["id"],
+                        "result":PromptResponse::new(StopReason::EndTurn)}))
+                    }
+                }
+                Some("session/cancel") if !held.is_null() => {
+                    let update = SessionNotification::new(
+                        session.to_string(),
+                        SessionUpdate::AgentMessageChunk(
+                            agent_client_protocol_schema::v1::ContentChunk::new(
+                                ContentBlock::Text(TextContent::new(
+                                    "visible output before cancel fence",
+                                )),
+                            ),
+                        ),
+                    );
+                    write_message(
+                        &mut writer,
+                        &json!({"jsonrpc":"2.0","method":"agent/acp",
+                    "params":{"jsonrpc":"2.0","method":"session/update","params":update}}),
+                    )
+                    .await
+                    .unwrap();
+                    Some(json!({"jsonrpc":"2.0","id":std::mem::take(&mut held),
+                    "result":PromptResponse::new(StopReason::Cancelled)}))
+                }
+                _ => None,
+            };
+            if let Some(response) = response {
+                write_message(
+                    &mut writer,
+                    &json!({"jsonrpc":"2.0","method":"agent/acp",
+                "params":response}),
+                )
+                .await
+                .unwrap();
+            }
+        }
+        exited.send_replace(true);
+    }
+
+    #[test]
+    fn review_771_cancel_drain_output_must_prevent_stale_load_rebuild() {
+        run_case(async {
+            let mut fixture = ReviewDrainFixture::new().await;
+            fixture.add_session("restored");
+            let mut stream = fixture
+                .manager
+                .prompt_session(prompt("restored"))
+                .await
+                .unwrap();
+            assert_eq!(fixture.next_frame().await["method"], "session/load");
+            assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+            tokio::time::advance(Duration::from_secs(45)).await;
+            let mut outputs = 0;
+            let mut errors = Vec::new();
+            let mut completed = 0;
+            while let Some(event) = stream.recv().await {
+                match event {
+                    Ok(PromptSessionEvent::SessionUpdate {
+                        update: SessionUpdate::AgentMessageChunk(_),
+                        ..
+                    }) => outputs += 1,
+                    Ok(PromptSessionEvent::Completed { .. }) => completed += 1,
+                    Err(error) => errors.push(format!("{error:?}")),
+                    _ => {}
+                }
+            }
+            drop(stream);
+            let mut calls = Vec::new();
+            while let Ok(frame) = fixture.frames.try_recv() {
+                calls.push(frame);
+            }
+            let new_count = calls
+                .iter()
+                .filter(|frame| frame["method"] == "session/new")
+                .count();
+            let resent_count = calls
+                .iter()
+                .filter(|frame| frame["method"] == "session/prompt")
+                .count();
+            eprintln!(
+                "review_771_drain_repro: outputs={outputs}; errors={errors:?}; completed={completed}; new={new_count}; resent={resent_count}; calls={calls:?}"
+            );
+            fixture.shutdown().await;
+            assert_eq!(
+                outputs, 1,
+                "the cancellation drain really delivered assistant output"
+            );
+            assert_eq!(
+                (new_count, resent_count, errors.len(), completed),
+                (0, 1, 1, 0),
+                "existing inactivity resend may run, but visible output must block the new stale-load rebuild; errors={errors:?}; calls={calls:?}"
+            );
+        });
+    }
+}
+
+/// A workflow completion token is a host-only capability: the agent must receive it with every
+/// turn, but the recorded user turn keeps only the user's words, so history, export, and the
+/// transcript replayed into a rebuilt channel never carry a token.
+#[test]
+fn attempt_instruction_is_sent_but_not_recorded() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("instructed");
+        let mut expected_records = Vec::new();
+        // The first turn carries the assembled workflow prompt; the second has the follow-up
+        // shape, a short user reply on the same session with a freshly issued token.
+        for (task, token) in [
+            ("workflow task instructions", "token-first-turn"),
+            ("follow-up from the user", "token-follow-up"),
+        ] {
+            let instruction_text = format!(
+                "<workflow_completion>\nattemptToken unchanged: {token}\n</workflow_completion>"
+            );
+            let sent_instruction = instruction_text.clone();
+            let instruction: crate::AttemptInstruction =
+                Box::new(move || ContentBlock::Text(TextContent::new(sent_instruction.clone())));
+            let mut request = prompt("instructed");
+            request.prompt = vec![ContentBlock::Text(TextContent::new(task))];
+            let mut stream = fixture
+                .manager
+                .prompt_session_with_attempt_instruction(
+                    request,
+                    PromptInactivityPolicy::Wait,
+                    Some(instruction),
+                )
+                .await
+                .unwrap();
+            let frame = fixture.next_frame().await;
+            assert_eq!(frame["method"], "session/prompt");
+            assert_eq!(
+                frame["params"]["prompt"],
+                json!([
+                    {"type": "text", "text": task},
+                    {"type": "text", "text": instruction_text},
+                ])
+            );
+            fixture
+                .agent
+                .send(AgentInput::Finish(
+                    "instructed".to_string(),
+                    StopReason::EndTurn,
+                ))
+                .unwrap();
+            assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+            expected_records.push(ora_history::HistoryRecord::Update {
+                update: Box::new(SessionUpdate::UserMessageChunk(
+                    agent_client_protocol_schema::v1::ContentChunk::new(ContentBlock::Text(
+                        TextContent::new(task),
+                    )),
+                )),
+                tool_timing: None,
+            });
+            expected_records.push(ora_history::HistoryRecord::TurnEnded {
+                stop_reason: StopReason::EndTurn,
+            });
+        }
+        let records = ora_history::read_session_history(
+            &fixture._directory.path().join("sessions"),
+            "instructed",
+        )
+        .unwrap()
+        .lines
+        .into_iter()
+        .map(|line| line.record)
+        .collect::<Vec<_>>();
+        assert_eq!(records, expected_records);
+        fixture.shutdown().await;
+    });
 }

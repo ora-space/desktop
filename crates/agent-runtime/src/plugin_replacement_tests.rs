@@ -49,6 +49,8 @@ impl WorkspaceDirectory for Directory {
 
 #[derive(Default)]
 struct InstalledPlugin {
+    /// Mirrors Node's exclusive lifecycle, which never restarts a failed process by itself.
+    exclusive: std::sync::atomic::AtomicBool,
     installed: Mutex<bool>,
     attachment: Mutex<Option<AgentPluginAttachment>>,
     runtime: Mutex<Option<PluginRuntime>>,
@@ -126,6 +128,11 @@ impl InstalledPlugin {
 
 impl AgentAttach for InstalledPlugin {
     type StopError = NeverFails;
+
+    /// Only an exclusive host waits for a fresh turn or target before retrying a failed process.
+    fn automatic_restarts(&self) -> bool {
+        !self.exclusive.load(std::sync::atomic::Ordering::Acquire)
+    }
 
     /// Reports whether this generation's package is still installed.
     fn installed_agent_plugins(&self) -> Vec<PluginId> {
@@ -371,4 +378,373 @@ fn existing_session_recovers_after_plugin_reinstall_with_load() {
 #[test]
 fn existing_session_recovers_after_plugin_reinstall_without_load() {
     run_replacement_case(/*load_supported*/ false);
+}
+
+#[cfg(test)]
+mod default_mcp {
+    use super::*;
+    use crate::host::SessionSetup;
+    use crate::session_setup::{
+        AgentSessionMcpCapabilities, SessionMcpRevision, SessionMcpSnapshot,
+    };
+    use ora_domain::{SessionId, SessionMcpSelection};
+    use pretty_assertions::assert_eq;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Clone, Default)]
+    struct Setup {
+        base: NoSessionMcp,
+        desired: Arc<AtomicU64>,
+        loaded: Arc<AtomicU64>,
+        replacing: Arc<Mutex<Option<Arc<ReplacementContext>>>>,
+    }
+    struct ReplacementContext {
+        host: Arc<InstalledPlugin>,
+        root: PathBuf,
+        count: AtomicU64,
+        /// The Desired generation each replacement attempt ran for, in order.
+        attempts: Mutex<Vec<u64>>,
+        /// What each replacement does after recording its attempt.
+        outcome: ReplacementOutcome,
+    }
+    /// The ways a host-owned replacement can end, each reaching a different failure exit.
+    #[derive(Clone, Copy, Debug)]
+    enum ReplacementOutcome {
+        /// Stops the old incarnation and installs the next one.
+        Installs { load_supported: bool },
+        /// Fails before anything is stopped or installed.
+        Fails,
+        /// Stops the old incarnation and installs nothing, so the new supervisor never gets ready.
+        LeavesNoProcess,
+    }
+    impl SessionSetup for Setup {
+        fn preserve_provider_identity(&self) -> bool {
+            self.replacing.lock().unwrap().is_some()
+        }
+        fn mcp_replacement_required(&self, _: &SessionMcpRevision) -> bool {
+            self.replacing.lock().unwrap().is_some()
+        }
+        async fn replace_mcp_process(&self) -> Result<(), RuntimeError> {
+            let context = self.replacing.lock().unwrap().clone().unwrap();
+            context
+                .attempts
+                .lock()
+                .unwrap()
+                .push(self.desired.load(Ordering::Acquire));
+            let load_supported = match context.outcome {
+                ReplacementOutcome::Installs { load_supported } => load_supported,
+                ReplacementOutcome::Fails => return Err(crate::support::runtime_unavailable()),
+                ReplacementOutcome::LeavesNoProcess => {
+                    context
+                        .host
+                        .stop_plugin(&PluginId::parse(PLUGIN).unwrap())
+                        .await
+                        .unwrap();
+                    return Ok(());
+                }
+            };
+            let generation = context.count.fetch_add(1, Ordering::AcqRel) + 2;
+            assert!(
+                context.host.runtime.lock().unwrap().is_none(),
+                "old supervisor must finish identity-based cleanup before installation"
+            );
+            context
+                .host
+                .stop_plugin(&PluginId::parse(PLUGIN).unwrap())
+                .await
+                .unwrap();
+            context
+                .host
+                .install(&context.root, generation, load_supported)
+                .await;
+            Ok(())
+        }
+        fn with_selection(&self, _: SessionMcpSelection) -> Self {
+            self.clone()
+        }
+        fn selection(&self) -> &SessionMcpSelection {
+            self.base.selection()
+        }
+        fn desired_mcp_revision(&self) -> Result<SessionMcpRevision, RuntimeError> {
+            Ok(SessionMcpRevision::for_generation(
+                self.desired.load(Ordering::Acquire),
+                vec![],
+            ))
+        }
+        fn resolve_mcp(
+            &self,
+            _: &Path,
+            _: AgentSessionMcpCapabilities,
+        ) -> Result<SessionMcpSnapshot, RuntimeError> {
+            Ok(SessionMcpSnapshot::new(
+                vec![],
+                self.desired_mcp_revision()?,
+            ))
+        }
+        fn observe_mcp_health(&self, _: &SessionId, _: &Path) {}
+        fn plugin_id_for_agent(&self, _: &AgentRef) -> Option<PluginId> {
+            PluginId::parse(PLUGIN).ok()
+        }
+        fn mcp_loaded(&self, revision: &SessionMcpRevision) {
+            self.loaded.store(revision.generation(), Ordering::Release);
+        }
+    }
+    struct Host;
+    impl AgentRuntimeHost for Host {
+        type Store = MemorySessionStore;
+        type Attach = InstalledPlugin;
+        type Setup = Setup;
+        type Events = RecordedEvents;
+        type Directory = Directory;
+    }
+
+    /// A target that keeps moving cannot turn one start or refresh into an unbounded spawn loop.
+    #[test]
+    fn one_start_or_refresh_attempt_replaces_at_most_once() {
+        ora_logging::with_trace_logging(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    ora_logging::initialize_test_clock();
+                    for existing in [false, true] {
+                        let directory = TempDir::new().unwrap();
+                        let host = Arc::new(InstalledPlugin::default());
+                        host.install(directory.path(), 1, true).await;
+                        let setup = Setup::default();
+                        let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
+                        let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<Host> {
+                            attach: host.clone(),
+                            store: MemorySessionStore::default(),
+                            directory: Directory(directory.path().to_path_buf()),
+                            session_setup: setup.clone(),
+                            events: RecordedEvents::default(),
+                            home_directory: directory.path().to_path_buf(),
+                            sessions_root: directory.path().join("sessions"),
+                            scheduler: scheduler.clone(),
+                        })
+                        .unwrap();
+                        manager
+                            .wait_for_agent(&AgentRef::parse(PLUGIN).unwrap())
+                            .await
+                            .unwrap();
+                        let request = || StartSessionRequest {
+                            workspace_id: "workspace".into(),
+                            agent_ref: PLUGIN.into(),
+                            model: None,
+                        };
+                        let session = if existing {
+                            Some(manager.start_session(request()).await.unwrap().session.id)
+                        } else {
+                            None
+                        };
+                        let context = Arc::new(ReplacementContext {
+                            host,
+                            root: directory.path().to_path_buf(),
+                            count: AtomicU64::new(0),
+                            attempts: Mutex::default(),
+                            outcome: ReplacementOutcome::Installs {
+                                load_supported: true,
+                            },
+                        });
+                        *setup.replacing.lock().unwrap() = Some(context.clone());
+                        if let Some(session) = session {
+                            setup.desired.store(1, Ordering::Release);
+                            // Prompt is one explicit retry; no extra Desired notifications can explain a spawn.
+                            let result = tokio::time::timeout(
+                                Duration::from_secs(3),
+                                manager.prompt_session(prompt(&session)),
+                            )
+                            .await
+                            .unwrap();
+                            assert!(result.is_err());
+                        } else {
+                            let result = tokio::time::timeout(
+                                Duration::from_secs(3),
+                                manager.start_session(request()),
+                            )
+                            .await
+                            .unwrap();
+                            assert!(result.is_err());
+                        }
+                        assert_eq!(context.count.load(Ordering::Acquire), 1);
+                        scheduler.shutdown().await;
+                    }
+                })
+        });
+    }
+
+    /// Every failed attach under the host policy blocks the revision it attempted: repeated
+    /// broadcast notifications of that Desired revision must not replace or load again, while a
+    /// later generation is a new retry input. Each outcome reaches a different failure exit: the
+    /// replacement itself, the new supervisor's readiness, and the provider restore.
+    #[test]
+    fn failed_attach_retries_only_for_a_new_desired_generation() {
+        ora_logging::with_trace_logging(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    ora_logging::initialize_test_clock();
+                    for outcome in [
+                        ReplacementOutcome::Fails,
+                        ReplacementOutcome::LeavesNoProcess,
+                        ReplacementOutcome::Installs {
+                            load_supported: false,
+                        },
+                    ] {
+                        let directory = TempDir::new().unwrap();
+                        let host = Arc::new(InstalledPlugin::default());
+                        host.exclusive.store(true, Ordering::Release);
+                        host.install(directory.path(), 1, true).await;
+                        let setup = Setup::default();
+                        let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
+                        let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<Host> {
+                            attach: host.clone(),
+                            store: MemorySessionStore::default(),
+                            directory: Directory(directory.path().to_path_buf()),
+                            session_setup: setup.clone(),
+                            events: RecordedEvents::default(),
+                            home_directory: directory.path().to_path_buf(),
+                            sessions_root: directory.path().join("sessions"),
+                            scheduler: scheduler.clone(),
+                        })
+                        .unwrap();
+                        manager
+                            .wait_for_agent(&AgentRef::parse(PLUGIN).unwrap())
+                            .await
+                            .unwrap();
+                        let session = manager
+                            .start_session(StartSessionRequest {
+                                workspace_id: "workspace".into(),
+                                agent_ref: PLUGIN.into(),
+                                model: None,
+                            })
+                            .await
+                            .unwrap()
+                            .session
+                            .id;
+                        let context = Arc::new(ReplacementContext {
+                            host,
+                            root: directory.path().to_path_buf(),
+                            count: AtomicU64::new(0),
+                            attempts: Mutex::default(),
+                            outcome,
+                        });
+                        *setup.replacing.lock().unwrap() = Some(context.clone());
+                        setup.desired.store(1, Ordering::Release);
+                        // Broadcast notifications are level-triggered: the idle Session observes
+                        // the same Desired revision three times.
+                        for _ in 0..3 {
+                            manager.notify_mcp_desired_changed();
+                        }
+                        // The actor handles commands in order, so its own reply proves all three
+                        // observations were settled before Desired moves to generation 2.
+                        let settled = tokio::time::timeout(
+                            Duration::from_secs(3),
+                            manager.respond_to_permission(
+                                ora_contracts::RespondToPermissionRequest {
+                                    session_id: session.to_string(),
+                                    permission_request_id: "none".into(),
+                                    option_id: "none".into(),
+                                },
+                            ),
+                        )
+                        .await
+                        .unwrap_or_else(|_| panic!("{outcome:?}: the actor never settled"));
+                        assert_eq!(
+                            settled
+                                .map(drop)
+                                .map_err(|error| error.public_error().clone()),
+                            Err(PublicError::PermissionRequestNotPending(
+                                EmptyErrorParams {}
+                            )),
+                            "{outcome:?}"
+                        );
+                        assert_eq!(*context.attempts.lock().unwrap(), vec![1], "{outcome:?}");
+                        setup.desired.store(2, Ordering::Release);
+                        manager.notify_mcp_desired_changed();
+                        tokio::time::timeout(Duration::from_secs(3), async {
+                            while !context.attempts.lock().unwrap().contains(&2) {
+                                tokio::task::yield_now().await;
+                            }
+                        })
+                        .await
+                        .unwrap();
+                        assert_eq!(*context.attempts.lock().unwrap(), vec![1, 2], "{outcome:?}");
+                        scheduler.shutdown().await;
+                    }
+                })
+        });
+    }
+
+    /// Desktop's default replacement policy must still refresh an idle provider and admit prompts.
+    #[test]
+    fn desktop_default_policy_refreshes_without_replacing_provider() {
+        ora_logging::with_trace_logging(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    ora_logging::initialize_test_clock();
+                    let directory = TempDir::new().unwrap();
+                    let host = Arc::new(InstalledPlugin::default());
+                    host.install(directory.path(), 1, true).await;
+                    let setup = Setup::default();
+                    assert!(!setup.preserve_provider_identity());
+                    assert!(host.automatic_restarts());
+                    let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
+                    let store = MemorySessionStore::default();
+                    let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<Host> {
+                        attach: host.clone(),
+                        store: store.clone(),
+                        directory: Directory(directory.path().to_path_buf()),
+                        session_setup: setup.clone(),
+                        events: RecordedEvents::default(),
+                        home_directory: directory.path().to_path_buf(),
+                        sessions_root: directory.path().join("sessions"),
+                        scheduler: scheduler.clone(),
+                    })
+                    .unwrap();
+                    manager
+                        .wait_for_agent(&AgentRef::parse(PLUGIN).unwrap())
+                        .await
+                        .unwrap();
+                    let session = manager
+                        .start_session(StartSessionRequest {
+                            workspace_id: "workspace".into(),
+                            agent_ref: PLUGIN.into(),
+                            model: None,
+                        })
+                        .await
+                        .unwrap()
+                        .session;
+                    setup.desired.store(1, Ordering::Release);
+                    manager.notify_mcp_desired_changed();
+                    tokio::time::timeout(Duration::from_secs(3), async {
+                        while setup.loaded.load(Ordering::Acquire) != 1 {
+                            tokio::task::yield_now().await;
+                        }
+                    })
+                    .await
+                    .unwrap();
+                    let mut stream = manager.prompt_session(prompt(&session.id)).await.unwrap();
+                    let mut completed = false;
+                    while let Some(event) = stream.recv().await {
+                        completed |= matches!(event.unwrap(), PromptSessionEvent::Completed { .. });
+                    }
+                    assert!(completed);
+                    manager
+                        .stop_session(StopSessionRequest {
+                            session_id: session.id,
+                        })
+                        .await
+                        .unwrap();
+                    scheduler.shutdown().await;
+                })
+        });
+    }
 }

@@ -9,8 +9,8 @@ use super::ports::SessionLedger;
 use super::thread::thread_event;
 use super::workload::PackageViewLauncher;
 use ora_agent_runtime::{
-    AgentAttach, AgentPluginAttachment, AgentRuntimeHost, MemorySessionStore, NoSessionMcp,
-    RuntimeError, RuntimeEvents, WorkspaceDirectory,
+    AgentAttach, AgentPluginAttachment, AgentRuntimeHost, MemorySessionStore, RuntimeError,
+    RuntimeEvents, WorkspaceDirectory,
 };
 use ora_contracts::StopPluginRequest;
 use ora_domain::{AgentRef, PluginId, SessionId, WorkspaceId};
@@ -40,8 +40,9 @@ const AGENT_ATTACH_WAIT: Duration = Duration::from_secs(15);
 pub(super) type SessionLifecycle = PluginLifecycle<SessionLauncher, IgnoredStatus, GenerationTaps>;
 
 /// Launches one session's plugin from its placement, with the session's environment.
-pub(super) type SessionLauncher =
-    PackageViewLauncher<DenoPluginRuntimeLauncher<SessionEnvironment>>;
+pub(super) type SessionLauncher = PackageViewLauncher<
+    DenoPluginRuntimeLauncher<SessionEnvironment, super::stop::spawner::SessionAttemptSpawner>,
+>;
 
 /// Names the Node's host composition for one session execution over ledger `L`.
 pub(super) struct NodeRuntimeHost<L>(PhantomData<L>);
@@ -50,8 +51,8 @@ impl<L: SessionLedger> AgentRuntimeHost for NodeRuntimeHost<L> {
     /// A Node never resumes a session after restarting, so session rows need not outlive it.
     type Store = MemorySessionStore;
     type Attach = SessionPlugin;
-    /// Sessions receive no MCP servers until their configuration and secrets have a delivery path.
-    type Setup = NoSessionMcp;
+    /// Only the spec's explicit MCP bindings can enter this execution.
+    type Setup = super::mcp::NodeSessionMcp;
     type Events = ThreadMirror<L>;
     type Directory = CheckoutDirectory;
 }
@@ -149,9 +150,20 @@ pub(super) struct SessionPlugin {
     pub(super) plugin_id: PluginId,
     /// The adapter's live startup input; a restart of the same plugin reapplies the same grant.
     pub(super) model_context: Option<ora_plugin_protocol::AgentModelContext>,
+    pub(super) spawner: super::stop::spawner::SessionAttemptSpawner,
+    pub(super) process_admission: Option<SessionProcessAdmission>,
+}
+
+/// Reconnects cannot bypass the same stop-proof boundary used for explicit MCP replacement.
+pub(super) struct SessionProcessAdmission {
+    pub setup: super::mcp::NodeSessionMcp,
+    pub last: tokio::sync::Mutex<Option<ora_node_db::AttemptId>>,
 }
 
 impl AgentAttach for SessionPlugin {
+    fn automatic_restarts(&self) -> bool {
+        self.process_admission.is_none() && self.spawner.is_open()
+    }
     type StopError = PluginLifecycleError;
 
     /// Only the session's own frozen context; the runtime refuses ACP until the adapter confirms it.
@@ -176,6 +188,18 @@ impl AgentAttach for SessionPlugin {
     ) -> Result<AgentPluginAttachment, ConnectionError> {
         if *plugin_id != self.plugin_id {
             return Err(ConnectionError::NotFound);
+        }
+        if let Some(admission) = &self.process_admission {
+            use ora_agent_runtime::SessionSetup;
+            let mut last = admission.last.lock().await;
+            if last.as_ref() == Some(&self.spawner.identity().attempt) {
+                admission
+                    .setup
+                    .replace_mcp_process()
+                    .await
+                    .map_err(|_| ConnectionError::NotReady)?;
+            }
+            *last = Some(self.spawner.identity().attempt);
         }
         let connection = self
             .lifecycle
@@ -230,6 +254,8 @@ pub(super) struct ThreadMirror<L> {
     wake: Arc<Notify>,
     operation: OperationId,
     previews: super::preview::PreviewBuffer,
+    /// Tracks the current turn's tool calls and refuses lines of fenced (stopped) turns.
+    fence: Arc<super::fence::TurnFence>,
 }
 
 impl<L: SessionLedger> ThreadMirror<L> {
@@ -249,12 +275,22 @@ impl<L: SessionLedger> ThreadMirror<L> {
             wake,
             operation,
             previews,
+            fence: Arc::default(),
         }
     }
 
-    /// Attributes every line settled from now on to `turn_id`, or to no turn.
+    /// Attributes every line settled from now on to `turn_id`, or to no turn. A new turn starts
+    /// its own tool bookkeeping.
     pub(super) fn set_turn(&self, turn_id: Option<TurnId>) {
+        if turn_id.is_some() {
+            self.fence.begin_turn();
+        }
         *self.turn.lock().unwrap_or_else(PoisonError::into_inner) = turn_id;
+    }
+
+    /// The turn bookkeeping the conversation reads when a turn ends by cancel or failure.
+    pub(super) fn fence(&self) -> &super::fence::TurnFence {
+        &self.fence
     }
 
     /// Reports whether a line failed to reach the ledger.
@@ -290,8 +326,18 @@ impl<L: SessionLedger> RuntimeEvents for ThreadMirror<L> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
+        let admitted: Vec<_> = records
+            .iter()
+            .filter(|record| self.fence.admits_preview(&record.record))
+            .cloned()
+            .collect();
+        if admitted.len() != records.len() {
+            // The same leak the settled line would report; end the session without waiting.
+            ora_warn!(execution_id = %self.execution, "pending update of a stopped turn arrived in a later turn");
+            self.wake.notify_one();
+        }
         self.previews
-            .replace(&self.operation, &self.execution, turn, records);
+            .replace(&self.operation, &self.execution, turn, &admitted);
     }
     /// A Thread has no title of its own; Cloud names the run.
     fn session_title_updated(&self, _session_id: &SessionId) {}
@@ -301,6 +347,13 @@ impl<L: SessionLedger> RuntimeEvents for ThreadMirror<L> {
 
     fn record_settled(&self, _session_id: &SessionId, line: &HistoryLine) {
         if self.is_broken() {
+            return;
+        }
+        // A line naming a stopped turn's tool call or child joins no turn; the conversation
+        // ends the session with `turn_leak_detected` once woken.
+        if self.fence.observe(line) == super::fence::Admission::Leak {
+            ora_warn!(execution_id = %self.execution, "update of a stopped turn arrived in a later turn");
+            self.wake.notify_one();
             return;
         }
         let turn_id = self

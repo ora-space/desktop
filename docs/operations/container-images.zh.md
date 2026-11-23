@@ -25,24 +25,23 @@ docker build -f docker/Dockerfile --target controller -t ora-controller:local .
 | `/var/lib/ora` | Workspace 卷的挂载点；配置中的每个状态路径都在它下面 |
 | `/etc/ora/clone.gitconfig` | clone 的 Git 配置；镜像自带一个属于 root、不含凭据的空文件 |
 
-管理进程（进程宿主和 Node）以 root 运行，拥有受保护的配置和日志。Git 工作负载通过受管的进程边界以 UID/GID 1000（`node`）运行；
-配置指定了 Agent 工作负载目录时，Agent 插件及其进程也是如此；Node 的网络控制监听要求这个单独的身份。
+管理进程（Node）以 root 运行，拥有受保护的配置和日志。Git 工作负载以 UID/GID 1000（`node`）运行，这些进程在 fork 之后、
+exec 之前切换到这个身份；配置指定了 Agent 工作负载目录时，Agent 插件及其进程也是如此；Node 的网络控制监听要求这个单独的身份。
 
-入口程序在 `tini` 下以 PID 1 运行，所以被重新挂到它下面的进程（guardian 及其后代）都会被回收。它：
+入口程序在 `tini` 下以 PID 1 运行，所以被重新挂到它下面的进程（Node 被杀后留下的进程）都会被回收。它：
 
 1. 把卷的根目录设为 `root:root`、模式 `0711`（从不修改其中的内容），创建 clone 根目录，配置了 Agent 工作负载目录时也创建它
    （`0711`），Node 需要这个目录但从不创建；
 2. 把配置写入 `/run/ora/node.json`，把每个证书和私钥写入 `/run/ora/*.pem`（模式 `0600`，位于只有 root 可访问的目录中），然后
    清除这些环境变量；
-3. 进程宿主目录不存在时以 `create` 启动宿主，否则以 `recover` 启动，所以同一个卷在不同容器之间保留宿主日志（恢复失败从不退回到
-   创建），并最多等待 30 秒直到宿主 socket 接受连接（遗留的 socket 文件不算）；
-4. 启动 `ora-node`。
+3. 启动 `ora-node`，这是它监管的唯一进程：Node 自己运行每一条 Git 命令，并拉起自己的 `ora-reaper`，见
+   [Node](../node/node.zh.md#执行与恢复)。
 
-停止信号先发给 Node，由它通过仍在运行的宿主关闭受管的 Scope；Node 退出之后才停止宿主。guardian 不会被停止：它们的日志留在卷上，
-由下一个容器恢复。因此 Sandbox Server 的停止超时必须大于 Node 的 `shutdown_grace_ms + cleanup_timeout_ms`。如果 Node 自行退出，
-宿主会被停止，容器以 Node 的退出状态退出。
+`TERM` 和 `INT` 被转发给 Node，由它结束自己运行的 Git 并等待停止证据。因此 Sandbox Server 的停止超时必须大于 Node 的
+`shutdown_grace_ms + cleanup_timeout_ms`。容器以 Node 的退出状态退出。
 
-二进制放在属于 root 的 `/opt/ora/bin` 下，这是宿主对 guardian 的要求。镜像还自带 `/opt/ora/bin/deno`，所有插件都运行在它上面：
+二进制放在属于 root 的 `/opt/ora/bin` 下；`ora-reaper` 与 `ora-node` 在同一目录，由 `ora-node` 从自己所在的目录启动。镜像还
+自带 `/opt/ora/bin/deno`，所有插件都运行在它上面：
 版本由 `.deno-version` 指定，构建时根据 `scripts/sidecar-checksums.json`（Linux x64 和 arm64）校验压缩包和可执行文件，没有固定
 值的架构会让构建失败。Agent 会话通过 `agent.deno_path` 使用它。
 

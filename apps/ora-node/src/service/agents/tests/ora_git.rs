@@ -10,8 +10,6 @@ fn compose(
 ) -> Result<(tempfile::TempDir, Availability), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let (mut deployment, clone) = super::restored_deployment(root.path())?;
-    // SAFETY: geteuid only reads this process's identity.
-    deployment.process.expected_uid = unsafe { libc::geteuid() };
     deployment.process.workload_uid = workload_uid;
     let mut node = Node::open(deployment.node, deployment.process, Shutdown::default())?;
     node.configure_clone(clone)?;
@@ -90,7 +88,7 @@ impl crate::ora_git::OraGitBroker for UnopenedBroker {
 
 /// A test-local writer records the same wrapper event startup emits.
 #[derive(Clone, Default)]
-struct Logs(Arc<Mutex<Vec<u8>>>);
+pub(super) struct Logs(pub(super) Arc<Mutex<Vec<u8>>>);
 
 impl Write for Logs {
     /// Appends one formatted event to this test's buffer.

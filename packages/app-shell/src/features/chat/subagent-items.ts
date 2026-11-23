@@ -2,6 +2,7 @@ import {
   childSessionSource,
   delegationResultCompleted,
   delegationSessionId,
+  delegationToolCallCompleted,
   type ChatToolCall,
   type ChatTurnItem,
 } from "@ora/chat";
@@ -15,6 +16,7 @@ export interface SubagentGroupItem {
   depth: number;
   index: number;
   title?: string;
+  delegationToolCallId?: string;
   relationshipUnknown: boolean;
   items: ChatTurnItem[];
   children: SubagentGroupItem[];
@@ -39,17 +41,24 @@ export function groupSubagentItems(
         depth: source.depth,
         index: groups.size + 1,
         title: source.title,
+        delegationToolCallId: source.delegationToolCallId,
         relationshipUnknown: false,
         items: [],
         children: [],
         timeline: [],
       };
       groups.set(source.id, group);
-    } else if (
-      group.parentId !== source.parentId ||
-      group.depth !== source.depth
-    ) {
-      group.relationshipUnknown = true;
+    } else {
+      if (group.parentId !== source.parentId || group.depth !== source.depth) {
+        group.relationshipUnknown = true;
+      }
+      if (source.delegationToolCallId !== undefined) {
+        if (group.delegationToolCallId === undefined) {
+          group.delegationToolCallId = source.delegationToolCallId;
+        } else if (group.delegationToolCallId !== source.delegationToolCallId) {
+          group.relationshipUnknown = true;
+        }
+      }
     }
     group.title = source.title ?? group.title;
     group.items.push(item);
@@ -112,13 +121,21 @@ export function groupSubagentItems(
 export function delegationReturned(
   streamItems: ChatTurnItem[],
   childId: string,
+  delegationToolCallId?: string,
 ): boolean {
   let latest: ChatToolCall | undefined;
   for (const item of streamItems) {
-    if (item.kind === "toolCall" && delegationSessionId(item) === childId)
-      latest = item;
+    if (item.kind !== "toolCall") continue;
+    const matches =
+      delegationToolCallId === undefined
+        ? delegationSessionId(item) === childId
+        : item.id === delegationToolCallId;
+    if (matches) latest = item;
   }
-  return latest !== undefined && delegationResultCompleted(latest);
+  if (latest === undefined) return false;
+  return delegationToolCallId === undefined
+    ? delegationResultCompleted(latest)
+    : delegationToolCallCompleted(latest);
 }
 
 /**

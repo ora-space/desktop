@@ -31,12 +31,17 @@ impl ModelProcessIsolation {
     }
 
     /// The spawner for the plugin and every host-managed child of this session.
+    ///
+    /// The Node's reaper ends the Git it runs when the Node dies. Session processes stay out of
+    /// it: what happens to them after an abnormal Node exit is unchanged.
     pub(super) fn spawner(self, identity: ProcessIdentity) -> TokioProcessSpawner {
         let environment = match self {
             Self::Ambient => ProcessEnvironment::Inherit,
             Self::Isolated => ProcessEnvironment::Empty,
         };
-        TokioProcessSpawner::running_as(identity).with_environment(environment)
+        TokioProcessSpawner::running_as(identity)
+            .with_environment(environment)
+            .without_reaper_registration()
     }
 
     /// Copies only non-authoritative process necessities into the explicit environment; values

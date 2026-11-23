@@ -32,6 +32,12 @@ pub enum PromptEndCause {
 #[derive(Debug, Clone, Default)]
 pub struct PromptEndReport {
     cause: Arc<Mutex<Option<PromptEndCause>>>,
+    /// Set when a turn cancel stopped the prompt after admission but before it was written, so
+    /// the Agent never received this turn.
+    unsent: Arc<std::sync::atomic::AtomicBool>,
+    /// Set when a turn cancel acted on this prompt: it stopped the write, or `session/cancel` was
+    /// written (by the turn cancel or by a watchdog stop it merged into).
+    cancel_applied: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PromptEndReport {
@@ -49,6 +55,30 @@ impl PromptEndReport {
         if slot.is_none() {
             *slot = Some(cause);
         }
+    }
+
+    /// Marks a prompt that a turn cancel stopped before it reached the Agent.
+    pub(crate) fn mark_unsent(&self) {
+        self.unsent
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Marks a prompt a turn cancel acted on.
+    pub(crate) fn mark_cancel_applied(&self) {
+        self.cancel_applied
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether a turn cancel acted on this prompt. Without it, the prompt ended on its own, even
+    /// if a cancel was requested and even if its stop reason is `cancelled`.
+    pub fn cancel_applied(&self) -> bool {
+        self.cancel_applied
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Whether the Agent never received this prompt because a turn cancel stopped it first.
+    pub fn unsent(&self) -> bool {
+        self.unsent.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Returns the recorded cause once the turn has ended.

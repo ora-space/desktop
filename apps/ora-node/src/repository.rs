@@ -60,6 +60,9 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
                     )
                 }),
         );
+        // An unrecorded command of an earlier process that has not stopped may still be writing
+        // its transport repository; that one stays until its attempt lock is free.
+        keep.extend(self.git.runner().direct_git().leftover_directories());
         crate::git_server::purge_transports(&config.repository_root, &keep).map_err(|error| {
             Error::Configuration(format!(
                 "transport repositories could not be cleared: {error}"

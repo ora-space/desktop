@@ -1,0 +1,1312 @@
+{
+  "description": "Shared accept/reject samples for AgentSessionSpec.host_mcp_servers (specs decisions/node/agent-runtime/20261118-host-mcp-servers-in-agent-session-spec.md D1). Node and Controller validation tests must both reach the labelled verdict for every case. url_cases wrap the URL in one server named ora-test with empty headers; raw_cases give the JSON text of the field, for inputs a JSON value cannot express.",
+  "url_cases": [
+    {
+      "url": "http://127.0.0.1:41234/mcp/3f1c",
+      "accept": true,
+      "note": "loopback IPv4 with port"
+    },
+    {
+      "url": "http://[::1]:41234/mcp",
+      "accept": true,
+      "note": "loopback IPv6 with port"
+    },
+    {
+      "url": "http://127.0.0.1/mcp",
+      "accept": true,
+      "note": "loopback without port"
+    },
+    {
+      "url": "http://127.0.0.1:1/",
+      "accept": true,
+      "note": "smallest port and root path"
+    },
+    {
+      "url": "http://127.0.0.1:65535/a//b",
+      "accept": true,
+      "note": "largest port and an empty segment"
+    },
+    {
+      "url": "https://example.com/x",
+      "accept": true,
+      "note": "https DNS name"
+    },
+    {
+      "url": "https://example.com:8443/a/b",
+      "accept": true,
+      "note": "https non-default port"
+    },
+    {
+      "url": "https://example.com:80/x",
+      "accept": true,
+      "note": "https may use the http default port"
+    },
+    {
+      "url": "http://127.0.0.1:443/x",
+      "accept": true,
+      "note": "http may use the https default port"
+    },
+    {
+      "url": "https://127.0.0.1/x",
+      "accept": true,
+      "note": "https on loopback IPv4"
+    },
+    {
+      "url": "https://[::1]:1/x",
+      "accept": true,
+      "note": "https on loopback IPv6"
+    },
+    {
+      "url": "https://10.0.0.1:65535/",
+      "accept": true,
+      "note": "https on a private IPv4"
+    },
+    {
+      "url": "https://0.0.0.0/x",
+      "accept": true,
+      "note": "IPv4 zero octets"
+    },
+    {
+      "url": "https://255.255.255.255/x",
+      "accept": true,
+      "note": "IPv4 largest octets"
+    },
+    {
+      "url": "https://a-b.c1.example/x",
+      "accept": true,
+      "note": "inner hyphens and digits in labels"
+    },
+    {
+      "url": "https://1.2.3.a/x",
+      "accept": true,
+      "note": "digit labels before a letter-led last label"
+    },
+    {
+      "url": "https://api.example.com/%2F%41%7E",
+      "accept": true,
+      "note": "uppercase percent escapes"
+    },
+    {
+      "url": "https://example.com/a;b=c,d!$&'()*+:@~-._",
+      "accept": true,
+      "note": "every sub-delimiter and unreserved byte in a segment"
+    },
+    {
+      "url": "https://example.com/...",
+      "accept": true,
+      "note": "three-dot segment is not a dot segment"
+    },
+    {
+      "url": "https://example.com/.hidden/a.",
+      "accept": true,
+      "note": "dots inside segments"
+    },
+    {
+      "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/x",
+      "accept": true,
+      "note": "63-byte label"
+    },
+    {
+      "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/x",
+      "accept": true,
+      "note": "253-byte DNS name"
+    },
+    {
+      "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "accept": true,
+      "note": "2048-byte URL"
+    },
+    {
+      "url": "http://127.1/mcp",
+      "accept": false,
+      "note": "IPv4 shorthand on http"
+    },
+    {
+      "url": "https://127.1/x",
+      "accept": false,
+      "note": "IPv4 shorthand on https"
+    },
+    {
+      "url": "http://2130706433/mcp",
+      "accept": false,
+      "note": "integer IPv4"
+    },
+    {
+      "url": "https://2130706433/x",
+      "accept": false,
+      "note": "integer IPv4 on https"
+    },
+    {
+      "url": "http://0x7f.0.0.1/mcp",
+      "accept": false,
+      "note": "hexadecimal IPv4"
+    },
+    {
+      "url": "https://0x7f.0.0.1/x",
+      "accept": false,
+      "note": "hexadecimal IPv4 on https"
+    },
+    {
+      "url": "https://127.000.0.1/x",
+      "accept": false,
+      "note": "IPv4 leading zero"
+    },
+    {
+      "url": "https://256.0.0.1/x",
+      "accept": false,
+      "note": "IPv4 octet out of range"
+    },
+    {
+      "url": "https://1.2.3.4.5/x",
+      "accept": false,
+      "note": "five IPv4 parts"
+    },
+    {
+      "url": "HTTP://127.0.0.1/mcp",
+      "accept": false,
+      "note": "uppercase scheme"
+    },
+    {
+      "url": "Https://example.com/x",
+      "accept": false,
+      "note": "mixed-case scheme"
+    },
+    {
+      "url": "https://Example.com/x",
+      "accept": false,
+      "note": "uppercase host"
+    },
+    {
+      "url": "http://127.0.0.1:41234",
+      "accept": false,
+      "note": "empty path"
+    },
+    {
+      "url": "https://example.com",
+      "accept": false,
+      "note": "empty path without port"
+    },
+    {
+      "url": "http://127.0.0.1:80/mcp",
+      "accept": false,
+      "note": "http default port"
+    },
+    {
+      "url": "https://example.com:443/x",
+      "accept": false,
+      "note": "https default port"
+    },
+    {
+      "url": "http://127.0.0.1:041234/mcp",
+      "accept": false,
+      "note": "port leading zero"
+    },
+    {
+      "url": "https://example.com:0443/x",
+      "accept": false,
+      "note": "https port leading zero"
+    },
+    {
+      "url": "http://127.0.0.1:65536/mcp",
+      "accept": false,
+      "note": "port out of range"
+    },
+    {
+      "url": "http://127.0.0.1:0/mcp",
+      "accept": false,
+      "note": "port zero"
+    },
+    {
+      "url": "https://example.com:/x",
+      "accept": false,
+      "note": "empty port"
+    },
+    {
+      "url": "https://example.com:12a/x",
+      "accept": false,
+      "note": "non-digit port"
+    },
+    {
+      "url": "http://127.0.0.1:1/a/./b",
+      "accept": false,
+      "note": "single-dot segment"
+    },
+    {
+      "url": "http://127.0.0.1:1/a/../b",
+      "accept": false,
+      "note": "double-dot segment"
+    },
+    {
+      "url": "http://127.0.0.1:1/.",
+      "accept": false,
+      "note": "trailing single-dot segment"
+    },
+    {
+      "url": "http://127.0.0.1:1/..",
+      "accept": false,
+      "note": "trailing double-dot segment"
+    },
+    {
+      "url": "http://127.0.0.1:1/a/%2E/b",
+      "accept": false,
+      "note": "escaped dot segment"
+    },
+    {
+      "url": "http://127.0.0.1:1/a%2Eb",
+      "accept": false,
+      "note": "escaped dot anywhere"
+    },
+    {
+      "url": "http://127.0.0.1:1/%2f",
+      "accept": false,
+      "note": "lowercase percent escape"
+    },
+    {
+      "url": "http://127.0.0.1:1/%2",
+      "accept": false,
+      "note": "truncated percent escape"
+    },
+    {
+      "url": "http://127.0.0.1:1/%G0",
+      "accept": false,
+      "note": "non-hex percent escape"
+    },
+    {
+      "url": "http://127.0.0.1:1/mcp?token=x",
+      "accept": false,
+      "note": "query"
+    },
+    {
+      "url": "http://127.0.0.1:1/mcp?",
+      "accept": false,
+      "note": "empty query"
+    },
+    {
+      "url": "http://127.0.0.1:1/mcp#x",
+      "accept": false,
+      "note": "fragment"
+    },
+    {
+      "url": "http://127.0.0.1:1/mcp#",
+      "accept": false,
+      "note": "empty fragment"
+    },
+    {
+      "url": "http://[::ffff:127.0.0.1]:1/mcp",
+      "accept": false,
+      "note": "IPv4-mapped IPv6"
+    },
+    {
+      "url": "http://[::FFFF:7f00:1]:1/mcp",
+      "accept": false,
+      "note": "hexadecimal mapped IPv6"
+    },
+    {
+      "url": "http://[0:0:0:0:0:0:0:1]:1/mcp",
+      "accept": false,
+      "note": "expanded IPv6 loopback"
+    },
+    {
+      "url": "http://[::01]:1/mcp",
+      "accept": false,
+      "note": "IPv6 loopback with leading zero"
+    },
+    {
+      "url": "https://[::2]/x",
+      "accept": false,
+      "note": "other IPv6 on https"
+    },
+    {
+      "url": "https://[2001:db8::1]/x",
+      "accept": false,
+      "note": "global IPv6 on https"
+    },
+    {
+      "url": "https://bücher.example/x",
+      "accept": false,
+      "note": "non-ASCII host"
+    },
+    {
+      "url": "https://xn--bcher-kva.example/x",
+      "accept": false,
+      "note": "IDNA A-label"
+    },
+    {
+      "url": "https://example.123/x",
+      "accept": false,
+      "note": "digit-led last label"
+    },
+    {
+      "url": "https://example.com./x",
+      "accept": false,
+      "note": "trailing dot"
+    },
+    {
+      "url": "https://-a.example/x",
+      "accept": false,
+      "note": "label starts with hyphen"
+    },
+    {
+      "url": "https://a-.example/x",
+      "accept": false,
+      "note": "label ends with hyphen"
+    },
+    {
+      "url": "https://a..example/x",
+      "accept": false,
+      "note": "empty label"
+    },
+    {
+      "url": "https://exa_mple.com/x",
+      "accept": false,
+      "note": "underscore in host"
+    },
+    {
+      "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/x",
+      "accept": false,
+      "note": "64-byte label"
+    },
+    {
+      "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/x",
+      "accept": false,
+      "note": "254-byte DNS name"
+    },
+    {
+      "url": "http://127.0.0.1:1\\mcp",
+      "accept": false,
+      "note": "backslash before path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a\\b",
+      "accept": false,
+      "note": "backslash in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a\tb",
+      "accept": false,
+      "note": "tab in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a\nb",
+      "accept": false,
+      "note": "newline in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a b",
+      "accept": false,
+      "note": "space in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/€",
+      "accept": false,
+      "note": "unescaped non-ASCII in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a\"b",
+      "accept": false,
+      "note": "double quote in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a<b>",
+      "accept": false,
+      "note": "angle brackets in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a{b}",
+      "accept": false,
+      "note": "braces in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a`b",
+      "accept": false,
+      "note": "backtick in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a|b",
+      "accept": false,
+      "note": "pipe in path"
+    },
+    {
+      "url": "http://127.0.0.1:1/a^b",
+      "accept": false,
+      "note": "caret in path"
+    },
+    {
+      "url": "http://user@127.0.0.1:1/mcp",
+      "accept": false,
+      "note": "userinfo"
+    },
+    {
+      "url": "https://u:p@example.com/x",
+      "accept": false,
+      "note": "userinfo with password"
+    },
+    {
+      "url": "http://localhost:1/mcp",
+      "accept": false,
+      "note": "localhost on http"
+    },
+    {
+      "url": "http://127.0.0.2:1/mcp",
+      "accept": false,
+      "note": "other 127/8 address on http"
+    },
+    {
+      "url": "http://example.com/x",
+      "accept": false,
+      "note": "DNS name on http"
+    },
+    {
+      "url": "http://10.0.0.1/x",
+      "accept": false,
+      "note": "private IPv4 on http"
+    },
+    {
+      "url": "ws://127.0.0.1:1/mcp",
+      "accept": false,
+      "note": "other scheme"
+    },
+    {
+      "url": "//127.0.0.1:1/mcp",
+      "accept": false,
+      "note": "no scheme"
+    },
+    {
+      "url": " http://127.0.0.1:1/mcp",
+      "accept": false,
+      "note": "leading space"
+    },
+    {
+      "url": "http://127.0.0.1:1/mcp ",
+      "accept": false,
+      "note": "trailing space"
+    },
+    {
+      "url": "",
+      "accept": false,
+      "note": "empty URL"
+    },
+    {
+      "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "accept": false,
+      "note": "2049-byte URL"
+    }
+  ],
+  "list_cases": [
+    {
+      "note": "empty list",
+      "accept": true,
+      "host_mcp_servers": []
+    },
+    {
+      "note": "one server with a bearer header",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "authorization": "Bearer abc.def"
+          }
+        }
+      ]
+    },
+    {
+      "note": "four servers",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-s0",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-s1",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-s2",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-s3",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "five servers",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-s0",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-s1",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-s2",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-s3",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-s4",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "eight headers",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-h0": "v",
+            "x-h1": "v",
+            "x-h2": "v",
+            "x-h3": "v",
+            "x-h4": "v",
+            "x-h5": "v",
+            "x-h6": "v",
+            "x-h7": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "nine headers",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-h0": "v",
+            "x-h1": "v",
+            "x-h2": "v",
+            "x-h3": "v",
+            "x-h4": "v",
+            "x-h5": "v",
+            "x-h6": "v",
+            "x-h7": "v",
+            "x-h8": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "5-byte name",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-a",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "64-byte name",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "65-byte name",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "name is only the prefix",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "name without the prefix",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "foo-x",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "uppercase name",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-Test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "name with slash",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-a/b",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "name with underscore",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-a_b",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "empty name",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "names out of byte order",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-b",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-a",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "duplicate names",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-a",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-a",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "names in byte order",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-a",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        },
+        {
+          "name": "ora-b",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "64-byte header name",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "65-byte header name",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "empty header name",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "header name with token symbols",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a!#$%&'*+.^_`|~1": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "uppercase header name",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "Authorization": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "header name with colon",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x:y": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "header name with space",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x y": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header host",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "host": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header content-length",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "content-length": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header content-type",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "content-type": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header accept",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "accept": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header mcp-session-id",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "mcp-session-id": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header mcp-protocol-version",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "mcp-protocol-version": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header last-event-id",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "last-event-id": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header connection",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "connection": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header keep-alive",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "keep-alive": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header proxy-connection",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "proxy-connection": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header te",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "te": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header trailer",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "trailer": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header transfer-encoding",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "transfer-encoding": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "reserved header upgrade",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "upgrade": "v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "empty header value",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": ""
+          }
+        }
+      ]
+    },
+    {
+      "note": "header value with leading space",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": " v"
+          }
+        }
+      ]
+    },
+    {
+      "note": "header value with trailing space",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": "v "
+          }
+        }
+      ]
+    },
+    {
+      "note": "header value with inner space and every visible byte",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~ z"
+          }
+        }
+      ]
+    },
+    {
+      "note": "header value with CR",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": "a\rb"
+          }
+        }
+      ]
+    },
+    {
+      "note": "header value with LF",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": "a\nb"
+          }
+        }
+      ]
+    },
+    {
+      "note": "header value with tab",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": "a\tb"
+          }
+        }
+      ]
+    },
+    {
+      "note": "header value with DEL",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": "ab"
+          }
+        }
+      ]
+    },
+    {
+      "note": "non-ASCII header value",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": "€"
+          }
+        }
+      ]
+    },
+    {
+      "note": "8192 bytes in total",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-s0",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        },
+        {
+          "name": "ora-s1",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        },
+        {
+          "name": "ora-s2",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        },
+        {
+          "name": "ora-s3",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "note": "8193 bytes in total",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-s0",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        },
+        {
+          "name": "ora-s1",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        },
+        {
+          "name": "ora-s2",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        },
+        {
+          "name": "ora-s3",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {
+            "x": "yyy"
+          }
+        }
+      ]
+    },
+    {
+      "note": "8192 bytes in total with headers",
+      "accept": true,
+      "host_mcp_servers": [
+        {
+          "name": "ora-s0",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        },
+        {
+          "name": "ora-s1",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        },
+        {
+          "name": "ora-s2",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {}
+        },
+        {
+          "name": "ora-s3",
+          "url": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "headers": {
+            "x": "yyy"
+          }
+        }
+      ]
+    },
+    {
+      "note": "unknown server field",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {},
+          "transport": "http"
+        }
+      ]
+    },
+    {
+      "note": "missing headers",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp"
+        }
+      ]
+    },
+    {
+      "note": "headers is not an object",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": []
+        }
+      ]
+    },
+    {
+      "note": "header value is not a string",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "url": "http://127.0.0.1:41234/mcp",
+          "headers": {
+            "x-a": 1
+          }
+        }
+      ]
+    },
+    {
+      "note": "stdio-shaped server",
+      "accept": false,
+      "host_mcp_servers": [
+        {
+          "name": "ora-test",
+          "command": "/bin/sh",
+          "args": [],
+          "headers": {}
+        }
+      ]
+    }
+  ],
+  "raw_cases": [
+    {
+      "note": "duplicate server field",
+      "accept": false,
+      "host_mcp_servers_json": "[{\"name\":\"ora-test\",\"name\":\"ora-other\",\"url\":\"http://127.0.0.1:41234/mcp\",\"headers\":{}}]"
+    },
+    {
+      "note": "duplicate header key",
+      "accept": false,
+      "host_mcp_servers_json": "[{\"name\":\"ora-test\",\"url\":\"http://127.0.0.1:41234/mcp\",\"headers\":{\"x-a\":\"1\",\"x-a\":\"2\"}}]"
+    },
+    {
+      "note": "null list",
+      "accept": false,
+      "host_mcp_servers_json": "null"
+    },
+    {
+      "note": "server entry as an array",
+      "accept": false,
+      "host_mcp_servers_json": "[[\"ora-test\",\"http://127.0.0.1:41234/mcp\",{}]]"
+    }
+  ]
+}

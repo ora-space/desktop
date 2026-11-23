@@ -114,6 +114,7 @@ describe("task-scoped first send without the task in the tasks cache", () => {
       projectId: "p1",
       kind: "isolated",
       lifecycle: "active",
+      directory: { kind: "present" },
     });
     // ...but the tasks list the client loaded does not contain it yet.
     const baseHandlers = createFixtureHandlers(state);

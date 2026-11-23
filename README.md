@@ -4,6 +4,11 @@ Ora is an IDE for AI agents. The shared Rust crates live in `crates/`,
 executable Rust packages live in `apps/`, and the shared TypeScript packages
 live in `packages/`. All Rust packages share the root Cargo workspace.
 
+## Supported platforms
+
+Ora Desktop runs on Windows and Linux. macOS is no longer supported: v0.6.0 was the last macOS
+release, and macOS installations stay on it without further updates.
+
 ## Documentation
 
 Start with the [documentation map](docs/README.md) ([中文](docs/README.zh.md)) and the

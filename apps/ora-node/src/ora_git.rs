@@ -110,7 +110,7 @@ pub(crate) struct OraGitService<R: Send + 'static, N: Send + 'static> {
     directory: PathBuf,
     /// The only UID a request may come from.
     peer_uid: u32,
-    /// One request's Git at a time across sessions: host-backed runners drive their own runtime.
+    /// One request's Git at a time across sessions: the Node's runners drive their own runtime.
     git: Mutex<Option<(DeliveryGit<R>, N)>>,
     access: GitServerAccess,
     repository_root: PathBuf,

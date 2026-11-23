@@ -4,60 +4,16 @@ use crate::plugin::PluginApi;
 use agent_client_protocol_schema::v1::McpServer;
 use ora_contracts::ListInstalledPluginsRequest;
 use ora_domain::{AgentRef, PluginId};
-use ora_plugin_config::{
-    CompiledMcpConfiguration, ConfigurationCompleteness, ConfigurationSummary, SettingValue,
-};
+use ora_plugin_config::{ConfigurationCompleteness, ConfigurationSummary};
 use ora_plugin_manager::{PluginContribution, PluginManager};
-use semver::Version;
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{McpHealthStore, SessionMcpError, SessionMcpSelection};
 
-/// One statically valid installed MCP package version.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct InstalledMcpCandidate {
-    pub plugin_id: PluginId,
-    pub version: Version,
-    pub package_root: PathBuf,
-    pub configuration: CompiledMcpConfiguration,
-}
-
-/// Configuration eligibility for one installed MCP, without exposing Setting values unless complete.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum McpConfigurationEligibility {
-    /// The package declares no Settings, so revision `0` is always eligible.
-    NoSettings,
-    /// Required Settings are present; values are used only to build the ACP snapshot.
-    Complete {
-        revision: u64,
-        values: BTreeMap<String, SettingValue>,
-    },
-    /// The plugin is installed but not yet configured.
-    ///
-    /// Automatic discovery omits it, while an explicit Session permission fails setup so author
-    /// intent cannot silently shrink.
-    Incomplete,
-    /// The store or declaration cannot be re-read, which fails the whole setup.
-    Unavailable,
-}
-
-/// Enumerates the current installed MCP snapshot.
-///
-/// Implementations must be side-effect free. A second call that disagrees with the first is how
-/// the resolver detects a package version change mid-setup.
-pub(crate) trait SessionMcpCatalog {
-    fn installed_mcps(&self) -> Result<Vec<InstalledMcpCandidate>, SessionMcpError>;
-}
-
-/// Reads configuration completeness and, when complete, Setting values for one MCP plugin.
-pub(crate) trait SessionMcpConfigurationSource {
-    fn eligibility(
-        &self,
-        candidate: &InstalledMcpCandidate,
-    ) -> Result<McpConfigurationEligibility, SessionMcpError>;
-}
+pub(crate) use ora_agent_runtime::{
+    InstalledMcpCandidate, McpConfigurationEligibility, SessionMcpCatalog,
+    SessionMcpConfigurationSource,
+};
 
 /// Host-backed catalog and configuration source shared by every Session setup path.
 #[derive(Clone)]

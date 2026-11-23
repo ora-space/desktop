@@ -4,6 +4,7 @@ mod agents;
 mod clones;
 mod delivery;
 mod executor;
+mod host;
 mod plugins;
 mod revisions;
 mod scheduled_artifacts;
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io,
     net::SocketAddr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
     time::Duration,
 };
@@ -120,7 +121,7 @@ pub struct AgentConfig {
 }
 
 /// Requests waiting for the blocking worker, across message handling and the replay pass.
-const ADMISSION_QUEUE_BOUND: usize = 16;
+const ADMISSION_QUEUE_BOUND: usize = 80;
 
 // The queue holds at most ADMISSION_QUEUE_BOUND entries; inline envelopes avoid another allocation per control message.
 #[allow(clippy::large_enum_variant)]
@@ -146,6 +147,9 @@ struct SessionInfo {
     identity: NodeRuntimeIdentity,
     controller: ControllerId,
     capabilities: Vec<NodeCapability>,
+    /// Present when this Node runs sessions: the handshake reads it to decide `turn_cancel` and
+    /// whether a Controller that did not negotiate it may take over (D5).
+    keep_sessions: Option<ora_node_db::SessionJournal>,
     /// Advertised beside `model_proxy`; absent when this Node cannot run plugin-owned adapters.
     model_adapter: Option<ora_node_protocol::ModelAdapterCapability>,
 }
@@ -160,7 +164,23 @@ impl Drop for StopOnDrop {
 
 /// Runs independent control-session and execution lifecycles while retaining the Node lease until cleanup finishes.
 pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> {
+    serve_on_host(
+        config,
+        shutdown,
+        Path::new(crate::hand_over::PROTECTED_HARDLINKS),
+    )
+    .await
+}
+
+/// [`serve`] with the host's `fs.protected_hardlinks` read from `protected_hardlinks`, at startup
+/// and before every checkout hand-over, so tests can stand in for the kernel setting.
+async fn serve_on_host(
+    config: ServiceConfig,
+    shutdown: Shutdown,
+    protected_hardlinks: &Path,
+) -> io::Result<()> {
     config.restore.policy()?;
+    host::require_protected_hardlinks(&config.process, protected_hardlinks)?;
     let _stop = StopOnDrop(shutdown.clone());
     if config.recovery_interval_ms == 0 {
         return Err(io::Error::other("recovery interval must be positive"));
@@ -210,8 +230,10 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
     let (sender, receiver) = mpsc::sync_channel(ADMISSION_QUEUE_BOUND);
     let (ready, started) = oneshot::channel();
     let worker_shutdown = shutdown.clone();
-    let mut worker =
-        tokio::task::spawn_blocking(move || worker::run(config, receiver, ready, worker_shutdown));
+    let hand_over = crate::CheckoutHandOver::new(protected_hardlinks);
+    let mut worker = tokio::task::spawn_blocking(move || {
+        worker::run(config, hand_over, receiver, ready, worker_shutdown)
+    });
     let startup = started.await.map_err(io::Error::other)?;
     let result = match startup {
         Ok(info) => match control {

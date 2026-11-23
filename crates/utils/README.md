@@ -46,7 +46,9 @@ that any other crate can consume without introducing dependency cycles.
   references, and files over the 50 KiB cap. `read_validated` reads one SVG file through that
   policy with a bounded read and returns its source text, so callers never hold untrusted markup.
 - `fs`: portable file naming for untrusted names (`sanitize_file_name`) and collision-free name
-  selection inside a directory (`next_available_file_name`).
+  selection inside a directory (`next_available_file_name`). Unix callers can require hard-link-only
+  views with `hard_link_tree_no_follow`; unlike the general view helper, it rejects `EXDEV` rather
+  than copying bytes. Linux `require_local_filesystem` rejects network and unknown filesystem types.
 - `process`: cross-platform background-command configuration that suppresses incidental Windows
   console windows while preserving normal pipes and exit-status observation.
 - `Slug`: an owned lowercase ASCII slug segment with stable syntax and byte-length guarantees.

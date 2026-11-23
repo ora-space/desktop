@@ -29,7 +29,7 @@ pub use install::{
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE};
 pub use ora_plugin_manifest::{HookTarget, Sha256Digest};
-pub use planned::{PreparedPlugin, inspect_planned_package};
+pub use planned::{PreparedPlugin, inspect_planned_package, is_mcp_package};
 pub use skill::{
     InstalledSkill, InstalledSkillDescriptor, SKILL_ASSET_DIRECTORY, SKILL_MANIFEST_FILE_NAME,
 };

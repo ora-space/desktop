@@ -36,6 +36,9 @@ const LOAD_REFUSAL_MARKER: &str = "refuse_session_load";
 /// drive automatic retries through the real session driver.
 const FAIL_TIMES_MARKER: &str = "[fail-times:";
 
+/// Prompt marker `[fail-delay-ms:N]`: hold the prompt this long before the planned failure.
+const FAIL_DELAY_MARKER: &str = "[fail-delay-ms:";
+
 /// Journal of prompts failed on purpose, one marker per line, so the count survives new
 /// sessions and a restarted plugin process alike.
 const PROMPT_FAILURE_JOURNAL: &str = "prompt_failures.txt";
@@ -89,6 +92,8 @@ struct FakeSession {
     model: String,
     title: Option<String>,
     active: bool,
+    /// Holds the first marked send and ends its replacement without any updates.
+    empty_retry_pending: bool,
     /// Loopback URL of the host completion capability delivered beside the plugin servers.
     completion_endpoint: Option<String>,
 }
@@ -166,7 +171,12 @@ impl FakeAcpAgent {
                 .and_then(|request| {
                     let session_id = request.session_id.to_string();
                     let prompt = prompt_text(&request.prompt);
-                    if prompt.contains("[hold-for-cancel]") {
+                    let first_empty_retry = prompt.contains("[fake-empty-retry]")
+                        && self
+                            .sessions
+                            .get(&session_id)
+                            .is_some_and(|session| !session.empty_retry_pending);
+                    if first_empty_retry || prompt.contains("[hold-for-cancel]") {
                         Some((session_id, None))
                     } else {
                         prompt_mode(&prompt).map(|mode| (session_id, Some(mode)))
@@ -236,6 +246,7 @@ impl FakeAcpAgent {
                     model: model.clone(),
                     title: None,
                     active: true,
+                    empty_retry_pending: false,
                     completion_endpoint: completion_endpoint(&request.mcp_servers),
                 },
             );
@@ -262,6 +273,7 @@ impl FakeAcpAgent {
                     model: default_model_id().to_string(),
                     title: None,
                     active: true,
+                    empty_retry_pending: false,
                     completion_endpoint: None,
                 });
             session.cwd = request.cwd;
@@ -344,11 +356,26 @@ impl FakeAcpAgent {
             && let Ok(request) = parse_params::<CancelNotification>(method, params)
             && let Some(id) = self.pending_prompts.remove(&request.session_id.to_string())
         {
-            return vec![json!({
+            let mut frames = Vec::new();
+            if self
+                .sessions
+                .get(request.session_id.0.as_ref())
+                .is_some_and(|session| session.empty_retry_pending)
+            {
+                frames.push(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "method": CLIENT_METHOD_NAMES.session_update,
+                    "params": SessionNotification::new(request.session_id, SessionUpdate::AgentMessageChunk(
+                        ContentChunk::new(ContentBlock::Text(TextContent::new("[Session Error] Request was aborted.")))
+                    )),
+                }));
+            }
+            frames.push(json!({
                 "jsonrpc": JSON_RPC_VERSION,
                 "id": id,
                 "result": PromptResponse::new(StopReason::Cancelled),
-            })];
+            }));
+            return frames;
         }
         Vec::new()
     }
@@ -374,6 +401,35 @@ impl FakeAcpAgent {
 
         let prompt = prompt_text(&request.prompt);
         record_prompt(&session_id, &prompt);
+        let late_tool = prompt.contains("[late-child-tool]");
+        let mut notifications = Vec::new();
+        if prompt.contains("[fake-empty-retry]") {
+            session.empty_retry_pending = !session.empty_retry_pending;
+            if late_tool {
+                // The old child finishes after cancellation. Its ACP delta omits ownership.
+                let update = if session.empty_retry_pending {
+                    json!({
+                        "sessionUpdate": "tool_call", "toolCallId": "abandoned",
+                        "title": "Child tool", "status": "pending",
+                        "_meta": {"opencode/child-session": {"id":"child","parentID":"parent","depth":1}}
+                    })
+                } else {
+                    json!({"sessionUpdate":"tool_call_update","toolCallId":"abandoned","status":"completed"})
+                };
+                notifications.push(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "method": CLIENT_METHOD_NAMES.session_update,
+                    "params": {"sessionId": request.session_id, "update": update}
+                }));
+            }
+            if !session.empty_retry_pending {
+                return Ok(AcpCallResult {
+                    notifications,
+                    result: serde_json::to_value(PromptResponse::new(StopReason::EndTurn))
+                        .map_err(|error| AcpError::invalid_params(method, error))?,
+                });
+            }
+        }
         if let Some(mode) = prompt_mode(&prompt) {
             if mode == PromptMode::Crash {
                 // An abrupt exit of the whole plugin process is a session crash, not a prompt
@@ -383,6 +439,9 @@ impl FakeAcpAgent {
             // Silent and drop modes return a normal result to this frame handler, which discards
             // its notifications and holds the request until ACP cancel. This keeps the process
             // alive for drop mode and produces no update or terminal end for silent mode.
+        }
+        if let Some(delay) = prompt_delay(&prompt) {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
         }
         if let Some(error) = planned_prompt_failure(&prompt) {
             return Err(error);
@@ -414,12 +473,13 @@ impl FakeAcpAgent {
                 TextContent::new(response),
             ))),
         );
+        notifications.push(json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "method": CLIENT_METHOD_NAMES.session_update,
+            "params": notification,
+        }));
         Ok(AcpCallResult {
-            notifications: vec![json!({
-                "jsonrpc": JSON_RPC_VERSION,
-                "method": CLIENT_METHOD_NAMES.session_update,
-                "params": notification,
-            })],
+            notifications,
             result: serde_json::to_value(PromptResponse::new(StopReason::EndTurn))
                 .map_err(|error| AcpError::invalid_params(method, error))?,
         })
@@ -466,6 +526,15 @@ fn record_acp_call(method: &str, session_id: &str) {
     {
         let _ = writeln!(file, "{method} {session_id}");
     }
+}
+
+/// Reads `[fail-delay-ms:N]` so a test can attach a load follower during the first attempt.
+fn prompt_delay(prompt: &str) -> Option<u64> {
+    let start = prompt.find(FAIL_DELAY_MARKER)?;
+    let length = prompt[start..].find(']')? + 1;
+    prompt[start + FAIL_DELAY_MARKER.len()..start + length - 1]
+        .parse()
+        .ok()
 }
 
 /// Fails this prompt when it carries `[fail-times:N]` and fewer than N prompts with the same

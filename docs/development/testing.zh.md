@@ -20,7 +20,7 @@
 | `task proto:check` | Cloud 契约 submodule 固定在指定 commit，生成的客户端与之一致（属于 `lint:crates`） |
 | `deno task test:tooling` | `scripts/` 下的工具脚本 |
 
-Tauri crate 与其他 Rust crate 共享根目录的 `Cargo.lock`、依赖图和 target 目录。CI 分别运行各组，crates 任务在 Linux、macOS 和
+Tauri crate 与其他 Rust crate 共享根目录的 `Cargo.lock`、依赖图和 target 目录。CI 分别运行各组，crates 任务在 Linux 和
 Windows 上运行。迭代时使用最小的相关任务；Desktop 的改动需要 `task test:tauri`，不能只跑 workspace 测试，横跨多处的改动最后要跑
 `task test`。
 
@@ -39,7 +39,6 @@ Windows 上运行。迭代时使用最小的相关任务；Desktop 的改动需�
 
 有些测试套件需要额外准备：
 
-- Node 独立测试运行真实的 Node、宿主和 guardian 可执行文件；先用
-  `cargo build -p ora-node -p ora-controller -p ora-process-host -p ora-process-guardian` 构建它们。
+- Node 独立测试运行真实的 Node、Controller 和 reaper 可执行文件；先用
+  `cargo build -p ora-node -p ora-controller -p ora-reaper` 构建它们。
 - clone、交付、恢复和 `ora-git` 的测试运行一个本地 Git Server 替身，它要求客户端证书 TLS、由 `git http-backend` 支撑（`ora-test-support` 的 `git-server` feature），只在 Linux 上构建。
-- 特权 helper 测试默认被忽略，见 [Linux helper](../process/linux-helper.zh.md#启动闸门)。

@@ -105,6 +105,7 @@ async fn rejects_oversized_outbound_message_without_writing() -> Result<(), Test
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
             thread_previews: false,
+            turn_cancel: false,
             controller_id: ControllerId::new("x".repeat(MAX_FRAME_LENGTH)),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
         },
@@ -126,6 +127,7 @@ async fn stream_envelope_is_length_prefix_around_frame_body() -> Result<(), Test
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
             thread_previews: false,
+            turn_cancel: false,
             controller_id: ControllerId::new("owner"),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
         },
@@ -189,6 +191,7 @@ fn rejects_invalid_frame_bodies() -> Result<(), TestError> {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
             thread_previews: false,
+            turn_cancel: false,
             controller_id: ControllerId::new("x".repeat(MAX_FRAME_LENGTH)),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
         },

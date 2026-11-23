@@ -17,7 +17,7 @@ use crate::AgentRuntimeHost;
 use crate::RuntimeError;
 use crate::host::SessionSetup;
 use crate::host::SessionStore;
-use crate::session_setup::{LiveMcpState, SessionMcpSnapshot};
+use crate::session_setup::{LiveMcpState, SessionMcpRevision, SessionMcpSnapshot};
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AvailableCommand, AvailableCommandsUpdate, ConfigOptionUpdate,
     LoadSessionRequest as AcpLoadSessionRequest, LoadSessionResponse, RequestPermissionOutcome,
@@ -27,6 +27,17 @@ use ora_domain::SessionStatus;
 use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;
 use tokio::time::{Instant, sleep};
+
+/// How the current channel came to be.
+///
+/// `Restored` means it came from `session/load` and has not served a successful prompt yet;
+/// a successful prompt clears it back to `NotRestored`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LoadRestoration {
+    #[default]
+    NotRestored,
+    Restored,
+}
 
 /// A provider session Ora created to replace one it could not restore, before the row knows.
 ///
@@ -59,23 +70,75 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         &mut self,
         model: Option<&str>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
+        let attaching = self.channel.is_none();
         let setup = match self.channel {
             Some(_) => Vec::new(),
             None => self.attach_provider_session(model).await?,
         };
-        self.ensure_current_mcp().await?;
+        // Node's final host commit checks freshness atomically. Do not turn a just-completed
+        // attach into another process replacement when Desired raced its handshake.
+        if !attaching || !self.session_mcp.preserve_provider_identity() {
+            self.ensure_current_mcp().await?;
+        }
         Ok(setup)
     }
 
     /// Acquires a provider channel for a session holding none, rebuilding when the old is unusable.
-    async fn attach_provider_session(
+    ///
+    /// Under the host policy that preserves the provider identity, a failed attach blocks the
+    /// revision it attempted. Desired notifications are broadcast and level-triggered, so a live
+    /// state left pending would turn every repeated observation of that revision into another
+    /// process replacement or `session/load`; only a new revision or the next prompt retries it.
+    pub(crate) async fn attach_provider_session(
         &mut self,
         model: Option<&str>,
+    ) -> Result<Vec<SessionUpdate>, RuntimeError> {
+        let mut attempted = None;
+        let result = self
+            .attach_provider_session_for(model, &mut attempted)
+            .await;
+        if result.is_err()
+            && self.session_mcp.preserve_provider_identity()
+            && let Some(desired) = attempted
+        {
+            self.live_mcp = LiveMcpState::Blocked { desired };
+        }
+        result
+    }
+
+    /// Performs one attach, recording in `attempted` the latest revision it tried to deliver.
+    async fn attach_provider_session_for(
+        &mut self,
+        model: Option<&str>,
+        attempted: &mut Option<SessionMcpRevision>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
         // Package replacement retires the entire supervisor, not just its process generation.
         // Pin the current supervisor for this attach and its MCP capability checks; the actor
         // and its durable conversation may outlive any number of installed incarnations.
+        let recovered = self
+            .connections
+            .recover_mcp_replacement(&self.session.agent_ref, &self.session_mcp)
+            .await?;
         self.connection = self.connections.for_agent(&self.session.agent_ref)?;
+        let snapshot = self.resolve_mcp_snapshot()?;
+        *attempted = Some(snapshot.revision().clone());
+        if recovered
+            && self
+                .session_mcp
+                .mcp_replacement_required(snapshot.revision())
+        {
+            let error = RuntimeError::mcp_retry_required();
+            self.session_mcp.mcp_failed(&error);
+            return Err(error);
+        }
+        self.replace_mcp_process_if_needed(&snapshot).await?;
+        let latest = self.resolve_mcp_snapshot()?;
+        *attempted = Some(latest.revision().clone());
+        if self.session_mcp.mcp_replacement_required(latest.revision()) {
+            let error = RuntimeError::mcp_retry_required();
+            self.session_mcp.mcp_failed(&error);
+            return Err(error);
+        }
         let channel = self
             .connection
             .open_session_channel(self.provider_session_id(), self.session.id.as_ref())?;
@@ -84,14 +147,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             // agent restored without it would serve the turn against a stale server set. A Snapshot
             // that cannot be resolved fails the send rather than attaching without one.
             let snapshot = self.resolve_mcp_snapshot()?;
+            *attempted = Some(snapshot.revision().clone());
             match self.restore_provider_session(channel, &snapshot).await {
                 Ok(config_options) => {
+                    self.load_restoration = LoadRestoration::Restored;
                     self.record_loaded_mcp(&snapshot);
                     // Applied against what this restore reported rather than the catalog the
                     // picker offered: only the agent can say whether it still serves that model.
                     Some(self.apply_restored_model(model, config_options).await)
                 }
                 Err(error) => {
+                    if self.session_mcp.preserve_provider_identity() {
+                        self.session_mcp.mcp_failed(&error);
+                        return Err(error.during_mcp());
+                    }
                     // An agent that cannot restore this session is not a failed send: the
                     // conversation is Ora's, and a fresh provider session can be told it.
                     ora_debug!(
@@ -104,6 +173,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         } else {
             drop(channel);
+            if self.session_mcp.preserve_provider_identity() {
+                let error = crate::support::mcp_load_unsupported();
+                self.session_mcp.mcp_failed(&error);
+                return Err(error.during_mcp());
+            }
             ora_debug!(
                 session_id = %self.session.id,
                 "agent does not support session/load; rebuilding the provider session",
@@ -116,7 +190,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 self.reported_config_options = config_options.clone();
                 Ok(setup_updates(config_options, Vec::new()))
             }
-            None => self.rebuild_provider_session(model).await,
+            None => {
+                self.load_restoration = LoadRestoration::NotRestored;
+                self.rebuild_provider_session(model).await
+            }
         }
     }
 
@@ -214,7 +291,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     ///
     /// The debt is only raised when none is outstanding: a switch that has not delivered its
     /// transcript yet already owes the same conversation and already keeps its own books.
-    async fn rebuild_provider_session(
+    pub(super) async fn rebuild_provider_session(
         &mut self,
         model: Option<&str>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
@@ -248,6 +325,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             self.handoff = HandoffDebt::Ephemeral;
         }
         self.channel = Some(channel);
+        self.load_restoration = LoadRestoration::NotRestored;
         // `session/new` carried the current Snapshot, so the replacement starts Active on it
         // rather than owing the refresh that an attach through `session/load` has to record.
         self.live_mcp = LiveMcpState::Active(mcp_revision);

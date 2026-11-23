@@ -1,8 +1,8 @@
 //! Streamable HTTP MCP probe: initialize + tools/list, then optional session DELETE.
 
 use super::protocol::{
-    JsonRpcResponse, ProbeError, accept_result, initialize_request, initialized_notification,
-    tools_list_request,
+    JsonRpcResponse, MAX_RESPONSE_BYTES, ProbeError, accept_result, initialize_request,
+    initialized_notification, tools_list_request,
 };
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, StatusCode};
@@ -28,12 +28,17 @@ pub async fn probe_http(
     }
 }
 
+/// Keeps credentials on the configured endpoint and bounds every response allocation.
 async fn run_http(
     url: Url,
     headers: Vec<(String, String)>,
     overall_timeout: Duration,
 ) -> Result<(), ProbeError> {
     let client = Client::builder()
+        // Custom MCP headers may contain credentials. Neither redirects nor ambient proxy
+        // configuration is authorized to choose another recipient for them.
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         // Per-request guard only; the caller's outer timeout stays the hard bound.
         .timeout(overall_timeout)
         .connect_timeout(overall_timeout.min(Duration::from_secs(5)))
@@ -88,7 +93,11 @@ async fn run_http(
 
     if let Some(session_id) = session_id {
         // Explicit teardown is best-effort: servers MAY reject it (405) or already be gone.
-        let _ = delete_session(&client, &url, &user_headers, &session_id).await;
+        if let Err(ProbeError::HandshakeFailed) =
+            delete_session(&client, &url, &user_headers, &session_id).await
+        {
+            return Err(ProbeError::ToolsUnavailable);
+        }
     }
     Ok(())
 }
@@ -100,6 +109,7 @@ enum ExpectBody {
     No,
 }
 
+/// Rejects malformed headers without retaining credential-bearing parser errors.
 fn build_user_headers(headers: &[(String, String)]) -> Result<HeaderMap, ProbeError> {
     let mut map = HeaderMap::new();
     for (name, value) in headers {
@@ -135,6 +145,9 @@ async fn post_rpc(
 
     let response = request.send().await.map_err(map_transport_error)?;
     let status = response.status();
+    if status.is_redirection() {
+        return Err(ProbeError::HandshakeFailed);
+    }
     let next_session = response
         .headers()
         .get(SESSION_HEADER)
@@ -159,10 +172,7 @@ async fn post_rpc(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let text = response
-        .text()
-        .await
-        .map_err(|_| ProbeError::HttpUnreachable)?;
+    let text = bounded_body(response).await?;
     if content_type.contains("text/event-stream") {
         let payload = first_sse_data(&text).ok_or(ProbeError::HandshakeFailed)?;
         Ok((payload, next_session))
@@ -171,22 +181,45 @@ async fn post_rpc(
     }
 }
 
+/// Reads incrementally, refusing excess bytes before extending the retained body.
+async fn bounded_body(mut response: reqwest::Response) -> Result<String, ProbeError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+    {
+        return Err(ProbeError::HandshakeFailed);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(map_transport_error)? {
+        if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
+            return Err(ProbeError::HandshakeFailed);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    String::from_utf8(bytes).map_err(|_| ProbeError::HandshakeFailed)
+}
+
+/// Drops unneeded teardown bodies without buffering or following their redirect targets.
 async fn delete_session(
     client: &Client,
     url: &Url,
     user_headers: &HeaderMap,
     session_id: &str,
 ) -> Result<(), ProbeError> {
-    client
+    let response = client
         .request(Method::DELETE, url.clone())
         .headers(user_headers.clone())
         .header(SESSION_HEADER, session_id)
         .send()
         .await
         .map_err(map_transport_error)?;
+    if response.status().is_redirection() {
+        return Err(ProbeError::HandshakeFailed);
+    }
     Ok(())
 }
 
+/// Decodes the bounded payload without exposing third-party response text.
 fn parse_rpc_payload(text: &str) -> Result<JsonRpcResponse, ProbeError> {
     serde_json::from_str(text.trim()).map_err(|_| ProbeError::HandshakeFailed)
 }

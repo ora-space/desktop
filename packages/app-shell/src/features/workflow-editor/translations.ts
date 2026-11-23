@@ -116,6 +116,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.transfer.importAnyway": "仍然导入",
     "settings.workflow.transfer.importDraftSuccess": "已导入「{{name}}」为草稿",
     "settings.workflow.transfer.importedBadge": "新导入",
+    "settings.workflow.sourcePluginUninstalledBadge": "来源插件已卸载",
     "settings.workflow.transfer.exportMenuItem": "导出…",
     "settings.workflow.transfer.addMenu": "新建或导入工作流",
     "settings.workflow.transfer.newWorkflowShortcut": "Ctrl+N",
@@ -727,6 +728,8 @@ export const workflowEditorTranslations = {
     "settings.workflow.transfer.importDraftSuccess":
       "Imported “{{name}}” as a draft",
     "settings.workflow.transfer.importedBadge": "Imported",
+    "settings.workflow.sourcePluginUninstalledBadge":
+      "Source plugin uninstalled",
     "settings.workflow.transfer.exportMenuItem": "Export…",
     "settings.workflow.transfer.addMenu": "Create or import workflow",
     "settings.workflow.transfer.newWorkflowShortcut": "Ctrl+N",

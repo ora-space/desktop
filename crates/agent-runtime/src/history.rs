@@ -182,6 +182,12 @@ impl<E: RuntimeEvents, C: HistoryClock> SessionRecorder<E, C> {
         }
     }
 
+    /// Persists the retry boundary after the cancelled request's final updates.
+    pub(super) fn record_retry(&mut self) -> RecordOutcome {
+        let records = self.assembler.retry_prompt();
+        self.append(&records)
+    }
+
     /// Closes the turn, flushing every item still open.
     pub(super) fn record_turn_end(&mut self, stop_reason: StopReason) -> RecordOutcome {
         let records = self.assembler.end_turn(stop_reason);

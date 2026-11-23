@@ -2,7 +2,7 @@
 
 [English](persistence.md) | 中文
 
-Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里。`ora-db` 是唯一知道 Ora SQL 的 crate：它定义迁移目录、启动数据库，并实现 `ora-application` 和 `ora-effect` 声明的仓储端口。上层调用方永远看不到行、列或软删除的记账字段。Node 和进程宿主各有独立的数据库，见 [Node](../node/node.zh.md) 和[进程宿主](../process/host.zh.md)。
+Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里。`ora-db` 是唯一知道 Ora SQL 的 crate：它定义迁移目录、启动数据库，并实现 `ora-application` 和 `ora-effect` 声明的仓储端口。上层调用方永远看不到行、列或软删除的记账字段。Node 有自己独立的数据库，见 [Node](../node/node.zh.md)。
 
 ## 迁移目录
 

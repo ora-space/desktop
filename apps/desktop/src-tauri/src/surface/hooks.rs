@@ -89,7 +89,6 @@ pub trait SurfaceBuilder<R: Runtime>: Sized {
         handler: F,
     ) -> Self;
     fn data_directory(self, directory: PathBuf) -> Self;
-    fn data_store_identifier(self, identifier: [u8; 16]) -> Self;
     fn initialization_script(self, script: &str) -> Self;
 }
 
@@ -118,10 +117,6 @@ impl<R: Runtime> SurfaceBuilder<R> for tauri::webview::WebviewBuilder<R> {
         tauri::webview::WebviewBuilder::data_directory(self, directory)
     }
 
-    fn data_store_identifier(self, identifier: [u8; 16]) -> Self {
-        tauri::webview::WebviewBuilder::data_store_identifier(self, identifier)
-    }
-
     fn initialization_script(self, script: &str) -> Self {
         tauri::webview::WebviewBuilder::initialization_script(self, script)
     }
@@ -148,10 +143,6 @@ impl<R: Runtime, M: Manager<R>> SurfaceBuilder<R> for WebviewWindowBuilder<'_, R
 
     fn data_directory(self, directory: PathBuf) -> Self {
         WebviewWindowBuilder::data_directory(self, directory)
-    }
-
-    fn data_store_identifier(self, identifier: [u8; 16]) -> Self {
-        WebviewWindowBuilder::data_store_identifier(self, identifier)
     }
 
     fn initialization_script(self, script: &str) -> Self {
@@ -223,7 +214,6 @@ impl<D, P> SurfaceHooks<D, P> {
 pub fn apply_spec<R: Runtime, B: SurfaceBuilder<R>>(builder: B, spec: &SurfaceWebviewSpec) -> B {
     let builder = match &spec.web_data {
         ResolvedWebData::Directory(directory) => builder.data_directory(directory.clone()),
-        ResolvedWebData::StoreIdentifier(identifier) => builder.data_store_identifier(*identifier),
         ResolvedWebData::SharedDefault => builder,
     };
     match spec.initialization_script {

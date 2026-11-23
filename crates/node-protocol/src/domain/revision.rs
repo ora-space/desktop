@@ -172,8 +172,13 @@ pub struct RevisionUnchanged {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RevisionFailureCode {
+    /// The session never reached a state a delivery can snapshot: no terminal result yet, an
+    /// unsettled restore, or a start refused at checkout admission that ran no work at all.
     SessionNotSettled,
     CheckoutUnavailable,
+    /// The checkout nests directories deeper than the Node hands over to its workload user, so
+    /// it was not snapshotted.
+    CheckoutTooDeep,
     SnapshotFailed,
     HistoryUnavailable,
     /// The session JSONL could not be uploaded.

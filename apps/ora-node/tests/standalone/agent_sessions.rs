@@ -2,10 +2,18 @@
 use super::*;
 use pretty_assertions::assert_eq;
 use std::os::unix::fs::PermissionsExt;
+#[path = "agent_sessions/admission.rs"]
+mod admission;
 #[path = "agent_sessions/authority.rs"]
 mod authority;
+#[path = "agent_sessions/background_jobs.rs"]
+mod background_jobs;
 #[path = "agent_sessions/delivery.rs"]
 mod delivery;
+#[path = "agent_sessions/host_mcp.rs"]
+mod host_mcp;
+#[path = "agent_sessions/mcp_lifecycle.rs"]
+mod mcp_lifecycle;
 #[path = "agent_sessions/previews.rs"]
 mod previews;
 #[path = "agent_sessions/recovery.rs"]
@@ -14,6 +22,8 @@ mod recovery;
 mod resume;
 #[path = "agent_sessions/support.rs"]
 mod support;
+#[path = "agent_sessions/turn_cancel.rs"]
+mod turn_cancel;
 #[path = "agent_sessions/unknown_delivery.rs"]
 mod unknown_delivery;
 #[path = "agent_sessions/window.rs"]

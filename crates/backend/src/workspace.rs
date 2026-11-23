@@ -16,12 +16,12 @@ use ora_contracts::{
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_contracts::{
-    ListWorkspacesRequest, ListWorkspacesResponse, Workspace as ContractWorkspace, WorkspaceKind,
-    WorkspaceLifecycle,
+    ListWorkspacesRequest, ListWorkspacesResponse, Workspace as ContractWorkspace,
+    WorkspaceDirectory, WorkspaceKind, WorkspaceLifecycle,
 };
 use ora_db::{RepositoryPool, SqliteWorkspaceRepository, SqliteWorktreeRepository};
 use ora_domain::{Workspace, WorkspaceId, WorkspaceLocation};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 /// Owns workspace queries, live checkout resolution, root configuration, and Git review.
@@ -142,6 +142,7 @@ impl WorkspaceApi {
                         ora_domain::WorkspaceLifecycle::Retiring => WorkspaceLifecycle::Retiring,
                         ora_domain::WorkspaceLifecycle::Deleted => WorkspaceLifecycle::Deleted,
                     },
+                    directory: probe_directory(&workspace.location, &self.relative_path_base),
                 })
                 .collect(),
         })
@@ -357,6 +358,29 @@ impl WorkspaceApi {
     }
 }
 
+/// Probes the directory behind one Workspace location at list time.
+///
+/// Uses the same anchoring as cwd resolution, so a workspace reported `Present` is exactly one
+/// that session start and model discovery can resolve, and a `Missing` path is the one they
+/// would refuse.
+fn probe_directory(location: &WorkspaceLocation, relative_path_base: &Path) -> WorkspaceDirectory {
+    match location {
+        WorkspaceLocation::LocalFilesystem { path } => {
+            let resolved = crate::task::resolve_local_path(PathBuf::from(path), relative_path_base);
+            if resolved.is_dir() {
+                WorkspaceDirectory::Present
+            } else {
+                WorkspaceDirectory::Missing {
+                    path: resolved.to_string_lossy().into_owned(),
+                }
+            }
+        }
+        WorkspaceLocation::Ssh { .. } | WorkspaceLocation::RemoteTarget { .. } => {
+            WorkspaceDirectory::Remote
+        }
+    }
+}
+
 /// Maps the public Git layer selector into the application diff reader vocabulary.
 fn map_diff_scope(scope: WorkspaceDiffScope) -> ReadWorkspaceDiffScope {
     match scope {
@@ -410,7 +434,7 @@ mod tests {
         CommitWorkspaceChangesRequest, CreateProjectRequest, CreateTaskRequest, EmptyErrorParams,
         GetWorkspaceDiffRequest, GetWorkspaceStatusRequest, ListWorkspacesRequest, PublicError,
         PushWorkspaceBranchRequest, StageWorkspaceChangesRequest, UnstageWorkspaceChangesRequest,
-        WorkspaceDiffScope,
+        Workspace, WorkspaceDiffScope, WorkspaceDirectory, WorkspaceKind, WorkspaceLifecycle,
     };
     use ora_test_support::GitTestScaffold;
     use pretty_assertions::assert_eq;
@@ -659,6 +683,52 @@ mod tests {
             .expect("read unstaged diff");
         assert!(unstaged.patch.contains("b.txt"));
         assert!(!unstaged.patch.contains("a.txt"));
+    }
+
+    /// Verifies a project folder deleted behind Ora's back is reported as missing on the next
+    /// list, and as present again once it returns, so clients can explain why nothing works.
+    #[test]
+    fn reports_a_deleted_project_folder_as_missing_until_it_returns() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let project_root = temporary.path().join("project");
+        fs::create_dir_all(&project_root).expect("create project folder");
+        let backend = open_backend(&temporary);
+        let project_id = create_project(&backend, &project_root);
+        let main_workspace = |backend: &Backend| {
+            backend
+                .workspaces()
+                .list(ListWorkspacesRequest {})
+                .expect("list workspaces")
+                .workspaces
+                .into_iter()
+                .find(|workspace| workspace.project_id == project_id)
+                .expect("project has a main workspace")
+        };
+        let present = main_workspace(&backend);
+        assert_eq!(
+            present,
+            Workspace {
+                id: present.id.clone(),
+                project_id: project_id.clone(),
+                kind: WorkspaceKind::Main,
+                lifecycle: WorkspaceLifecycle::Active,
+                directory: WorkspaceDirectory::Present,
+            }
+        );
+
+        fs::remove_dir_all(&project_root).expect("delete project folder");
+        assert_eq!(
+            main_workspace(&backend),
+            Workspace {
+                directory: WorkspaceDirectory::Missing {
+                    path: project_root.to_string_lossy().into_owned(),
+                },
+                ..present.clone()
+            }
+        );
+
+        fs::create_dir_all(&project_root).expect("restore project folder");
+        assert_eq!(main_workspace(&backend), present);
     }
 
     /// Opens one isolated backend whose worktrees stay inside the test fixture.

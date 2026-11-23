@@ -22,6 +22,23 @@ pub enum WorkspaceLifecycle {
     Deleted,
 }
 
+/// Reports whether the directory behind a workspace exists at the moment it was listed.
+///
+/// Lifecycle admission does not cover this: a user can delete or move a project folder at any
+/// time without telling Ora, and every session start, model discovery, and file operation then
+/// fails. Probing on list lets clients explain that state instead of showing empty results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export_to = "workspace.ts")]
+pub enum WorkspaceDirectory {
+    /// The local checkout exists as a directory.
+    Present,
+    /// The recorded local checkout is not a directory; `path` is the resolved location.
+    Missing { path: String },
+    /// The workspace is not a local checkout, so Desktop cannot probe it.
+    Remote,
+}
+
 /// Describes the stable workspace identity used by Sessions and WorkflowRuns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +48,7 @@ pub struct Workspace {
     pub project_id: String,
     pub kind: WorkspaceKind,
     pub lifecycle: WorkspaceLifecycle,
+    pub directory: WorkspaceDirectory,
 }
 
 /// Requests every visible workspace so clients can resolve direct chats to the main workspace.
@@ -51,6 +69,7 @@ pub struct ListWorkspacesResponse {
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkspaceKind::export(config)?;
     WorkspaceLifecycle::export(config)?;
+    WorkspaceDirectory::export(config)?;
     Workspace::export(config)?;
     ListWorkspacesRequest::export(config)?;
     ListWorkspacesResponse::export(config)?;
@@ -60,7 +79,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ListWorkspacesRequest, ListWorkspacesResponse, Workspace, WorkspaceKind, WorkspaceLifecycle,
+        ListWorkspacesRequest, ListWorkspacesResponse, Workspace, WorkspaceDirectory,
+        WorkspaceKind, WorkspaceLifecycle,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
@@ -74,6 +94,9 @@ mod tests {
             project_id: "project-1".to_string(),
             kind: WorkspaceKind::Main,
             lifecycle: WorkspaceLifecycle::Active,
+            directory: WorkspaceDirectory::Missing {
+                path: "/gone/ora".to_string(),
+            },
         };
 
         assert_serialized_json(
@@ -83,6 +106,7 @@ mod tests {
                 "projectId": "project-1",
                 "kind": "main",
                 "lifecycle": "active",
+                "directory": { "kind": "missing", "path": "/gone/ora" },
             }),
         );
         assert_serialized_json(&ListWorkspacesRequest {}, json!({}));
@@ -96,6 +120,7 @@ mod tests {
                     "projectId": "project-1",
                     "kind": "main",
                     "lifecycle": "active",
+                    "directory": { "kind": "missing", "path": "/gone/ora" },
                 }],
             }),
         );

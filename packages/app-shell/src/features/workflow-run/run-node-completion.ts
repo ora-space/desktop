@@ -17,6 +17,13 @@ export function isAwaitingConfirmation(
   return completion?.needsConfirmation === true;
 }
 
+/** Selects the failed-step label for a retry that delivered no result. */
+export function abnormalParkBadge(completion: WorkflowNodeCompletion): string {
+  return completion.warnings.includes("retry_without_result")
+    ? "workflowRun.stepCard.failedAttemptBadge"
+    : "workflowRun.stepCard.abnormalBadge";
+}
+
 /**
  * Direct successor titles for every node in one frozen graph, keyed by node id.
  *

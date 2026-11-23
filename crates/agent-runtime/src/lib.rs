@@ -18,7 +18,10 @@ mod history;
 mod host;
 mod limits;
 mod load;
+mod manager_startup;
+mod mcp_resolver;
 mod memory_host;
+mod model_config;
 mod operations;
 mod plugin_agent;
 mod prompt;
@@ -34,10 +37,12 @@ mod session_followers;
 mod session_setup;
 mod start;
 mod stream;
+mod subagent_update;
 mod support;
 mod suspend;
 mod title_acquisition;
 mod tool_timing;
+mod turn_cancel;
 
 #[cfg(feature = "test-support")]
 mod test_support;
@@ -59,7 +64,14 @@ pub use host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,
     SessionStore, WorkspaceDirectory,
 };
+pub use mcp_resolver::{
+    EligibleMcpMember, InstalledMcpCandidate, McpConfigurationEligibility, SessionMcpCatalog,
+    SessionMcpConfigurationSource, SessionMcpError, SessionMcpErrorCode, effective_members,
+    find_eligible_member, resolve_session_mcp, resolve_session_mcp_revision,
+    revalidate_stdio_command,
+};
 pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp};
+pub use model_config::model_selector;
 pub use operations::AgentRuntime;
 pub use replaced::ReplacedAgentSessions;
 
@@ -81,6 +93,7 @@ use command::RuntimeCommand;
 use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 use limits::*;
+pub use prompt::AttemptInstruction;
 use prompt::RecordedTurn;
 use session_setup::LiveMcpState;
 use support::*;
@@ -150,6 +163,8 @@ struct ManagerInner<H: AgentRuntimeHost> {
 #[derive(Clone)]
 struct RuntimeActorHandle {
     commands: mpsc::UnboundedSender<RuntimeCommand>,
+    /// Shared with the actor so a turn cancel is seen before the prompt write and by the watchdog.
+    turn_cancel: Arc<turn_cancel::TurnCancelState>,
 }
 
 struct RuntimeActor<H: AgentRuntimeHost> {
@@ -172,6 +187,8 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     handoff: HandoffDebt,
     /// A provider session built to replace one that could not be restored, not yet in the row.
     rebuilt_binding: Option<RebuiltBinding<H>>,
+    /// Whether this channel came from `session/load` and has not served a successful prompt yet.
+    load_restoration: attach::LoadRestoration,
     /// What the provider this actor is attached to last reported as its configuration.
     ///
     /// Held rather than recorded because it describes the provider serving the conversation right
@@ -187,6 +204,7 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     session_mcp: H::Setup,
     barriers: Arc<AgentSessionBarriers>,
     live_mcp: LiveMcpState,
+    turn_cancel: Arc<turn_cancel::TurnCancelState>,
     /// E2E-only schedule copied from the manager; production uses the shared constant.
     #[cfg(feature = "test-support")]
     test_prompt_inactivity_windows: Option<&'static [Duration]>,
@@ -218,44 +236,6 @@ pub struct AgentRuntimeSetup<H: AgentRuntimeHost> {
 }
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
-    /// Builds the manager, reconciles stale rows, and immediately starts the shared supervisor.
-    pub fn new(setup: AgentRuntimeSetup<H>) -> Result<Self, RuntimeError> {
-        let AgentRuntimeSetup {
-            attach,
-            store,
-            directory,
-            session_setup: session_mcp,
-            events,
-            home_directory,
-            sessions_root,
-            scheduler,
-        } = setup;
-        let clock = SystemClock;
-        reconcile_running_sessions(&store, clock)?;
-        let barriers = Arc::new(AgentSessionBarriers::new());
-        let connections =
-            ConnectionSupervisors::start(attach, store.clone(), home_directory, clock);
-        Ok(Self {
-            inner: Arc::new(ManagerInner {
-                store,
-                directory,
-                actors: RwLock::new(HashMap::new()),
-                unpublished_workflow_sessions: RwLock::new(HashSet::new()),
-                lifecycle: tokio::sync::Mutex::new(()),
-                next_operation_id: AtomicU64::new(1),
-                connections,
-                sessions_root,
-                session_mcp,
-                barriers,
-                clock,
-                scheduler,
-                events,
-                #[cfg(feature = "test-support")]
-                prompt_inactivity_windows: RwLock::new(None),
-            }),
-        })
-    }
-
     /// Creates, configures, persists, and binds one session on first use.
     pub async fn start_session(
         &self,
@@ -295,19 +275,6 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             host_capabilities,
         )
         .await
-    }
-
-    /// Wakes every Live Session so it re-reads the current Desired MCP revision.
-    ///
-    /// The notification is level-triggered and secret-free. Stopped Sessions ignore it; idle
-    /// Sessions refresh immediately; busy Sessions mark refresh as owed work.
-    pub fn notify_mcp_desired_changed(&self) {
-        let Ok(actors) = self.inner.actors.read() else {
-            return;
-        };
-        for handle in actors.values() {
-            let _ = handle.commands.send(RuntimeCommand::McpDesiredMaybeChanged);
-        }
     }
 
     /// Reconciles supervised agent connections with the currently installed plugin set.
@@ -622,6 +589,45 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         Ok(CancelSessionPromptResponse {})
     }
 
+    /// Cancels the session's current prompt for a caller that must know whether the Agent
+    /// answered by `deadline`. Unlike [`Self::cancel_session_prompt`], an unanswered cancel ends
+    /// the prompt stream with an error instead of a cancelled completion, a prompt admitted but
+    /// not yet written is never written, and a watchdog cancel already in progress is not resent.
+    /// The first request of a prompt fixes the deadline.
+    pub fn cancel_turn_prompt(
+        &self,
+        session_id: &str,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), RuntimeError> {
+        let session = self.find_session(session_id)?;
+        if let Some(handle) = self.lookup_actor(&session.id)? {
+            handle.turn_cancel.request(deadline);
+            handle
+                .commands
+                .send(RuntimeCommand::CancelActivePrompt)
+                .map_err(runtime_unavailable_with)?;
+        }
+        Ok(())
+    }
+
+    /// Reports whether turn traffic arrived on the idle session since its last prompt was
+    /// admitted: anything but session-level notifications, including permission requests, which
+    /// the idle actor answers cancelled. The idle actor settles such traffic as it arrives, so it
+    /// never reaches the next prompt; reading the report forgets it. A busy actor answers `true`,
+    /// because it cannot prove the session quiet.
+    pub async fn take_idle_turn_traffic(&self, session_id: &str) -> Result<bool, RuntimeError> {
+        let session = self.find_session(session_id)?;
+        let Some(handle) = self.lookup_actor(&session.id)? else {
+            return Ok(false);
+        };
+        let (response, received) = oneshot::channel();
+        handle
+            .commands
+            .send(RuntimeCommand::TakeIdleTurnTraffic { response })
+            .map_err(runtime_unavailable_with)?;
+        received.await.map_err(runtime_unavailable_with)
+    }
+
     /// Stops one logical session without terminating its shared CLI process.
     pub async fn stop_session(
         &self,
@@ -760,6 +766,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         let (commands, receiver) = mpsc::unbounded_channel();
         let handle = RuntimeActorHandle {
             commands: commands.clone(),
+            turn_cancel: Arc::default(),
         };
         actors.insert(session.id.clone(), handle.clone());
         #[cfg(feature = "test-support")]
@@ -783,6 +790,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 connections: self.inner.connections.clone(),
                 handoff: setup.handoff,
                 rebuilt_binding: None,
+                load_restoration: Default::default(),
                 reported_config_options: setup.config_options,
                 scheduler: self.inner.scheduler.clone(),
                 events: self.inner.events.clone(),
@@ -791,6 +799,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 session_mcp: setup.session_mcp,
                 barriers: self.inner.barriers.clone(),
                 live_mcp: setup.live_mcp,
+                turn_cancel: Arc::clone(&handle.turn_cancel),
                 #[cfg(feature = "test-support")]
                 test_prompt_inactivity_windows,
                 #[cfg(test)]
@@ -835,26 +844,4 @@ struct ActorSetup<H: AgentRuntimeHost> {
     live_mcp: LiveMcpState,
     /// What the handshake that produced `channel` reported, empty when there is no channel.
     config_options: Vec<SessionConfigOption>,
-}
-
-/// Restores durable lifecycle truth before the managed connection starts.
-fn reconcile_running_sessions(
-    repository: &impl SessionStore,
-    clock: SystemClock,
-) -> Result<(), RuntimeError> {
-    for session in repository
-        .list_sessions()
-        .map_err(|source| RuntimeError::internal("failed to reconcile sessions", source))?
-    {
-        if session.status == SessionStatus::Running {
-            repository
-                .update_session_status(
-                    &session.id,
-                    SessionStatus::Stopped,
-                    clock.now_timestamp_millis(),
-                )
-                .map_err(|source| RuntimeError::internal("failed to reconcile sessions", source))?;
-        }
-    }
-    Ok(())
 }

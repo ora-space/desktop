@@ -24,6 +24,7 @@ import {
 import { RunBriefPopover } from "./run-brief-popover";
 import { RunStatusBadge } from "./run-status-mark";
 import { isNodeWorking, runStatusTone } from "./run-status-style";
+import { abnormalParkBadge } from "./run-node-completion";
 import { RunNodeSessionChat } from "./run-node-session-chat";
 import { RunRetryWaitLabel } from "./run-retry-wait-label";
 import { shouldPreviewBrief } from "./should-preview-brief";
@@ -146,7 +147,7 @@ export function RunTheaterActCard({
   const parkBadgeKey =
     interactive && state.status === "awaiting_input" && !participation
       ? completion?.parkKind === "abnormal"
-        ? "workflowRun.stepCard.abnormalBadge"
+        ? abnormalParkBadge(completion)
         : completion?.parkKind === "awaiting_user"
           ? undefined
           : completion?.ready !== true
@@ -299,7 +300,7 @@ export function RunTheaterActCard({
             status={state.status}
             live={emphasized && isNodeWorking(state.status)}
             className={
-              parkBadgeKey === "workflowRun.stepCard.abnormalBadge"
+              completion?.parkKind === "abnormal" && parkBadgeKey !== undefined
                 ? "border-destructive/35 bg-destructive/10 text-destructive"
                 : undefined
             }

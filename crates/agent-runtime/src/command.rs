@@ -33,6 +33,7 @@ pub(crate) enum RuntimeCommand {
         operation_id: u64,
         prompt: Vec<ContentBlock>,
         record_prompt: RecordedTurn,
+        commit_admission: Option<Box<dyn FnOnce() -> Result<(), RuntimeError> + Send + Sync>>,
         inactivity_policy: PromptInactivityPolicy,
         /// Applied by the attach this prompt performs, and ignored when none is needed.
         model: Option<String>,
@@ -49,6 +50,10 @@ pub(crate) enum RuntimeCommand {
         response: oneshot::Sender<Result<StopSessionResponse, RuntimeError>>,
     },
     CancelActivePrompt,
+    /// Drains idle traffic and answers whether any of it belonged to a turn.
+    TakeIdleTurnTraffic {
+        response: oneshot::Sender<bool>,
+    },
     Cancel {
         operation_id: u64,
         completion: Option<oneshot::Sender<Result<(), RuntimeError>>>,

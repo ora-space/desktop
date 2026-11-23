@@ -25,6 +25,11 @@ impl Plugins {
             ReqwestDownloader::new(ProxyConfig::default()),
             ora_plugin_registry::current_host_target(),
             config,
+        )
+        .with_stop_journal(
+            node.database
+                .session_journal()
+                .map_err(std::io::Error::other)?,
         );
         let catalog = installer.catalog();
         let recovered = installer.recover().is_ok();

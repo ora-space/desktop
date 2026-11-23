@@ -1,22 +1,26 @@
 use super::*;
-use ora_node_db::CloneExecution;
+use ora_node_db::{AttemptEnding, CloneExecution};
+use std::ffi::OsString;
 
-/// How a clone attempt ended, read from the host only after its Scope was observed Closed.
+/// How a clone attempt ended, concluded only once its stop evidence held.
 ///
-/// The live and recovery paths share this classification so the same host observation always
-/// yields the same business outcome, whichever process happens to read it.
+/// The live and recovery paths share this classification so the same evidence always yields the
+/// same business outcome, whichever process happens to read it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AttemptSettlement {
     /// Git exited with its own verdict.
     Exited(i32),
     /// A signal ended Git before it reached a verdict (Node stop, command deadline or an external
-    /// kill) and cleanup completed, so no write can follow and success is impossible.
+    /// kill), so no write can follow and success is impossible.
     Terminated(i32),
-    /// Exit or cleanup facts are missing; nothing may be concluded about the directory.
+    /// Nothing of the attempt is running, but nobody collected an exit status: a restarted Node
+    /// found it stopped, or it never started. Success is impossible here too.
+    Stopped,
+    /// The stop evidence does not hold or is missing; nothing may be concluded about the directory.
     Unverified,
 }
 
-/// Which OS identity a host Run of Git uses.
+/// Which OS identity a Git command runs as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RunAs {
     /// The workload user, for every command that touches a checkout.
@@ -25,33 +29,33 @@ pub(crate) enum RunAs {
     Node,
 }
 
-/// The host side of clone execution: dispatching, settling and inspecting Runs.
+/// One thread's means of running Git directly: dispatching, settling and inspecting commands.
 ///
-/// It holds no Node database connection and writes nothing under the Node home, so it can run
-/// away from the thread that owns SQLite. Every Run it touches was recorded before it was handed
-/// over, which lets a restart settle the same Run without anything this value remembered.
-pub(crate) struct CloneHost {
+/// It holds no Node database connection, so it can run away from the thread that owns SQLite.
+/// Every attempt it settles was recorded, with its lock file, before it was handed over, which
+/// lets a restart settle the same attempt without anything this value remembered.
+pub(crate) struct DirectGit {
     pub(super) config: ProcessConfig,
     pub(super) restore_stops: Option<super::RestoreStops>,
     pub(super) restore_context: Option<super::RestoreContext>,
     pub(super) shutdown: Shutdown,
-    owner: RunLifetime,
+    pub(super) locks: AttemptLocks,
     pub(super) runtime: tokio::runtime::Runtime,
 }
 
-impl CloneHost {
+impl DirectGit {
     /// Each instance owns its runtime, so one can move to another thread while the runner keeps its own.
     pub(super) fn new(
         config: ProcessConfig,
         shutdown: Shutdown,
-        owner: RunLifetime,
+        locks: AttemptLocks,
     ) -> std::io::Result<Self> {
         Ok(Self {
             config,
             restore_stops: None,
             restore_context: None,
             shutdown,
-            owner,
+            locks,
             runtime: tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?,
@@ -68,122 +72,92 @@ impl CloneHost {
         self.config.workload_uid
     }
 
-    /// Starts a recorded attempt and settles it once Git ends or its wait deadline expires.
-    pub(crate) fn dispatch(&self, attempt: &ProcessAttempt) -> std::io::Result<AttemptSettlement> {
-        let client = ProcessHost::new(attempt.host_directory.clone(), attempt.expected_uid);
-        // An expired stop grace or command deadline ends this wait without a verdict; the Run's
-        // real ending is only knowable after its Scope closes, so settlement reads it from the host
-        // instead of treating the interrupted wait as missing evidence.
-        let _ = self.runtime.block_on(transport::execute(
-            &client,
-            &attempt.intent,
-            self.config.command_budget(GitIntent::Network),
-            &self.config,
-            &self.shutdown,
-        ));
-        self.settle(attempt)
+    /// The lock directory, for whoever settles this Node's restore attempts.
+    pub(crate) fn locks(&self) -> &AttemptLocks {
+        &self.locks
     }
 
-    /// Closes the attempt's Scope, then classifies the host's view of its Run.
-    ///
-    /// Closing first is the fence: no directory fact is read while the old Git could still write.
-    pub(crate) fn settle(&self, attempt: &ProcessAttempt) -> std::io::Result<AttemptSettlement> {
-        let client = ProcessHost::new(attempt.host_directory.clone(), attempt.expected_uid);
-        self.runtime.block_on(transport::close(
-            &client,
-            attempt.intent.scope,
-            Duration::from_millis(self.config.cleanup_timeout_ms),
-        ))?;
-        let snapshot = match self
-            .runtime
-            .block_on(client.execute(HostOperation::QueryRun {
-                run: attempt.intent.run,
-            }))? {
-            HostReply::Run(view) => view.last_observed,
-            _ => None,
-        };
-        Ok(
-            match snapshot.map(|snapshot| (snapshot.direct, snapshot.cleanup)) {
-                Some((
-                    DirectProcessState::Exited(ExitOutcome::Code(code)),
-                    CleanupState::Complete(_),
-                )) => AttemptSettlement::Exited(code),
-                Some((
-                    DirectProcessState::Exited(ExitOutcome::Signal(signal)),
-                    CleanupState::Complete(_),
-                )) => AttemptSettlement::Terminated(signal),
-                _ => AttemptSettlement::Unverified,
-            },
-        )
+    /// Directories in which an unrecorded command of an earlier pass may still be writing.
+    pub(crate) fn leftover_directories(&self) -> Vec<PathBuf> {
+        self.locks.leftover_directories()
     }
 
-    /// Inspects local facts under the same non-secret deployment environment and cleanup policy.
-    pub(crate) fn inspect(&self, command: &GitCommand) -> std::io::Result<GitOutput> {
-        let client = ProcessHost::new(self.config.host_directory.clone(), self.config.expected_uid);
-        let intent = HostRunIntent {
-            scope: ScopeId::new(),
-            run: RunId::new(),
-            spec: self.spec(
-                command,
-                OutputPolicy::Capture {
-                    stdout_limit: 8192,
-                    stderr_limit: 0,
-                },
-            ),
-            host_disconnect: GuardianHostDisconnect::KeepRunning,
-        };
-        let result = self.runtime.block_on(transport::execute(
-            &client,
-            &intent,
-            self.config.budget_for(command),
-            &self.config,
-            &self.shutdown,
-        ));
-        self.runtime.block_on(transport::close(
-            &client,
-            intent.scope,
-            Duration::from_millis(self.config.cleanup_timeout_ms),
-        ))?;
-        result
-    }
-
-    /// Intentionally does not copy the Worktree deployment environment, which may contain secrets.
-    pub(super) fn spec(&self, command: &GitCommand, output: OutputPolicy) -> RunSpec {
-        self.spec_as(command, output, RunAs::Workload)
-    }
-
-    /// Builds the Run for `command` as `identity`. Only Git Server access runs as the Node: it
-    /// presents the git-access key, which the workload user cannot read.
-    pub(super) fn spec_as(
+    /// Starts a recorded attempt and settles it once Git ends or its deadline passes.
+    pub(crate) fn dispatch(
         &self,
+        attempt: &ProcessAttempt,
         command: &GitCommand,
-        output: OutputPolicy,
-        identity: RunAs,
-    ) -> RunSpec {
-        let mut spec = RunSpec::new(
-            self.config.git_program.as_os_str(),
-            &command.cwd,
-            DescendantPolicy::Cleanup {
-                grace: Duration::ZERO,
-            },
-        );
-        spec.args = command.args.iter().map(OsString::from).collect();
-        match identity {
-            RunAs::Workload => self.config.isolate_workload(&mut spec),
-            RunAs::Node => {}
-        }
-        spec.env = command
-            .env
-            .variables
-            .iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-        spec.env.insert("LANG".into(), "C".into());
-        spec.env.insert("GIT_PAGER".into(), "cat".into());
-        spec.output = output;
-        spec.lifetime = self.owner;
-        spec
+    ) -> AttemptSettlement {
+        self.runtime
+            .block_on(exec::run(
+                &self.config,
+                &self.locks,
+                &self.shutdown,
+                Invocation {
+                    command,
+                    environment: clone_environment(command),
+                    identity: RunAs::Workload,
+                    capture: Capture::Discard,
+                    deadline: Instant::now() + self.config.command_budget(GitIntent::Network),
+                    stop_grace: StopGrace::Honored,
+                    before_cut: None,
+                    lock: Some(&attempt.id),
+                },
+            ))
+            .settlement
     }
+
+    /// Settles an attempt an earlier process dispatched: ends what its clue names, then asks the
+    /// lock. Its exit status is gone with the process that started it.
+    ///
+    /// The evidence comes first: no directory fact is read while the old Git could still write.
+    pub(crate) fn settle(&self, attempt: &ProcessAttempt) -> AttemptSettlement {
+        match self.runtime.block_on(self.locks.await_stop(
+            &attempt.id,
+            Duration::from_millis(self.config.cleanup_timeout_ms),
+        )) {
+            StopEvidence::Stopped => AttemptSettlement::Stopped,
+            StopEvidence::Running | StopEvidence::Unknown => AttemptSettlement::Unverified,
+        }
+    }
+
+    /// Inspects local facts under the same non-secret deployment environment.
+    pub(crate) fn inspect(&self, command: &GitCommand) -> std::io::Result<GitOutput> {
+        self.runtime
+            .block_on(exec::run(
+                &self.config,
+                &self.locks,
+                &self.shutdown,
+                Invocation {
+                    command,
+                    environment: clone_environment(command),
+                    identity: RunAs::Workload,
+                    capture: Capture::Bounded {
+                        stdout: 8192,
+                        stderr: 0,
+                    },
+                    deadline: Instant::now() + self.config.budget_for(command),
+                    stop_grace: StopGrace::Honored,
+                    before_cut: None,
+                    lock: None,
+                },
+            ))
+            .output
+    }
+}
+
+/// Intentionally does not copy the Worktree deployment environment, which may contain secrets.
+pub(super) fn clone_environment(command: &GitCommand) -> Vec<(OsString, OsString)> {
+    command
+        .env
+        .variables
+        .iter()
+        .map(|(key, value)| (key.into(), value.into()))
+        .chain([
+            ("LANG".into(), "C".into()),
+            ("GIT_PAGER".into(), "cat".into()),
+        ])
+        .collect()
 }
 
 impl<W: WriteGuard> ManagedGitRunner<W> {
@@ -192,14 +166,18 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
         &self.config
     }
 
-    /// The host side this runner uses when a caller drives a clone on its own thread.
-    pub(crate) fn clone_host(&self) -> &CloneHost {
-        &self.clone_host
+    /// The executor this runner uses when a caller drives a clone on its own thread.
+    pub(crate) fn direct_git(&self) -> &DirectGit {
+        &self.git
     }
 
-    /// A separate host side with the same deployment and stop signal, for another thread to own.
-    pub(crate) fn detached_clone_host(&self) -> std::io::Result<CloneHost> {
-        CloneHost::new(self.config.clone(), self.shutdown.clone(), self.owner)
+    /// A separate executor with the same deployment, locks and stop signal, for another thread to own.
+    pub(crate) fn detached_git(&self) -> std::io::Result<DirectGit> {
+        DirectGit::new(
+            self.config.clone(),
+            self.shutdown.clone(),
+            self.git.locks.clone(),
+        )
     }
 
     /// Establishes managed responsibility while the directory-created phase still proves no dispatch.
@@ -207,7 +185,7 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
         self.journal.manage_clone(record)
     }
 
-    /// Lists the Runs already recorded for the execution; recovery settles these, never new ones.
+    /// Lists the attempts already recorded for the execution; recovery settles these, never new ones.
     pub(crate) fn clone_attempts(
         &self,
         record: &CloneExecution,
@@ -217,7 +195,25 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
             .map_err(std::io::Error::other)
     }
 
-    /// Persists the clone's original intent; only a recorded attempt may be dispatched.
+    /// The ending an earlier pass or process already recorded for the attempt, if any. A settled
+    /// attempt is never probed again: its lock file may be gone by now.
+    pub(crate) fn recorded_settlement(
+        &self,
+        attempt: &ProcessAttempt,
+    ) -> std::io::Result<Option<AttemptSettlement>> {
+        Ok(self
+            .journal
+            .ending(&attempt.id)
+            .map_err(std::io::Error::other)?
+            .map(|ending| match ending {
+                AttemptEnding::Exited(code) => AttemptSettlement::Exited(code),
+                AttemptEnding::Terminated(signal) => AttemptSettlement::Terminated(signal),
+                AttemptEnding::Stopped => AttemptSettlement::Stopped,
+            }))
+    }
+
+    /// Creates the attempt's lock file, then persists the attempt; only a recorded attempt may
+    /// be dispatched.
     pub(crate) fn record_clone_attempt(
         &self,
         record: &CloneExecution,
@@ -228,43 +224,49 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
         }
         let attempt = ProcessAttempt {
             execution: record.command.execution_id.clone(),
-            host_directory: self.config.host_directory.clone(),
-            expected_uid: self.config.expected_uid,
-            intent: HostRunIntent {
-                scope: ScopeId::new(),
-                run: RunId::new(),
-                spec: self.clone_host.spec(command, OutputPolicy::Discard),
-                host_disconnect: GuardianHostDisconnect::KeepRunning,
-            },
+            id: AttemptId::generate(),
         };
-        self.journal
-            .record(&attempt)
-            .map_err(std::io::Error::other)?;
+        self.git
+            .locks
+            .create(&attempt.id, &command.cwd, LockDurability::Recorded)?;
+        let recorded = self.journal.record(
+            &attempt,
+            &AttemptCommand {
+                cwd: command.cwd.clone(),
+                args: command.args.clone(),
+            },
+        );
+        if let Err(error) = recorded {
+            // No record refers to the lock file and nothing was started with it.
+            self.git.locks.retire(&attempt.id);
+            return Err(std::io::Error::other(error));
+        }
         Ok(attempt)
     }
 
-    /// Records what the host observed after the Scope closed, then retires the attempt's cleanup.
+    /// Records how the attempt ended, then retires it and its lock file.
     ///
-    /// The ending is persisted before cleanup is marked, so the database can later prove which
-    /// business result the single Run supports.
+    /// The ending is persisted before the attempt is marked settled, so the database can later
+    /// prove which business result the single attempt supports.
     pub(crate) fn persist_settlement(
         &self,
         attempt: &ProcessAttempt,
         settlement: AttemptSettlement,
     ) -> std::io::Result<()> {
-        match settlement {
-            AttemptSettlement::Exited(code) => self
-                .journal
-                .record_outcome(attempt.intent.run, code)
-                .map_err(std::io::Error::other)?,
-            AttemptSettlement::Terminated(signal) => self
-                .journal
-                .record_termination(attempt.intent.run, signal)
-                .map_err(std::io::Error::other)?,
-            AttemptSettlement::Unverified => {}
-        }
+        let ending = match settlement {
+            AttemptSettlement::Exited(code) => AttemptEnding::Exited(code),
+            AttemptSettlement::Terminated(signal) => AttemptEnding::Terminated(signal),
+            AttemptSettlement::Stopped => AttemptEnding::Stopped,
+            // Without stop evidence the attempt keeps its lock file and stays unsettled.
+            AttemptSettlement::Unverified => return Ok(()),
+        };
         self.journal
-            .cleaned(attempt.intent.run)
-            .map_err(std::io::Error::other)
+            .record_ending(&attempt.id, ending)
+            .map_err(std::io::Error::other)?;
+        self.journal
+            .cleaned(&attempt.id)
+            .map_err(std::io::Error::other)?;
+        self.git.locks.retire(&attempt.id);
+        Ok(())
     }
 }

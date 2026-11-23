@@ -2,42 +2,11 @@ import type { Node as TiptapNode } from "@tiptap/pm/model";
 import { NodeSelection } from "@tiptap/pm/state";
 import type { Editor } from "@tiptap/react";
 
-export const MAC_SYMBOLS: Record<string, string> = {
-  mod: "⌘",
-  ctrl: "⌘",
-  alt: "⌥",
-  shift: "⇧",
-  backspace: "Del",
-} as const;
-
 /**
- * Determines if the current platform is macOS
- */
-export function isMac(): boolean {
-  return (
-    typeof navigator !== "undefined" &&
-    navigator.platform.toLowerCase().includes("mac")
-  );
-}
-
-/**
- * Formats a shortcut key based on the platform (Mac or non-Mac)
- */
-export const formatShortcutKey = (
-  key: string,
-  isMac: boolean,
-  capitalize: boolean = true,
-) => {
-  if (isMac) {
-    const lowerKey = key.toLowerCase();
-    return MAC_SYMBOLS[lowerKey] || (capitalize ? key.toUpperCase() : key);
-  }
-
-  return capitalize ? key.charAt(0).toUpperCase() + key.slice(1) : key;
-};
-
-/**
- * Parses a shortcut key string into an array of formatted key symbols
+ * Parses a shortcut key string into an array of key labels.
+ *
+ * Ora runs on Windows and Linux only, where TipTap's `mod` modifier is Ctrl, so `mod` is shown
+ * under that name and every other key keeps its own spelling.
  */
 export const parseShortcutKeys = (props: {
   shortcutKeys: string | undefined;
@@ -51,7 +20,10 @@ export const parseShortcutKeys = (props: {
   return shortcutKeys
     .split(delimiter)
     .map((key) => key.trim())
-    .map((key) => formatShortcutKey(key, isMac(), capitalize));
+    .map((key) => (key.toLowerCase() === "mod" ? "ctrl" : key))
+    .map((key) =>
+      capitalize ? key.charAt(0).toUpperCase() + key.slice(1) : key,
+    );
 };
 
 /**

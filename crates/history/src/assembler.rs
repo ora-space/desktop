@@ -1,10 +1,12 @@
-use crate::metadata::{child_source_id, retain_tool_metadata};
+use crate::metadata::{TURN_END_SETTLED_META_KEY, child_source_id, retain_tool_metadata};
 use crate::record::{HistoryRecord, ToolCallTiming};
 use agent_client_protocol_schema::v1::ContentBlock;
+use agent_client_protocol_schema::v1::Meta;
 use agent_client_protocol_schema::v1::Plan;
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate};
 use agent_client_protocol_schema::v1::{ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate};
+use serde_json::Value;
 
 /// One assembled record together with the position it occupies in the conversation.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,6 +57,7 @@ struct PendingTool {
 /// here, and the lookups each kind needs stay direct.
 pub struct HistoryAssembler {
     next_seq: u32,
+    last_retry_seq: Option<u32>,
     texts: Vec<PendingText>,
     tools: Vec<PendingTool>,
     plans: Vec<(u32, Plan)>,
@@ -65,6 +68,7 @@ impl HistoryAssembler {
     pub fn new(next_seq: u32) -> Self {
         Self {
             next_seq,
+            last_retry_seq: None,
             texts: Vec::new(),
             tools: Vec::new(),
             plans: Vec::new(),
@@ -161,13 +165,41 @@ impl HistoryAssembler {
     /// Parent tools may settle here; projected child tools retain their reported
     /// state because the parent ending does not prove child completion.
     pub fn end_turn(&mut self, stop_reason: StopReason) -> Vec<AssembledRecord> {
+        let retried = self.last_retry_seq.take().is_some();
+        let mut records = self.flush_attempt(stop_reason, retried);
+        self.tools.clear();
+        records.push(AssembledRecord {
+            seq: self.take_seq(),
+            record: HistoryRecord::TurnEnded { stop_reason },
+        });
+        records
+    }
+
+    /// Flushes abandoned items before the replacement can reuse message or tool identifiers.
+    pub fn retry_prompt(&mut self) -> Vec<AssembledRecord> {
+        let mut records = self.flush_attempt(StopReason::Cancelled, true);
+        let seq = self.take_seq();
+        self.last_retry_seq = Some(seq);
+        records.push(AssembledRecord {
+            seq,
+            record: HistoryRecord::PromptRetried,
+        });
+        records
+    }
+
+    /// A retry needs the provider's actual tool status to distinguish recovery from an empty end.
+    fn flush_attempt(
+        &mut self,
+        stop_reason: StopReason,
+        preserve_tool_status: bool,
+    ) -> Vec<AssembledRecord> {
         let mut records: Vec<AssembledRecord> = std::mem::take(&mut self.texts)
             .into_iter()
             .map(PendingText::into_record)
             .chain(
-                std::mem::take(&mut self.tools)
-                    .into_iter()
-                    .filter_map(|tool| tool.settle_at_turn_end(stop_reason)),
+                self.tools
+                    .iter_mut()
+                    .filter_map(|tool| tool.settle_at_turn_end(stop_reason, preserve_tool_status)),
             )
             .chain(
                 std::mem::take(&mut self.plans)
@@ -182,11 +214,6 @@ impl HistoryAssembler {
             )
             .collect();
         records.sort_by_key(|record| record.seq);
-        let seq = self.take_seq();
-        records.push(AssembledRecord {
-            seq,
-            record: HistoryRecord::TurnEnded { stop_reason },
-        });
         records
     }
 
@@ -270,10 +297,20 @@ impl HistoryAssembler {
     /// Installs a tool call's opening snapshot, replacing an earlier one in place.
     fn upsert_tool(
         &mut self,
-        call: ToolCall,
+        mut call: ToolCall,
         timing: Option<ToolCallTiming>,
     ) -> Vec<AssembledRecord> {
+        strip_turn_end_settled_marker(&mut call.meta);
         match self.tool_index(&call.tool_call_id) {
+            // A full opening can reuse an abandoned ID. Bare deltas keep the old position.
+            Some(index)
+                if self
+                    .last_retry_seq
+                    .is_some_and(|seq| self.tools[index].seq < seq) =>
+            {
+                self.tools.swap_remove(index);
+                self.open_tool(call, timing)
+            }
             Some(index) => {
                 let pending = &mut self.tools[index];
                 pending.call = call;
@@ -292,10 +329,15 @@ impl HistoryAssembler {
         update: &ToolCallUpdate,
         timing: Option<ToolCallTiming>,
     ) -> Vec<AssembledRecord> {
+        let mut incoming_meta = update.meta.clone();
+        strip_turn_end_settled_marker(&mut incoming_meta);
         if let Some(index) = self.tool_index(&update.tool_call_id) {
             let pending = &mut self.tools[index];
             pending.call.update(update.fields.clone());
-            retain_tool_metadata(&mut pending.call.meta, update.meta.as_ref());
+            retain_tool_metadata(&mut pending.call.meta, incoming_meta.as_ref());
+            if update.fields.status.is_some() {
+                strip_turn_end_settled_marker(&mut pending.call.meta);
+            }
             if timing.is_some() {
                 pending.timing = timing;
             }
@@ -305,7 +347,7 @@ impl HistoryAssembler {
         // ACP only guarantees the title on the opening notification.
         let mut call = ToolCall::new(update.tool_call_id.clone(), "Tool call");
         call.update(update.fields.clone());
-        retain_tool_metadata(&mut call.meta, update.meta.as_ref());
+        retain_tool_metadata(&mut call.meta, incoming_meta.as_ref());
         self.open_tool(call, timing)
     }
 
@@ -424,7 +466,11 @@ impl PendingTool {
     /// success would report an outcome nobody observed.
     ///
     /// A terminal status the provider did report is never reinterpreted.
-    fn settle_at_turn_end(mut self, stop_reason: StopReason) -> Option<AssembledRecord> {
+    fn settle_at_turn_end(
+        &mut self,
+        stop_reason: StopReason,
+        preserve_tool_status: bool,
+    ) -> Option<AssembledRecord> {
         let unfinished = matches!(
             self.call.status,
             ToolCallStatus::Pending | ToolCallStatus::InProgress
@@ -432,11 +478,27 @@ impl PendingTool {
         // A projected child may outlive the parent prompt. Only its own terminal update proves
         // completion. Cleared or invalid sources follow the ordinary parent-stream rules.
         let projected = child_source_id(self.call.meta.as_ref()).is_some();
-        if unfinished && !projected && stop_reason == StopReason::EndTurn {
+        if unfinished && !preserve_tool_status && !projected && stop_reason == StopReason::EndTurn {
             self.call.status = ToolCallStatus::Completed;
-            return Some(tool_record(self.seq, &self.call, self.timing.clone()));
+            self.call
+                .meta
+                .get_or_insert_with(Meta::new)
+                .insert(TURN_END_SETTLED_META_KEY.to_string(), Value::Bool(true));
+        } else if self.written {
+            return None;
         }
-        (!self.written).then(|| tool_record(self.seq, &self.call, self.timing.clone()))
+        self.written = true;
+        Some(tool_record(self.seq, &self.call, self.timing.clone()))
+    }
+}
+
+/// Drops Ora's turn-end settlement marker from untrusted incoming tool updates and cleans empty maps.
+fn strip_turn_end_settled_marker(meta: &mut Option<Meta>) {
+    if let Some(map) = meta {
+        map.remove(TURN_END_SETTLED_META_KEY);
+        if map.is_empty() {
+            *meta = None;
+        }
     }
 }
 

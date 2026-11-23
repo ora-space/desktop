@@ -1,4 +1,21 @@
 mod agent_session;
+mod host_mcp;
+pub use host_mcp::{
+    HostMcpHeaders, HostMcpServer, MAX_HOST_MCP_HEADERS, MAX_HOST_MCP_SERVERS,
+    MAX_HOST_MCP_TOTAL_BYTES, MAX_HOST_MCP_URL_BYTES,
+};
+mod session_mcp;
+mod session_mcp_lifecycle;
+pub use session_mcp::{
+    MAX_SESSION_MCP_SERVERS, MAX_SESSION_MCP_SETTINGS_BYTES, SessionMcpBinding, SessionMcpTransport,
+};
+pub(crate) use session_mcp_lifecycle::validate_update_members;
+pub use session_mcp_lifecycle::{
+    MAX_SESSION_MCP_COUNTER, SessionMcpConvergence, SessionMcpErrorCode, SessionMcpFailure,
+    SessionMcpHealth, SessionMcpMemberIdentity, SessionMcpMemberState, SessionMcpProbeErrorCode,
+    SessionMcpRevisionIdentity, SessionMcpState, SessionMcpUnavailable, SessionMcpUnknownReason,
+    SessionMcpUpdateMember,
+};
 mod execution;
 mod git_server;
 mod model_adapter;

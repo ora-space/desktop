@@ -258,7 +258,7 @@ impl Drop for RouteRegistration {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{RouteRegistry, SessionControl, SessionEvent};
     use agent_client_protocol_schema::v1::RequestId;
     use agent_client_protocol_schema::v1::RequestPermissionRequest;
@@ -292,7 +292,7 @@ mod tests {
     /// Routing has to be asserted on a real `SessionResponse`, which only the ACP peer can mint:
     /// it carries the correlation the peer established when the request went out, and no
     /// constructor exposes that from here.
-    async fn session_response(session_id: &str) -> SessionResponse {
+    pub(crate) async fn session_response(session_id: &str) -> SessionResponse {
         let (inbound, messages) = mpsc::unbounded_channel();
         let (sent, mut outbound) = mpsc::unbounded_channel();
         let mut peer = AcpPeer::spawn(messages, RecordingTransport { sent });
@@ -317,6 +317,7 @@ mod tests {
         match peer.next_event().await.expect("receive response event") {
             AcpInboundEvent::SessionResponse(response) => response,
             AcpInboundEvent::SessionUpdate(_)
+            | AcpInboundEvent::ExtensionNotification(_)
             | AcpInboundEvent::PermissionRequest(_)
             | AcpInboundEvent::Fatal(_) => panic!("expected session response"),
         }

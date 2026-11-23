@@ -10,7 +10,6 @@ mod containment;
 #[cfg(unix)]
 mod identity;
 mod lexical;
-mod native_encoding;
 mod portable;
 mod strict;
 #[cfg(unix)]
@@ -27,7 +26,6 @@ pub use glob::{RelativeGlob, RelativeGlobError};
 pub use identity::DirectoryIdentity;
 pub use lexical::{canonicalize_longest_existing_prefix, normalize_absolute, normalize_relative};
 pub use links::has_multiple_hard_links;
-pub use native_encoding::{deserialize_native_path, serialize_native_path};
 pub use portable::{PortableRelativePath, PortableRelativePathError};
 pub use strict::{RelativePathLimits, StrictRelativePath, StrictRelativePathError};
 #[cfg(unix)]

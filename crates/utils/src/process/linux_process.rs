@@ -1,8 +1,7 @@
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::process::ExitStatusExt;
-use std::process::{Child, ExitStatus};
+use std::process::Child;
 
 /// Session membership observed through a pinned proc directory; names need not be UTF-8.
 #[derive(Debug)]
@@ -10,11 +9,17 @@ pub struct LinuxProcessStat {
     pub pid: u32,
     pub session: u32,
     pub start_ticks: u64,
-    directory: File,
+    /// The parent at observation time; init or a subreaper once the original parent exited.
+    pub(super) parent: u32,
+    /// The one-letter `stat` state, where `Z` and `X` mean the process has already exited.
+    pub(super) state: u8,
+    pub(super) directory: File,
 }
 
 struct StatFields {
     pid: u32,
+    parent: u32,
+    state: u8,
     session: u32,
     start_ticks: u64,
 }
@@ -24,6 +29,8 @@ struct StatFields {
 pub enum ProcessSignal {
     Terminate,
     Kill,
+    /// Freezes the process so it can neither fork nor exit until it is killed or continued.
+    Stop,
 }
 
 /// A kernel handle keeps signal delivery tied to the original process after PID reuse.
@@ -49,20 +56,6 @@ impl LinuxPidFd {
             return Err(io::Error::from_raw_os_error(libc::ESRCH));
         }
         Ok(handle)
-    }
-
-    /// Checks syscall availability and signal authorization without sending a real signal.
-    pub fn probe_current() -> io::Result<()> {
-        let handle = Self::open(std::process::id())?;
-        handle.send(/*signal*/ 0)?;
-        handle.has_exited()?;
-        // Self is not our child. ECHILD proves P_PIDFD/WNOWAIT was understood without creating
-        // a probe process; unsupported or seccomp-blocked wait operations fail admission.
-        match handle.peek_child_exit() {
-            Err(error) if error.raw_os_error() == Some(libc::ECHILD) => Ok(()),
-            Err(error) => Err(error),
-            Ok(_) => Err(io::Error::other("unexpected self wait result")),
-        }
     }
 
     /// Opens only a positive individual PID; flags never select groups or threads.
@@ -102,14 +95,11 @@ impl LinuxPidFd {
 
     /// Delivers only to the pinned process; an already exited target is an idempotent success.
     pub fn signal(&self, signal: ProcessSignal) -> io::Result<()> {
-        self.send(match signal {
+        let signal = match signal {
             ProcessSignal::Terminate => libc::SIGTERM,
             ProcessSignal::Kill => libc::SIGKILL,
-        })
-    }
-
-    /// Shares error handling between capability probing and actual process signals.
-    fn send(&self, signal: i32) -> io::Result<()> {
+            ProcessSignal::Stop => libc::SIGSTOP,
+        };
         // SAFETY: the descriptor is live, and a null siginfo asks the kernel to construct it.
         if unsafe {
             libc::syscall(
@@ -128,52 +118,12 @@ impl LinuxPidFd {
         }
         Ok(())
     }
-
-    /// Observes child exit without releasing its numeric identity or blocking the caller.
-    pub fn peek_child_exit(&self) -> io::Result<Option<ExitStatus>> {
-        self.wait(libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
-    }
-
-    /// Reaps this original child; use only after exit is observed or in a dedicated waiter.
-    pub fn reap_child(&self) -> io::Result<ExitStatus> {
-        self.wait(libc::WEXITED)?
-            .ok_or_else(|| io::Error::other("missing child exit status"))
-    }
-
-    /// waitid through the pidfd never mistakes a reused numeric PID for the original child.
-    fn wait(&self, options: i32) -> io::Result<Option<ExitStatus>> {
-        // SAFETY: zero initializes siginfo_t's integer/pointer fields, including the no-event PID.
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        // SAFETY: info is writable and the owned fd is a valid nonnegative id for P_PIDFD.
-        if unsafe { libc::waitid(libc::P_PIDFD, self.0.as_raw_fd() as u32, &mut info, options) } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: successful waitid initializes the SIGCHLD fields of siginfo_t.
-        if unsafe { info.si_pid() } == 0 {
-            return Ok(None);
-        }
-        let status = unsafe { info.si_status() };
-        let raw = match info.si_code {
-            libc::CLD_EXITED => status << 8,
-            libc::CLD_KILLED => status,
-            libc::CLD_DUMPED => status | 0x80,
-            _ => return Err(io::Error::other("unexpected child wait event")),
-        };
-        Ok(Some(ExitStatus::from_raw(raw)))
-    }
 }
 
 /// Pins one proc directory so callers can compare observations around stable handle acquisition.
 pub fn linux_process(pid: u32) -> io::Result<LinuxProcessStat> {
     let directory = File::open(std::path::Path::new("/proc").join(pid.to_string()))?;
-    let stat = read_stat(&directory)?;
-    Ok(LinuxProcessStat {
-        pid: stat.pid,
-        session: stat.session,
-        start_ticks: stat.start_ticks,
-        directory,
-    })
+    observe(directory)
 }
 
 /// Enumerates visible processes; permission and parse failures are errors, never empty evidence.
@@ -187,15 +137,7 @@ pub fn linux_process_snapshot() -> io::Result<impl Iterator<Item = io::Result<Li
             .file_name()
             .to_str()
             .and_then(|name| name.parse::<u32>().ok())?;
-        let observation = File::open(entry.path()).and_then(|directory| {
-            let stat = read_stat(&directory)?;
-            Ok(LinuxProcessStat {
-                pid: stat.pid,
-                session: stat.session,
-                start_ticks: stat.start_ticks,
-                directory,
-            })
-        });
+        let observation = File::open(entry.path()).and_then(observe);
         match observation {
             Ok(stat) => Some(Ok(stat)),
             Err(error)
@@ -209,13 +151,31 @@ pub fn linux_process_snapshot() -> io::Result<impl Iterator<Item = io::Result<Li
     }))
 }
 
-/// Reads through the pinned proc directory so PID reuse cannot redirect an identity recheck.
-fn read_stat(directory: &File) -> io::Result<StatFields> {
-    // SAFETY: the directory and static NUL-terminated filename remain live throughout openat.
+/// Reads the stat of a freshly pinned proc directory into an observation that keeps the pin.
+fn observe(directory: File) -> io::Result<LinuxProcessStat> {
+    let stat = read_stat(&directory)?;
+    Ok(LinuxProcessStat {
+        pid: stat.pid,
+        session: stat.session,
+        start_ticks: stat.start_ticks,
+        parent: stat.parent,
+        state: stat.state,
+        directory,
+    })
+}
+
+/// Reads at most `limit` bytes of one file of a pinned proc directory, so a reused PID can never
+/// redirect the read to another process. The flag reports whether the file was longer.
+pub(super) fn read_pinned(
+    directory: &File,
+    name: &std::ffi::CStr,
+    limit: usize,
+) -> io::Result<(Vec<u8>, bool)> {
+    // SAFETY: the directory and the NUL-terminated filename remain live throughout openat.
     let fd = unsafe {
         libc::openat(
             directory.as_raw_fd(),
-            c"stat".as_ptr(),
+            name.as_ptr(),
             libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
         )
     };
@@ -225,9 +185,17 @@ fn read_stat(directory: &File) -> io::Result<StatFields> {
     // SAFETY: openat returned a fresh descriptor, now owned by File.
     let file = unsafe { File::from_raw_fd(fd) };
     let mut bytes = Vec::new();
-    file.take(/*limit*/ 16385).read_to_end(&mut bytes)?;
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    let truncated = bytes.len() > limit;
+    bytes.truncate(limit);
+    Ok((bytes, truncated))
+}
+
+/// Reads through the pinned proc directory so PID reuse cannot redirect an identity recheck.
+fn read_stat(directory: &File) -> io::Result<StatFields> {
+    let (bytes, truncated) = read_pinned(directory, c"stat", /*limit*/ 16384)?;
     let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid proc stat");
-    if bytes.len() > 16384 {
+    if truncated {
         return Err(invalid());
     }
     let begin = bytes
@@ -252,7 +220,21 @@ fn read_stat(directory: &File) -> io::Result<StatFields> {
     }
     Ok(StatFields {
         pid,
+        state: *fields[0].as_bytes().first().ok_or_else(invalid)?,
+        parent: fields[1].parse().map_err(|_| invalid())?,
         session: fields[3].parse().map_err(|_| invalid())?,
         start_ticks: fields[19].parse().map_err(|_| invalid())?,
     })
+}
+
+/// Whether this process holds `capability` (a Linux capability number such as 19,
+/// `CAP_SYS_PTRACE`) in its effective set.
+pub fn linux_has_effective_capability(capability: u32) -> io::Result<bool> {
+    let status = std::fs::read_to_string("/proc/self/status")?;
+    let mask = status
+        .lines()
+        .find_map(|line| line.strip_prefix("CapEff:"))
+        .and_then(|mask| u64::from_str_radix(mask.trim(), 16).ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid CapEff line"))?;
+    Ok(capability < 64 && mask & (1 << capability) != 0)
 }

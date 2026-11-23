@@ -27,7 +27,8 @@ pub use mcp::{
     CompileConfigurationFileError, CompileMcpConfigurationError, CompiledConfigurationFile,
     CompiledMcpConfiguration, MCP_COMMAND_DIRECTORY, McpArgument, McpHttpTransport,
     McpStdioTransport, McpTransport, McpValueExpression, ResolveMcpBindingError,
-    ResolvedMcpArgument, ResolvedMcpTransport, compile_configuration_file, resolve_mcp_transport,
+    ResolvedMcpArgument, ResolvedMcpTransport, compile_configuration_file, resolve_mcp_settings,
+    resolve_mcp_transport,
 };
 pub use service::{
     ConfigurationCompleteness, ConfigurationDetails, ConfigurationError, ConfigurationFieldError,

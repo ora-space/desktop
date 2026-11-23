@@ -451,3 +451,58 @@ test("a load stream that replays an open turn exposes no live observation", asyn
   assert.equal(loaded?.diagnostics, undefined);
   store.getState().dispose();
 });
+
+test("_subagent/update tool calls record child activity and inherit across metadata-free deltas", () => {
+  const subagentMeta = {
+    "_subagent/update": {
+      sessionId: "ses-main",
+      taskId: "task-1",
+      toolCallId: "parent-call",
+      agentType: "Explore",
+    },
+  };
+  const first = observeDiagnostics(
+    undefined,
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "task-1:inner-1",
+      title: "Read",
+      status: "pending",
+      _meta: subagentMeta,
+    },
+    100,
+  );
+  assert.deepEqual(first, {
+    lastChildActivity: { kind: "tool", receivedAt: 100 },
+    toolSources: { "task-1:inner-1": "child" },
+  });
+
+  const delta = observeDiagnostics(
+    first,
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "task-1:inner-1",
+      status: "completed",
+    },
+    200,
+  );
+  assert.deepEqual(delta, {
+    lastChildActivity: { kind: "tool", receivedAt: 200 },
+    toolSources: { "task-1:inner-1": "child" },
+  });
+
+  const cleared = observeDiagnostics(
+    delta,
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "task-1:inner-1",
+      _meta: { "_subagent/update": null },
+    },
+    300,
+  );
+  assert.deepEqual(cleared, {
+    lastChildActivity: { kind: "tool", receivedAt: 200 },
+    lastActivity: { kind: "tool", receivedAt: 300 },
+    toolSources: { "task-1:inner-1": "parent" },
+  });
+});

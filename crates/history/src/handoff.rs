@@ -97,6 +97,7 @@ pub fn binding_needs_handoff(history: &SessionHistory) -> bool {
             HistoryRecord::Meta(_)
             | HistoryRecord::Update { .. }
             | HistoryRecord::TurnEnded { .. }
+            | HistoryRecord::PromptRetried
             | HistoryRecord::Gap { .. } => {}
         }
     }
@@ -118,6 +119,7 @@ fn previous_agent(history: &SessionHistory) -> Option<AgentRef> {
             HistoryRecord::Update { .. }
             | HistoryRecord::TurnEnded { .. }
             | HistoryRecord::HandoffDelivered { .. }
+            | HistoryRecord::PromptRetried
             | HistoryRecord::Gap { .. } => None,
         })
 }
@@ -223,7 +225,7 @@ fn collect_turns(history: &SessionHistory) -> Vec<HandoffTurn> {
             )),
             // Bookkeeping about how this record reached an agent, not part of the
             // conversation the next one is being shown.
-            HistoryRecord::Meta(_) | HistoryRecord::HandoffDelivered { .. } => {}
+            HistoryRecord::Meta(_) | HistoryRecord::PromptRetried | HistoryRecord::HandoffDelivered { .. } => {}
         }
     }
     // A turn interrupted by a crash never got its boundary, but its work still

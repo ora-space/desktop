@@ -4,6 +4,7 @@
 
 ## 前提
 
+Ora Desktop 只在 Windows 和 Linux 上开发和发布，不支持 macOS（v0.6.0 是最后一个 macOS 版本）。
 安装 `.deno-version` 固定的 Deno 版本、Rust（见 `rust-toolchain.toml`）、Task、Git、ripgrep，以及所在平台的 Tauri 系统依赖。
 不需要 Node.js 和 pnpm。
 
@@ -35,10 +36,10 @@ task run:desktop        # 以开发模式运行 Desktop
 
 ## Controller 和 Node
 
-Controller、Node、进程宿主和 guardian 只支持 Linux：
+Controller 和 Node 只支持 Linux：
 
 ```sh
-cargo build -p ora-controller -p ora-node -p ora-process-host -p ora-process-guardian
+cargo build -p ora-controller -p ora-node -p ora-reaper
 ```
 
 它们的配置见 [Controller](../controller/controller.zh.md) 和 [Node](../node/node.zh.md)。Cloud 契约的 submodule 用

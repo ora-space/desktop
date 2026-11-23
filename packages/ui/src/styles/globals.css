@@ -235,15 +235,8 @@
   body {
     @apply bg-background text-foreground;
     font-family:
-      Inter,
-      -apple-system,
-      BlinkMacSystemFont,
-      "Segoe UI",
-      "PingFang SC",
-      "Microsoft YaHei UI",
-      "Microsoft YaHei",
-      ui-sans-serif,
-      sans-serif;
+      Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+      ui-sans-serif, sans-serif;
     /* Desktop chrome should not drag-select; user and agent content opts in explicitly. */
     -webkit-user-select: none;
     user-select: none;

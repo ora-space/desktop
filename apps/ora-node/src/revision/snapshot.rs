@@ -20,7 +20,7 @@ const DELIVERY_CONFIG: [&str; 3] = [
     "core.fsmonitor=false",
     "commit.gpgSign=false",
 ];
-/// Captured output stays far below the guardian capture limit; plumbing prints object IDs only.
+/// Captured output stays far below the Node's capture limit; plumbing prints object IDs only.
 const OUTPUT_LIMIT: usize = 64 * 1024;
 
 /// Hardened environment and per-command configuration shared with clone execution.
@@ -95,8 +95,8 @@ impl<R: GitRunner> DeliveryGit<R> {
         request: &SnapshotRequest<'_>,
     ) -> Result<Snapshot, SnapshotFailure> {
         let checkout = request.checkout;
-        // One Run resolves everything the snapshot starts from: each host-managed Git Run has a
-        // fixed setup cost. Revisions before `--` must all exist (Git echoes the `--`), so a
+        // One command resolves everything the snapshot starts from: each Git process has a
+        // fixed start-up cost. Revisions before `--` must all exist (Git echoes the `--`), so a
         // checkout without the base commit fails here.
         let base = format!("{}^{{commit}}", request.base_commit.as_str());
         let resolved = self

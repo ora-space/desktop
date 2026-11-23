@@ -6,6 +6,9 @@
 use super::*;
 use crate::AgentRuntimeHost;
 
+/// Supplies host-only instructions for a single provider send, including automatic resends.
+pub type AttemptInstruction = Box<dyn Fn() -> ContentBlock + Send + Sync>;
+
 /// What Ora records as the user turn of one prompt.
 pub(crate) struct RecordedTurn {
     /// The blocks to record when they differ from the prompt the agent receives.
@@ -13,6 +16,7 @@ pub(crate) struct RecordedTurn {
     /// The host's identity for this user message, written as the ACP `messageId` of every
     /// recorded user block so the file itself says which turn a message was.
     pub(crate) message_id: Option<MessageId>,
+    pub(crate) attempt_instruction: Option<AttemptInstruction>,
 }
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
@@ -25,6 +29,8 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             request,
             /*message_id*/ None,
             PromptInactivityPolicy::Timeout,
+            None,
+            None,
         )
         .await
     }
@@ -38,8 +44,25 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         request: PromptSessionRequest,
         inactivity_policy: PromptInactivityPolicy,
     ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
-        self.send_prompt(request, /*message_id*/ None, inactivity_policy)
+        self.prompt_session_with_attempt_instruction(request, inactivity_policy, None)
             .await
+    }
+
+    /// Starts a prompt with a fresh, unrecorded host capability for each provider send.
+    pub async fn prompt_session_with_attempt_instruction(
+        &self,
+        request: PromptSessionRequest,
+        inactivity_policy: PromptInactivityPolicy,
+        instruction: Option<AttemptInstruction>,
+    ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
+        self.send_prompt(
+            request,
+            /*message_id*/ None,
+            inactivity_policy,
+            None,
+            instruction,
+        )
+        .await
     }
 
     /// Starts a prompt whose recorded user message carries the host's identity for it.
@@ -51,8 +74,33 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         request: PromptSessionRequest,
         message_id: MessageId,
     ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
-        self.send_prompt(request, Some(message_id), PromptInactivityPolicy::Timeout)
-            .await
+        self.send_prompt(
+            request,
+            Some(message_id),
+            PromptInactivityPolicy::Timeout,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Commits host admission after ACP/MCP readiness, before recording or sending any prompt.
+    /// A failed commit rejects the send without running the turn. The callback must be short and
+    /// synchronous; it runs on the serialized session actor and is invoked at most once.
+    pub async fn prompt_session_with_admission(
+        &self,
+        request: PromptSessionRequest,
+        message_id: MessageId,
+        commit: impl FnOnce() -> Result<(), RuntimeError> + Send + Sync + 'static,
+    ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
+        self.send_prompt(
+            request,
+            Some(message_id),
+            PromptInactivityPolicy::Timeout,
+            Some(Box::new(commit)),
+            None,
+        )
+        .await
     }
 
     /// Validates and admits one prompt on its session's actor.
@@ -61,11 +109,14 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         request: PromptSessionRequest,
         message_id: Option<MessageId>,
         inactivity_policy: PromptInactivityPolicy,
+        commit_admission: Option<Box<dyn FnOnce() -> Result<(), RuntimeError> + Send + Sync>>,
+        attempt_instruction: Option<AttemptInstruction>,
     ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
         let prompt = request.prompt;
         let record_prompt = RecordedTurn {
             blocks: request.record_prompt,
             message_id,
+            attempt_instruction,
         };
         let model = request.model;
         if prompt.is_empty()
@@ -113,6 +164,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 operation_id,
                 prompt,
                 record_prompt,
+                commit_admission,
                 inactivity_policy,
                 model,
                 end_report: end_report.clone(),

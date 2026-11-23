@@ -45,8 +45,8 @@ ora-reaper sidecar ── kills every registered process tree on exit or crash
 Ora Cloud ◀── mTLS gRPC, dialed out ── ora-controller ── Substrate effects ──▶ Sandbox Server
                                             │                                     │
                                             └── WSS via sandbox router ──▶ sandbox: ora-node
-                                                                              ├─ ora-process-host
-                                                                              │    └─ guardians ─▶ Git
+                                                                              ├─ Git
+                                                                              ├─ ora-reaper
                                                                               └─ agent plugin + CLI
 ```
 
@@ -57,8 +57,9 @@ Ora Cloud ◀── mTLS gRPC, dialed out ── ora-controller ── Substrate
 - In each sandbox a Node clones the Workspace from a Git Server snapshot, installs plugins, runs Agent
   sessions with the same agent runtime Desktop uses, and delivers Revisions to the Git Server, see
   [Node](node/node.md).
-- Every Git command a Node runs goes through the process host and a per-Scope guardian, so launches and
-  cleanups are durable facts, see [Process runtime](process/process-runtime.md).
+- A Node runs every Git command as a direct child in its own process group, registered with an
+  `ora-reaper` sidecar; a command with side effects holds an attempt lock whose release proves that it
+  stopped, see [Node](node/node.md#execution-and-recovery).
 - Authority is fenced end to end: Cloud authorizes, the Controller fetches a fresh permit per dispatch,
   and the Node isolates stale qualifications, see [Runtime control](controller/runtime-control.md).
 - The Controller can also run a local SQLite form that coordinates clones for one Node.
@@ -67,8 +68,8 @@ Ora Cloud ◀── mTLS gRPC, dialed out ── ora-controller ── Substrate
 
 | Path | Contents |
 |---|---|
-| `apps/` | Executables: `desktop/src-tauri`, `ora-controller`, `ora-node`, `ora-process-host`, `ora-process-guardian`, `ora-process-helper`, `ora-reaper` |
-| `crates/` | Shared Rust crates, all prefixed `ora-` (domain, contracts, application, db, backend, agent-runtime, plugin-*, node-*, process-*, gitlancer, utils, …) |
+| `apps/` | Executables: `desktop/src-tauri`, `ora-controller`, `ora-node`, `ora-reaper` |
+| `crates/` | Shared Rust crates, all prefixed `ora-` (domain, contracts, application, db, backend, agent-runtime, plugin-*, node-*, process, gitlancer, utils, …) |
 | `packages/` | TypeScript packages: `app-shell`, `contracts`, `chat`, `editor`, `ui`, `plugin-sdk`, `workflow-runtime`, `workflow-mock` |
 | `xtask/` | Contract export, migration reconciliation and the Rust size gate |
 | `e2e/` | Desktop end-to-end tests with a fake ACP agent |

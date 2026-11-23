@@ -112,6 +112,48 @@ fn resolve_expression(
     }
 }
 
+/// Validates explicit overrides and applies declaration defaults without reading a host store.
+/// Invalid or absent required values name the setting only, never the submitted scalar.
+pub fn resolve_mcp_settings(
+    configuration: &CompiledMcpConfiguration,
+    overrides: &BTreeMap<String, SettingValue>,
+) -> Result<BTreeMap<String, SettingValue>, ResolveMcpBindingError> {
+    let Some(declaration) = &configuration.settings else {
+        return if let Some(setting_id) = overrides.keys().next() {
+            Err(ResolveMcpBindingError::MissingSetting {
+                setting_id: setting_id.clone(),
+            })
+        } else {
+            Ok(BTreeMap::new())
+        };
+    };
+    if let Some(error) = crate::values::validate_values(declaration, overrides)
+        .into_iter()
+        .next()
+    {
+        return Err(ResolveMcpBindingError::MissingSetting {
+            setting_id: error.setting_id,
+        });
+    }
+    let mut values = BTreeMap::new();
+    for setting in &declaration.settings {
+        let value = overrides.get(&setting.id).or(setting.default.as_ref());
+        if setting.required
+            && value.is_none_or(
+                |value| matches!(value, SettingValue::String(text) if text.trim().is_empty()),
+            )
+        {
+            return Err(ResolveMcpBindingError::MissingSetting {
+                setting_id: setting.id.clone(),
+            });
+        }
+        if let Some(value) = value {
+            values.insert(setting.id.clone(), value.clone());
+        }
+    }
+    Ok(values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ResolvedMcpArgument, ResolvedMcpTransport, resolve_mcp_transport};
@@ -207,5 +249,39 @@ mod tests {
             "MCP Setting `token` has no effective value"
         );
         assert!(!error.to_string().contains("secret"));
+    }
+    /// Frozen bindings use declaration defaults and reject stale/incorrect overrides in full.
+    #[test]
+    fn explicit_mcp_settings_validate_types_required_values_and_defaults() {
+        use crate::{CompiledConfigurationFile, compile_configuration_file, resolve_mcp_settings};
+        use serde_json::json;
+        let CompiledConfigurationFile::Mcp(configuration) = compile_configuration_file(
+            br#"{
+            "schemaVersion":1, "settings":{
+                "token":{"type":"string", "title":"Token", "description":"test", "required":true},
+                "count":{"type":"number", "title":"Count", "description":"test", "default":2}
+            }, "transport":{"type":"http", "url":"https://mcp.example.test/mcp"}
+        }"#,
+        )
+        .unwrap() else {
+            unreachable!()
+        };
+        let input = BTreeMap::from([("token".into(), SettingValue::String("secret".into()))]);
+        let expected: BTreeMap<String, SettingValue> =
+            serde_json::from_value(json!({"token":"secret", "count":2})).unwrap();
+        assert_eq!(
+            resolve_mcp_settings(&configuration, &input).unwrap(),
+            expected
+        );
+        for invalid in [
+            json!({}),
+            json!({"token":" "}),
+            json!({"token":true}),
+            json!({"token":"secret", "unknown":"secret"}),
+        ] {
+            let invalid = serde_json::from_value(invalid).unwrap();
+            let error = resolve_mcp_settings(&configuration, &invalid).unwrap_err();
+            assert!(!format!("{error:?}").contains("secret"));
+        }
     }
 }

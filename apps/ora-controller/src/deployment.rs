@@ -10,7 +10,7 @@ pub struct DeploymentConfig {
     pub single_node: Option<SingleNodeConfig>,
 }
 
-/// How to start the one configured Node when `--single-node` is given; host and guardian are prerequisites.
+/// How to start the one configured Node when `--single-node` is given.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SingleNodeConfig {

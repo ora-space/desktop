@@ -61,6 +61,8 @@ export interface ChatToolCall extends ChatItemMetadata {
   title: string;
   toolKind?: acp.ToolKind;
   status?: ChatToolCallStatus;
+  /** True when `status: "completed"` was implied at `end_turn` rather than reported by the provider. */
+  settledByTurnEnd?: boolean;
   content: acp.ToolCallContent[];
   locations: acp.ToolCallLocation[];
   rawInput?: unknown;

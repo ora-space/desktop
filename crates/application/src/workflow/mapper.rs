@@ -33,6 +33,7 @@ pub(crate) fn map_workflow_summary(summary: WorkflowSummary) -> ora_contracts::W
         namespace: summary.namespace.to_string(),
         name: summary.name,
         published_version: summary.published_version,
+        source_plugin_id: summary.source_plugin_id,
         created_at: summary.created_at,
         updated_at: summary.updated_at,
     }

@@ -19,6 +19,8 @@ pub struct RepositoryBinding {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
+    #[serde(default)]
+    pub session_stop: SessionStopConfig,
     pub home_directory: PathBuf,
     pub identity: NodeIdentity,
     pub repositories: Vec<RepositoryBinding>,
@@ -29,11 +31,19 @@ mod git;
 #[cfg(target_os = "linux")]
 mod repository;
 mod resources;
+mod session_stop_config;
 pub use git::{Checkout, DirectoryState, ExecutionGitRunner, Observation, WorktreeGit};
 #[cfg(target_os = "linux")]
 pub use repository::CloneConfig;
 #[cfg(target_os = "linux")]
+pub use session::stop::admin::{Reply as SessionStopAdminReply, client as reconcile_session_stop};
+pub use session_stop_config::SessionStopConfig;
+#[cfg(target_os = "linux")]
 mod git_access;
+#[cfg(target_os = "linux")]
+mod hand_over;
+#[cfg(target_os = "linux")]
+pub use hand_over::CheckoutHandOver;
 #[cfg(target_os = "linux")]
 mod git_server;
 #[cfg(target_os = "linux")]
@@ -63,7 +73,7 @@ pub use session::{
     AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable,
     InstalledConfigurationError, PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel,
     RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig, SessionHost,
-    SessionLedger, SessionWorkload,
+    SessionLedger, SessionWorkload, TurnCancelConfig,
 };
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;
@@ -123,10 +133,12 @@ pub struct Node<G = gitlancer::Git<gitlancer::CliGitRunner>, W = DurableWrites, 
     git: G,
     clock: C,
     state: NodeState,
+    #[cfg(target_os = "linux")]
+    session_stop: SessionStopConfig,
 }
 
 impl Node {
-    /// Composes the explicitly configured host-backed Git adapter under the original Node database lease.
+    /// Composes the Git adapter that runs commands directly under the original Node database lease.
     #[cfg(target_os = "linux")]
     pub fn open(
         config: NodeConfig,
@@ -136,7 +148,7 @@ impl Node {
         Self::open_managed_with_dependencies(config, process, shutdown, DurableWrites, LocalClock)
     }
 
-    /// Injects durable-write boundaries and time without replacing the production host-backed adapter.
+    /// Injects durable-write boundaries and time without replacing the production Git adapter.
     #[cfg(target_os = "linux")]
     pub fn open_managed_with_dependencies<W: WriteGuard, C: Clock>(
         config: NodeConfig,
@@ -155,11 +167,13 @@ impl Node {
                 "Node data directory must be absolute without parent traversal".into(),
             ));
         }
-        if ora_utils::path::canonicalize_longest_existing_prefix(&config.home_directory)
-            == ora_utils::path::canonicalize_longest_existing_prefix(&process.host_directory)
-        {
+        // The retired host's directory is deleted on startup, so it must not hold the Node's own.
+        if process.host_directory.as_deref().is_some_and(|host| {
+            ora_utils::path::canonicalize_longest_existing_prefix(&config.home_directory)
+                .starts_with(ora_utils::path::canonicalize_longest_existing_prefix(host))
+        }) {
             return Err(Error::Configuration(
-                "Node and host require distinct state directories".into(),
+                "the retired host directory must not contain the Node data directory".into(),
             ));
         }
         if config.home_directory.exists() {
@@ -186,9 +200,15 @@ impl Node {
             ora_utils::path::TrustedPathKind::Directory,
         )
         .map_err(|e| Error::Configuration(e.to_string()))?;
-        let runner = ManagedGitRunner::new(node.database.process_journal()?, process, shutdown)
-            .map_err(|e| Error::Configuration(e.to_string()))?;
+        let runner = ManagedGitRunner::new(
+            node.database.process_journal()?,
+            process,
+            shutdown,
+            &node.home_directory,
+        )
+        .map_err(|e| Error::Configuration(e.to_string()))?;
         Ok(Node {
+            session_stop: node.session_stop,
             repository_config: None,
             #[cfg(target_os = "linux")]
             git_access: None,
@@ -219,6 +239,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         writes: W,
         clock: C,
     ) -> Result<Self, Error> {
+        config.session_stop.validate()?;
         if !config.home_directory.is_absolute() {
             return Err(Error::Configuration(
                 "Node data directory must be an explicit absolute path".into(),
@@ -246,10 +267,14 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         directory
             .create(&config.home_directory)
             .map_err(ora_node_db::Error::from)?;
-        let database = NodeDatabase::open_with_guard(
+        #[cfg(target_os = "linux")]
+        ora_utils::fs::require_local_filesystem(&config.home_directory)
+            .map_err(|error| Error::Configuration(error.to_string()))?;
+        let database = NodeDatabase::open_with_guard_and_host(
             &config.home_directory.join("ora-node.sqlite3"),
             config.identity,
             writes,
+            &config.session_stop.host(),
         )?;
         let identity = NodeRuntimeIdentity {
             node_id: database.node_id().clone(),
@@ -275,6 +300,8 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             git,
             clock,
             state,
+            #[cfg(target_os = "linux")]
+            session_stop: config.session_stop,
         })
     }
     /// Returns the injected state directory containing ora-node.sqlite3.
@@ -322,14 +349,21 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                     .into_iter()
                     .filter(|attempt| attempt.stop_unconfirmed)
                     .filter_map(|attempt| {
+                        // The protocol keeps the fields the process host filled. Git now runs
+                        // without a Scope, so the attempt's identity names both.
                         Some(StopUnconfirmed {
-                            scope_id: attempt.process.intent.scope.to_string(),
-                            run_id: attempt.process.intent.run.to_string(),
+                            scope_id: attempt.process.id.to_string(),
+                            run_id: attempt.process.id.to_string(),
                             first_stop_at_ms: attempt.first_stop_at_ms?,
                             bound_at_ms: attempt.stop_bound_at_ms?,
                             guarantee: attempt.guarantee,
                         })
                     })
+                    .chain(
+                        self.database
+                            .session_journal()?
+                            .session_stop_unconfirmed(&query.execution_id)?,
+                    )
                     .collect(),
                 node: self.identity.clone(),
                 state,

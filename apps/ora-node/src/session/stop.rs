@@ -1,0 +1,220 @@
+//! Independent process responsibility outlives conversations, plugin handles, and Node restarts.
+pub(crate) mod admin;
+pub(crate) mod files;
+pub(crate) mod marks;
+pub(crate) mod spawner;
+#[cfg(test)]
+mod tests;
+
+use super::{SessionLedger, workload::SessionPlacement};
+use crate::{SessionStopConfig, managed::attempt_lock::StopEvidence};
+use files::StopFiles;
+use ora_node_db::{
+    AttemptId, SessionStopChange, SessionStopIdentity, SessionStopScope, SessionStopState,
+};
+use ora_node_protocol::ExecutionId;
+use ora_process::TokioProcessSpawner;
+use spawner::SessionAttemptSpawner;
+use std::{io, path::Path, time::Duration};
+
+/// Resources stay owned after the actor hands an unconfirmed attempt to background reconciliation.
+pub(super) struct Retained<T> {
+    pub placement: SessionPlacement,
+    pub leases: Vec<T>,
+    pub spawner: SessionAttemptSpawner,
+    pub isolation: super::process::ModelProcessIsolation,
+}
+
+/// Wall-clock deadlines survive Node restart and are never extended by subsequent stop requests.
+pub(crate) fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
+/// A failed lifecycle request must take the same bounded evidence path as a successful request.
+pub(super) async fn await_plugin_stop<L: SessionLedger, T, E: std::fmt::Display>(
+    ledger: &L,
+    home: &Path,
+    config: &SessionStopConfig,
+    execution: &ExecutionId,
+    stop: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<bool, L::Error> {
+    // Signal the original groups immediately. Await lifecycle cleanup for diagnostics before
+    // releasing views, even when the process evidence is already conclusive.
+    let (result, confirmed) = tokio::join!(stop, confirm(ledger, home, config, execution, true),);
+    if let Err(error) = result {
+        ora_logging::ora_warn!(execution_id = %execution, error = %error, "agent plugin did not stop cleanly");
+    }
+    // Success and failure are both requests, never proof; the original deadline still governs.
+    confirmed
+}
+
+/// Lock creation, durable registration and taking the OFD all precede the first dispatch.
+pub(super) fn prepare<L: SessionLedger>(
+    ledger: &L,
+    home: &Path,
+    identity: SessionStopIdentity,
+    inner: TokioProcessSpawner,
+) -> io::Result<SessionAttemptSpawner> {
+    let files = StopFiles::open(home)?;
+    files.create(&identity.attempt, inner.identity())?;
+    ledger
+        .record_session_stop(&identity, SessionStopScope::Recorded, now_ms())
+        .map_err(|_| io::Error::other("stop journal unavailable"))?;
+    SessionAttemptSpawner::new(inner, identity, files)
+}
+
+/// Records the end decision with the stop clock of every outstanding responsibility and the
+/// pending cancel settlements in one transaction; the first decision and clock are kept.
+pub(super) fn decide<L: SessionLedger>(
+    ledger: &L,
+    execution: &ExecutionId,
+    ended: &ora_node_protocol::AgentSessionEnded,
+    config: &SessionStopConfig,
+) -> Result<(), L::Error> {
+    let at_ms = now_ms();
+    ledger.decide_session_end(
+        execution,
+        ended,
+        at_ms,
+        at_ms.saturating_add(config.confirmation_timeout_ms as i64),
+    )
+}
+
+/// Anchors all outstanding responsibilities before notifying any process or closing admission.
+pub(super) fn request<L: SessionLedger>(
+    ledger: &L,
+    execution: &ExecutionId,
+    config: &SessionStopConfig,
+) -> Result<(), L::Error> {
+    let at_ms = now_ms();
+    for record in ledger.session_stop_records(Some(execution))? {
+        if record.state != SessionStopState::Confirmed {
+            ledger.change_session_stop(
+                &record.identity.attempt,
+                SessionStopChange::Request {
+                    at_ms,
+                    bound_at_ms: at_ms.saturating_add(config.confirmation_timeout_ms as i64),
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Proves original attempts only; a missing file or failed read leaves ownership unchanged.
+pub(crate) async fn confirm<L: SessionLedger>(
+    ledger: &L,
+    home: &Path,
+    config: &SessionStopConfig,
+    execution: &ExecutionId,
+    wait: bool,
+) -> Result<bool, L::Error> {
+    request(ledger, execution, config)?;
+    let files = StopFiles::open(home).ok();
+    let mut pause = FIRST_RECHECK;
+    loop {
+        let mut pending = false;
+        let mut before_bound = false;
+        for record in ledger.session_stop_records(Some(execution))? {
+            if record.state == SessionStopState::Confirmed {
+                continue;
+            }
+            let proof = match &files {
+                Some(files) => {
+                    let (evidence, proof) = files
+                        .settle(
+                            &record.identity,
+                            record.scope,
+                            &config.host(),
+                            config.single_mount_with_storage_fencing,
+                        )
+                        .await;
+                    (evidence == StopEvidence::Stopped)
+                        .then_some(proof)
+                        .flatten()
+                }
+                None => None,
+            };
+            if let Some(proof) = proof {
+                ledger.change_session_stop(
+                    &record.identity.attempt,
+                    SessionStopChange::Confirm {
+                        at_ms: now_ms(),
+                        proof,
+                    },
+                )?;
+            } else {
+                pending = true;
+                if record.bound_at_ms.is_some_and(|bound| now_ms() < bound) {
+                    before_bound = true;
+                } else if record.state != SessionStopState::StopUnconfirmed {
+                    ledger.change_session_stop(
+                        &record.identity.attempt,
+                        SessionStopChange::Unconfirmed,
+                    )?;
+                }
+            }
+        }
+        if !pending {
+            return Ok(true);
+        }
+        if !wait || !before_bound {
+            return Ok(false);
+        }
+        tokio::time::sleep(pause).await;
+        pause = next_recheck(pause);
+    }
+}
+
+/// The first wait between stop observations; a stop that settles at once is confirmed quickly.
+pub(crate) const FIRST_RECHECK: Duration = Duration::from_millis(25);
+
+/// The longest wait between stop observations. Every observation terminates and scans procfs,
+/// so a process that refuses to die costs at most one round per second until the bound.
+const LAST_RECHECK: Duration = Duration::from_secs(1);
+
+/// The wait after `pause` between observations of an attempt that has not settled: doubling,
+/// capped at [`LAST_RECHECK`]. Every stop loop of the Node shares this sequence.
+pub(crate) fn next_recheck(pause: Duration) -> Duration {
+    (pause * 2).min(LAST_RECHECK)
+}
+
+/// The scope flag the ledger recorded for an attempt, the one source of whether its stop evidence
+/// includes the mark scan; `None` when the row cannot be read, which proves nothing.
+pub(crate) fn recorded_scope<L: SessionLedger>(
+    ledger: &L,
+    identity: &SessionStopIdentity,
+) -> Option<SessionStopScope> {
+    ledger
+        .session_stop_records(Some(&identity.execution))
+        .ok()?
+        .into_iter()
+        .find(|record| record.identity.attempt == identity.attempt)
+        .map(|record| record.scope)
+}
+
+/// Resource release is a second durable boundary, after proof and actual removal of local views.
+pub(crate) fn released<L: SessionLedger>(
+    ledger: &L,
+    execution: &ExecutionId,
+) -> Result<(), L::Error> {
+    for record in ledger
+        .session_stop_records(Some(execution))?
+        .into_iter()
+        .filter(|r| r.state == SessionStopState::Confirmed && !r.resources_released)
+    {
+        ledger.change_session_stop(
+            &record.identity.attempt,
+            SessionStopChange::ResourcesReleased,
+        )?;
+    }
+    Ok(())
+}
+
+/// Generates an opaque original attempt identity; neither execution nor package paths are reused.
+pub(super) fn attempt_id() -> AttemptId {
+    AttemptId::generate()
+}

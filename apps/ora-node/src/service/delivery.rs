@@ -55,6 +55,8 @@ impl Delivery {
 fn event_key(message: &NodeToControllerMessage) -> Option<(&ExecutionId, Sequence)> {
     match message {
         NodeToControllerMessage::ThreadEvent(m) => Some((&m.execution_id, m.sequence)),
+        NodeToControllerMessage::SessionTurnFailed(m) => Some((&m.execution_id, m.sequence)),
+        NodeToControllerMessage::TurnCancelSettled(m) => Some((&m.execution_id, m.sequence)),
         NodeToControllerMessage::AgentSessionEnded(m) => Some((&m.execution_id, m.sequence)),
         NodeToControllerMessage::CloneResult(m) => Some((&m.execution_id, m.sequence)),
         NodeToControllerMessage::PluginsResult(m) => Some((&m.execution_id, m.sequence)),
@@ -71,6 +73,7 @@ fn event_key(message: &NodeToControllerMessage) -> Option<(&ExecutionId, Sequenc
         | NodeToControllerMessage::RuntimeControlState(_)
         | NodeToControllerMessage::SessionCommandAccepted(_)
         | NodeToControllerMessage::SessionCommandRejected(_)
+        | NodeToControllerMessage::SessionMcpReply(_)
         | NodeToControllerMessage::ScheduledArtifactGrantNeeded(_)
         | NodeToControllerMessage::UploadGrantNeeded(_) => None,
     }

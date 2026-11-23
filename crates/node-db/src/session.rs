@@ -1,14 +1,18 @@
 //! Durable session responsibility and a shareable actor-facing journal under the Node's lease.
+mod admission;
 mod commands;
 mod events;
 mod journal;
 mod model;
 mod restore;
+mod turn_cancel;
+pub use admission::{MAX_SESSIONS_PER_CHECKOUT, RefusedSession, SessionRefusal};
 pub use model::{
     CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,
     SessionExecution,
 };
 pub use restore::{RestoreAttempt, RestorePhase};
+pub(crate) use turn_cancel::{end_decided, settle_pending_as_ending};
 
 use crate::*;
 use ora_node_protocol::*;
@@ -104,19 +108,24 @@ impl<G: WriteGuard> NodeDatabase<G> {
         permit: Option<&RuntimeBinding>,
     ) -> Result<SessionExecution, Error> {
         command.validate()?;
+        // Runtime-only MCP scalars must never reach SQLite, including WAL pages. Durable input
+        // retains the selected identities for recovery; a repeated execution cannot replace its
+        // in-memory settings or restart a running session.
+        // Host MCP URLs and headers follow the same rule; a repeated start compares names only, so
+        // the values it carries are ignored rather than replacing the ones in use.
+        let (durable_command, host_mcp_server_names) = durable_input(command);
+        let command = &durable_command;
         if command.payload.spec.node_id != self.node_id {
             return Err(Error::NodeMismatch);
         }
         if let Some(record) = self.find_session(&command.operation_id, &command.execution_id)? {
-            return if record.command == *command {
+            return if record.command == *command
+                && record.host_mcp_server_names == host_mcp_server_names
+            {
                 Ok(record)
             } else {
                 Err(Error::IdentityConflict)
             };
-        }
-        let conflict: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM node_executions WHERE (state<>'completed' OR execution IN (SELECT execution FROM session_restores WHERE phase='legacy_unknown')) AND json_extract(input,'$.payload.spec.checkout_execution_id')=?1)", [command.payload.spec.checkout_execution_id.as_str()], |r| r.get(/*idx*/ 0))?;
-        if conflict {
-            return Err(Error::ResourceConflict);
         }
         if permit.is_some() && !self.unfinished_runtime_executions()?.is_empty() {
             return Err(Error::ResourceConflict);
@@ -125,11 +134,21 @@ impl<G: WriteGuard> NodeDatabase<G> {
         let tx = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        // The fences and the insert share one immediate transaction, so the checkout count the
+        // decision reads is exactly the one the accepted row will join; a second admission path
+        // can never admit against a count another writer already changed.
+        if let Some(refusal) = admission::checkout_refusal(&tx, command)? {
+            return Err(Error::SessionRefused(RefusedSession {
+                refusal,
+                command: Box::new(durable_command),
+                host_mcp_server_names,
+            }));
+        }
         tx.execute(
             "INSERT INTO execution_identities VALUES(?1,?2,'agent_session')",
             params![command.operation_id.as_str(), command.execution_id.as_str()],
         )?;
-        tx.execute("INSERT INTO node_executions(execution,kind,input,state) VALUES(?1,'agent_session',?2,'accepted')", params![command.execution_id.as_str(),serde_json::to_string(command)?])?;
+        tx.execute("INSERT INTO node_executions(execution,kind,input,state) VALUES(?1,'agent_session',?2,'accepted')", params![command.execution_id.as_str(),encode_input(command, &host_mcp_server_names)?])?;
         if command.payload.spec.prior_revision.is_some() {
             tx.execute(
                 "INSERT INTO session_restores(execution,phase) VALUES(?1,'pending')",
@@ -148,6 +167,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
         tx.commit()?;
         Ok(SessionExecution {
             command: command.clone(),
+            host_mcp_server_names,
             state: ExecutionState::Accepted,
             last_sequence: 0,
         })
@@ -162,7 +182,11 @@ impl<G: WriteGuard> NodeDatabase<G> {
         let record = self
             .find_session(&command.operation_id, &command.execution_id)?
             .ok_or(Error::IdentityConflict)?;
-        if record.command != *command || record.state != ExecutionState::Accepted {
+        let (durable, host_mcp_server_names) = durable_input(command);
+        if record.command != durable
+            || record.host_mcp_server_names != host_mcp_server_names
+            || record.state != ExecutionState::Accepted
+        {
             return Err(Error::InvalidTransition);
         }
         if !self
@@ -191,6 +215,14 @@ impl<G: WriteGuard> NodeDatabase<G> {
         self.connection.prepare("SELECT input,state,result,last_sequence FROM node_executions WHERE kind='agent_session' AND state<>'completed' ORDER BY rowid")?
             .query_map([], row)?.map(|r| decode(r?)).collect()
     }
+}
+
+/// Loads a session only while it still runs; ended sessions have no pending settlements.
+pub(crate) fn read_running(
+    connection: &rusqlite::Connection,
+    execution: &ExecutionId,
+) -> Result<Option<SessionExecution>, Error> {
+    Ok(read(connection, execution)?.filter(|session| session.state == ExecutionState::Running))
 }
 
 /// Loads a session while the caller owns the connection or transaction lock.
@@ -231,9 +263,56 @@ fn decode((input, state, result, last_sequence): SessionRow) -> Result<SessionEx
         )),
         _ => return Err(Error::InvalidSchema),
     };
+    let (command, host_mcp_server_names) = decode_input(&input)?;
     Ok(SessionExecution {
-        command: serde_json::from_str(&input)?,
+        command,
+        host_mcp_server_names,
         state,
         last_sequence: u64::try_from(last_sequence).map_err(|_| Error::InvalidSchema)?,
     })
+}
+
+/// Durable key holding host MCP server names beside the wire input. It is deliberately not a wire
+/// field, so a row without URLs or headers decodes, and a Controller can never send it.
+const HOST_MCP_SERVER_NAMES: &str = "host_mcp_server_names";
+
+/// Keeps one persistence projection for admission, duplicate comparison and start fencing: MCP
+/// settings and host MCP URLs and headers are separated before the first database write.
+fn durable_input(command: &StartAgentSessionMessage) -> (StartAgentSessionMessage, Vec<String>) {
+    let mut durable = command.clone();
+    for binding in &mut durable.payload.spec.mcp {
+        binding.settings.clear();
+    }
+    let names = std::mem::take(&mut durable.payload.spec.host_mcp_servers)
+        .into_iter()
+        .map(|server| server.name)
+        .collect();
+    (durable, names)
+}
+
+/// Writes the durable input; an empty name list is omitted so rows match those of older Nodes.
+pub(super) fn encode_input(
+    command: &StartAgentSessionMessage,
+    names: &[String],
+) -> Result<String, Error> {
+    if names.is_empty() {
+        return Ok(serde_json::to_string(command)?);
+    }
+    let mut value = serde_json::to_value(command)?;
+    value["payload"]["spec"][HOST_MCP_SERVER_NAMES] = serde_json::to_value(names)?;
+    Ok(serde_json::to_string(&value)?)
+}
+
+/// Splits the stored names off before decoding the wire input they were written beside.
+fn decode_input(input: &str) -> Result<(StartAgentSessionMessage, Vec<String>), Error> {
+    let mut value: serde_json::Value = serde_json::from_str(input)?;
+    let names = match value
+        .pointer_mut("/payload/spec")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|spec| spec.remove(HOST_MCP_SERVER_NAMES))
+    {
+        Some(names) => serde_json::from_value(names)?,
+        None => Vec::new(),
+    };
+    Ok((serde_json::from_value(value)?, names))
 }

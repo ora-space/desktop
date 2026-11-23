@@ -69,6 +69,8 @@ interface WorkspaceChatPaneProps {
   roles: Agent[];
   targetAgentCli: string | null;
   projectSelected: boolean;
+  /** Resolved folder path when the workspace checkout is gone; null when present or unknown. */
+  missingDirectory: string | null;
   agentEffectReadiness: AgentEffectReadiness;
   targetAgentReadiness: AgentReadiness;
   showContextBar: boolean;
@@ -101,6 +103,7 @@ export function WorkspaceChatPane({
   roles,
   targetAgentCli,
   projectSelected,
+  missingDirectory,
   agentEffectReadiness,
   targetAgentReadiness,
   showContextBar,
@@ -121,16 +124,20 @@ export function WorkspaceChatPane({
   // The send button alone carries this hint: the composer must stay typable
   // so the picker next to it can fix the state, and it only applies where the
   // whole-composer hint does not, so the two bubbles never compete.
+  // A missing folder outranks every agent-side reason: none of them can clear while the
+  // checkout is gone, and they would point the user at the agent instead of the folder.
   const sendDisabledHint =
-    canChat && agentEffectReadiness.kind === "failed"
-      ? t("chat.agentEffectsFailed", {
-          message: agentEffectReadiness.message,
-        })
-      : canChat && agentEffectReadiness.kind === "blocked"
-        ? t("chat.agentEffectsNotReady")
-        : canChat && targetAgentReadiness === "blocked"
-          ? t("chat.pickAvailableAgent")
-          : undefined;
+    canChat && missingDirectory !== null
+      ? t("chat.workspaceDirectoryMissing")
+      : canChat && agentEffectReadiness.kind === "failed"
+        ? t("chat.agentEffectsFailed", {
+            message: agentEffectReadiness.message,
+          })
+        : canChat && agentEffectReadiness.kind === "blocked"
+          ? t("chat.agentEffectsNotReady")
+          : canChat && targetAgentReadiness === "blocked"
+            ? t("chat.pickAvailableAgent")
+            : undefined;
   // A failed background session-create settles onto the draft conversation, so
   // the conversation error already covers the start-up failure path. A pending
   // send has no conversation to settle onto and carries its own.

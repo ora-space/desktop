@@ -1,6 +1,7 @@
 //! Production composition and durable admission of Agent sessions.
+pub(super) mod mcp;
 use super::{AgentConfig, ServiceConfig};
-use crate::managed::{AsNode, CloneHost};
+use crate::managed::{AsNode, DirectGit};
 use crate::revision::{DeliveryGit, RevisionRestorer};
 use crate::{
     AgentSessions, DirectoryPluginCatalog, ManagedNode, ProcessConfig, SessionConfig,
@@ -16,7 +17,7 @@ use std::path::Component;
 use std::time::Duration;
 
 /// Restores prior Revisions with delivery's Git and Node-identity Git Server access.
-pub(super) type Restorer = RevisionRestorer<CloneHost, AsNode<CloneHost>>;
+pub(super) type Restorer = RevisionRestorer<DirectGit, AsNode<DirectGit>>;
 
 pub(super) type SessionHost =
     AgentSessions<SessionJournal, SessionJournal, DirectoryPluginCatalog, Option<Restorer>>;
@@ -40,17 +41,17 @@ pub(super) fn restorer(
     ) else {
         return Ok(None);
     };
-    let host = || {
+    let git = || {
         node.git
             .runner()
-            .detached_clone_host()
+            .detached_git()
             .map_err(ora_node_db::Error::from)
     };
-    let mut runner = host()?;
-    // Every restore command records its original Run identity before the host sees it, whether it
+    let mut runner = git()?;
+    // Every restore command is recorded as an attempt before it is dispatched, whether it
     // runs as the workload user in the checkout or as the Node for Git Server access.
     runner.track_restore(stops.clone());
-    let mut node_runner = host()?;
+    let mut node_runner = git()?;
     node_runner.track_restore(stops.clone());
     Ok(Some(
         RevisionRestorer::new(
@@ -89,17 +90,34 @@ pub(super) async fn reconcile(
             continue;
         }
         let ended = journal
-            .deferred_restore_end(execution)?
+            .session_stop_end(execution)?
+            .or(journal.deferred_restore_end(execution)?)
             .unwrap_or(AgentSessionEnded {
                 node: node.identity().clone(),
                 reason: AgentSessionEndReason::Interrupted,
                 detail: None,
+                plugin_id: None,
+                setting_id: None,
+                transport: None,
                 scheduled_result: None,
                 artifact_manifest: None,
             });
         // A failed ledger read defers this record only; the next pass retries it.
         if let Err(error) = journal.defer_restore_end(execution, &ended) {
             ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore end could not be deferred");
+            continue;
+        }
+        // The full decision, its stop clock and the settlement of every pending cancel come first;
+        // only the terminal waits for stop evidence, which may never arrive (cancel-turn D3, D4).
+        // An earlier decision is kept unchanged.
+        let at_ms = crate::session::stop::now_ms();
+        if let Err(error) = journal.decide_session_end(
+            execution,
+            &ended,
+            at_ms,
+            at_ms.saturating_add(node.session_stop.confirmation_timeout_ms as i64),
+        ) {
+            ora_logging::ora_warn!(execution_id = %execution, error = %error, "session end decision could not be recorded");
             continue;
         }
         let confirmed = match stops.poll(execution, check).await {
@@ -112,6 +130,30 @@ pub(super) async fn reconcile(
         if !confirmed {
             continue;
         }
+        if !crate::session::stop::confirm(
+            journal,
+            node.home_directory(),
+            &node.session_stop,
+            execution,
+            false,
+        )
+        .await?
+        {
+            continue;
+        }
+        if let Some(host) = host {
+            host.release_stop_resources(execution)
+                .map_err(ora_node_db::Error::from)?;
+        } else if journal
+            .session_stop_records(Some(execution))?
+            .iter()
+            .any(|r| {
+                !r.resources_released && r.identity.packages.iter().any(|p| p.view_key.is_some())
+            })
+        {
+            continue;
+        }
+        crate::session::stop::released(journal, execution)?;
         if phase.is_some()
             && let Err(detail) = crate::session::seal_unstarted_history(
                 &node.home_directory().join("sessions"),
@@ -126,6 +168,9 @@ pub(super) async fn reconcile(
             continue;
         }
         cleanup_restore(node, journal, &record)?;
+    }
+    if let Some(host) = host {
+        host.refresh_probe_capacity();
     }
     Ok(())
 }
@@ -182,6 +227,8 @@ fn cleanup_restore(
 /// (root in a sandbox) and writable by nobody else, because the Node creates, links and removes
 /// trees inside it with that authority. It must also not overlap any state or checkout root, so
 /// purging it can never reach them. The `ora-git` directory is checked by [`validate_ora_git`].
+/// A valid configuration whose workload environments the stop mark scan cannot read is warned
+/// about, not refused.
 pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
     if !agent.deno_path.is_absolute() || agent.ready_timeout_ms == 0 {
         return Err(io::Error::other(
@@ -189,7 +236,11 @@ pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Resul
         ));
     }
     validate_workload(agent, config)?;
-    validate_ora_git(agent, config)
+    validate_ora_git(agent, config)?;
+    // Not a refusal: a Node that cannot read the workload's environments only confirms fewer
+    // stops, so the deployment prerequisite of the mark scan is a warning.
+    crate::session::stop::marks::warn_unless_readable(config.process.workload_uid);
+    Ok(())
 }
 
 fn validate_workload(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
@@ -222,7 +273,7 @@ fn validate_workload(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<
     }
     if overlaps(directory, config, &[]) {
         return Err(io::Error::other(
-            "agent workload directory overlaps Node state, host state or the clone root",
+            "agent workload directory overlaps Node state, the retired host directory or the clone root",
         ));
     }
     Ok(())
@@ -231,7 +282,7 @@ fn validate_workload(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<
 /// Checks the `ora-git` socket directory, which the Node creates when missing and clears of its
 /// own sockets when it starts: the same absolute path rules as the workload directory, owned by
 /// the Node identity with no one else allowed to list or change it (so `/run` or `/tmp` are
-/// refused), under a parent only trusted owners control, and overlapping no Node, host, clone or
+/// refused), under a parent only trusted owners control, and overlapping no Node, retired host, clone or
 /// workload directory.
 fn validate_ora_git(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
     let Some(directory) = agent.ora_git_directory.as_deref() else {
@@ -271,7 +322,9 @@ fn validate_ora_git(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<(
     }
     let workload = agent.workload_directory.as_deref();
     if overlaps(directory, config, &[workload]) {
-        return refuse("overlaps Node state, host state, the clone root or the workload directory");
+        return refuse(
+            "overlaps Node state, the retired host directory, the clone root or the workload directory",
+        );
     }
     Ok(())
 }
@@ -285,7 +338,7 @@ fn overlaps(
     let directory = canonicalize_longest_existing_prefix(directory);
     let protected = [
         Some(config.node.home_directory.as_path()),
-        Some(config.process.host_directory.as_path()),
+        config.process.host_directory.as_deref(),
         config
             .clone
             .as_ref()
@@ -305,17 +358,19 @@ fn overlaps(
 pub(super) fn workload(
     agent: Option<&AgentConfig>,
     process: &ProcessConfig,
+    hand_over: &crate::CheckoutHandOver,
 ) -> io::Result<SessionWorkload> {
     let directory = agent.and_then(|agent| agent.workload_directory.as_deref());
     match (directory, process.workload_uid) {
         (Some(directory), Some(uid)) => Ok(SessionWorkload::Separate {
             directory: directory.to_path_buf(),
-            // The group equals the user, as for the clone workload's `setpriv --regid`.
+            // The group equals the user, as for the clone workload's Git.
             identity: ProcessIdentity::Linux(ora_utils::process::LinuxChildIdentity::new(
                 uid, uid,
             )?),
             uid,
             gid: uid,
+            hand_over: hand_over.clone(),
         }),
         (None, _) | (_, None) => Ok(SessionWorkload::Shared),
     }
@@ -344,6 +399,10 @@ pub(super) fn open(
         stops,
     } = recovery;
     let journal = node.database.session_journal()?;
+    if let SessionWorkload::Separate { directory, .. } = &workload {
+        crate::session::validate_workload_storage(node.home_directory(), directory)
+            .map_err(|error| crate::Error::Configuration(error.to_string()))?;
+    }
     let ora_git = config
         .and_then(|config| config.ora_git_directory.as_deref())
         .map(|directory| ora_git(node, directory, journal.clone(), shutdown.clone()))
@@ -356,12 +415,14 @@ pub(super) fn open(
                 .map_err(|_| crate::Error::Configuration("invalid Agent timezone".into()))?;
             Ok::<_, crate::Error>(AgentSessions::new(
                 SessionConfig {
+                    stop: node.session_stop.clone(),
                     home_directory: node.home_directory().to_path_buf(),
                     deno_path: config.deno_path.clone(),
                     timezone,
                     agent_ready_timeout: Duration::from_millis(config.ready_timeout_ms),
                     model_proxy: config.model_proxy.clone(),
                     workload: workload.clone(),
+                    turn_cancel: crate::session::TurnCancelConfig::default(),
                 },
                 node.identity().clone(),
                 journal.clone(),
@@ -407,10 +468,10 @@ fn ora_git(
     ) else {
         return Ok(None);
     };
-    let host = || {
+    let git = || {
         node.git
             .runner()
-            .detached_clone_host()
+            .detached_git()
             .map_err(ora_node_db::Error::from)
     };
     let owner = node.git.runner().process_config().workload_uid;
@@ -420,8 +481,8 @@ fn ora_git(
         let service = crate::ora_git::OraGitService::new(crate::ora_git::OraGitParts {
             directory: directory.to_path_buf(),
             peer_uid,
-            workload: DeliveryGit::new(host()?, policy),
-            node: AsNode(host()?),
+            workload: DeliveryGit::new(git()?, policy),
+            node: AsNode(git()?),
             access,
             repository_root: config.repository_root.clone(),
             owner: Some(peer_uid),
@@ -463,9 +524,22 @@ pub(super) fn start(
             if permit.node_incarnation_id != node.identity().incarnation_id.as_str() {
                 return Err(ora_node_db::Error::NodeMismatch.into());
             }
-            node.database.accept_controlled_session(input, permit)?
+            node.database.accept_controlled_session(input, permit)
         }
-        None => node.database.accept_session(input)?,
+        None => node.database.accept_session(input),
+    };
+    let record = match record {
+        // Refusal is bare-only: a controlled start never reaches it, because the runtime
+        // singleton refuses any unfinished execution first with `ResourceConflict`. The
+        // refused execution records no history and never becomes deliverable, so there is
+        // no transcript to seal.
+        // The refusal carries admission's MCP-free projection of `input`, which is the only
+        // input a refused execution may persist.
+        Err(ora_node_db::Error::SessionRefused(refused)) => {
+            let identity = node.identity().clone();
+            node.database.refuse_session(&refused, &identity)?
+        }
+        result => result?,
     };
     // An earlier write failure may leave Accepted in this incarnation. It has never
     // started an actor and may retry its guarded transition; Running is never restarted.
@@ -506,6 +580,7 @@ pub(super) fn start(
 /// Admission does not wake the actor: the transport does that after sending the accepted reply.
 pub(super) fn command(
     node: &mut ManagedNode,
+    host: &SessionHost,
     controller: &ControllerId,
     input: SessionCommandInput,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
@@ -521,7 +596,12 @@ pub(super) fn command(
         node.database
             .authorize_session_command(input.execution_id(), &node.identity().incarnation_id)?;
     }
-    let result = node.database.accept_session_command(&input)?;
+    let desired = host
+        .mcp_control(input.execution_id())
+        .map(|control| control.snapshot(true).desired.generation);
+    let result = node
+        .database
+        .accept_session_command_at_generation(&input, desired)?;
     let operation_id = input.operation_id().clone();
     let execution_id = input.execution_id().clone();
     let command_id = input.command_id().clone();
@@ -542,6 +622,28 @@ pub(super) fn command(
                 payload: SessionCommandRejected {
                     command_id,
                     reason: SessionCommandRejection::SessionEnded,
+                },
+            })
+        }
+        CommandAdmission::McpUpdateRequired => {
+            NodeToControllerMessage::SessionCommandRejected(SessionCommandRejectedMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                operation_id,
+                execution_id,
+                payload: SessionCommandRejected {
+                    command_id,
+                    reason: SessionCommandRejection::McpUpdateRequired,
+                },
+            })
+        }
+        CommandAdmission::TurnCancelUnsupported => {
+            NodeToControllerMessage::SessionCommandRejected(SessionCommandRejectedMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                operation_id,
+                execution_id,
+                payload: SessionCommandRejected {
+                    command_id,
+                    reason: SessionCommandRejection::TurnCancelUnsupported,
                 },
             })
         }

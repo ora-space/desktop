@@ -23,6 +23,7 @@ import { currentModel } from "./model-option.ts";
 import { observeDiagnostics, type RunDiagnostics } from "./diagnostics.ts";
 import {
   childSessionSource,
+  extractToolMetadata,
   mergeToolMetadata,
   metadataKey,
   withItemMetadata,
@@ -150,6 +151,13 @@ export interface ChatState {
 export interface ChatStoreOptions {
   createId?: () => string;
   now?: () => number;
+  /**
+   * Turns a failed request into the sentence shown in the conversation.
+   *
+   * The store is locale-agnostic, so the host supplies the translation of contract errors;
+   * without one the store falls back to the raw `Error.message`.
+   */
+  describeError?: (error: unknown) => string;
 }
 
 export type ChatStore = StoreApi<ChatState>;
@@ -198,6 +206,7 @@ export function createChatStore(
 ): ChatStore {
   const createId = options.createId ?? (() => crypto.randomUUID());
   const now = options.now ?? Date.now;
+  const describeError = options.describeError ?? errorMessage;
   const operations = new Map<string, AbortController>();
 
   const store = createStore<ChatState>((set, get) => ({
@@ -265,7 +274,7 @@ export function createChatStore(
         // every other session action that could not reach the agent.
         updateConversation(set, oraSessionId, (conversation) => ({
           ...conversation,
-          error: errorMessage(error),
+          error: describeError(error),
         }));
         throw error;
       }
@@ -385,7 +394,7 @@ export function createChatStore(
           ...previous,
           usage: reloadedUsage,
           ...(previous.diagnostics ? { diagnostics: undefined } : {}),
-          error: isAbortError(error) ? previous.error : errorMessage(error),
+          error: isAbortError(error) ? previous.error : describeError(error),
         }));
         if (!isAbortError(error)) throw error;
       } finally {
@@ -579,7 +588,7 @@ export function createChatStore(
           prepared = await prepare();
         } catch (error) {
           // Preparation failed before the prompt phase began, so there is no response duration.
-          const message = errorMessage(error);
+          const message = describeError(error);
           updateTurn(set, key, turnId, (current) => ({
             ...current,
             status: "failed",
@@ -809,7 +818,7 @@ export function createChatStore(
           );
           clearPendingPermissions(set, key);
         } else {
-          const message = errorMessage(error);
+          const message = describeError(error);
           // A timeout after the backend already re-sent the prompt means every
           // retry stalled too; the turn keeps that so the UI can say the agent
           // never came back rather than showing a generic failure.
@@ -912,7 +921,7 @@ export function createChatStore(
       } catch (error) {
         updateConversation(set, oraSessionId, (conversation) => ({
           ...conversation,
-          error: errorMessage(error),
+          error: describeError(error),
         }));
         throw error;
       }
@@ -986,6 +995,7 @@ class HistoryBuilder {
         this.createId,
         this.timestamp(recordedAt),
         toolTiming,
+        true,
       ),
     );
   }
@@ -1174,6 +1184,7 @@ function applyAgentUpdate(
   createId: () => string,
   timestamp: number,
   toolTiming?: import("@ora/contracts").ToolCallTiming,
+  trustTurnEndSettled = false,
 ): ChatTurn {
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
@@ -1183,9 +1194,21 @@ function applyAgentUpdate(
     case "plan":
       return replacePlan(turn, update.entries, timestamp, update._meta);
     case "tool_call":
-      return upsertToolCall(turn, update, timestamp, toolTiming);
+      return upsertToolCall(
+        turn,
+        update,
+        timestamp,
+        toolTiming,
+        trustTurnEndSettled,
+      );
     case "tool_call_update":
-      return updateToolCall(turn, update, timestamp, toolTiming);
+      return updateToolCall(
+        turn,
+        update,
+        timestamp,
+        toolTiming,
+        trustTurnEndSettled,
+      );
     default:
       return turn;
   }
@@ -1376,23 +1399,23 @@ function applyConversationUpdate(
   }
 }
 
-/** Replaces the current turn's complete plan snapshot without changing its timeline position. */
+/** Replaces the current turn's complete plan snapshot per source without changing its timeline position. */
 function replacePlan(
   turn: ChatTurn,
   entries: acp.PlanEntry[],
   timestamp: number,
   metadata?: unknown,
 ): ChatTurn {
-  const parent = metadataKey(metadata);
+  const sourceId = childSessionSource(metadata)?.id;
   const planIndex = turn.items.findIndex(
     (item) =>
       item.kind === "plan" &&
-      metadataKey(item.metadata, item.contentContext) === parent,
+      childSessionSource(item.metadata)?.id === sourceId,
   );
   if (planIndex === -1) {
     const plan: ChatPlan = {
       kind: "plan",
-      id: `plan-${turn.id}${parent === undefined ? "" : `:source:${turn.items.length}`}`,
+      id: `plan-${turn.id}${sourceId === undefined ? "" : `:source:${turn.items.length}`}`,
       entries,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -1418,9 +1441,14 @@ function upsertToolCall(
   toolCall: acp.ToolCall,
   timestamp: number,
   timing?: import("@ora/contracts").ToolCallTiming,
+  trustTurnEndSettled = false,
 ): ChatTurn {
   const toolIndex = turn.items.findIndex(
     (item) => item.kind === "toolCall" && item.id === toolCall.toolCallId,
+  );
+  const { metadata, settledByTurnEnd } = extractToolMetadata(
+    toolCall._meta,
+    trustTurnEndSettled,
   );
   const next = withToolMetadata(
     {
@@ -1429,6 +1457,7 @@ function upsertToolCall(
       title: toolCall.title,
       ...(toolCall.kind === undefined ? {} : { toolKind: toolCall.kind }),
       ...(toolCall.status === undefined ? {} : { status: toolCall.status }),
+      ...(settledByTurnEnd ? { settledByTurnEnd: true } : {}),
       content: toolCall.content ?? [],
       locations: toolCall.locations ?? [],
       ...(toolCall.rawInput === undefined
@@ -1444,7 +1473,7 @@ function upsertToolCall(
       updatedAt: timestamp,
       ...toolTimingFields(timing),
     },
-    toolCall._meta,
+    metadata,
   );
   if (toolIndex === -1) return { ...turn, items: [...turn.items, next] };
 
@@ -1459,9 +1488,14 @@ function updateToolCall(
   update: acp.ToolCallUpdate,
   timestamp: number,
   timing?: import("@ora/contracts").ToolCallTiming,
+  trustTurnEndSettled = false,
 ): ChatTurn {
   const toolIndex = turn.items.findIndex(
     (item) => item.kind === "toolCall" && item.id === update.toolCallId,
+  );
+  const { metadata: incomingMeta, settledByTurnEnd } = extractToolMetadata(
+    update._meta,
+    trustTurnEndSettled,
   );
   if (toolIndex === -1) {
     const tool = withToolMetadata(
@@ -1475,6 +1509,7 @@ function updateToolCall(
         ...(update.status === undefined || update.status === null
           ? {}
           : { status: update.status }),
+        ...(settledByTurnEnd ? { settledByTurnEnd: true } : {}),
         content: update.content ?? [],
         locations: update.locations ?? [],
         ...(update.rawInput === undefined ? {} : { rawInput: update.rawInput }),
@@ -1485,13 +1520,19 @@ function updateToolCall(
         updatedAt: timestamp,
         ...toolTimingFields(timing),
       },
-      mergeToolMetadata(undefined, update._meta),
+      mergeToolMetadata(undefined, incomingMeta),
     );
     return { ...turn, items: [...turn.items, tool] };
   }
 
   const items = [...turn.items];
-  const current = items[toolIndex] as ChatToolCall;
+  const { settledByTurnEnd: previousSettledByTurnEnd, ...current } = items[
+    toolIndex
+  ] as ChatToolCall;
+  const keepSettledByTurnEnd =
+    settledByTurnEnd ||
+    (previousSettledByTurnEnd === true &&
+      (update.status === undefined || update.status === null));
   items[toolIndex] = withToolMetadata(
     {
       ...current,
@@ -1504,6 +1545,7 @@ function updateToolCall(
       ...(update.status === undefined
         ? {}
         : { status: update.status ?? undefined }),
+      ...(keepSettledByTurnEnd ? { settledByTurnEnd: true } : {}),
       ...(update.content === undefined
         ? {}
         : { content: update.content ?? [] }),
@@ -1517,7 +1559,7 @@ function updateToolCall(
       updatedAt: timestamp,
       ...toolTimingFields(timing),
     },
-    mergeToolMetadata(current.metadata, update._meta),
+    mergeToolMetadata(current.metadata, incomingMeta),
   );
   return { ...turn, items };
 }
@@ -1537,22 +1579,25 @@ function settleActiveToolCalls(
 ): ChatTurn {
   return {
     ...turn,
-    items: turn.items.map((item) =>
-      item.kind === "toolCall" &&
-      (item.status === "pending" || item.status === "in_progress")
-        ? {
-            ...item,
-            status:
-              childSessionSource(item.metadata) !== undefined
-                ? "unknown"
-                : status,
-            updatedAt: timestamp,
-            ...(item.startedAt === undefined
-              ? {}
-              : { durationMs: elapsedDuration(item.startedAt, timestamp) }),
-          }
-        : item,
-    ),
+    items: turn.items.map((item) => {
+      if (
+        item.kind !== "toolCall" ||
+        (item.status !== "pending" && item.status !== "in_progress")
+      ) {
+        return item;
+      }
+      const nextStatus =
+        childSessionSource(item.metadata) !== undefined ? "unknown" : status;
+      return {
+        ...item,
+        status: nextStatus,
+        ...(nextStatus === "completed" ? { settledByTurnEnd: true } : {}),
+        updatedAt: timestamp,
+        ...(item.startedAt === undefined
+          ? {}
+          : { durationMs: elapsedDuration(item.startedAt, timestamp) }),
+      };
+    }),
   };
 }
 

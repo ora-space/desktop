@@ -2,8 +2,8 @@
 
 English | [中文](README.zh.md)
 
-These documents describe Ora Desktop and the Cloud runtime executables (Controller, Node, process host)
-across module boundaries. Implementation details inside a crate or package live in that directory's
+These documents describe Ora Desktop and the Cloud runtime executables (Controller, Node) across
+module boundaries. Implementation details inside a crate or package live in that directory's
 `README.md`; the authoritative source for decisions is the ADRs in
 [ora-space/specs](https://github.com/ora-space/specs/tree/main/decisions).
 
@@ -86,14 +86,6 @@ across module boundaries. Implementation details inside a crate or package live 
 - [Revisions](node/revisions.md): delivery over Git, the history upload and restoring a prior Revision
 - [ora-git](node/ora-git.md): the Agent's Git command, per-session sockets, verbs, pushes and exit codes
 - [Node plugins](node/plugins.md)
-
-**Process runtime**
-
-- [Process runtime](process/process-runtime.md): host, guardians, the lifecycle kernel and its guarantees
-- [Process host](process/host.md)
-- [Guardian](process/guardian.md)
-- [Linux rootless adapter](process/linux-rootless.md)
-- [Linux helper](process/linux-helper.md)
 
 **Operations**
 

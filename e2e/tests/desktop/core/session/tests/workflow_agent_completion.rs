@@ -716,3 +716,133 @@ fn a_restarted_backend_restores_the_completion_tool() -> TestResult {
         Ok(())
     })
 }
+
+/// Old text and an accepted MCP signal cannot let an empty resend dispatch a dependent node.
+/// A new human turn can still recover the same step and its prior failure remains visible.
+#[test]
+fn empty_inactivity_retry_blocks_successors_until_a_valid_turn() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        for policy in ["end_turn", "agent"] {
+            let setup = DesktopTestSetup::new()?;
+            let package = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+            let backend = super::abnormal_support::open_abnormal_backend(&setup)?;
+            let workspace = seeded_workspace(&setup, &backend)?;
+            let run = start_run(&backend, &workspace, SKIP_COMPLETION, policy, true)?;
+            let first = wait_for_node(&backend, &run, "agent", |node| {
+                node.status == WorkflowNodeStatus::Pending && node.session_id.is_some()
+            })
+            .await?;
+            let session = first.session_id.ok_or("missing agent session")?;
+            let prompt = if policy == "end_turn" {
+                "[fake-empty-retry] [late-child-tool]"
+            } else {
+                "[fake-empty-retry]"
+            };
+            say(&backend, &session, prompt).await?;
+            let parked = wait_for_node(&backend, &run, "agent", |node| {
+                payload(node)["completion"]["turnOrigin"] == "human"
+            })
+            .await?;
+            let facts = payload(&parked);
+            assert_eq!(facts["completion"]["parkKind"], json!("abnormal"));
+            assert_eq!(blocker_kinds(&facts), vec!["output_missing"]);
+            assert_eq!(
+                facts["completion"]["warnings"],
+                json!(["retry_without_result"])
+            );
+            assert!(facts.get("agentSignal").is_none());
+            if policy == "agent" {
+                assert_eq!(
+                    completion_calls(&package)?.len(),
+                    1,
+                    "the abandoned attempt signaled"
+                );
+            }
+            for _ in 0..2 {
+                let failure = complete(&backend, &run, None, false, None)
+                    .await
+                    .err()
+                    .ok_or("an empty retry cannot complete the node")?;
+                assert!(matches!(
+                    failure.public_error(),
+                    PublicError::WorkflowNodeIncomplete(_)
+                ));
+            }
+            let detail = backend.workflow_runs().get(GetWorkflowRunRequest {
+                run_id: run.clone(),
+            })?;
+            assert_eq!(detail.run.status, WorkflowRunStatus::AwaitingInput);
+            assert!(
+                detail
+                    .nodes
+                    .iter()
+                    .all(|node| node.node_id != "output" || node.started_at.is_none())
+            );
+            say(&backend, &session, "deliver a valid result").await?;
+            if policy == "end_turn" {
+                wait_for_node(&backend, &run, "agent", |node| {
+                    node.status == WorkflowNodeStatus::Pending
+                        && payload(node)["completion"]["turnKey"] != facts["completion"]["turnKey"]
+                })
+                .await?;
+                complete(&backend, &run, None, false, None).await?;
+            }
+            let final_run = wait_for_run_end(&backend, &run).await?;
+            assert_eq!(final_run.run.status, WorkflowRunStatus::Succeeded);
+            let finished = final_run
+                .nodes
+                .iter()
+                .find(|node| node.node_id == "agent")
+                .ok_or("completed run is missing the agent node")?;
+            assert_eq!(payload(finished)["promptFailures"], facts["promptFailures"]);
+            assert!(facts["promptFailures"].is_object());
+        }
+        Ok(())
+    })
+}
+
+/// Explicit force can advance the failed step, but cannot adopt the abandoned send's text.
+#[test]
+fn forcing_an_empty_retry_records_the_reason_and_discards_abandoned_text() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let backend = super::abnormal_support::open_abnormal_backend(&setup)?;
+        let workspace = seeded_workspace(&setup, &backend)?;
+        let run = start_run(
+            &backend,
+            &workspace,
+            "[fake-empty-retry]",
+            "end_turn",
+            false,
+        )?;
+        wait_for_node(&backend, &run, "agent", |node| {
+            payload(node)["completion"]["parkKind"] == "abnormal"
+        })
+        .await?;
+        drop(backend);
+        let backend = open_ready_backend(&setup)?;
+        let restored = wait_for_node(&backend, &run, "agent", |node| {
+            node.status == WorkflowNodeStatus::Pending
+        })
+        .await?;
+        assert_eq!(
+            payload(&restored)["completion"]["parkKind"],
+            json!("abnormal")
+        );
+        assert_eq!(blocker_kinds(&payload(&restored)), vec!["output_missing"]);
+        complete(&backend, &run, None, true, None).await?;
+        let finished = wait_for_run_end(&backend, &run).await?;
+        let node = finished
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .ok_or("completed run is missing the agent node")?;
+        assert_eq!(node.output, None);
+        assert_eq!(
+            payload(node)["completion_forced"]["retry_reason"],
+            json!("retry_without_result")
+        );
+        Ok(())
+    })
+}

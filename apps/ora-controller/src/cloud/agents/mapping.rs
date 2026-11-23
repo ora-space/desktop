@@ -30,6 +30,11 @@ pub(in crate::cloud) fn start(
         execution_id: ExecutionId::new(record.execution_id.clone()),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
+                mcp_lifecycle: false,
+                keep_session_on_cancel: false,
+                keep_session_on_failure: false,
+                mcp: Vec::new(),
                 node_id: node.clone(),
                 agent_plugin_id: PluginId::new(spec.agent_plugin_id.clone()),
                 agent_plugin_version: PluginVersion::new(spec.agent_plugin_version.clone()),
@@ -175,6 +180,7 @@ pub(super) fn command(
                 operation_id: start.operation_id,
                 execution_id: start.execution_id,
                 payload: SubmitUserTurn {
+                    mcp_generation: None,
                     node_id: node.clone(),
                     command_id: CommandId::new(input.command_id.clone()),
                     turn: turn(submit.turn.as_ref().ok_or(Error::Conflict)?)?,
@@ -429,6 +435,11 @@ mod tests {
                 execution_id: ExecutionId::new("session"),
                 payload: StartAgentSession {
                     spec: AgentSessionSpec {
+                        host_mcp_servers: Vec::new(),
+                        mcp_lifecycle: false,
+                        keep_session_on_cancel: false,
+                        keep_session_on_failure: false,
+                        mcp: Vec::new(),
                         node_id: NodeId::new("node"),
                         agent_plugin_id: PluginId::new("official/ora-space.echo"),
                         agent_plugin_version: PluginVersion::new("1.2.3"),
@@ -567,6 +578,9 @@ mod tests {
             },
             reason: AgentSessionEndReason::IdleTimeout,
             detail: None,
+            plugin_id: None,
+            setting_id: None,
+            transport: None,
             scheduled_result: Some(ScheduledRunResult {
                 verdict: ScheduledVerdict::RangeUnresolved,
                 verdict_detail: Some("no comparison base".to_owned()),

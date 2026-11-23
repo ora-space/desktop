@@ -1,4 +1,10 @@
 mod agent_session;
+mod session_mcp_lifecycle;
+pub use session_mcp_lifecycle::{
+    GetSessionMcpState, GetSessionMcpStateMessage, ProbeSessionMcp, ProbeSessionMcpMessage,
+    SessionMcpMessage, SessionMcpReply, SessionMcpReplyMessage, SessionMcpResult, UpdateSessionMcp,
+    UpdateSessionMcpMessage,
+};
 mod execution;
 mod plugin;
 mod repository;
@@ -7,15 +13,20 @@ mod runtime_control;
 mod scheduled_artifacts;
 mod session;
 mod thread_preview;
+mod turn_cancel;
 mod validation;
 mod worktree;
 pub use thread_preview::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
+pub use turn_cancel::{
+    CancelTurn, CancelTurnMessage, TurnCancelOutcome, TurnCancelSettled, TurnCancelSettledMessage,
+};
 
 pub use agent_session::{
     AgentSessionEndedMessage, EndSession, EndSessionMessage, EndSessionReason,
     SessionCommandAccepted, SessionCommandAcceptedMessage, SessionCommandRejected,
-    SessionCommandRejectedMessage, SessionCommandRejection, StartAgentSession,
-    StartAgentSessionMessage, SubmitUserTurn, SubmitUserTurnMessage, ThreadEventMessage,
+    SessionCommandRejectedMessage, SessionCommandRejection, SessionTurnFailed,
+    SessionTurnFailedMessage, SessionTurnFailureCode, StartAgentSession, StartAgentSessionMessage,
+    SubmitUserTurn, SubmitUserTurnMessage, ThreadEventMessage,
 };
 
 pub use execution::{
@@ -76,7 +87,11 @@ pub enum ControllerToNodeMessage {
     RemovePlugins(RemovePluginsMessage),
     StartAgentSession(StartAgentSessionMessage),
     SubmitUserTurn(SubmitUserTurnMessage),
+    UpdateSessionMcp(UpdateSessionMcpMessage),
+    GetSessionMcpState(GetSessionMcpStateMessage),
+    ProbeSessionMcp(ProbeSessionMcpMessage),
     EndSession(EndSessionMessage),
+    CancelTurn(CancelTurnMessage),
     DeliverRevision(DeliverRevisionMessage),
     DeliverScheduledArtifacts(DeliverScheduledArtifactsMessage),
     /// Memory-only: never persisted, logged, or acknowledged.
@@ -108,7 +123,11 @@ impl ValidateMessage for ControllerToNodeMessage {
             Self::RemovePlugins(message) => message.validate(),
             Self::StartAgentSession(message) => message.validate(),
             Self::SubmitUserTurn(message) => message.validate(),
+            Self::UpdateSessionMcp(message) => message.validate(),
+            Self::GetSessionMcpState(message) => message.validate(),
+            Self::ProbeSessionMcp(message) => message.validate(),
             Self::EndSession(message) => message.validate(),
+            Self::CancelTurn(message) => message.validate(),
             Self::DeliverRevision(message) => message.validate(),
             Self::DeliverScheduledArtifacts(message) => message.validate(),
             Self::ScheduledArtifactGrants(message) => message.validate(),
@@ -138,6 +157,9 @@ pub enum NodeToControllerMessage {
     AgentSessionEnded(AgentSessionEndedMessage),
     SessionCommandAccepted(SessionCommandAcceptedMessage),
     SessionCommandRejected(SessionCommandRejectedMessage),
+    SessionMcpReply(SessionMcpReplyMessage),
+    SessionTurnFailed(SessionTurnFailedMessage),
+    TurnCancelSettled(TurnCancelSettledMessage),
     RevisionResult(RevisionResultMessage),
     ScheduledArtifactsResult(ScheduledArtifactsResultMessage),
     ScheduledArtifactGrantNeeded(ScheduledArtifactGrantNeededMessage),
@@ -163,6 +185,9 @@ impl ValidateMessage for NodeToControllerMessage {
             Self::AgentSessionEnded(message) => message.validate(),
             Self::SessionCommandAccepted(message) => message.validate(),
             Self::SessionCommandRejected(message) => message.validate(),
+            Self::SessionMcpReply(message) => message.validate(),
+            Self::SessionTurnFailed(message) => message.validate(),
+            Self::TurnCancelSettled(message) => message.validate(),
             Self::RevisionResult(message) => message.validate(),
             Self::ScheduledArtifactsResult(message) => message.validate(),
             Self::ScheduledArtifactGrantNeeded(message) => message.validate(),

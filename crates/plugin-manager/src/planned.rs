@@ -125,6 +125,10 @@ impl<D: HttpDownload> Installer<D> {
 }
 
 impl PreparedPlugin {
+    /// Reports the validated staged package kind before publication consumes the staging owner.
+    pub fn is_mcp(&self) -> Result<bool, InstallError> {
+        is_mcp_package(&self.staging.path().join("package"))
+    }
     /// Publishes only verified bytes. The caller excludes session leases while replacing or
     /// removing packages. A corrupt same-version tree is retained in staging until commit succeeds.
     pub fn commit(self, data_dir: &Path) -> Result<PathBuf, InstallError> {
@@ -156,6 +160,14 @@ impl PreparedPlugin {
         }
         Ok(destination)
     }
+}
+
+/// Reads the installed manifest without widening a caller's exact-version lookup.
+pub fn is_mcp_package(path: &Path) -> Result<bool, InstallError> {
+    Ok(matches!(
+        crate::install::package::read_installed_manifest(path)?.kind(),
+        PluginKind::Mcp
+    ))
 }
 
 /// Attaches the failing path without introducing Node error vocabulary into the installer.
@@ -229,9 +241,9 @@ mod tests {
 
     /// Returns the temporary root with every symlink resolved, in plain form.
     ///
-    /// macOS hands out temporary directories under `/var/folders`, where `/var` is itself a
-    /// symlink, and the staging and commit paths deliberately reject a link anywhere in the
-    /// chain — so the tests anchor on the resolved path. Windows `canonicalize` answers with a
+    /// The system temporary root may itself be reached through a symlink, and the staging and
+    /// commit paths deliberately reject a link anywhere in the chain — so the tests anchor on the
+    /// resolved path. Windows `canonicalize` answers with a
     /// `\\?\`-prefixed verbatim path the same checks reject, so the prefix is stripped after
     /// resolution: the path is link-free either way and reads the same on every platform.
     fn symlink_free_root(temp_dir: &TempDir) -> std::path::PathBuf {

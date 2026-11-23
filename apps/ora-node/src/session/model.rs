@@ -14,14 +14,21 @@ use tokio::sync::{Notify, watch};
 pub(super) const END_RECONCILE_WAIT: Duration = Duration::from_secs(/*secs*/ 30);
 
 /// Waits only for the already-durable end command; unrelated revocations never enter this path.
+///
+/// `cancels` runs on every wake: it settles what can be settled without an end decision and
+/// returns the latest moment by which pending cancels need one. The wait ends no later than
+/// that, so a cancel accepted meanwhile is settled within its own deadline (cancel-turn D1, D4),
+/// with the reason known by then; an `EndSession` reason that arrives later cannot replace the
+/// first decision (D3).
 pub(super) async fn reconcile<L: SessionLedger>(
     ledger: &L,
     execution: &ExecutionId,
     wake: &Notify,
     mut stopping: watch::Receiver<bool>,
     wait: Duration,
+    cancels: &mut (dyn FnMut() -> Result<Option<tokio::time::Instant>, &'static str> + Send),
 ) -> Result<EndSessionReason, &'static str> {
-    let deadline = tokio::time::Instant::now() + wait;
+    let wait_until = tokio::time::Instant::now() + wait;
     loop {
         // Register before reading: command receipt between the read and await cannot lose a wake.
         let notified = wake.notified();
@@ -46,6 +53,7 @@ pub(super) async fn reconcile<L: SessionLedger>(
             Ok(Plan::Turn { .. } | Plan::Wait) => {}
             Err(_) => return Err("ledger_unavailable"),
         }
+        let deadline = cancels()?.map_or(wait_until, |bound| bound.min(wait_until));
         // The last read also catches a persisted command whose acknowledgement lost its wake.
         if tokio::time::Instant::now() >= deadline {
             return Err("model_access_revoked");

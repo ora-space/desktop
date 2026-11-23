@@ -46,7 +46,7 @@ type RestoreGit<R, N> = (DeliveryGit<R>, N);
 /// The production restore: Git Server access through `N` as the Node, checkout Git through `R`
 /// with delivery's policy as the workload user.
 pub(crate) struct RevisionRestorer<R: Send + 'static, N: Send + 'static> {
-    /// One restore's Git at a time: a host-backed runner drives its own runtime, which concurrent
+    /// One restore's Git at a time: the production runner drives its own runtime, which concurrent
     /// blocking threads must not share.
     /// Taken out only when the restorer is dropped.
     git: Arc<Mutex<Option<RestoreGit<R, N>>>>,
@@ -99,7 +99,7 @@ impl<R: Send + 'static, N: Send + 'static> RevisionRestorer<R, N> {
 }
 
 impl<R: Send + 'static, N: Send + 'static> Drop for RevisionRestorer<R, N> {
-    /// Host-backed runners own synchronous runtimes, and the last session handle may be released
+    /// The production runners own synchronous runtimes, and the last session handle may be released
     /// on an async worker; those runtimes are retired on a joined thread that may block.
     fn drop(&mut self) {
         let git = self
@@ -168,7 +168,7 @@ where
             let Some((workload, node)) = git.as_mut() else {
                 return Err(RestoreFailure::Unavailable);
             };
-            // Every restore command records its original Run before the host sees it, whether the
+            // Every restore command is recorded as an attempt before it is dispatched, whether the
             // Node or the workload user runs it, and both share the session's stop cancellation.
             workload.bind_restore(&request.execution, cancel.clone());
             node.bind_restore(&request.execution, cancel.clone());

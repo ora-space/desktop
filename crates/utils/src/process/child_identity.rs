@@ -16,6 +16,11 @@ impl LinuxChildIdentity {
         Ok(Self { uid, gid })
     }
 
+    /// The user every process started under this identity runs as.
+    pub fn uid(&self) -> u32 {
+        self.uid
+    }
+
     /// Irreversibly removes inherited authority before an untrusted executable is loaded.
     ///
     /// # Safety

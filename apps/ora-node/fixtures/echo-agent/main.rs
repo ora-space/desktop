@@ -11,7 +11,9 @@
 //! - `[commit-direct]` runs the same commit as its own child process, inheriting its environment;
 //! - `[env]` answers with its working directory and `HOME`, showing where and as what it runs;
 //! - `[large]` answers with a message larger than one Thread record may be;
-//! - `[model]` answers with the model context it was started with, if any.
+//! - `[model]` answers with the model context it was started with, if any;
+//! - `[background <ms>]` and `[background-hidden <ms>]` first leave a tool background job behind
+//!   (see `background.rs`).
 //!
 //! On start it appends its process id to `echo-agent.pids` in its working directory, the package
 //! root, so a test can check that every plugin process it started has exited.
@@ -22,6 +24,10 @@
 
 #[cfg(target_os = "linux")]
 mod agent;
+#[cfg(target_os = "linux")]
+mod background;
+#[cfg(target_os = "linux")]
+mod mcp_checks;
 
 /// Runs as `ora-git` when asked to, and as the agent plugin otherwise.
 #[cfg(target_os = "linux")]
@@ -31,6 +37,12 @@ fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
         && command == "ora-git"
     {
         return Ok(ora_git::run(rest));
+    }
+    if let Some((command, rest)) = args.split_first()
+        && command == background::JOB_COMMAND
+    {
+        background::run(rest)?;
+        return Ok(std::process::ExitCode::SUCCESS);
     }
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

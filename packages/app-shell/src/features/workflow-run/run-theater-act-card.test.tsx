@@ -557,7 +557,10 @@ describe("RunTheaterActCard conversation", () => {
     expect(screen.queryByText("已暂停")).toBeNull();
   });
 
-  it("shows the backend's abnormal park classification instead of the paused heuristic", () => {
+  it.each([
+    [[], "异常停靠"],
+    [["retry_without_result"], "节点运行失败"],
+  ] as const)("labels abnormal parks with warnings %j", (warnings, badge) => {
     render(
       <RunTheaterActCard
         data={INTERACTIVE_NODE_DATA}
@@ -565,10 +568,15 @@ describe("RunTheaterActCard conversation", () => {
           status: "awaiting_input",
           completion: {
             turnOrigin: "human",
-            stopCause: "prompt_timed_out",
+            stopCause: warnings.length ? null : "prompt_timed_out",
             parkKind: "abnormal",
-            blockers: [{ kind: "turn_stopped", params: {} }],
-            warnings: [],
+            blockers: [
+              {
+                kind: warnings.length ? "output_missing" : "turn_stopped",
+                params: {},
+              },
+            ],
+            warnings: [...warnings],
             provisional: false,
             ready: false,
             needsConfirmation: false,
@@ -579,7 +587,7 @@ describe("RunTheaterActCard conversation", () => {
       { wrapper: createSessionWrapper() },
     );
 
-    expect(screen.getByText("异常停靠")).toBeInTheDocument();
+    expect(screen.getByText(badge)).toBeInTheDocument();
     expect(screen.queryByText("已暂停")).toBeNull();
     expect(screen.queryByText("等待参与")).toBeNull();
   });

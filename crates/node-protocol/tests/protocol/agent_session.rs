@@ -26,6 +26,11 @@ pub(super) fn start() -> Case {
                 execution_id: ExecutionId::new(EXECUTION),
                 payload: StartAgentSession {
                     spec: AgentSessionSpec {
+                        host_mcp_servers: Vec::new(),
+                        mcp_lifecycle: false,
+                        keep_session_on_cancel: false,
+                        keep_session_on_failure: false,
+                        mcp: Vec::new(),
                         agent_configuration: None,
                         node_id: NodeId::new("node-1"),
                         agent_plugin_id: PluginId::new("ora.1a2b/claude-code"),
@@ -443,6 +448,9 @@ async fn session_end_round_trips_as_event_and_completed_status() -> Result<(), T
         node: node(),
         reason: AgentSessionEndReason::AgentFailed,
         detail: Some("agent_plugin_unavailable".to_owned()),
+        plugin_id: None,
+        setting_id: None,
+        transport: None,
         scheduled_result: None,
         artifact_manifest: None,
     });
@@ -502,6 +510,78 @@ async fn session_end_round_trips_as_event_and_completed_status() -> Result<(), T
     .await
 }
 
+/// MCP terminal identifiers cross without their Setting values; old frames keep parsing.
+#[tokio::test]
+async fn session_mcp_failure_identifiers_round_trip_without_values() -> Result<(), TestError> {
+    let result = AgentSessionResult::AgentSessionEnded(AgentSessionEnded {
+        node: node(),
+        reason: AgentSessionEndReason::AgentFailed,
+        detail: Some("mcp_setting_missing".to_owned()),
+        plugin_id: Some(Box::new(PluginId::new("official/acme.web"))),
+        setting_id: Some("token".into()),
+        transport: Some(SessionMcpTransport::Http),
+        scheduled_result: None,
+        artifact_manifest: None,
+    });
+    let result_wire = json!({"kind": "agent_session_ended", "result": {
+        "node": {"node_id": "node-1", "incarnation_id": "incarnation-1"},
+        "reason": "agent_failed", "detail": "mcp_setting_missing",
+        "plugin_id": "official/acme.web", "setting_id": "token", "transport": "http"}});
+    let case = Case {
+        message: Message::Node(NodeToControllerMessage::AgentSessionEnded(
+            AgentSessionEndedMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                operation_id: OperationId::new(OPERATION),
+                execution_id: ExecutionId::new(EXECUTION),
+                sequence: Sequence::new(/*value*/ 10),
+                payload: result,
+            },
+        )),
+        wire: json!({"message_type": "agent_session_ended", "protocol_version": 1,
+            "operation_id": OPERATION, "execution_id": EXECUTION, "sequence": 10,
+            "payload": result_wire}),
+    };
+    case.assert_wire().await?;
+    case.assert_round_trip().await?;
+    assert!(!case.wire.to_string().contains("m938-control-secret"));
+
+    let mut old_wire = case.wire.clone();
+    let old_result = old_wire["payload"]["result"]
+        .as_object_mut()
+        .expect("result object");
+    old_result.remove("plugin_id");
+    old_result.remove("setting_id");
+    old_result.remove("transport");
+    let old: NodeToControllerMessage = serde_json::from_value(old_wire)?;
+    let NodeToControllerMessage::AgentSessionEnded(ended) = &old else {
+        unreachable!()
+    };
+    let AgentSessionResult::AgentSessionEnded(ended) = &ended.payload;
+    assert_eq!(
+        (&ended.plugin_id, &ended.setting_id, &ended.transport,),
+        (&None, &None, &None)
+    );
+    assert_eq!(round_trip_node(old.clone()).await?, old);
+
+    for (path, value, expected) in [
+        (
+            "/payload/result/plugin_id",
+            json!("Official/acme.web"),
+            MessageValidationError::InvalidPluginId,
+        ),
+        (
+            "/payload/result/setting_id",
+            json!("bad\nsetting"),
+            MessageValidationError::InvalidSessionMcp,
+        ),
+    ] {
+        let mut wire = case.wire.clone();
+        replace(&mut wire, path, value);
+        reject_semantics(Peer::Node, &wire, path, expected).await?;
+    }
+    Ok(())
+}
+
 /// Session commands and their replies carry command identity but no event sequence.
 #[tokio::test]
 async fn session_commands_and_replies_round_trip() -> Result<(), TestError> {
@@ -517,6 +597,7 @@ async fn session_commands_and_replies_round_trip() -> Result<(), TestError> {
                     operation_id: OperationId::new(OPERATION),
                     execution_id: ExecutionId::new(EXECUTION),
                     payload: SubmitUserTurn {
+                        mcp_generation: None,
                         node_id: NodeId::new("node-1"),
                         command_id: CommandId::new("command-1"),
                         turn: turn("turn-2", "Also update the changelog."),
@@ -669,6 +750,9 @@ async fn a_scheduled_terminal_result_declares_its_verdict_and_artifacts() -> Res
         node: node(),
         reason: AgentSessionEndReason::IdleTimeout,
         detail: None,
+        plugin_id: None,
+        setting_id: None,
+        transport: None,
         scheduled_result: Some(ScheduledRunResult {
             verdict: ScheduledVerdict::RangeUnresolved,
             verdict_detail: Some("no comparison base".to_owned()),

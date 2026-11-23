@@ -11,17 +11,12 @@ use ora_plugin_manifest::HookTarget;
 pub fn current_host_target() -> Option<HookTarget> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     const HOST_TRIPLE: Option<&str> = Some("x86_64-pc-windows-msvc");
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    const HOST_TRIPLE: Option<&str> = Some("aarch64-apple-darwin");
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    const HOST_TRIPLE: Option<&str> = Some("x86_64-apple-darwin");
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     const HOST_TRIPLE: Option<&str> = Some("x86_64-unknown-linux-gnu");
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     const HOST_TRIPLE: Option<&str> = Some("aarch64-unknown-linux-gnu");
     #[cfg(not(any(
         all(target_os = "windows", target_arch = "x86_64"),
-        all(target_os = "macos"),
         all(
             target_os = "linux",
             any(target_arch = "x86_64", target_arch = "aarch64")

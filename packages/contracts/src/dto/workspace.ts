@@ -18,7 +18,20 @@ export type Workspace = {
   projectId: string;
   kind: WorkspaceKind;
   lifecycle: WorkspaceLifecycle;
+  directory: WorkspaceDirectory;
 };
+
+/**
+ * Reports whether the directory behind a workspace exists at the moment it was listed.
+ *
+ * Lifecycle admission does not cover this: a user can delete or move a project folder at any
+ * time without telling Ora, and every session start, model discovery, and file operation then
+ * fails. Probing on list lets clients explain that state instead of showing empty results.
+ */
+export type WorkspaceDirectory = { "kind": "present" } | {
+  "kind": "missing";
+  path: string;
+} | { "kind": "remote" };
 
 /**
  * Identifies the canonical project checkout or an isolated execution environment.

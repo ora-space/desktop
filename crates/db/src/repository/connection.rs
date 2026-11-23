@@ -117,8 +117,8 @@ fn configure_repository_connection(connection: &Connection) -> Result<(), rusqli
     // projects vanishing after a power outage. FULL makes each COMMIT fsync the WAL
     // before reporting success, so power loss can lose at most the in-flight
     // transaction, never acknowledged writes. This matches the durability policy
-    // every other SQLite owner in the workspace (node-db, controller, and the
-    // process-runtime state journal) already applies.
+    // every other SQLite owner in the workspace (node-db and controller) already
+    // applies.
     connection.pragma_update(/*schema_name*/ None, "synchronous", "FULL")?;
     connection.pragma_update(/*schema_name*/ None, "foreign_keys", "ON")?;
 

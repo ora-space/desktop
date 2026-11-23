@@ -1,13 +1,10 @@
 #![cfg(target_os = "linux")]
 
-use std::fs::{self, File};
+use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 
-use ora_utils::{
-    fs::LinuxFilesystem,
-    path::{TrustedPathKind, open_private_path},
-};
+use ora_utils::path::{TrustedPathKind, open_private_path};
 use pretty_assertions::assert_eq;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -75,21 +72,5 @@ fn private_path_rejects_symlinks_and_multiple_hard_links() -> TestResult {
     symlink(directory.path(), &alias)?;
     assert!(open_private_path(&alias.join("value"), owner, TrustedPathKind::File).is_err());
     open_private_path(&path, owner, TrustedPathKind::File)?;
-    Ok(())
-}
-
-/// Classification follows the inode's filesystem and leaves unqualified kernel mounts unsupported.
-#[test]
-fn filesystem_probe_follows_open_inode() -> TestResult {
-    let directory = directory()?;
-    let file = File::create(directory.path().join("value"))?;
-    assert_eq!(
-        LinuxFilesystem::for_file(&file)?,
-        LinuxFilesystem::for_file(&File::open(directory.path())?)?
-    );
-    assert_eq!(
-        LinuxFilesystem::for_file(&File::open("/proc")?)?,
-        LinuxFilesystem::Other
-    );
     Ok(())
 }

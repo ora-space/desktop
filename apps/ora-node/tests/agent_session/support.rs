@@ -4,13 +4,13 @@ use ora_node::{
     AgentSessions, CheckoutResolver, CommandSettlement, InstalledConfigurationError,
     ModelProxyConfig, PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel,
     RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig, SessionHost,
-    SessionLedger, SessionWorkload,
+    SessionLedger, SessionWorkload, TurnCancelConfig,
 };
 use ora_node_protocol::{
     AgentSessionEnded, AgentSessionSpec, BoundModel, CommandId, ContentBlock, ExecutionId,
     FrozenAgentConfiguration, GitIdentity, ModelBindingId, ModelProtocol, NodeId,
     NodeIncarnationId, NodeRuntimeIdentity, OperationId, PluginId, PluginVersion, PriorRevision,
-    Sequence, Sha256Digest, ThreadEvent, TurnId, UserTurn,
+    Sequence, Sha256Digest, ThreadEvent, TurnCancelOutcome, TurnId, UserTurn,
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 #[allow(dead_code)]
 #[path = "../../src/model_proxy/test_gateway.rs"]
 pub mod gateway;
+#[path = "../support/session_stops.rs"]
+mod stops;
 
 pub const PLUGIN_ID: &str = "official/ora-space.echo";
 pub const PLUGIN_VERSION: &str = "1.0.0";
@@ -57,17 +59,42 @@ struct StoredCommand {
 
 #[derive(Default)]
 struct LedgerState {
+    failures: Vec<ora_node_protocol::SessionTurnFailed>,
     events: Vec<ThreadEvent>,
     ended: Option<AgentSessionEnded>,
     commands: Vec<StoredCommand>,
     gate: Option<AppendGate>,
     reject_execution: bool,
+    /// Cancel settlements and Thread events in the order they were written.
+    journal: Vec<Entry>,
+    /// Fails the next end decision once, as a ledger that cannot write would.
+    fail_next_decision: bool,
+    /// Fails the next queue read once, as a ledger with a passing error would.
+    fail_next_queue_read: bool,
+    /// Runs when the named command is settled executed, inside the admission commit.
+    on_executed: Option<(CommandId, Box<dyn FnOnce() + Send>)>,
+}
+
+/// The keep choices a session starts with.
+#[derive(Clone, Copy)]
+pub struct Keep {
+    pub on_cancel: bool,
+    pub on_failure: bool,
+}
+
+/// One durable write a test can order against the others.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Entry {
+    /// A Thread event, named by its record type.
+    Thread(String),
+    Cancel(String, TurnCancelOutcome),
 }
 
 /// A ledger for one execution that keeps everything in memory.
 #[derive(Clone, Default)]
 pub struct MemoryLedger {
     state: Arc<Mutex<LedgerState>>,
+    stops: stops::Stops,
 }
 
 impl MemoryLedger {
@@ -87,6 +114,43 @@ impl MemoryLedger {
             command,
             settlements: Vec::new(),
         });
+    }
+
+    /// The end decision recorded for the execution, the one a restart would publish.
+    pub fn decision(&self) -> Option<AgentSessionEnded> {
+        self.stops.decision(&ExecutionId::new(EXECUTION))
+    }
+
+    /// Makes the next queue read fail once.
+    pub fn fail_next_queue_read(&self) {
+        self.state().fail_next_queue_read = true;
+    }
+
+    /// Makes the next end decision fail once.
+    pub fn fail_next_decision(&self) {
+        self.state().fail_next_decision = true;
+    }
+
+    /// Runs `action` when `command` is settled executed, which happens inside the admission commit.
+    pub fn on_executed(&self, command: &str, action: impl FnOnce() + Send + 'static) {
+        self.state().on_executed = Some((CommandId::new(command), Box::new(action)));
+    }
+
+    /// Returns Thread events and cancel settlements in write order.
+    pub fn journal(&self) -> Vec<Entry> {
+        self.state().journal.clone()
+    }
+
+    /// Returns the settlement of each cancel, in settlement order.
+    pub fn cancels(&self) -> Vec<(String, TurnCancelOutcome)> {
+        self.state()
+            .journal
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Cancel(command, outcome) => Some((command.clone(), *outcome)),
+                Entry::Thread(_) => None,
+            })
+            .collect()
     }
 
     /// Returns every Thread event appended so far.
@@ -132,8 +196,143 @@ impl MemoryLedger {
     }
 }
 
+impl LedgerState {
+    /// Settles every still-queued cancel as `session_ending`, as the end decision does.
+    fn settle_pending_cancels(&mut self) {
+        for index in 0..self.commands.len() {
+            if matches!(self.commands[index].command, SessionCommand::CancelTurn(_))
+                && self.commands[index].settlements.is_empty()
+            {
+                self.commands[index]
+                    .settlements
+                    .push(CommandSettlement::Executed);
+                let command = self.commands[index].command_id.to_string();
+                self.journal
+                    .push(Entry::Cancel(command, TurnCancelOutcome::SessionEnding));
+            }
+        }
+    }
+}
+
 impl SessionLedger for MemoryLedger {
     type Error = LedgerError;
+    fn settle_turn_cancel(
+        &self,
+        _execution: &ExecutionId,
+        command_id: &CommandId,
+        outcome: TurnCancelOutcome,
+        target: Option<&CommandId>,
+    ) -> Result<TurnCancelOutcome, Self::Error> {
+        let mut state = self.state();
+        let Some(index) = state
+            .commands
+            .iter()
+            .position(|command| &command.command_id == command_id)
+        else {
+            return Err(LedgerError(format!("unknown command {command_id}")));
+        };
+        let SessionCommand::CancelTurn(turn) = state.commands[index].command.clone() else {
+            return Err(LedgerError("not a cancel".into()));
+        };
+        if let Some(previous) = state.journal.iter().find_map(|entry| match entry {
+            Entry::Cancel(command, outcome) if command == command_id.as_str() => Some(*outcome),
+            _ => None,
+        }) {
+            return Ok(previous);
+        }
+        if outcome != TurnCancelOutcome::SessionEnding
+            && state
+                .commands
+                .iter()
+                .any(|command| matches!(command.command, SessionCommand::EndSession(_)))
+        {
+            return Err(LedgerError("ending".into()));
+        }
+        let mut outcome = outcome;
+        if outcome == TurnCancelOutcome::NotStarted {
+            if state.failures.iter().any(|failure| failure.turn_id == turn) {
+                outcome = TurnCancelOutcome::AlreadyEnded;
+            } else if let Some(target) = target {
+                let target = state
+                    .commands
+                    .iter_mut()
+                    .find(|command| &command.command_id == target && command.settlements.is_empty())
+                    .ok_or_else(|| LedgerError("target already admitted".into()))?;
+                target.settlements.push(CommandSettlement::Discarded);
+            }
+        }
+        state.commands[index]
+            .settlements
+            .push(CommandSettlement::Executed);
+        state
+            .journal
+            .push(Entry::Cancel(command_id.to_string(), outcome));
+        Ok(outcome)
+    }
+    fn fail_session_turn(
+        &self,
+        _execution: &ExecutionId,
+        failure: ora_node_protocol::SessionTurnFailed,
+    ) -> Result<(), Self::Error> {
+        let mut state = self.state();
+        if state
+            .commands
+            .iter()
+            .any(|command| matches!(command.command, SessionCommand::EndSession { .. }))
+        {
+            return Err(LedgerError("ending".into()));
+        }
+        if let Some(command_id) = &failure.command_id {
+            state
+                .commands
+                .retain(|command| &command.command_id != command_id);
+        }
+        state.failures.push(failure);
+        Ok(())
+    }
+    fn record_session_stop(
+        &self,
+        identity: &ora_node_db::SessionStopIdentity,
+        scope: ora_node_db::SessionStopScope,
+        at_ms: i64,
+    ) -> Result<(), Self::Error> {
+        self.stops
+            .record(identity, scope, at_ms)
+            .map_err(|e| LedgerError(e.to_string()))
+    }
+    fn session_stop_records(
+        &self,
+        execution: Option<&ExecutionId>,
+    ) -> Result<Vec<ora_node_db::SessionStopRecord>, Self::Error> {
+        self.stops
+            .records(execution)
+            .map_err(|e| LedgerError(e.to_string()))
+    }
+    fn change_session_stop(
+        &self,
+        attempt: &ora_node_db::AttemptId,
+        change: ora_node_db::SessionStopChange,
+    ) -> Result<(), Self::Error> {
+        self.stops
+            .change(attempt, change)
+            .map_err(|e| LedgerError(e.to_string()))
+    }
+    fn decide_session_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
+    ) -> Result<(), Self::Error> {
+        if std::mem::take(&mut self.state().fail_next_decision) {
+            return Err(LedgerError("decision write failed".into()));
+        }
+        self.stops
+            .decide(execution, ended, at_ms, bound_at_ms)
+            .map_err(|e| LedgerError(e.to_string()))?;
+        self.state().settle_pending_cancels();
+        Ok(())
+    }
 
     fn append_thread_event(
         &self,
@@ -161,6 +360,13 @@ impl SessionLedger for MemoryLedger {
             }
         }
         let mut state = self.state();
+        let kind = event
+            .record
+            .get("type")
+            .and_then(|kind| kind.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        state.journal.push(Entry::Thread(kind));
         state.events.push(event);
         Ok(Sequence::new(state.events.len() as u64))
     }
@@ -174,11 +380,15 @@ impl SessionLedger for MemoryLedger {
         if state.ended.is_some() {
             return Err(LedgerError("the session already ended".to_string()));
         }
+        state.settle_pending_cancels();
         state.ended = Some(ended);
         Ok(Sequence::new(state.events.len() as u64 + 1))
     }
 
     fn queued_commands(&self, _execution: &ExecutionId) -> Result<Vec<QueuedCommand>, LedgerError> {
+        if std::mem::take(&mut self.state().fail_next_queue_read) {
+            return Err(LedgerError("queue read failed".into()));
+        }
         Ok(self
             .state()
             .commands
@@ -208,6 +418,21 @@ impl SessionLedger for MemoryLedger {
             .find(|command| command.command_id == *command_id)
             .ok_or_else(|| LedgerError(format!("unknown command {command_id}")))?;
         command.settlements.push(settlement);
+        let hook = match state.on_executed.take() {
+            Some((hooked, action))
+                if &hooked == command_id && matches!(settlement, CommandSettlement::Executed) =>
+            {
+                Some(action)
+            }
+            other => {
+                state.on_executed = other;
+                None
+            }
+        };
+        drop(state);
+        if let Some(action) = hook {
+            action();
+        }
         Ok(())
     }
 }
@@ -292,6 +517,8 @@ pub struct Restorer {
     /// While set, a restore runs until it is cancelled, then counts that in `cancelled`.
     pub hold: Arc<AtomicBool>,
     pub cancelled: Arc<AtomicUsize>,
+    /// While set, a cancelled hold keeps winding down instead of returning.
+    pub stall: Arc<AtomicBool>,
 }
 
 impl PriorRevisionRestore for Restorer {
@@ -307,6 +534,7 @@ impl PriorRevisionRestore for Restorer {
             .push(request);
         if self.hold.load(Ordering::SeqCst) {
             until(|| cancel.requested().then_some(())).await;
+            until(|| (!self.stall.load(Ordering::SeqCst)).then_some(())).await;
             self.cancelled.fetch_add(1, Ordering::SeqCst);
             return Err(RestoreFailure::Unavailable);
         }
@@ -325,6 +553,8 @@ pub struct Fixture {
     pub restorer: Restorer,
     /// What the catalog answers when a configured session checks its installed package.
     pub configuration: Arc<Mutex<Result<(), InstalledConfigurationError>>>,
+    /// Cancel timing and verified Agents for composed sessions; tests adjust it before composing.
+    pub turn_cancel: TurnCancelConfig,
 }
 
 impl Fixture {
@@ -334,11 +564,13 @@ impl Fixture {
         let fixture = Self {
             root,
             ledger: MemoryLedger::default(),
+            turn_cancel: TurnCancelConfig::default(),
             leases: Arc::new(AtomicUsize::new(0)),
             restorer: Restorer {
                 answer: Arc::new(Mutex::new(Ok(Restored::OnSnapshotHistory))),
                 requests: Arc::default(),
                 hold: Arc::default(),
+                stall: Arc::default(),
                 cancelled: Arc::default(),
             },
             configuration: Arc::new(Mutex::new(Ok(()))),
@@ -412,6 +644,16 @@ impl Fixture {
         self.root.path().join("agent")
     }
 
+    /// The fixture's stand-in for `fs.protected_hardlinks`, created protecting hard links; tests
+    /// rewrite it to see a host that stopped protecting them.
+    pub fn protected_hardlinks(&self) -> PathBuf {
+        let sysctl = self.root.path().join("protected_hardlinks");
+        if !sysctl.exists() {
+            std::fs::write(&sysctl, "1\n").expect("sysctl stand-in");
+        }
+        sysctl
+    }
+
     /// A separate workload this unprivileged test can run: the test's own ids own the session
     /// home and checkout, and the identity is inherited, since only root may take another.
     pub fn separate_workload(&self) -> SessionWorkload {
@@ -422,6 +664,7 @@ impl Fixture {
             identity: ora_process::ProcessIdentity::Inherit,
             uid: std::os::unix::fs::MetadataExt::uid(&metadata),
             gid: std::os::unix::fs::MetadataExt::gid(&metadata),
+            hand_over: ora_node::CheckoutHandOver::new(self.protected_hardlinks()),
         }
     }
 
@@ -442,29 +685,73 @@ impl Fixture {
         workload: SessionWorkload,
         model_proxy: Option<ModelProxyConfig>,
     ) -> Sessions {
+        self.compose_with_ledger(
+            installed_version,
+            workload,
+            model_proxy,
+            self.ledger.clone(),
+        )
+    }
+
+    /// Reuses the same transport fixture with a production SQLite session journal.
+    pub fn compose_with_ledger<L: SessionLedger>(
+        &self,
+        installed_version: &str,
+        workload: SessionWorkload,
+        model_proxy: Option<ModelProxyConfig>,
+        ledger: L,
+    ) -> AgentSessions<L, Checkouts, Catalog, Restorer> {
         AgentSessions::new(
             SessionConfig {
+                stop: Default::default(),
                 home_directory: self.home(),
                 deno_path: env!("CARGO_BIN_EXE_ora-node-echo-agent").into(),
                 timezone: chrono_tz::UTC,
                 agent_ready_timeout: Duration::from_secs(30),
                 model_proxy,
                 workload,
+                turn_cancel: self.turn_cancel.clone(),
             },
             self.node(),
-            self.ledger.clone(),
+            ledger,
             Checkouts(HashMap::from([(
                 ExecutionId::new(CHECKOUT_EXECUTION),
                 self.checkout(),
             )])),
             Catalog {
-                installed: HashMap::from([(
+                installed: HashMap::from([
                     (
-                        PluginId::new(PLUGIN_ID),
-                        PluginVersion::new(installed_version),
+                        (
+                            PluginId::new(PLUGIN_ID),
+                            PluginVersion::new(installed_version),
+                        ),
+                        self.package_root_of(installed_version),
                     ),
-                    self.package_root_of(installed_version),
-                )]),
+                    (
+                        (
+                            PluginId::new("official/acme.stdio"),
+                            PluginVersion::new("1.0.0"),
+                        ),
+                        self.home()
+                            .join("plugins")
+                            .join("installed")
+                            .join("official")
+                            .join("acme.stdio")
+                            .join("1.0.0"),
+                    ),
+                    (
+                        (
+                            PluginId::new("official/acme.web"),
+                            PluginVersion::new("1.0.0"),
+                        ),
+                        self.home()
+                            .join("plugins")
+                            .join("installed")
+                            .join("official")
+                            .join("acme.web")
+                            .join("1.0.0"),
+                    ),
+                ]),
                 leases: Arc::clone(&self.leases),
                 configuration: Arc::clone(&self.configuration),
             },
@@ -475,6 +762,51 @@ impl Fixture {
     /// Starts the session execution with `initial` as its first turn.
     pub fn start(&self, sessions: &Sessions, version: &str, initial: &str) {
         self.start_resuming(sessions, version, initial, None);
+    }
+
+    /// Starts a session that chose to stay after a cancelled and/or a failed turn.
+    pub fn start_keeping(&self, sessions: &Sessions, initial: &str, keep: Keep) {
+        self.start_keeping_resuming(sessions, initial, keep, None);
+    }
+
+    /// Starts a session with keep choices that resumes `prior`, if given.
+    pub fn start_keeping_resuming(
+        &self,
+        sessions: &Sessions,
+        initial: &str,
+        keep: Keep,
+        prior: Option<PriorRevision>,
+    ) {
+        sessions.start(
+            OperationId::new(OPERATION),
+            ExecutionId::new(EXECUTION),
+            AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
+                mcp_lifecycle: false,
+                keep_session_on_cancel: keep.on_cancel,
+                keep_session_on_failure: keep.on_failure,
+                mcp: Vec::new(),
+                agent_configuration: None,
+                node_id: NodeId::new("node-1"),
+                agent_plugin_id: PluginId::new(PLUGIN_ID),
+                agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
+                checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
+                model_binding_id: None,
+                git_identity: identity(),
+                initial_turn: turn("turn-1", initial),
+                prior_revision: prior,
+                workspace_directory: vec![],
+                trigger: None,
+            },
+        );
+    }
+
+    /// Marks the echo agent's version as having a verified turn boundary and shortens the
+    /// windows, so a stopped turn can keep the session within a test.
+    pub fn verify_turn_boundary(&mut self) {
+        self.turn_cancel.turn_boundary =
+            vec![(PluginId::new(PLUGIN_ID), PluginVersion::new(PLUGIN_VERSION))];
+        self.turn_cancel.quiet = Duration::from_millis(300);
     }
 
     /// Starts the session execution with `initial` as its first turn, resuming `prior` if given.
@@ -489,6 +821,11 @@ impl Fixture {
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
+                mcp_lifecycle: false,
+                keep_session_on_cancel: false,
+                keep_session_on_failure: false,
+                mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("node-1"),
                 agent_plugin_id: PluginId::new(PLUGIN_ID),
@@ -506,10 +843,34 @@ impl Fixture {
 
     /// Starts a session whose adapter receives `settings_json` with the gateway fixture's model.
     pub fn start_configured(&self, sessions: &Sessions, initial: &str, settings_json: &str) {
+        self.start_configured_keeping(
+            sessions,
+            initial,
+            settings_json,
+            Keep {
+                on_cancel: false,
+                on_failure: false,
+            },
+        );
+    }
+
+    /// Starts a model-bound session with keep choices.
+    pub fn start_configured_keeping(
+        &self,
+        sessions: &Sessions,
+        initial: &str,
+        settings_json: &str,
+        keep: Keep,
+    ) {
         sessions.start(
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
+                mcp_lifecycle: false,
+                keep_session_on_cancel: keep.on_cancel,
+                keep_session_on_failure: keep.on_failure,
+                mcp: Vec::new(),
                 agent_configuration: Some(FrozenAgentConfiguration {
                     plugin_id: PluginId::new(PLUGIN_ID),
                     plugin_version: PluginVersion::new(PLUGIN_VERSION),

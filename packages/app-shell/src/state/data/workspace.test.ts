@@ -22,8 +22,20 @@ function aggregate() {
     { id: "t2", projectId: "p2", workspaceId: "w2", title: "Survivor" },
   ];
   const workspaces: Workspace[] = [
-    { id: "main", projectId: "p1", kind: "main", lifecycle: "active" },
-    { id: "w2", projectId: "p2", kind: "isolated", lifecycle: "active" },
+    {
+      id: "main",
+      projectId: "p1",
+      kind: "main",
+      lifecycle: "active",
+      directory: { kind: "present" },
+    },
+    {
+      id: "w2",
+      projectId: "p2",
+      kind: "isolated",
+      lifecycle: "active",
+      directory: { kind: "present" },
+    },
   ];
   const sessions: Session[] = ["main", "w1", "w2"].map((workspaceId) => ({
     id: `session-${workspaceId}`,

@@ -2,8 +2,13 @@
 use super::*;
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
+mod admission;
+mod host_mcp;
+mod mcp;
 mod recovery;
 mod restore;
+mod stop;
+mod turn_cancel;
 
 /// Supplies valid immutable input independently of the agent runtime.
 pub(super) fn command() -> StartAgentSessionMessage {
@@ -13,6 +18,11 @@ pub(super) fn command() -> StartAgentSessionMessage {
         execution_id: ExecutionId::new("session-execution"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                host_mcp_servers: Vec::new(),
+                mcp_lifecycle: false,
+                keep_session_on_cancel: false,
+                keep_session_on_failure: false,
+                mcp: Vec::new(),
                 agent_configuration: None,
                 node_id: NodeId::new("node"),
                 agent_plugin_id: PluginId::new("official/agent"),
@@ -45,6 +55,7 @@ fn turn(id: &str) -> SessionCommandInput {
         operation_id: start.operation_id,
         execution_id: start.execution_id,
         payload: SubmitUserTurn {
+            mcp_generation: None,
             node_id: NodeId::new("node"),
             command_id: CommandId::new(id),
             turn: start.payload.spec.initial_turn,
@@ -65,6 +76,14 @@ fn event() -> ThreadEvent {
 }
 
 /// Interrupted recovery may seal both accepted and running sessions.
+/// The checkout refusal an admission result reports, if it is one.
+pub(super) fn refusal_of(result: &Result<SessionExecution, Error>) -> Option<SessionRefusal> {
+    match result {
+        Err(Error::SessionRefused(refused)) => Some(refused.refusal()),
+        _ => None,
+    }
+}
+
 pub(super) fn ended() -> AgentSessionEnded {
     AgentSessionEnded {
         node: NodeRuntimeIdentity {
@@ -73,6 +92,9 @@ pub(super) fn ended() -> AgentSessionEnded {
         },
         reason: AgentSessionEndReason::Interrupted,
         detail: None,
+        plugin_id: None,
+        setting_id: None,
+        transport: None,
         scheduled_result: None,
         artifact_manifest: None,
     }
@@ -164,6 +186,7 @@ fn exact_ack_and_sequence_survive_reopen() {
         db.find_session(&input.operation_id, &input.execution_id)
             .unwrap(),
         Some(SessionExecution {
+            host_mcp_server_names: Vec::new(),
             command: input.clone(),
             state: ExecutionState::Completed(ExecutionResult::AgentSession(
                 AgentSessionResult::AgentSessionEnded(ended())
@@ -194,6 +217,9 @@ fn a_scheduled_declaration_is_persisted_with_the_terminal_result() {
         },
         reason: AgentSessionEndReason::IdleTimeout,
         detail: None,
+        plugin_id: None,
+        setting_id: None,
+        transport: None,
         scheduled_result: Some(ScheduledRunResult {
             verdict: ScheduledVerdict::Warn,
             verdict_detail: Some("one flaky check".to_owned()),
@@ -226,6 +252,7 @@ fn a_scheduled_declaration_is_persisted_with_the_terminal_result() {
         db.find_session(&input.operation_id, &input.execution_id)
             .unwrap(),
         Some(SessionExecution {
+            host_mcp_server_names: Vec::new(),
             command: input.clone(),
             state: ExecutionState::Completed(ExecutionResult::AgentSession(
                 AgentSessionResult::AgentSessionEnded(ended)
@@ -254,7 +281,7 @@ fn commands_are_ordered_deduplicated_and_discarded_at_end() {
             reason: EndSessionReason::UserEnded,
         },
     });
-    for input in [&first, &second, &end, &first] {
+    for input in [&first, &second, &first] {
         assert_eq!(
             db.accept_session_command(input).unwrap(),
             CommandAdmission::Accepted
@@ -266,7 +293,7 @@ fn commands_are_ordered_deduplicated_and_discarded_at_end() {
     let execution = command().execution_id;
     assert_eq!(
         journal.queued_commands(&execution).unwrap(),
-        vec![first.clone(), second.clone(), end.clone()]
+        vec![first.clone(), second.clone()]
     );
     journal
         .settle_command(
@@ -300,6 +327,19 @@ fn commands_are_ordered_deduplicated_and_discarded_at_end() {
         m.payload.turn.turn_id = TurnId::new("changed");
     }
     assert!(db.accept_session_command(&changed).is_err());
+    assert_eq!(
+        db.accept_session_command(&end).unwrap(),
+        CommandAdmission::Accepted
+    );
+    assert!(
+        journal
+            .settle_command(
+                &execution,
+                second.command_id(),
+                SessionCommandSettlement::Executed
+            )
+            .is_err()
+    );
     assert_eq!(
         journal.queued_commands(&execution).unwrap(),
         vec![second.clone(), end.clone()]
@@ -370,6 +410,7 @@ fn failed_event_rolls_back_all_session_effects() {
         db.find_session(&input.operation_id, &input.execution_id)
             .unwrap(),
         Some(SessionExecution {
+            host_mcp_server_names: Vec::new(),
             command: input.clone(),
             state: ExecutionState::Running,
             last_sequence: 0

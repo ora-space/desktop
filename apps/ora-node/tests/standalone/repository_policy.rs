@@ -17,7 +17,6 @@ fn clone_configuration_rejects_protected_roots_without_changing_permissions() {
         for root in [
             fixture.path().to_path_buf(),
             fixture.config().home_directory,
-            fixture.process().host_directory,
             child,
         ] {
             let before = fs::metadata(&root).unwrap().permissions();
@@ -94,21 +93,17 @@ fn snapshot_clone_ignores_deployment_credentials_and_checkout_extensions() {
         assert!(!target.join("nested").join(".git").exists());
         assert!(!marker.exists());
         drop(node);
-        for path in [
-            fixture.config().home_directory.join("ora-node.sqlite3"),
-            fixture.path().join("host").join("host.sqlite"),
-        ] {
-            let bytes = fs::read(path).unwrap();
-            assert!(
-                !bytes
-                    .windows(b"password=secret".len())
-                    .any(|window| window == b"password=secret")
-            );
-            assert!(
-                !bytes
-                    .windows(b"Zml4dHVyZTpzZWNyZXQ=".len())
-                    .any(|window| window == b"Zml4dHVyZTpzZWNyZXQ=")
-            );
-        }
+        // The attempt records are the only place a command line is persisted.
+        let bytes = fs::read(fixture.config().home_directory.join("ora-node.sqlite3")).unwrap();
+        assert!(
+            !bytes
+                .windows(b"password=secret".len())
+                .any(|window| window == b"password=secret")
+        );
+        assert!(
+            !bytes
+                .windows(b"Zml4dHVyZTpzZWNyZXQ=".len())
+                .any(|window| window == b"Zml4dHVyZTpzZWNyZXQ=")
+        );
     });
 }

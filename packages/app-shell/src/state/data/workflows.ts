@@ -48,11 +48,12 @@ export function invalidateWorkflowQueries(
  * and the workspace create-run menu.
  * The list stays lean (no graphs); drafts hydrate on selection via `useWorkflowDraft`.
  */
-export function useWorkflowLibrary() {
+export function useWorkflowLibrary(enabled = true) {
   const client = useContractsClient();
   return useQuery({
     queryKey: workflowLibraryKey,
     queryFn: async () => (await client.workflow.list({})).workflows,
+    enabled,
   });
 }
 
@@ -141,6 +142,7 @@ export function useCreateWorkflow() {
         namespace: result.workflow.namespace,
         name: result.workflow.name,
         publishedVersion: null,
+        sourcePluginId: null,
         createdAt: result.workflow.createdAt,
         updatedAt: result.workflow.updatedAt,
       };
@@ -229,6 +231,7 @@ export function useCopyWorkflow() {
                   namespace: result.workflow.namespace,
                   name: result.workflow.name,
                   publishedVersion: null,
+                  sourcePluginId: null,
                   createdAt: result.workflow.createdAt,
                   updatedAt: result.workflow.updatedAt,
                 },

@@ -5,8 +5,8 @@ English | [中文](session-mcp.zh.md)
 Ora delivers configured MCP plugins as **Session runtime input**: the ACP `mcpServers` list of each
 `session/new` and `session/load`. MCP is never an Effect Resource and never a Workspace file. Every
 frame that sets up a provider session (`startSession`, the attach a prompt performs, a rebuild,
-an agent switch, a workflow start and a live refresh) uses one Session setup snapshot. Resolution
-lives in `crates/backend/src/session_setup/mcp`.
+an agent switch, a workflow start and a live refresh) uses one Session setup snapshot. Pure resolution lives in
+`crates/agent-runtime/src/mcp_resolver`; Desktop sources and health remain in Backend.
 
 ## Selection
 
@@ -38,9 +38,9 @@ all-or-nothing: the runtime never sends a partial list.
 - `{ "context": "workspace" }` becomes the Session's absolute cwd; a literal `"."` stays `"."`.
   Environment variables and headers become ACP name/value lists.
 - A non-empty set requires `session/load` support, because that is the only frame that can carry a
-  changed set to a running Session. If the agent cannot load sessions, setup fails before any frame
-  is sent, including the `session/new` of a rebuild: a rebuild carries the real snapshot or does not
-  happen.
+  changed set to a running Session. If the agent cannot load sessions, setup fails after ACP
+  `initialize` and before any session setup frame is sent, including the `session/new` of a rebuild:
+  a rebuild carries the real snapshot or does not happen.
 
 ## Live refresh
 
@@ -51,6 +51,11 @@ prompts wait for the refresh. Success advances the Active revision, and a newer 
 meanwhile stays pending. Failure blocks only that Session, and the next prompt retries rather than
 using old configuration. Stopped Sessions do not refresh in the background. Changes to plugins
 outside an explicit selection do not change that Session's revision.
+
+The shared revision also carries an explicit host generation. Existing hosts construct generation
+zero; a host using ordered updates supplies the generation before resolving/sending. Even when the
+member identities are unchanged, a newer generation requires its own successful convergence. An old
+response cannot make that newer target current. The generation contains no Settings digest.
 
 MCP refresh, Skill Effect mutation and agent replacement share one Agent Session Barrier so new
 prompts wait for a safe point. They share no Effect state.
@@ -107,8 +112,69 @@ Health never changes delivery: a failed probe does not fail setup, does not remo
 never produces a partial list. A healthy probe is not "in effect in the session": the agent still
 connects on its own, so the two can disagree either way.
 
+HTTP probes never follow redirects, including same-origin redirects and session DELETE, and ignore
+system proxy environment variables. Configure the final, directly reachable endpoint; endpoints
+requiring a proxy or redirect will fail. JSON and SSE response bodies are read incrementally up to
+1 MiB; stdio counts all received frames and noise against a 1 MiB handshake budget. Oversized input
+and redirects report only the stable handshake/tools failure code, never response text or Location.
+This transport policy also applies to Desktop probes.
+
 Presentation stays secret-free: the plugin card shows health beside install and configuration
 status with a re-detect action; a Session shows a non-blocking banner listing the `Unhealthy`
 members of its own effective set; `listMcpHealth` answers either view and `probeMcpHealth` re-runs a
 probe; `McpHealthChanged { plugin_id }` tells clients to re-query. After the setup log line, a
 structured event pairs the Session with its members' identity, code and probe duration.
+
+## Node sessions
+
+A Node advertising `session_mcp` accepts `AgentSessionSpec.mcp`: an explicit list of plugin id,
+exact package version and scalar settings. Omitted or empty means none; ids must be canonical,
+unique and sorted. Limits are 16 servers and 64 KiB total compact JSON settings maps. Node resolves
+installed packages with `ora-plugin-config` and the shared resolver in `ora-agent-runtime`; it never
+discovers MCPs automatically. `InstallPlugins` already accepts MCP packages. Separate workloads
+receive immutable package views so stdio commands remain accessible without opening the Node home.
+
+Package and setting checks precede agent launch. Agent capability checks follow ACP `initialize`
+and precede `session/new`: non-empty sets require load support, and HTTP needs HTTP MCP support.
+Failure sends no `session/new` or MCP values to the agent and ends with `mcp_plugin_missing`,
+`mcp_setting_missing`, `mcp_http_capability_missing` or `mcp_load_session_missing`. Structured setup
+failures and preflight logs name the plugin id and, when applicable, setting id and transport, never
+values; the terminal detail remains the stable code. For MCP setup failures, `AgentSessionEnded` also
+carries those optional identifiers to the Controller (`transport` is `stdio` or `http`), omitting unknown
+fields and all fields for other terminal results.
+
+Settings remain in memory and the successful ACP request; ledger inputs retain only MCP identities
+and versions with empty settings. Duplicate executions cannot change their live values; changing
+settings requires a new execution. Node restart interrupts sessions rather than recovering values.
+Settings never become JSONL, Thread, logs, errors or input Debug output. Node live refresh, restore
+and Host health probes are outside this delivery path.
+
+### Host MCP servers
+
+A Node advertising `session_host_mcp_servers` also accepts `AgentSessionSpec.host_mcp_servers`:
+up to four Controller-provided HTTP servers, each a `name` (`ora-` plus lowercase letters, digits and
+`-`, 5–64 bytes, strictly increasing), a `url` and `headers`. Omitted and empty both mean none.
+They are not plugin MCP: they never join `mcp`, the Effective MCP Set, revisions, the 16-server limit,
+`GetSessionMcpState`, refresh, health probes or the setup-window choice, and an empty `mcp` still
+injects no plugin MCP. The Node appends them, in input order, after the plugin servers of every ACP
+setup of the execution: `session/new`, `session/load`, lifecycle refresh loads and the setups of a
+replacement Agent. It never connects to or probes them, and there is no stdio form.
+
+The URL must fully match the decision's grammar (checked character by character, never by
+parse-and-reserialize): plaintext `http` only on the literal `127.0.0.1` or `[::1]`, otherwise
+`https`; no userinfo, query, fragment, default port, dot segment or lowercase escape. Headers are at
+most eight lowercase tokens per server, excluding the HTTP and MCP stack's own headers. All URLs,
+header names and values together are at most 8 KiB. `crates/node-protocol/fixtures/host_mcp_servers.json`
+holds the shared accept/reject samples a Controller validates against too. Invalid input is a frame
+validation failure that closes the control connection before admission.
+
+Non-empty host servers need the Agent to declare HTTP MCP after `initialize`. Plugin checks come
+first; when only the host servers need HTTP, the session ends before `session/new` with
+`agent_failed` / `host_mcp_http_capability_missing`, naming no server. A replacement Agent is checked
+the same way and ends the execution rather than continuing without them.
+
+URLs and headers stay in memory and the ACP request. The ledger keeps only
+`host_mcp_server_names`; a repeated start compares names and keeps the values first accepted. Decode
+failures log only the JSON error category, and validation failures only the rejected field, since a
+decoder message can quote a value. A Node restart interrupts the session
+without asking the Controller to resend values.

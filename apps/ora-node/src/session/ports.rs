@@ -19,6 +19,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub enum SessionCommand {
     SubmitUserTurn(UserTurn),
     EndSession(EndSessionReason),
+    /// Cancels the named turn only; the session decides when the cancel takes effect.
+    CancelTurn(ora_node_protocol::TurnId),
 }
 
 /// A persisted command that the session has not settled yet.
@@ -44,6 +46,44 @@ pub enum CommandSettlement {
 /// belong to the protocol side.
 pub trait SessionLedger: Clone + Send + Sync + 'static {
     type Error: Error + Send + Sync + 'static;
+
+    /// Commits one reliable turn failure together with its command settlement.
+    fn fail_session_turn(
+        &self,
+        execution: &ExecutionId,
+        failure: ora_node_protocol::SessionTurnFailed,
+    ) -> Result<(), Self::Error>;
+
+    /// Registers ownership before any Agent or probe process can be dispatched.
+    fn record_session_stop(
+        &self,
+        identity: &ora_node_db::SessionStopIdentity,
+        scope: ora_node_db::SessionStopScope,
+        at_ms: i64,
+    ) -> Result<(), Self::Error>;
+
+    /// Reads the original identities and deadlines, including responsibilities without an actor.
+    fn session_stop_records(
+        &self,
+        execution: Option<&ExecutionId>,
+    ) -> Result<Vec<ora_node_db::SessionStopRecord>, Self::Error>;
+
+    /// Changes ownership only after the stop owner has gathered the corresponding evidence.
+    fn change_session_stop(
+        &self,
+        attempt: &ora_node_db::AttemptId,
+        change: ora_node_db::SessionStopChange,
+    ) -> Result<(), Self::Error>;
+
+    /// Records the end decision, anchors the stop clock of every outstanding stop
+    /// responsibility, and settles pending cancels as `session_ending`, in one durable write.
+    fn decide_session_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
+    ) -> Result<(), Self::Error>;
 
     /// Assigns the next sequence to one Thread event and returns once it is durable.
     fn append_thread_event(
@@ -92,6 +132,18 @@ pub trait SessionLedger: Clone + Send + Sync + 'static {
     /// turns must be seen while a turn is still running.
     fn queued_commands(&self, execution: &ExecutionId) -> Result<Vec<QueuedCommand>, Self::Error>;
 
+    /// Records the one settlement of a queued `CancelTurn`; for `not_started` it also discards
+    /// `target` in the same transaction. Returns the settlement actually recorded, which is
+    /// `already_ended` when the target turn already failed or was dropped. Fails without writing
+    /// when the target was admitted first, so the caller treats the turn as started.
+    fn settle_turn_cancel(
+        &self,
+        execution: &ExecutionId,
+        command_id: &CommandId,
+        outcome: ora_node_protocol::TurnCancelOutcome,
+        target: Option<&CommandId>,
+    ) -> Result<ora_node_protocol::TurnCancelOutcome, Self::Error>;
+
     /// Settles one queued command.
     fn settle_command(
         &self,
@@ -117,6 +169,11 @@ pub trait PluginCatalog: Send + Sync + 'static {
 
     /// Takes a use lease on one plugin; install and removal report `plugin_in_use` while it lives.
     fn lease(&self, plugin_id: &PluginId) -> Self::Lease;
+
+    /// Pins an exact MCP version. Catalogs without version coexistence retain their ID fence.
+    fn lease_mcp(&self, plugin_id: &PluginId, _version: &PluginVersion) -> Self::Lease {
+        self.lease(plugin_id)
+    }
 
     /// Returns the package directory of exactly this installed version, if present.
     fn installed(&self, plugin_id: &PluginId, version: &PluginVersion) -> Option<PathBuf>;

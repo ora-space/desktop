@@ -11,6 +11,11 @@ MCP delivery is in [Session MCP](session-mcp.md). Crate internals are in
 
 ## Runtime observations
 
+Hosts with durable command queues can use `prompt_session_with_admission`. The session actor first
+checks provider attachment and MCP readiness, then invokes the host's short synchronous commit before
+recording or sending the prompt. A failed commit rejects the turn without executing it. Existing
+prompt APIs have no commit callback and retain their behavior.
+
 Workspace and workflow conversation views expose read-only run details: the latest live content,
 tool or plan observation and its client receipt time, known pending permission requests, active
 tools, and recognized provider retry/compaction reports. Missing reports remain unknown. Reloaded
@@ -22,10 +27,17 @@ countdowns. Silence does not establish provider health or a child lifecycle. Onl
 by the host are listed; the current runtime auto-handles permissions, and unsupported question forms
 do not become pending UI requests.
 
-OpenCode child-session projections remain visible, but do not independently reset or pause their
-parent prompt's inactivity window. A child tool retains this exclusion across metadata-free deltas.
-The parent delegate's own in-progress update still pauses its existing timer; explicit Wait and
-cancel/error cleanup remain unchanged.
+OpenCode child-session projections and `_subagent/update` extension projections remain visible
+and never pause their parent prompt's inactivity window. A `_subagent/update` frame whose outer
+`toolCallId` names a parent delegation still `pending` or `in_progress` in the current attempt
+additionally rearms a full parent window: the captured CodeAgent parent `Task` stays `pending`
+for the whole delegation, so without this renewal a foreground delegation longer than the first
+window would be cancelled and re-sent while the subagent continues emitting frames within each
+window. Completed, failed, unknown or absent outer delegation ids do not renew, and a retry
+clears the previous attempt's delegation observations (assuming parent `toolCallId`s are unique
+within a provider session). Metadata-free child tool deltas retain their known source and do not
+renew. The parent delegate's own in-progress update still pauses its existing timer, with pause
+taking priority over renewal; explicit Wait and cancel/error cleanup remain unchanged.
 
 ## Agents come from plugins
 
@@ -64,6 +76,10 @@ over its `agent/acp` notification channel. See
   that agent is abandoned for the rest of the process.
 
 ## Connections and supervision
+
+The private `manager_startup` module owns manager construction and durable session reconciliation; it runs before connection supervisors start.
+
+The private `model_config` module identifies the same provider-reported selector for startup model intents and stale-load rebuilds. Startup applies only offered values, while rebuild reads the reported current value. A report carries no model when it is empty, when two selects make the fallback ambiguous, or when the `Model` category is not a select. Its `model_selector` rule is public so the workflow executor matches a graph's `modelId` against the same selector.
 
 At Backend start, stale `Running` session rows are reconciled to `Stopped`, then one dedicated
 runtime thread per agent starts it and performs `initialize`. The handshake advertises the
@@ -105,7 +121,15 @@ turn locally until `startSession` returns.
   for the attach and the MCP check, so a send that cannot reach an agent fails as a send.
 - **Rebuild.** An agent that cannot load the session, or fails to restore it, gets a replacement
   provider session from `session/new` with the same snapshot, and the next prompt carries the
-  recorded transcript, exactly as an agent switch does.
+  recorded transcript, exactly as an agent switch does. A load can also report success for a
+  session the agent no longer holds: when that channel's first prompt fails without any assistant
+  output or tool call, the runtime closes it, rebuilds, publishes the new setup updates, and
+  resends the prompt once with the transcript and the model the restored provider reported. If the
+  retry fails too, that attempt's error is returned; only a failure to rebuild returns the first
+  error. The retry only applies to a reusable `RequestFailed` before any output; a cancelled or
+  otherwise finished first prompt consumes it. A load follower registered during that first
+  attempt stays with the logical turn across the rebuild, so it receives exactly one terminal
+  boundary.
 - **Configure.** A session that holds a provider reports its own options and is configured through
   `setSessionConfig`. A model chosen while a session held no provider is an intent applied at the
   next attach. Reasoning effort is read only from the `thought_level` option a live session reports;
@@ -173,7 +197,7 @@ cancelled turn and keeps the actor reusable.
 | `initialize` | 15 s |
 | Plugin model discovery | 60 s |
 | `session/new` / `session/load` inactivity | 30 s, or 120 s when MCP servers are delivered; rearmed by setup notifications |
-| Prompt inactivity windows | 45 s, then 60 s, 90 s and 120 s for up to three retries; paused by running tools and permission waits |
+| Prompt inactivity windows | 45 s, then 60 s, 90 s and 120 s for up to three retries; paused by running tools and permission waits; subagent frames renew open CodeAgent delegations |
 | Cancellation settlement grace | 5 s |
 | Connection retry backoff | 250 ms doubling to 30 s |
 | Restart circuit | Opens after more than 3 failures in 1 minute |
@@ -201,14 +225,29 @@ Agent messages, thoughts, plans and tool lifecycle updates rearm the window; ses
 parallel tool settles and a permission wait pauses it until answered, so a long tool can run for
 hours. There is no absolute prompt limit.
 
+CodeAgent `_subagent/update` frames are the one projected exception: while their outer
+`toolCallId` names a delegation still `pending` or `in_progress` in the current attempt, each
+frame rearms a full window without pausing it, and a retry starts fresh without the previous
+attempt's delegation observations (assuming parent `toolCallId`s are unique within a provider
+session; if a provider reused the same id on a new open delegation, a late child frame from the
+old task could still renew it). Because the captured CodeAgent parent `Task` never reports
+`in_progress`, this keeps a foreground delegation alive only while subagent frames continue to
+arrive within each window. Renewal checks frame arrival rather than subagent health, leaving two
+accepted limits until CodeAgent reports parent `in_progress`: if a normal single tool inside the
+subagent runs longer than the active window without intermediate frames (or the subagent stops
+sending frames), the parent prompt still cancels and retries, rerunning the subagent and that
+tool; conversely, a subagent that keeps sending frames (even in an error or retry loop) renews
+the parent window indefinitely and must be stopped manually.
+
 When a window expires the runtime sends `session/cancel` and waits up to the five-second grace for
 the stalled request's response. If it arrived with `stop_reason: cancelled` and the schedule has
-windows left, the same prompt blocks are re-sent on the same provider session, preceded by a
+windows left, the same user prompt is re-sent on the same provider session, preceded by a
 `retrying { retry, maxRetries }` marker on the owning stream. That response fence is required
 because ACP updates carry no request id. A missing fence, another stop reason or an exhausted
 schedule fails the prompt with `agent_timed_out` and isolates only that Session. A retry never closes
-the session and never re-records the prompt; output produced before the stall stays, so an agent may
-repeat itself.
+the session or duplicates the recorded user message. Before resending, it records a
+`promptRetried` boundary after the cancellation drain. Updates from that drain belong to the
+abandoned send. The host refreshes the attempt instruction and completion token for the new send.
 
 `Wait` still ends on normal responses, provider errors, connection loss, overflow, explicit
 cancellation, owner cleanup and shutdown, and setup and configuration deadlines still apply. It

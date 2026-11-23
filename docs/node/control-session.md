@@ -72,13 +72,16 @@ unavailable".
 Hello negotiates the protocol version, Node identity and incarnation, and capabilities. The session
 accepts the commands of the negotiated capabilities, status queries and exact acknowledgements;
 unsupported or conflicting messages close it, and Cloud mutations require their controlled envelope.
+A checkout admission refusal is the exception: `checkout_busy` and `checkout_session_limit` are
+recorded as the new execution's terminal result and do not close the control connection or affect
+sibling sessions.
 
 - Admission uses a bounded queue and a revocable session guard. Only durable admission happens under
   the guard. A disconnect or revocation discards unaccepted queued work but cannot cancel accepted
   clones. Reads, writes and admission replies use the `frame_timeout_ms` deadline, measured for a
   reply from when its frame arrived.
 - The worker that answers admission owns the Node database and never waits on Git. Every clone step
-  that needs the host runs on a separate clone executor one step at a time, with the worker recording
+  that runs Git runs on a separate clone executor one step at a time, with the worker recording
   each step's input before handing it over
   ([decision](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20260925-clone-git-effects-run-outside-the-admission-worker.md)).
   Status, acknowledgements and replay are therefore answered while Git waits on a remote. A stop lets

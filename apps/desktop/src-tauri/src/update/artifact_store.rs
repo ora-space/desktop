@@ -37,7 +37,6 @@ pub(super) trait ArtifactVerifier {
 #[serde(rename_all = "snake_case")]
 pub(super) enum UpdateBundleKind {
     Nsis,
-    AppArchive,
     AppImage,
 }
 
@@ -47,10 +46,6 @@ impl UpdateBundleKind {
         #[cfg(target_os = "windows")]
         {
             Self::Nsis
-        }
-        #[cfg(target_os = "macos")]
-        {
-            Self::AppArchive
         }
         #[cfg(target_os = "linux")]
         {
@@ -62,7 +57,6 @@ impl UpdateBundleKind {
     fn payload_file_name(self) -> &'static str {
         match self {
             Self::Nsis => "payload.exe",
-            Self::AppArchive => "payload.app.tar.gz",
             Self::AppImage => "payload.AppImage",
         }
     }

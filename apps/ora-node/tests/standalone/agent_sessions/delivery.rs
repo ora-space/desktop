@@ -1,5 +1,6 @@
 //! Revision delivery through the production executable: a real session ends, the delivery
 //! snapshots its checkout, asks for grants, uploads to a local object store and reports.
+use super::admission::named;
 use super::*;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
@@ -311,5 +312,113 @@ fn delivery_for_another_workspace_branch_is_refused() {
         };
         assert_eq!(failed.failure, RevisionFailureCode::CheckoutUnavailable);
         assert_eq!(server.server.served().len(), served);
+    });
+}
+
+/// A session refused at checkout admission never became deliverable work, whichever class
+/// refused it: delivering it is refused as `session_not_settled` before the shared checkout is
+/// read, pushed or uploaded, so a live sibling's files cannot become the refused session's
+/// Revision.
+#[test]
+fn delivery_for_a_checkout_refused_session_is_refused() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        prepare(&fixture, &config, &server);
+        let clone = checkout(&fixture);
+        let mut child = launch(&fixture, &config);
+        let served = server.server.served().len();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let results = runtime.block_on(async {
+            let (mut stream, _) = connect(&fixture).await;
+            // A full checkout: busy for any start that must restore, and at its limit for a
+            // plain one. Admission follows frame order, so the starts need not have run yet.
+            for index in 0..ora_node_db::MAX_SESSIONS_PER_CHECKOUT {
+                send(
+                    &mut stream,
+                    ControllerToNodeMessage::StartAgentSession(named(
+                        &format!("live-{index}"),
+                        "hello",
+                    )),
+                )
+                .await;
+            }
+            let mut busy = named("busy", "must not restore");
+            busy.payload.spec.prior_revision = Some(PriorRevision {
+                revision_id: RevisionId::new("refused-revision"),
+                final_commit: CommitId::new("0123456789012345678901234567890123456789"),
+                git_repository_url: server.url.clone(),
+                delivery_ref: DeliveryRef::parse("refs/ora/deliveries/refused").unwrap(),
+                base_commit: clone.commit.clone(),
+            });
+            let limited = named("limited", "must not start");
+            let mut results = Vec::new();
+            for refused in [busy, limited] {
+                send(
+                    &mut stream,
+                    ControllerToNodeMessage::StartAgentSession(refused.clone()),
+                )
+                .await;
+                // The refusal is durable before the delivery is even named.
+                let detail = loop {
+                    match receive(&mut stream).await {
+                        NodeToControllerMessage::AgentSessionEnded(event)
+                            if event.execution_id == refused.execution_id =>
+                        {
+                            let AgentSessionResult::AgentSessionEnded(ended) = event.payload;
+                            break ended.detail;
+                        }
+                        _ => {}
+                    }
+                };
+                let mut input = deliver(&clone.commit, &server);
+                input.operation_id =
+                    OperationId::new(format!("deliver-{}", refused.execution_id.as_str()));
+                input.execution_id =
+                    ExecutionId::new(format!("delivery-{}", refused.execution_id.as_str()));
+                input.payload.spec.session_execution_id = refused.execution_id.clone();
+                send(&mut stream, ControllerToNodeMessage::DeliverRevision(input)).await;
+                let result = loop {
+                    match next(&mut stream).await {
+                        NodeToControllerMessage::RevisionResult(result) => break result.payload,
+                        NodeToControllerMessage::ExecutionStatus(_)
+                        | NodeToControllerMessage::ThreadEvent(_)
+                        | NodeToControllerMessage::SessionCommandAccepted(_)
+                        | NodeToControllerMessage::AgentSessionEnded(_) => {}
+                        other => panic!("unexpected {other:?}"),
+                    }
+                };
+                let RevisionExecutionResult::RevisionFailed(failed) = result else {
+                    panic!("expected a failed delivery, got {result:?}");
+                };
+                results.push((detail, failed.failure));
+            }
+            results
+        });
+        child.terminate();
+        assert_eq!(
+            results,
+            vec![
+                (
+                    Some("checkout_busy".to_owned()),
+                    RevisionFailureCode::SessionNotSettled
+                ),
+                (
+                    Some("checkout_session_limit".to_owned()),
+                    RevisionFailureCode::SessionNotSettled
+                ),
+            ]
+        );
+        assert_eq!(server.server.served().len(), served);
+        assert_eq!(
+            fs::read_dir(fixture.config().home_directory.join("revision-deliveries"))
+                .map_or_else(|_| 0, |mut entries| { entries.by_ref().count() as u32 }),
+            0
+        );
     });
 }

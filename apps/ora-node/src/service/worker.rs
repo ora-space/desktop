@@ -11,6 +11,7 @@ use std::time::Instant;
 /// executors so admission waits only for SQLite and local directory work.
 pub(super) fn run(
     config: ServiceConfig,
+    hand_over: crate::CheckoutHandOver,
     receiver: mpsc::Receiver<Work>,
     ready: oneshot::Sender<Result<SessionInfo, String>>,
     shutdown: Shutdown,
@@ -30,7 +31,7 @@ pub(super) fn run(
             ControlListen::WebSocket { .. } | ControlListen::MutualTlsWebSocket { .. }
         )
     });
-    // A stop may let the outstanding step settle its Run before the final cleanup.
+    // A stop may let the outstanding step settle its attempt before the final cleanup.
     let drain = Duration::from_millis(
         config
             .process
@@ -39,8 +40,8 @@ pub(super) fn run(
     );
     let initialized = (|| {
         // Read before the process configuration moves into the Node.
-        let workload =
-            agents::workload(config.agent.as_ref(), &config.process).map_err(|e| e.to_string())?;
+        let workload = agents::workload(config.agent.as_ref(), &config.process, &hand_over)
+            .map_err(|e| e.to_string())?;
         let mut node =
             Node::open(config.node, config.process, shutdown.clone()).map_err(|e| e.to_string())?;
         if controlled {
@@ -71,8 +72,8 @@ pub(super) fn run(
         let clones = Clones::start(&node).map_err(|e| e.to_string())?;
         let plugins = Plugins::start(&node, config.plugins).map_err(|e| e.to_string())?;
         let grants = crate::revision::GrantStore::new();
-        let revisions =
-            Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;
+        let revisions = Revisions::start(&node, grants.clone(), shutdown.clone(), hand_over)
+            .map_err(|e| e.to_string())?;
         let scheduled =
             ScheduledArtifacts::start(&mut node, grants.clone()).map_err(|e| e.to_string())?;
         let restore_policy = config.restore.policy().map_err(|error| error.to_string())?;
@@ -82,6 +83,7 @@ pub(super) fn run(
                 .map_err(|error| error.to_string())?,
             node.git.runner().process_config().clone(),
             restore_policy.stop_confirmation,
+            node.git.runner().direct_git().locks().clone(),
         );
         let restorer = agents::restorer(
             &node,
@@ -129,12 +131,26 @@ pub(super) fn run(
         NodeCapability::PluginInstall,
         NodeCapability::RuntimeControl,
     ];
+    let stop_admin = crate::session::stop::admin::Admin::start(
+        node.home_directory(),
+        node.session_stop.clone(),
+        node.database.session_journal().map_err(|e| e.to_string())?,
+        agents
+            .as_ref()
+            .map(agents::SessionHost::probe_scheduler)
+            .unwrap_or_default(),
+    )
+    .map_err(|e| e.to_string())?;
     // Clones come only from the Git Server, which the Node reaches with its git-access identity.
     if node.git_server().is_some() {
         capabilities.insert(0, NodeCapability::RepositoryClone);
     }
     if agents.is_some() {
         capabilities.push(NodeCapability::AgentSession);
+        capabilities.push(NodeCapability::SessionMcp);
+        capabilities.push(NodeCapability::SessionMcpLifecycle);
+        capabilities.push(NodeCapability::SessionHostMcpServers);
+        capabilities.push(NodeCapability::SharedCheckoutSessions);
     }
     if agents
         .as_ref()
@@ -151,6 +167,11 @@ pub(super) fn run(
     }
     let model_adapter = agents.as_ref().and_then(agents::SessionHost::model_adapter);
     let info = SessionInfo {
+        keep_sessions: agents
+            .is_some()
+            .then(|| node.database.session_journal())
+            .transpose()
+            .map_err(|e| e.to_string())?,
         model_adapter,
         agents: agents.clone(),
         grants,
@@ -159,6 +180,7 @@ pub(super) fn run(
         capabilities,
     };
     if ready.send(Ok(info)).is_err() {
+        tokio::runtime::Handle::current().block_on(stop_admin.close());
         if let Some(agents) = &agents {
             tokio::runtime::Handle::current().block_on(agents.shutdown());
         }
@@ -252,6 +274,7 @@ pub(super) fn run(
         Ok(())
     };
     let drained = clones.drain(&mut node, drain);
+    tokio::runtime::Handle::current().block_on(stop_admin.close());
     node.shutdown().map_err(|e| e.to_string())?;
     result
         .and(drained)
@@ -282,6 +305,7 @@ fn close_reason(error: &crate::Error) -> CloseReason {
             | StorageError::InvalidSchema
             | StorageError::NodeMismatch
             | StorageError::ResourceConflict
+            | StorageError::SessionRefused(_)
             | StorageError::InvalidTransition
             | StorageError::Injected(_),
         ) => CloseReason::InternalError,
@@ -302,6 +326,15 @@ fn handle(
     request: Request,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
     match request {
+        Request::Message(ControllerToNodeMessage::UpdateSessionMcp(input)) => {
+            agents::mcp::handle(node, agents, controller, agents::mcp::Action::Update(input))
+        }
+        Request::Message(ControllerToNodeMessage::GetSessionMcpState(input)) => {
+            agents::mcp::handle(node, agents, controller, agents::mcp::Action::Get(input))
+        }
+        Request::Message(ControllerToNodeMessage::ProbeSessionMcp(input)) => {
+            agents::mcp::handle(node, agents, controller, agents::mcp::Action::Probe(input))
+        }
         Request::Replay(cursors) => Ok(node
             .database
             .controller_events_after(controller, &cursors)?),
@@ -375,15 +408,37 @@ fn handle(
             agents.ok_or(crate::Error::UnsupportedMessage)?;
             agents::command(
                 node,
+                agents.ok_or(crate::Error::UnsupportedMessage)?,
                 controller,
                 ora_node_db::SessionCommandInput::SubmitUserTurn(input),
             )
+        }
+        Request::Message(ControllerToNodeMessage::CancelTurn(input)) => {
+            let host = agents.ok_or(crate::Error::UnsupportedMessage)?;
+            let execution = input.execution_id.clone();
+            let command = input.payload.command_id.clone();
+            let replies = agents::command(
+                node,
+                host,
+                controller,
+                ora_node_db::SessionCommandInput::CancelTurn(input),
+            )?;
+            // The settlement is due from acceptance (D1, D4), so the session is woken here, by the
+            // durable acceptance itself, rather than once the reply reached the Controller.
+            if replies
+                .iter()
+                .any(|reply| matches!(reply, NodeToControllerMessage::SessionCommandAccepted(_)))
+            {
+                host.turn_cancel_accepted(&execution, &command, tokio::time::Instant::now());
+            }
+            Ok(replies)
         }
         Request::Message(ControllerToNodeMessage::EndSession(input)) => {
             agents.ok_or(crate::Error::UnsupportedMessage)?;
             let execution = input.execution_id.clone();
             let replies = agents::command(
                 node,
+                agents.ok_or(crate::Error::UnsupportedMessage)?,
                 controller,
                 ora_node_db::SessionCommandInput::EndSession(input),
             )?;

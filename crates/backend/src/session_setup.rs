@@ -24,3 +24,5 @@ impl SessionMcpHost {
         Self::new(plugin_host)
     }
 }
+
+pub(crate) use mcp::error::into_backend as mcp_into_backend;

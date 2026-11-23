@@ -1,10 +1,9 @@
 //! Durable stop clocks and checkout responsibility across real SQLite reopen and migration.
 use super::*;
-use ora_process_protocol::*;
 use pretty_assertions::assert_eq;
 
 /// Supplies an immutable prior input without relying on a running Git fixture.
-fn resumed() -> StartAgentSessionMessage {
+pub(super) fn resumed() -> StartAgentSessionMessage {
     let mut input = command();
     input.payload.spec.prior_revision = Some(PriorRevision {
         revision_id: RevisionId::new("prior"),
@@ -18,24 +17,18 @@ fn resumed() -> StartAgentSessionMessage {
 }
 
 /// No process can exist until this exact association commits.
-fn attempt(input: &StartAgentSessionMessage, directory: &std::path::Path) -> ProcessAttempt {
+fn attempt(input: &StartAgentSessionMessage) -> ProcessAttempt {
     ProcessAttempt {
         execution: input.execution_id.clone(),
-        host_directory: directory.join("original-host"),
-        expected_uid: 42,
-        intent: HostRunIntent {
-            scope: ScopeId::new(),
-            run: RunId::new(),
-            spec: RunSpec::new("git", directory, DescendantPolicy::WaitForAll),
-            host_disconnect: GuardianHostDisconnect::KeepRunning,
-        },
+        id: AttemptId::generate(),
     }
 }
 
 /// Rewinds the fixture to the v10 schema so the v11 backfill runs against real history.
-fn reopen_after_v10_downgrade(
+pub(super) fn reopen_after_v10_downgrade(
     path: &std::path::Path,
 ) -> Result<NodeDatabase, Box<dyn std::error::Error>> {
+    remove_session_stop_schema(&Connection::open(path)?);
     // v12 also changed the shared identity check and the terminal-event outbox, so both are rebuilt
     // to their exact v10 definitions (the schema check compares SQL text).
     let revision = include_str!("../../revision.sql");
@@ -55,6 +48,8 @@ fn reopen_after_v10_downgrade(
         .ok_or("missing v9 outbox columns")?;
     Connection::open(path)?.execute_batch(&format!(
         "PRAGMA foreign_keys=OFF;
+        DROP TRIGGER outcome_excludes_stop; DROP TRIGGER termination_excludes_stop;
+        DROP TABLE process_stops;
         DROP TRIGGER bind_new_scheduled_artifact; DROP TABLE scheduled_artifact_deliveries;
         DROP TABLE restore_process_attempts; DROP TABLE session_restores;
         CREATE TEMP TABLE v10_ids AS SELECT * FROM execution_identities;
@@ -81,12 +76,12 @@ fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
     db.accept_session(&input)?;
     assert!(db.start_session(&input, &NodeIncarnationId::new("original"))?);
     let journal = db.session_journal()?;
-    let process = attempt(&input, directory.path());
-    journal.record_restore_attempt(&process, StopContainment::BestEffort)?;
+    let process = attempt(&input);
+    journal.record_restore_attempt(&process, &git_command(), StopContainment::BestEffort)?;
     journal.request_session_restore_stop(&input.execution_id, 1000, 600_000)?;
-    journal.request_restore_stop(process.intent.run, 20_000, 1_000_000)?;
+    journal.request_restore_stop(&process.id, 20_000, 1_000_000)?;
     journal.defer_restore_end(&input.execution_id, &ended())?;
-    journal.mark_restore_stop_unconfirmed(process.intent.run, 601_000)?;
+    journal.mark_restore_stop_unconfirmed(&process.id, 601_000)?;
     let expected = vec![RestoreAttempt {
         process: process.clone(),
         guarantee: StopContainment::BestEffort,
@@ -106,13 +101,13 @@ fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
     let mut replacement = input.clone();
     replacement.execution_id = ExecutionId::new("replacement");
     replacement.operation_id = OperationId::new("replacement-op");
-    assert!(matches!(
-        db.accept_session(&replacement),
-        Err(Error::ResourceConflict)
-    ));
+    assert_eq!(
+        refusal_of(&db.accept_session(&replacement)),
+        Some(SessionRefusal::CheckoutBusy)
+    );
     assert!(
         journal
-            .record_restore_attempt(&attempt(&input, directory.path()), StopContainment::Strong)
+            .record_restore_attempt(&attempt(&input), &git_command(), StopContainment::Strong)
             .is_err()
     );
     assert!(journal.restored(&input.execution_id).is_err());
@@ -131,7 +126,7 @@ fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
         Some(ended())
     );
     // Only original host proof authorizes the caller to acknowledge this association.
-    journal.confirm_restore_stop(process.intent.run)?;
+    journal.confirm_restore_stop(&process.id)?;
     journal.end_session(
         &input.execution_id,
         journal
@@ -139,6 +134,41 @@ fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
             .ok_or("missing deferred end")?,
     )?;
     assert!(journal.end_session(&input.execution_id, ended()).is_err());
+    assert_eq!(db.pending_events()?.len(), 1);
+    Ok(())
+}
+
+/// Old Git recovery confirms its own stop; v14 independently retains the untracked old Agent.
+#[test]
+fn upgrade_confirms_the_stop_of_a_restore_attempt_the_host_left()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node")))?;
+    let input = resumed();
+    db.accept_session(&input)?;
+    assert!(db.start_session(&input, &NodeIncarnationId::new("original"))?);
+    let journal = db.session_journal()?;
+    let process = attempt(&input);
+    journal.record_restore_attempt(&process, &git_command(), StopContainment::BestEffort)?;
+    journal.request_session_restore_stop(&input.execution_id, 1000, 600_000)?;
+    journal.defer_restore_end(&input.execution_id, &ended())?;
+    drop(journal);
+    drop(db);
+    let previous = Connection::open(&path)?;
+    remove_direct_git_schema(&previous);
+    previous.execute_batch("PRAGMA user_version=12;")?;
+    drop(previous);
+
+    let db = NodeDatabase::open(&path, NodeIdentity::Discover)?;
+    let journal = db.session_journal()?;
+    assert_eq!(
+        journal.pending_restore_attempts(&input.execution_id)?,
+        vec![]
+    );
+    assert!(journal.end_session(&input.execution_id, ended()).is_err());
+    confirm_legacy_agent_after_reboot(&journal, &input.execution_id)?;
+    journal.end_session(&input.execution_id, ended())?;
     assert_eq!(db.pending_events()?.len(), 1);
     Ok(())
 }
@@ -179,10 +209,10 @@ fn missing_stop_origin_is_anchored_only_once() -> Result<(), Box<dyn std::error:
     db.accept_session(&input)?;
     db.start_session(&input, &NodeIncarnationId::new("original"))?;
     let journal = db.session_journal()?;
-    let process = attempt(&input, directory.path());
-    journal.record_restore_attempt(&process, StopContainment::Strong)?;
-    journal.request_restore_stop(process.intent.run, 50, 100)?;
-    journal.request_restore_stop(process.intent.run, 500, 1000)?;
+    let process = attempt(&input);
+    journal.record_restore_attempt(&process, &git_command(), StopContainment::Strong)?;
+    journal.request_restore_stop(&process.id, 50, 100)?;
+    journal.request_restore_stop(&process.id, 500, 1000)?;
     assert_eq!(
         journal.pending_restore_attempts(&input.execution_id)?,
         vec![RestoreAttempt {
@@ -250,10 +280,10 @@ fn upgrade_keeps_inflight_legacy_restore_fenced() -> Result<(), Box<dyn std::err
     replacement.operation_id = OperationId::new("replacement-op");
     replacement.execution_id = ExecutionId::new("replacement-execution");
     // The checkout cannot be reused while the original stop is unknown.
-    assert!(matches!(
-        db.accept_session(&replacement),
-        Err(Error::ResourceConflict)
-    ));
+    assert_eq!(
+        refusal_of(&db.accept_session(&replacement)),
+        Some(SessionRefusal::CheckoutBusy)
+    );
     // Runtime admission reads the same ledger and refuses an open Cloud binding.
     let scope = super::super::repository::runtime_scope(db.node_id());
     assert!(matches!(
@@ -286,7 +316,9 @@ fn upgrade_releases_inflight_restore_proven_after_events_were_acknowledged()
     let journal = db.session_journal()?;
     // The Agent started after v10's synchronous restore, so no restore responsibility remains.
     assert_eq!(journal.restore_phase(&input.execution_id)?, None);
-    // Startup recovery can end the session as interrupted, which releases both fences.
+    // Git proof cannot clear the independent legacy Agent responsibility introduced in v14.
+    assert!(journal.end_session(&input.execution_id, ended()).is_err());
+    confirm_legacy_agent_after_reboot(&journal, &input.execution_id)?;
     journal.end_session(&input.execution_id, ended())?;
     assert!(db.unfinished_runtime_executions()?.is_empty());
     let scope = super::super::repository::runtime_scope(db.node_id());
@@ -298,5 +330,27 @@ fn upgrade_releases_inflight_restore_proven_after_events_were_acknowledged()
     permit.execution_id = replacement.execution_id.as_str().into();
     permit.node_operation_id = replacement.operation_id.as_str().into();
     db.accept_controlled_session(&replacement, &permit)?;
+    Ok(())
+}
+
+/// Models the stop owner supplying affirmative reboot proof, independently of old restore proof.
+fn confirm_legacy_agent_after_reboot(
+    journal: &SessionJournal,
+    execution: &ExecutionId,
+) -> Result<(), Error> {
+    for record in journal.session_stop_records(Some(execution))? {
+        assert_eq!(record.state, SessionStopState::LegacyUnknown);
+        journal.change_session_stop(
+            &record.identity.attempt,
+            SessionStopChange::Confirm {
+                at_ms: 1000,
+                proof: SessionStopProof::HostReboot,
+            },
+        )?;
+        journal.change_session_stop(
+            &record.identity.attempt,
+            SessionStopChange::ResourcesReleased,
+        )?;
+    }
     Ok(())
 }

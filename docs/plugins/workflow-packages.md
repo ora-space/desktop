@@ -104,6 +104,15 @@ record:
 Local `.orax` import is unchanged: it imports every document it carries and reports a name conflict
 as that document's failure.
 
+### Uninstalling a workflow plugin
+
+The uninstall dialog lists the surviving workflows imported from that marketplace plugin. For a
+Pack it lists copies from members being removed. The library and the create-run menu mark those
+copies “Source plugin uninstalled”. The mark allows editing and running a copy. Running it still
+requires its MCP and Skill dependencies, which a Pack uninstall may also remove. Reinstalling the same plugin
+ID clears the mark. Local `.orax` imports also survive uninstall. They have no marketplace source
+record, so they do not appear in the retained-copy list or receive a source mark.
+
 ### Plugin readiness
 
 A document records the MCP plugins and Skills its Agent nodes bind, so importing a package can leave

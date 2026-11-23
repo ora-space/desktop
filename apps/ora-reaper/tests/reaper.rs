@@ -75,6 +75,150 @@ fn shutdown_is_idempotent_for_an_exited_process() {
     wait_for_successful_exit(&mut reaper, "reaper");
 }
 
+/// Verifies each termination signal makes the sidecar terminate a registered live process group
+/// before it exits successfully, instead of dying with the group still running.
+#[cfg(unix)]
+#[test]
+fn termination_signals_reap_registered_process() {
+    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        let mut reaper = spawn_reaper();
+        assert_ready(&mut reaper);
+        let mut target = spawn_long_running_target();
+        register(&mut reaper, target.id());
+
+        send_signal(&reaper, signal);
+        let reaper_status = wait_for_status(&mut reaper, "reaper");
+        let target_signal = wait_for_signal_exit(&mut target, "registered target");
+
+        assert_eq!(
+            (signal, reaper_status.code(), target_signal),
+            (signal, Some(0), Some(libc::SIGKILL))
+        );
+    }
+}
+
+/// Verifies a burst of termination signals neither aborts the cleanup the first one started nor
+/// changes its successful exit.
+#[cfg(unix)]
+#[test]
+fn repeated_termination_signals_complete_one_cleanup() {
+    let mut reaper = spawn_reaper();
+    assert_ready(&mut reaper);
+    let mut targets: Vec<Child> = (0..3).map(|_| spawn_long_running_target()).collect();
+    for target in &targets {
+        register(&mut reaper, target.id());
+    }
+
+    for signal in [
+        libc::SIGTERM,
+        libc::SIGTERM,
+        libc::SIGHUP,
+        libc::SIGINT,
+        libc::SIGTERM,
+    ] {
+        send_signal(&reaper, signal);
+    }
+    let reaper_status = wait_for_status(&mut reaper, "reaper");
+    let target_signals: Vec<Option<i32>> = targets
+        .iter_mut()
+        .map(|target| wait_for_signal_exit(target, "registered target"))
+        .collect();
+
+    assert_eq!(
+        (reaper_status.code(), target_signals),
+        (Some(0), vec![Some(libc::SIGKILL); 3])
+    );
+}
+
+/// Verifies a signal racing an explicit shutdown still ends in exactly one successful cleanup,
+/// whichever of the two runs it.
+#[cfg(unix)]
+#[test]
+fn termination_signal_during_shutdown_completes_cleanup() {
+    let mut reaper = spawn_reaper();
+    assert_ready(&mut reaper);
+    let mut target = spawn_long_running_target();
+    register(&mut reaper, target.id());
+
+    let stdin = reaper
+        .stdin
+        .as_mut()
+        .unwrap_or_else(|| panic!("reaper stdin unavailable"));
+    stdin
+        .write_all(&[SHUTDOWN, 0, 0, 0, 0])
+        .and_then(|()| stdin.flush())
+        .unwrap_or_else(|error| panic!("write shutdown request: {error}"));
+    send_signal(&reaper, libc::SIGTERM);
+    let reaper_status = wait_for_status(&mut reaper, "reaper");
+    let target_signal = wait_for_signal_exit(&mut target, "registered target");
+
+    assert_eq!(
+        (reaper_status.code(), target_signal),
+        (Some(0), Some(libc::SIGKILL))
+    );
+}
+
+/// Verifies the case of a killed parent whose cleanup owner signals the sidecar right away: the
+/// signal racing EOF cleanup cannot make the sidecar exit before its registered group is killed.
+#[cfg(unix)]
+#[test]
+fn termination_signal_after_parent_eof_completes_cleanup() {
+    let mut reaper = spawn_reaper();
+    assert_ready(&mut reaper);
+    let mut target = spawn_long_running_target();
+    register(&mut reaper, target.id());
+
+    drop(reaper.stdin.take());
+    send_signal(&reaper, libc::SIGTERM);
+    let reaper_status = wait_for_status(&mut reaper, "reaper");
+    let target_signal = wait_for_signal_exit(&mut target, "registered target");
+
+    assert_eq!(
+        (reaper_status.code(), target_signal),
+        (Some(0), Some(libc::SIGKILL))
+    );
+}
+
+/// Delivers one signal to the sidecar alone, as a cleanup owner signalling it by PID would.
+#[cfg(unix)]
+fn send_signal(reaper: &Child, signal: i32) {
+    let process_id = libc::pid_t::try_from(reaper.id())
+        .unwrap_or_else(|error| panic!("reaper pid out of range: {error}"));
+    // SAFETY: `kill` only reads its integer arguments.
+    let result = unsafe { libc::kill(process_id, signal) };
+    assert_eq!(
+        result,
+        0,
+        "signal reaper: {}",
+        std::io::Error::last_os_error()
+    );
+}
+
+/// Polls one process and returns how it ended, failing instead of hanging past the deadline.
+#[cfg(unix)]
+fn wait_for_status(child: &mut Child, label: &str) -> std::process::ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(status) = child
+            .try_wait()
+            .unwrap_or_else(|error| panic!("poll child exit: {error}"))
+        {
+            return status;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("{label} did not exit before its deadline");
+}
+
+/// Waits for a target and reports the signal that ended it.
+#[cfg(unix)]
+fn wait_for_signal_exit(child: &mut Child, label: &str) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    wait_for_status(child, label).signal()
+}
+
 /// Starts the compiled sidecar with the private protocol attached to pipes.
 fn spawn_reaper() -> Child {
     Command::new(env!("CARGO_BIN_EXE_ora-reaper"))

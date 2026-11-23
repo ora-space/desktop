@@ -10,7 +10,7 @@ mod actor_history;
 #[path = "actor_mcp.rs"]
 mod actor_mcp;
 #[path = "actor_prompt.rs"]
-mod actor_prompt;
+pub(crate) mod actor_prompt;
 #[path = "cleanup.rs"]
 mod cleanup;
 #[path = "title_polling.rs"]
@@ -49,12 +49,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 Some(channel) => {
                     // Residual events belong to the previous provider turn. Consume the current
                     // queue snapshot before accepting a new command so they cannot cross turns.
-                    drain_idle_events(
+                    // Turn traffic among them is remembered for a caller judging a stopped turn.
+                    if drain_idle_events(
                         &channel.connection.client,
                         &mut channel.events,
                         &command_sender,
                     )
-                    .await;
+                    .await
+                    {
+                        self.turn_cancel.note_idle_traffic();
+                    }
                     if let Ok(control) = channel.controls.try_recv() {
                         self.handle_idle_control(Some(control)).await;
                         continue;
@@ -66,12 +70,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             continue;
                         }
                         command = self.commands.recv() => {
-                            drain_idle_events(
+                            if drain_idle_events(
                                 &channel.connection.client,
                                 &mut channel.events,
                                 &command_sender,
                             )
-                            .await;
+                            .await
+                            {
+                                self.turn_cancel.note_idle_traffic();
+                            }
                             command
                         }
                         event = channel.events.recv() => {
@@ -79,6 +86,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                 self.mark_stopped();
                                 continue;
                             };
+                            if super::events::is_turn_traffic(&event) {
+                                self.turn_cancel.note_idle_traffic();
+                            }
                             if let SessionEvent::Update(update) = &event
                                 && let Some(command_sender) = command_sender.upgrade()
                             {
@@ -117,20 +127,34 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     operation_id,
                     prompt,
                     record_prompt,
+                    commit_admission,
                     inactivity_policy,
                     model,
                     end_report,
                     events,
                     accepted,
                 } => {
+                    // A turn cancel addressed to an earlier prompt must not stop this one; one
+                    // requested from here on, even before the write, does.
+                    self.turn_cancel.clear();
                     // Conversations are opened without a provider, so a send is where one is
                     // acquired. Admission waits on that: a prompt that cannot reach an agent, or
                     // that cannot be given the MCP set configured right now, has to fail as the
                     // send it was, not as a turn that started and produced nothing.
-                    match self.ensure_attached(model.as_deref()).await {
+                    match self
+                        .ensure_attached(model.as_deref())
+                        .await
+                        .and_then(|setup| {
+                            if accepted.is_closed() {
+                                return Err(runtime_unavailable());
+                            }
+                            if let Some(commit) = commit_admission {
+                                commit()?;
+                            }
+                            Ok(setup)
+                        }) {
                         Ok(setup) => {
-                            let _ = accepted.send(Ok(()));
-                            if publish_setup(&events, setup) {
+                            if accepted.send(Ok(())).is_ok() && publish_setup(&events, setup) {
                                 self.run_prompt(
                                     operation_id,
                                     prompt,
@@ -168,6 +192,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     }));
                 }
                 RuntimeCommand::CancelActivePrompt => {}
+                RuntimeCommand::TakeIdleTurnTraffic { response } => {
+                    // The idle loop drained the queue before dispatching this command.
+                    let _ = response.send(self.turn_cancel.take_idle_traffic());
+                }
                 RuntimeCommand::Cancel {
                     operation_id,
                     completion,
@@ -300,7 +328,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.channel = None;
         self.reported_config_options.clear();
         self.title_acquisition.close();
-        self.live_mcp = LiveMcpState::Inactive;
+        if self.session_mcp.preserve_provider_identity() {
+            self.session_mcp.mcp_detached();
+        } else {
+            self.live_mcp = LiveMcpState::Inactive;
+        }
         self.persist_session_status(SessionStatus::Stopped);
         ora_debug!(session_id = %self.session.id, "session marked stopped");
     }
@@ -442,6 +474,7 @@ mod tests {
             connections,
             handoff: HandoffDebt::Settled,
             rebuilt_binding: None,
+            load_restoration: Default::default(),
             reported_config_options: Vec::new(),
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
@@ -450,6 +483,7 @@ mod tests {
             session_mcp: NoSessionMcp::default(),
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
+            turn_cancel: Default::default(),
             #[cfg(feature = "test-support")]
             test_prompt_inactivity_windows: None,
             exit_probe: Some(exit_sender),
@@ -522,6 +556,7 @@ mod tests {
             connections,
             handoff: HandoffDebt::Settled,
             rebuilt_binding: None,
+            load_restoration: Default::default(),
             reported_config_options: Vec::new(),
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
@@ -530,6 +565,7 @@ mod tests {
             session_mcp: NoSessionMcp::default(),
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
+            turn_cancel: Default::default(),
             #[cfg(feature = "test-support")]
             test_prompt_inactivity_windows: None,
             exit_probe: None,
@@ -549,7 +585,7 @@ mod tests {
 ///
 /// A closed queue means the caller abandoned the send before it began, so the turn is dropped
 /// rather than started for nobody.
-fn publish_setup(
+pub(super) fn publish_setup(
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     setup: Vec<SessionUpdate>,
 ) -> bool {

@@ -99,7 +99,7 @@ fn checkout_git(path: &std::path::Path, args: &[&str]) -> String {
     ora_test_support::git_server::git(path, args)
 }
 
-/// Uses actual TLS, Git, host and guardian: the snapshot is fetched as the Node, the checkout is
+/// Uses actual TLS and directly run Git: the snapshot is fetched as the Node, the checkout is
 /// built from it on the Workspace branch with no remote, and a replay needs no network.
 #[test]
 fn managed_snapshot_clone_checks_out_the_base_commit_without_a_remote() {

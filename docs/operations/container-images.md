@@ -25,34 +25,30 @@ One container per Workspace sandbox, started by the Sandbox Server (never by Com
 | `/var/lib/ora` | Mount point of the Workspace volume; every state path in the configuration lives below it |
 | `/etc/ora/clone.gitconfig` | Clone Git configuration; the image ships an empty, root-owned file without credentials |
 
-The management processes (the process host and the Node) run as root and own the protected
-configuration and journals. Git workloads run as UID/GID 1000 (`node`) through the managed process
-boundary, and so do agent plugins and their processes when the configuration names an agent workload
+The management process (the Node) runs as root and owns the protected configuration and journals.
+Git workloads run as UID/GID 1000 (`node`), an identity each such process takes between fork and
+exec, and so do agent plugins and their processes when the configuration names an agent workload
 directory; the Node's network control listener requires that separate identity.
 
-The entrypoint runs under `tini` as PID 1, so processes reparented to it (guardians and their
-descendants) are reaped. It:
+The entrypoint runs under `tini` as PID 1, so processes reparented to it (what outlived a killed
+Node) are reaped. It:
 
 1. sets the volume root to `root:root` with mode `0711` (never its contents), creates the clone root and,
    when configured, the agent workload directory (`0711`), which the Node requires and never creates;
 2. writes the configuration to `/run/ora/node.json` and each certificate and key to `/run/ora/*.pem`
    (mode `0600`, in a root-only directory) and unsets the variables;
-3. starts the process host with `create` when its directory is missing and `recover` otherwise, so the
-   same volume keeps its host journal across containers (a failed recovery never falls back to
-   creation), and waits up to 30 seconds until the host socket accepts connections (a leftover socket
-   file does not count);
-4. starts `ora-node`.
+3. starts `ora-node`, the only process it supervises: the Node runs every Git command itself and
+   starts its own `ora-reaper`, see [Node](../node/node.md#execution-and-recovery).
 
-A stop signal goes to the Node first, which closes its managed Scopes through the live host; only after
-the Node exits is the host stopped. Guardians are not stopped: their journals stay on the volume and the
-next container recovers them. The Sandbox Server's stop timeout must therefore exceed the Node's
-`shutdown_grace_ms + cleanup_timeout_ms`. If the Node exits on its own, the host is stopped and the
-container exits with the Node's status.
+`TERM` and `INT` are forwarded to the Node, which ends the Git it runs and waits for its stop
+evidence. The Sandbox Server's stop timeout must therefore exceed the Node's
+`shutdown_grace_ms + cleanup_timeout_ms`. The container exits with the Node's status.
 
-Binaries live under the root-owned `/opt/ora/bin`, as the host requires for the guardian. The image also
-ships `/opt/ora/bin/deno`, the runtime every plugin runs on: its version is `.deno-version`, and the
-build verifies the archive and executable against `scripts/sidecar-checksums.json` (Linux x64 and arm64),
-failing on an architecture without a pin. Agent sessions use it through `agent.deno_path`.
+Binaries live under the root-owned `/opt/ora/bin`; `ora-reaper` sits next to `ora-node`, which starts
+it from its own directory. The image also ships `/opt/ora/bin/deno`, the runtime every plugin runs
+on: its version is `.deno-version`, and the build verifies the archive and executable against
+`scripts/sidecar-checksums.json` (Linux x64 and arm64), failing on an architecture without a pin.
+Agent sessions use it through `agent.deno_path`.
 
 `ora-git` is installed at `/usr/local/bin/ora-git`, on the workload `PATH`, so the Agent's processes
 find it. It only sends fixed requests to the current session's `ORA_GIT_SOCKET`, whose directory is

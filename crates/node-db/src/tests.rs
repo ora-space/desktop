@@ -164,7 +164,7 @@ fn atomic_acceptance_deduplicates_and_reserves_resources() {
 }
 
 /// Faults are armed after initialization so tests reach the exact transactional boundary.
-struct Fault(std::rc::Rc<std::cell::Cell<Option<WritePoint>>>);
+pub(super) struct Fault(pub(super) std::rc::Rc<std::cell::Cell<Option<WritePoint>>>);
 impl WriteGuard for Fault {
     /// Fails only the requested write without faking SQLite persistence.
     fn before_write(&self, point: WritePoint) -> Result<(), Error> {
@@ -343,6 +343,78 @@ fn definitive_create_failure_retires_its_reservation() {
     );
 }
 
+/// A recorded command description; the journal never executes it.
+fn git_command() -> AttemptCommand {
+    AttemptCommand {
+        cwd: std::path::PathBuf::from("/repositories/checkout"),
+        args: vec!["fetch".into(), "origin".into()],
+    }
+}
+
+/// Drops what v13 added, so a fixture of any earlier version matches its exact schema.
+fn remove_direct_git_schema(connection: &Connection) {
+    remove_session_stop_schema(connection);
+    connection
+        .execute_batch(
+            "DROP TRIGGER outcome_excludes_stop; DROP TRIGGER termination_excludes_stop; DROP TABLE process_stops;",
+        )
+        .unwrap();
+}
+
+/// Reconstructs the stop table as it was just before the stop-marks schema: no
+/// `lock_processes_and_marks` proof and no `mark_scope` flag.
+fn remove_session_stop_marks_schema(connection: &Connection) {
+    connection.execute_batch("DROP INDEX session_stop_execution;
+DROP INDEX session_stop_checkout;
+ALTER TABLE session_stop_attempts RENAME TO new_session_stop_attempts;
+CREATE TABLE session_stop_attempts (
+    attempt TEXT PRIMARY KEY,
+    execution TEXT NOT NULL REFERENCES node_executions(execution),
+    checkout TEXT NOT NULL,
+    record TEXT NOT NULL CHECK(json_valid(record)),
+    state TEXT NOT NULL CHECK(state IN ('prepared','stopping','stop_unconfirmed','legacy_unknown','confirmed')),
+    created_at_ms INTEGER NOT NULL,
+    first_stop_at_ms INTEGER,
+    bound_at_ms INTEGER,
+    confirmed_at_ms INTEGER,
+    evidence TEXT CHECK(evidence IS NULL OR evidence IN ('lock_and_processes','host_reboot','fenced_volume')),
+    resources_released INTEGER NOT NULL DEFAULT 0 CHECK(resources_released IN (0,1)),
+    CHECK((first_stop_at_ms IS NULL) = (bound_at_ms IS NULL)),
+    CHECK(bound_at_ms IS NULL OR bound_at_ms > first_stop_at_ms),
+    CHECK((state='confirmed') = (confirmed_at_ms IS NOT NULL)),
+    CHECK(resources_released=0 OR state='confirmed')
+);
+INSERT INTO session_stop_attempts SELECT attempt,execution,checkout,record,state,created_at_ms,first_stop_at_ms,bound_at_ms,confirmed_at_ms,evidence,resources_released FROM new_session_stop_attempts;
+DROP TABLE new_session_stop_attempts;
+CREATE INDEX session_stop_execution ON session_stop_attempts(execution,state);
+CREATE INDEX session_stop_checkout ON session_stop_attempts(checkout,state);").unwrap();
+    connection
+        .pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            crate::schema::STOP_MARKS_VERSION - 1,
+        )
+        .unwrap();
+}
+
+/// Reconstructs an exact pre-v14 schema; production has no downgrade path.
+fn remove_session_stop_schema(connection: &Connection) {
+    connection.execute_batch("DROP TABLE session_turn_cancels; DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
+DROP INDEX queued_session_commands;
+ALTER TABLE session_commands RENAME TO new_session_commands;
+CREATE TABLE session_commands (
+    acceptance_order INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution TEXT NOT NULL REFERENCES node_executions(execution),
+    command_id TEXT NOT NULL CHECK(length(command_id)>0),
+    input TEXT NOT NULL CHECK(json_valid(input)),
+    state TEXT NOT NULL CHECK(state IN ('queued','executed','discarded')),
+    UNIQUE(execution,command_id)
+);
+INSERT INTO session_commands SELECT * FROM new_session_commands;
+DROP TABLE new_session_commands;
+CREATE INDEX queued_session_commands ON session_commands(execution,state,acceptance_order);").unwrap();
+}
+
 /// Reconstructs the exact pre-plugin identity schema for legacy migration fixtures.
 fn remove_plugin_schema(path: &std::path::Path) {
     remove_session_schema(path);
@@ -383,8 +455,9 @@ fn remove_revision_schema(path: &std::path::Path) {
 
 /// Reconstructs v9 exactly: the schema before the own-branch ledger.
 fn remove_branch_heads_schema(path: &std::path::Path) {
-    Connection::open(path)
-        .unwrap()
+    let connection = Connection::open(path).unwrap();
+    remove_direct_git_schema(&connection);
+    connection
         .execute_batch("DROP TABLE workspace_branch_heads; PRAGMA user_version=9;")
         .unwrap();
 }

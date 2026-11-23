@@ -1,5 +1,5 @@
 use super::*;
-use crate::managed::CloneHost;
+use crate::managed::DirectGit;
 use gitlancer::{GitCommand, GitIntent};
 use std::io;
 
@@ -7,7 +7,7 @@ use std::io;
 /// a plain, complete repository of its own on the Workspace branch, with no remote and a clean
 /// tree. The caller compares the commit with the input's base commit.
 pub(super) fn verify(
-    host: &CloneHost,
+    git: &DirectGit,
     record: &CloneExecution,
     config: &CloneConfig,
 ) -> io::Result<CommitId> {
@@ -32,7 +32,7 @@ pub(super) fn verify(
             GitIntent::ReadOnly,
         );
         config.constrain(&mut command);
-        let output = host.inspect(&command)?;
+        let output = git.inspect(&command)?;
         if output.code != Some(0) {
             return Err(io::Error::other("local checkout facts unavailable"));
         }

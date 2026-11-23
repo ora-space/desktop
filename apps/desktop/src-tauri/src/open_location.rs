@@ -2,7 +2,7 @@ use crate::error::CommandError;
 use ora_backend::{BackendError, RequestLifecycle, UuidRequestIdGenerator};
 use ora_contracts::{OpenLocationFailedParams, OpenLocationTarget, PublicError};
 use serde::Deserialize;
-#[cfg(any(test, windows, target_os = "macos"))]
+#[cfg(any(test, windows))]
 use std::path::Path;
 use tracing::Instrument;
 
@@ -26,18 +26,18 @@ pub struct OpenLocationRequest {
 /// How the host file manager should present a path.
 ///
 /// Directories open as folder windows. Files (and missing paths) must be
-/// *revealed* so Windows Explorer / macOS Finder owns the window. Passing a
-/// file to `explorer.exe` or `open` without a reveal switch launches the
-/// default file association, which on developer machines is often Cursor.
+/// *revealed* so Windows Explorer owns the window. Passing a file to
+/// `explorer.exe` without a reveal switch launches the default file
+/// association, which on developer machines is often Cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg(any(test, windows, target_os = "macos"))]
+#[cfg(any(test, windows))]
 pub(crate) enum ExplorerInvocation {
     OpenDirectory { path: String },
     RevealItem { path: String },
 }
 
 /// Converts Git-style slashes to the separator the host file manager expects.
-#[cfg(any(test, windows, target_os = "macos"))]
+#[cfg(any(test, windows))]
 fn native_location_path(path: &str) -> String {
     #[cfg(windows)]
     {
@@ -54,7 +54,7 @@ fn native_location_path(path: &str) -> String {
 /// Only existing directories open as folder windows. Everything else —
 /// regular files and missing paths — is revealed so a chat file link cannot
 /// launch Cursor (or another default editor) in place of the system file manager.
-#[cfg(any(test, windows, target_os = "macos"))]
+#[cfg(any(test, windows))]
 pub(crate) fn explorer_invocation(path: &str) -> ExplorerInvocation {
     let path = native_location_path(path);
     if Path::new(&path).is_dir() {
@@ -187,43 +187,9 @@ fn spawn_windows_explorer(path: &str) -> std::io::Result<()> {
     command.spawn().map(|_| ())
 }
 
-/// Launches the host handler for one location through macOS `open`, which fails loudly when absent.
-#[cfg(target_os = "macos")]
-fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), BackendError> {
-    use std::process::Command;
-
-    let mut command = Command::new("open");
-    match target {
-        LocationTarget::Explorer => match explorer_invocation(path) {
-            ExplorerInvocation::OpenDirectory { path } => {
-                command.arg(path);
-            }
-            ExplorerInvocation::RevealItem { path } => {
-                command.arg("-R").arg(path);
-            }
-        },
-        LocationTarget::Terminal => {
-            command.args(["-a", "Terminal", path]);
-        }
-        LocationTarget::VsCode => {
-            command.args(["-a", "Visual Studio Code", path]);
-        }
-    }
-    let status = command
-        .status()
-        .map_err(|source| open_location_error(target, source))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(open_location_error(
-            target,
-            std::io::Error::other(format!("open command exited with {status}")),
-        ))
-    }
-}
-
-/// Rejects location handoffs on hosts that never run the desktop shell (only Web runs on Linux).
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+/// Rejects location handoffs on Linux, where no file manager, terminal, or VS Code handoff exists
+/// yet; the UI reports the failure instead of guessing a desktop environment's launcher.
+#[cfg(target_os = "linux")]
 fn open_location_blocking(target: LocationTarget, _path: &str) -> Result<(), BackendError> {
     Err(open_location_error(
         target,

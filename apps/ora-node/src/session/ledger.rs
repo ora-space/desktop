@@ -4,7 +4,49 @@ use ora_node_db::{SessionCommandInput, SessionCommandSettlement, SessionJournal,
 use ora_node_protocol::{AgentSessionEnded, CommandId, ExecutionId, Sequence, ThreadEvent};
 
 impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> {
+    fn fail_session_turn(
+        &self,
+        execution: &ExecutionId,
+        failure: ora_node_protocol::SessionTurnFailed,
+    ) -> Result<(), Self::Error> {
+        SessionJournal::fail_session_turn(self, execution, failure).map(drop)
+    }
     type Error = ora_node_db::Error;
+
+    fn record_session_stop(
+        &self,
+        identity: &ora_node_db::SessionStopIdentity,
+        scope: ora_node_db::SessionStopScope,
+        at_ms: i64,
+    ) -> Result<(), Self::Error> {
+        SessionJournal::record_session_stop(self, identity, scope, at_ms)
+    }
+
+    fn session_stop_records(
+        &self,
+        execution: Option<&ExecutionId>,
+    ) -> Result<Vec<ora_node_db::SessionStopRecord>, Self::Error> {
+        SessionJournal::session_stop_records(self, execution)
+    }
+
+    fn change_session_stop(
+        &self,
+        attempt: &ora_node_db::AttemptId,
+        change: ora_node_db::SessionStopChange,
+    ) -> Result<(), Self::Error> {
+        SessionJournal::change_session_stop(self, attempt, change)
+    }
+
+    /// One transaction for the decision, the stop clock and the cancel settlements.
+    fn decide_session_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
+    ) -> Result<(), Self::Error> {
+        SessionJournal::decide_session_end(self, execution, ended, at_ms, bound_at_ms)
+    }
 
     /// History release follows durable terminal evidence, never actor lifetime alone.
     fn session_completed(&self, execution: &ExecutionId) -> Result<bool, Self::Error> {
@@ -59,6 +101,9 @@ impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> 
                     SessionCommandInput::EndSession(message) => {
                         SessionCommand::EndSession(message.payload.reason)
                     }
+                    SessionCommandInput::CancelTurn(message) => {
+                        SessionCommand::CancelTurn(message.payload.turn_id)
+                    }
                 };
                 QueuedCommand {
                     command_id,
@@ -66,6 +111,18 @@ impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> 
                 }
             })
             .collect())
+    }
+
+    /// Delegates to the ledger, which is the serial boundary for cancel, admission and timeout.
+    fn settle_turn_cancel(
+        &self,
+        execution: &ExecutionId,
+        command_id: &CommandId,
+        outcome: ora_node_protocol::TurnCancelOutcome,
+        target: Option<&CommandId>,
+    ) -> Result<ora_node_protocol::TurnCancelOutcome, Self::Error> {
+        SessionJournal::settle_turn_cancel(self, execution, command_id, outcome, target)
+            .map(|(outcome, _)| outcome)
     }
 
     /// Keeps runtime settlements within the database's one-way command state machine.

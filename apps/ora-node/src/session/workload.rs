@@ -16,7 +16,10 @@
 //! by name but cannot list or replace them. It lives exactly as long as the session's plugin.
 
 use super::host::{SessionEnvironment, SessionLauncher};
+pub(crate) mod storage;
 use super::process::ModelProcessIsolation;
+use crate::CheckoutHandOver;
+use crate::hand_over::HandOverError;
 use ora_logging::ora_warn;
 use ora_node_protocol::{ExecutionId, GitIdentity};
 use ora_plugin_lifecycle::{
@@ -39,13 +42,15 @@ pub enum SessionWorkload {
     ///
     /// `identity` is what processes are spawned as; `uid` and `gid` own the session home and the
     /// checkout. Production names the same user in both — a group equal to the user, as the
-    /// clone workload's `setpriv --regid` does — and tests keep `identity` inherited while
-    /// naming their own ids, since only root may take another identity.
+    /// clone workload's identity drop does — and tests keep `identity` inherited while
+    /// naming their own ids, since only root may take another identity. `hand_over` gives the
+    /// checkout to them under the Node-wide walk bound and host check.
     Separate {
         directory: PathBuf,
         identity: ProcessIdentity,
         uid: u32,
         gid: u32,
+        hand_over: CheckoutHandOver,
     },
 }
 
@@ -58,7 +63,61 @@ pub(super) enum SessionPlacement {
     },
 }
 
+/// Why a session's placement could not be prepared.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum PlacementError {
+    /// The checkout nests directories deeper than the hand-over walk descends, so it was not
+    /// handed to the workload user and the session must not start in it. Every other hand-over
+    /// failure, a host that stopped protecting hard links included, is [`Self::Io`].
+    #[error(
+        "checkout is nested deeper than {} directory levels",
+        ora_utils::fs::MAX_OWN_TREE_DEPTH
+    )]
+    CheckoutTooDeep,
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
 impl SessionPlacement {
+    /// The attempt spawner applies the same identity to the plugin and its host children.
+    pub(super) fn identity(&self) -> ProcessIdentity {
+        match self {
+            Self::Shared => ProcessIdentity::Inherit,
+            Self::Separate { identity, .. } => *identity,
+        }
+    }
+
+    /// A value-free key identifies the immutable placement to restart recovery.
+    pub(super) fn view_key(&self) -> Option<String> {
+        match self {
+            Self::Shared => None,
+            Self::Separate { directory, .. } => directory
+                .root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned),
+        }
+    }
+
+    /// Once registered, an interrupted stack must leave views for the durable stop owner.
+    pub(super) fn retain_for_stop(&mut self) {
+        if let Self::Separate { directory, .. } = self {
+            directory.remove_on_drop = false;
+        }
+    }
+
+    /// Removes views only after affirmative stop proof; failed removal is retried by recovery.
+    pub(super) fn release(&mut self) -> io::Result<()> {
+        if let Self::Separate { directory, .. } = self {
+            match fs::remove_dir_all(&directory.root) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            directory.remove_on_drop = false;
+        }
+        Ok(())
+    }
     /// Prepares the session's directory and hands a checkout left by older Nodes, whose agents
     /// ran as root, back to the workload user. Runs blocking filesystem work, so callers keep it
     /// off the async workers.
@@ -67,7 +126,7 @@ impl SessionPlacement {
         execution: &ExecutionId,
         package_root: &Path,
         checkout: &Path,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, PlacementError> {
         match workload {
             SessionWorkload::Shared => Ok(Self::Shared),
             SessionWorkload::Separate {
@@ -75,10 +134,26 @@ impl SessionPlacement {
                 identity,
                 uid,
                 gid,
+                hand_over,
             } => {
-                // A link the old agent left cannot redirect this privileged change: nothing is
-                // followed, and an already-right tree costs only a walk.
-                ora_utils::fs::own_tree_no_follow(checkout, *uid, *gid)?;
+                // Every session walks its checkout itself, before its own Agent starts, rather
+                // than trusting an earlier sibling to have done it: admission order says nothing
+                // about whether that sibling's walk finished, or ran at all. The walk pins every
+                // entry before acting on it and never re-resolves a path, so live sibling Agents
+                // changing the tree as the workload user cannot redirect it outside the checkout:
+                // an entry removed before it is pinned is skipped and a name replaced afterwards
+                // changes nothing the walk does. Hard links are only safe while the host keeps
+                // `fs.protected_hardlinks`, which the hand-over reads again before this walk. An
+                // already-right tree costs only a walk, and the depth bound plus the Node-wide
+                // walk permits keep the descriptors all walks hold bounded.
+                hand_over
+                    .hand_over(checkout, *uid, *gid)
+                    .map_err(|error| match error {
+                        HandOverError::TooDeep => PlacementError::CheckoutTooDeep,
+                        HandOverError::HardlinksUnprotected(error) | HandOverError::Io(error) => {
+                            PlacementError::Io(error)
+                        }
+                    })?;
                 Ok(Self::Separate {
                     directory: SessionDirectory::create(
                         directory,
@@ -101,6 +176,7 @@ impl SessionPlacement {
         package_root: &Path,
         mut runtime: std::collections::BTreeMap<String, String>,
         isolation: ModelProcessIsolation,
+        spawner: super::stop::spawner::SessionAttemptSpawner,
     ) -> SessionLauncher {
         isolation.extend_environment(&mut runtime);
         let environment = SessionEnvironment::new(git_identity, runtime);
@@ -110,24 +186,76 @@ impl SessionPlacement {
                     PluginRuntimeTimeouts::default(),
                     environment,
                 )
-                .with_spawner(isolation.spawner(ProcessIdentity::Inherit)),
+                .with_spawner(spawner),
                 location: PackageLocation::Installed,
             },
             Self::Separate {
                 directory,
-                identity,
+                identity: _,
             } => PackageViewLauncher {
                 inner: DenoPluginRuntimeLauncher::with_environment_provider(
                     PluginRuntimeTimeouts::default(),
                     environment.with_home(&directory.home),
                 )
-                .with_spawner(isolation.spawner(*identity)),
+                .with_spawner(spawner),
                 location: PackageLocation::View {
                     installed: package_root.to_path_buf(),
                     view: directory.package.clone(),
                 },
             },
         }
+    }
+
+    /// Links immutable MCP package bytes beside the agent package for workload access. Plugin
+    /// identities are hashed so their two segments cannot collide with the existing layout.
+    pub(super) fn mcp_package(
+        &self,
+        id: &ora_domain::PluginId,
+        installed: &Path,
+    ) -> io::Result<PathBuf> {
+        match self {
+            Self::Shared => Ok(installed.to_path_buf()),
+            Self::Separate { directory, .. } => {
+                let view = directory.root.join(format!(
+                    "mcp-{}",
+                    ora_utils::hash::sha256_hex(
+                        format!(
+                            "{}:{}",
+                            id.canonical(),
+                            installed
+                                .file_name()
+                                .ok_or_else(|| io::Error::other("missing package version"))?
+                                .to_string_lossy()
+                        )
+                        .as_bytes()
+                    )
+                ));
+                match ora_utils::path::check_directory_without_symlinks(&view) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        ora_utils::fs::hard_link_tree_no_follow(installed, &view)?
+                    }
+                    Err(error) => return Err(error),
+                }
+                Ok(view)
+            }
+        }
+    }
+
+    /// Removes one obsolete immutable view only after every attempt referring to it stopped.
+    pub(super) fn release_mcp_package(&self, id: &str, version: &str) -> io::Result<()> {
+        if let Self::Separate { directory, .. } = self {
+            let view = directory.root.join(format!(
+                "mcp-{}",
+                ora_utils::hash::sha256_hex(format!("{id}:{version}").as_bytes())
+            ));
+            match fs::remove_dir_all(view) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 
     /// The private workload home owns CLI state; management-owned Node directories remain closed.
@@ -154,6 +282,7 @@ impl SessionPlacement {
 
 /// One session's directory under the workload directory, removed when dropped.
 pub(super) struct SessionDirectory {
+    remove_on_drop: bool,
     root: PathBuf,
     package: PathBuf,
     home: PathBuf,
@@ -179,13 +308,14 @@ impl SessionDirectory {
             Err(error) => return Err(error),
         }
         let directory = Self {
+            remove_on_drop: true,
             package: root.join("package"),
             home: root.join("home"),
             root,
         };
         // From here on, dropping `directory` removes whatever a failure left behind.
         create_directory(&directory.root, /*mode*/ 0o711)?;
-        ora_utils::fs::link_tree_no_follow(package_root, &directory.package)?;
+        ora_utils::fs::hard_link_tree_no_follow(package_root, &directory.package)?;
         create_directory(&directory.home, /*mode*/ 0o700)?;
         std::os::unix::fs::chown(&directory.home, Some(uid), Some(gid))?;
         Ok(directory)
@@ -196,6 +326,9 @@ impl Drop for SessionDirectory {
     /// Runs once the plugin stopped (or never started): nothing reads the view or the home
     /// anymore. A failure is only logged; the next service start purges the directory anyway.
     fn drop(&mut self) {
+        if !self.remove_on_drop {
+            return;
+        }
         if let Err(error) = fs::remove_dir_all(&self.root) {
             ora_warn!(path = %self.root.display(), error = %error, "session workload directory was not removed");
         }

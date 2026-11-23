@@ -42,6 +42,7 @@ import { PluginLogoMark } from "../settings/plugin-logo";
 import { useAgentModels } from "../../state/hooks/use-agent-models";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useWorkspaces } from "../../state/hooks/use-workspaces";
+import { missingWorkspaceDirectory } from "../../state/hooks/use-missing-workspace-directory";
 
 /**
  * The composer's agent and model picker.
@@ -151,6 +152,12 @@ export function ModelSelector({
         workspace.kind === "main",
     )?.id ??
     null;
+  // Discovery resolves this folder before asking the agent, so asking while it is gone can only
+  // fail; the menu names the folder instead of presenting an agent that offers no models.
+  const directoryMissing =
+    missingWorkspaceDirectory(
+      workspaces.find((workspace) => workspace.id === workspaceId),
+    ) !== null;
   // The conversation this picker reads from, which is a question about identity rather than
   // about state: a workflow node names its session explicitly, and a chat reads the one it is
   // bound to unless a move onto another agent is pending, which no session's options describe.
@@ -190,8 +197,8 @@ export function ModelSelector({
     optionsSessionId !== null &&
     (!conversationLoaded || (liveOptions?.length ?? 0) > 0);
   const discovered = useAgentModels(
-    usesSessionOptions ? null : agentCli,
-    usesSessionOptions ? null : workspaceId,
+    usesSessionOptions || directoryMissing ? null : agentCli,
+    usesSessionOptions || directoryMissing ? null : workspaceId,
   );
   const activeSessionId = usesSessionOptions ? optionsSessionId : null;
   // A session can retain the last options reported before its plugin stopped.
@@ -471,9 +478,13 @@ export function ModelSelector({
               {modelValues.length === 0 ? (
                 <p className="px-2 py-4 text-center text-xs text-muted-foreground">
                   {t(
-                    isLoadingModels
-                      ? "chat.modelSelector.loading"
-                      : "chat.modelSelector.empty",
+                    !usesSessionOptions && directoryMissing
+                      ? "chat.modelSelector.workspaceDirectoryMissing"
+                      : isLoadingModels
+                        ? "chat.modelSelector.loading"
+                        : !usesSessionOptions && discovered.isError
+                          ? "chat.modelSelector.discoveryFailed"
+                          : "chat.modelSelector.empty",
                   )}
                 </p>
               ) : visibleModelValues.length === 0 ? (

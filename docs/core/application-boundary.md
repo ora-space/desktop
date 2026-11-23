@@ -184,10 +184,19 @@ written.
 
 - A project's Main Workspace location is fixed at creation; `UpdateProjectHandler` renames only.
 - Project creation rejects a local Main Workspace path that is blank or not an existing directory
-  with `project_workspace_not_directory`; a relative path is resolved against the same base that
+  with `project_workspace_not_directory` and persists nothing. It applies the same anchoring and
+  directory check as the runtime probe below, so a relative path is judged against the base that
   later cwd resolution uses. A local Main Workspace is `active` from creation: Ora never provisions
-  a local checkout, so whether its directory still exists is re-checked on every use and reported
-  as `workspace_unavailable` instead of being frozen into the lifecycle.
+  a local checkout, so a folder that disappears later is reported through `directory` and
+  `workspace_unavailable`, never frozen into the lifecycle.
+- Whether a local Workspace folder exists is a runtime fact, not lifecycle state: users delete or
+  move folders without telling Ora. `listWorkspaces` probes each local location on every call and
+  reports `directory` as `present`, `missing` (with the resolved path) or `remote`. Session start,
+  model discovery and file operations re-check independently and refuse a missing folder with
+  `workspace_unavailable`. The client marks the project in the sidebar, names the folder above the
+  chat, blocks send, and replaces the empty model list with the reason. It re-probes when the window
+  regains focus, when the user clicks Check again, and when a request is refused as
+  `workspace_unavailable`.
 - A session's Workspace is immutable. Lifecycle operations change only `status` and `updated_at`.
 - `UpdateTaskRequest` cannot change project or Workspace ownership.
 - Project and Task deletion soft-delete the whole Ora-owned aggregate in one SQLite transaction. A

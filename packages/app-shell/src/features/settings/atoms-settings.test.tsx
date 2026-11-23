@@ -15,6 +15,10 @@ import {
 import { createAgentMemory, agentHandlers } from "../../test/memory/agents";
 import { createSkillMemory, skillHandlers } from "../../test/memory/skills";
 import {
+  createWorkflowMemory,
+  workflowHandlers,
+} from "../../test/memory/workflows";
+import {
   createHookWrapper,
   createTestQueryClient,
 } from "../../test/hook-harness";
@@ -234,6 +238,129 @@ describe("atom settings content", () => {
         undefined,
       ),
     );
+  });
+
+  it("names workflows that depend on a plugin Skill before uninstalling from Skills settings", async () => {
+    const user = userEvent.setup();
+    const pluginId = "official/release-pack";
+    let releaseWorkflow: (() => void) | undefined;
+    const workflows = createWorkflowMemory();
+    workflows.workflows.push({
+      workflow: {
+        id: "workflow-1",
+        namespace: "local",
+        name: "发布流程",
+        publishedSnapshotId: null,
+        createdAt: 1n,
+        updatedAt: 2n,
+      },
+      draft: {
+        id: "workflow-1-draft",
+        workflowId: "workflow-1",
+        version: "draft",
+        graph: JSON.stringify({
+          viewport: { x: 0, y: 0, zoom: 1 },
+          nodes: [
+            {
+              id: "agent-1",
+              type: "workflow",
+              position: { x: 0, y: 0 },
+              data: {
+                kind: "agent",
+                title: "编写发布说明",
+                agentConfig: {
+                  skills: [{ skillId: "release-notes", enabled: true }],
+                  mcps: [],
+                },
+              },
+            },
+          ],
+          edges: [],
+          annotations: [],
+          globalVariables: [],
+        }),
+        createdAt: 1n,
+        updatedAt: 2n,
+      },
+      published: [],
+    });
+
+    renderSettings("skill", (handlers) => {
+      Object.assign(handlers, workflowHandlers(workflows));
+      const originalGetWorkflow = handlers.getWorkflow!;
+      vi.spyOn(handlers, "getWorkflow").mockImplementation(
+        (req) =>
+          new Promise((resolve) => {
+            releaseWorkflow = () => {
+              void Promise.resolve(originalGetWorkflow(req)).then(resolve);
+            };
+          }),
+      );
+      handlers.listSkills = async () => ({
+        skills: [
+          {
+            id: `plugin:${pluginId}:release-notes`,
+            namespace: pluginId,
+            name: "release-notes",
+            description: "Writes release notes",
+            source: { kind: "plugin", pluginId },
+            availability: "available",
+          },
+        ],
+      });
+      handlers.listInstalledPlugins = async () => ({
+        plugins: [
+          {
+            id: pluginId,
+            namespace: "official",
+            name: "release-pack",
+            displayName: "Release Pack",
+            version: "1.0.0",
+            description: "Release skills",
+            homepage: null,
+            license: null,
+            kind: "skill",
+            logo: null,
+            installationValidity: { validity: "valid" },
+            configuration: { state: "not_declared" },
+            runtime: "stopped",
+          },
+        ],
+      });
+      handlers.listAvailablePlugins = async () => ({
+        updatedAt: 0n,
+        plugins: [],
+        failedSources: [],
+      });
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "删除该插件引入的所有 Skill" }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: `卸载“${pluginId}”？`,
+    });
+    expect(
+      await within(dialog).findByText(/正在检查引用该插件的工作流/),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "卸载并删除 Skills" }),
+    ).toBeDisabled();
+
+    await act(async () => {
+      releaseWorkflow?.();
+      await Promise.resolve();
+    });
+
+    expect(
+      await within(dialog).findByText(/1 个工作流依赖该插件/),
+    ).toBeVisible();
+    expect(within(dialog).getByText("发布流程")).toBeVisible();
+    expect(within(dialog).getByText(/用于：编写发布说明/)).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "卸载并删除 Skills" }),
+    ).toBeEnabled();
   });
 
   it("loads and clears editable Skill content", async () => {

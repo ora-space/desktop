@@ -9,6 +9,8 @@ workspace = true
 [features]
 default = ["validation"]
 archive = ["dep:zip", "dep:tar", "dep:flate2"]
+hash = ["dep:sha2"]
+url = []
 http = ["dep:url", "dep:sha2", "dep:hmac"]
 http-reqwest = [
     "http",
@@ -29,7 +31,7 @@ mcp = [
     "tokio?/io-util",
     "dep:url",
 ]
-validation = ["dep:sha2", "dep:quick-xml"]
+validation = ["hash", "url", "dep:quick-xml"]
 local-ipc = ["dep:tokio", "tokio/net", "tokio/time"]
 rust-source = ["dep:proc-macro2", "dep:syn"]
 
@@ -57,6 +59,11 @@ zip = { workspace = true, optional = true }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Already in every Linux build through tempfile; the fd-relative tree re-own needs its safe
+# `O_PATH` and `*at` calls.
+rustix = { workspace = true }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Storage_FileSystem"] }
 
@@ -71,3 +78,7 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "process"] }
 tokio-rustls = { workspace = true }
 zip = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# The depth test raises its own soft descriptor limit up to the hard one.
+rustix = { workspace = true, features = ["process"] }

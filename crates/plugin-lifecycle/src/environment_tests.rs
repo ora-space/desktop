@@ -140,5 +140,5 @@ async fn real_host_child_receives_snapshot_with_or_without_cwd() {
         .unwrap();
         pretty_assertions::assert_eq!(std::fs::read_to_string(receipt).unwrap(), "ok");
     }
-    host.kill_all().await;
+    host.kill_all().await.expect("host children stopped");
 }

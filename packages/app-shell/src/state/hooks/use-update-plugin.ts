@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { invalidatePluginQueries } from "../data/plugins";
+import { invalidateWorkflowQueries } from "../data/workflows";
 
 /** What one update request carries beyond the plugin it names. */
 interface UpdatePluginVariables {
@@ -27,7 +28,12 @@ export function useUpdatePlugin(pluginId: string) {
   const activity = usePluginOperationStore(
     (state) => state.activities[pluginId],
   );
-  const invalidate = () => invalidatePluginQueries(queryClient);
+  // Marketplace updates can import newly added or previously unrecorded workflow documents.
+  const invalidate = () =>
+    Promise.all([
+      invalidatePluginQueries(queryClient),
+      invalidateWorkflowQueries(queryClient),
+    ]);
 
   const mutation = useMutation({
     mutationFn: ({

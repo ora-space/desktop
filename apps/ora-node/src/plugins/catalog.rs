@@ -12,17 +12,21 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
+/// A missing version retains the whole plugin identity; MCP leases name one exact version.
+type PackageUses = HashMap<(String, Option<String>), usize>;
+
 /// Exact-version package catalogue and lease owner for one Node home.
 #[derive(Clone)]
 pub struct DirectoryPluginCatalog {
     pub(super) home: PathBuf,
-    uses: Arc<Mutex<HashMap<String, usize>>>,
+    uses: Arc<Mutex<PackageUses>>,
+    pub(super) stops: Option<ora_node_db::SessionJournal>,
 }
 
 /// Keeping this value alive prevents replacement or removal of its plugin.
 pub struct PluginUseLease {
-    uses: Arc<Mutex<HashMap<String, usize>>>,
-    id: String,
+    uses: Arc<Mutex<PackageUses>>,
+    id: (String, Option<String>),
 }
 
 impl Drop for PluginUseLease {
@@ -39,11 +43,67 @@ impl Drop for PluginUseLease {
 }
 
 impl DirectoryPluginCatalog {
+    /// Combines live exact leases with restart-retained package ownership under the use lock.
+    fn held_versions(
+        &self,
+        uses: &PackageUses,
+        id: &ora_domain::PluginId,
+    ) -> Result<Vec<Option<String>>, PluginFailureCode> {
+        let canonical = id.canonical();
+        let mut held: Vec<_> = uses
+            .keys()
+            .filter(|(key, _)| key == &canonical)
+            .map(|(_, version)| version.clone())
+            .collect();
+        if let Some(journal) = &self.stops {
+            for record in journal
+                .session_stop_records(None)
+                .map_err(|_| PluginFailureCode::PluginInUse)?
+            {
+                if !record.resources_released {
+                    held.extend(
+                        record
+                            .identity
+                            .packages
+                            .iter()
+                            .filter(|package| package.plugin_id.as_str() == canonical)
+                            .map(|package| Some(package.plugin_version.as_str().to_owned())),
+                    );
+                }
+            }
+        }
+        Ok(held)
+    }
+
+    /// Only another intact MCP version may coexist; unknown kinds and same-version repairs block.
+    fn mutation_blocked(
+        &self,
+        uses: &PackageUses,
+        id: &ora_domain::PluginId,
+        target: &semver::Version,
+    ) -> Result<bool, PluginFailureCode> {
+        for version in self.held_versions(uses, id)? {
+            let Some(version) = version.and_then(|version| version.parse::<semver::Version>().ok())
+            else {
+                return Ok(true);
+            };
+            let path = self.path(id, &version);
+            if &version == target
+                || inspect_planned_package(&path, id, &version).is_err()
+                || !ora_plugin_manager::is_mcp_package(&path).unwrap_or(false)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Creates the shared catalogue without touching a potentially unavailable plugin root.
     pub(super) fn new(home: PathBuf) -> Self {
         Self {
             home,
             uses: Arc::default(),
+            stops: None,
         }
     }
 
@@ -53,8 +113,27 @@ impl DirectoryPluginCatalog {
     }
 
     /// Serializes lease acquisition with the filesystem publication boundary.
-    fn uses(&self) -> MutexGuard<'_, HashMap<String, usize>> {
+    fn uses(&self) -> MutexGuard<'_, PackageUses> {
         self.uses.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Restarted ownership and failed journal reads keep packages protected without a live actor.
+    fn retained(&self, id: &ora_domain::PluginId) -> Result<bool, PluginFailureCode> {
+        match &self.stops {
+            Some(journal) => Ok(journal
+                .session_stop_records(None)
+                .map_err(|_| PluginFailureCode::PluginInUse)?
+                .iter()
+                .any(|record| {
+                    !record.resources_released
+                        && record
+                            .identity
+                            .packages
+                            .iter()
+                            .any(|package| package.plugin_id.as_str() == id.canonical())
+                })),
+            None => Ok(false),
+        }
     }
 
     /// Returns the location derived only from plugin-domain validated segments.
@@ -90,7 +169,7 @@ impl DirectoryPluginCatalog {
                 return Ok(true);
             }
         }
-        if uses.contains_key(&id.canonical()) {
+        if self.mutation_blocked(&uses, id, version)? {
             return Err(PluginFailureCode::PluginInUse);
         }
         Ok(false)
@@ -105,7 +184,11 @@ impl DirectoryPluginCatalog {
         artifact: &PackageArtifact<'_>,
     ) -> Result<(), PluginFailureCode> {
         let uses = self.uses();
-        if uses.contains_key(&id.canonical()) {
+        if self.mutation_blocked(&uses, id, version)? {
+            return Err(PluginFailureCode::PluginInUse);
+        }
+        let held = self.held_versions(&uses, id)?;
+        if !held.is_empty() && !prepared.is_mcp().map_err(super::failure)? {
             return Err(PluginFailureCode::PluginInUse);
         }
         self.clear_package_record(id, version)
@@ -120,6 +203,9 @@ impl DirectoryPluginCatalog {
             if entry.path() != self.path(id, version)
                 && entry.file_type().is_ok_and(|kind| kind.is_dir())
                 && semver::Version::parse(&entry.file_name().to_string_lossy()).is_ok()
+                && !held.iter().any(|version| {
+                    version.as_deref() == Some(entry.file_name().to_string_lossy().as_ref())
+                })
             {
                 std::fs::remove_dir_all(entry.path())
                     .map_err(|_| PluginFailureCode::InstallFailed)?;
@@ -137,7 +223,7 @@ impl DirectoryPluginCatalog {
     ) -> Result<(), PluginFailureCode> {
         let (id, _) = identity(id, version)?;
         let uses = self.uses();
-        if uses.contains_key(&id.canonical()) {
+        if uses.keys().any(|(key, _)| key == &id.canonical()) || self.retained(&id)? {
             return Err(PluginFailureCode::PluginInUse);
         }
         let path = installed_root(&self.home)
@@ -154,9 +240,22 @@ impl DirectoryPluginCatalog {
 impl PluginCatalog for DirectoryPluginCatalog {
     type Lease = PluginUseLease;
 
+    /// Keeps an exact version alive while allowing another validated MCP version to publish.
+    fn lease_mcp(&self, plugin_id: &PluginId, version: &PluginVersion) -> Self::Lease {
+        let id = (
+            plugin_id.as_str().to_owned(),
+            Some(version.as_str().to_owned()),
+        );
+        *self.uses().entry(id.clone()).or_default() += 1;
+        PluginUseLease {
+            uses: Arc::clone(&self.uses),
+            id,
+        }
+    }
+
     /// Takes a use lease before looking up files, so a session never observes a disappearing tree.
     fn lease(&self, plugin_id: &PluginId) -> Self::Lease {
-        let id = plugin_id.as_str().to_owned();
+        let id = (plugin_id.as_str().to_owned(), None);
         *self.uses().entry(id.clone()).or_default() += 1;
         PluginUseLease {
             uses: Arc::clone(&self.uses),

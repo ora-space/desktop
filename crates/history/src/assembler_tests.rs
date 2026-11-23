@@ -295,15 +295,20 @@ fn settles_a_tool_call_the_provider_never_reported_finishing() {
     ));
     assembler.push_update(&agent_text("here is what I found", Some("m1")));
 
+    let mut settled_call = ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed);
+    settled_call.meta = Some(
+        serde_json::from_value(serde_json::json!({
+            crate::TURN_END_SETTLED_META_KEY: true
+        }))
+        .unwrap(),
+    );
     assert_eq!(
         assembler.end_turn(StopReason::EndTurn),
         vec![
             AssembledRecord {
                 seq: 0,
                 record: HistoryRecord::Update {
-                    update: Box::new(SessionUpdate::ToolCall(
-                        ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed),
-                    )),
+                    update: Box::new(SessionUpdate::ToolCall(settled_call)),
                     tool_timing: None,
                 },
             },
@@ -554,4 +559,127 @@ fn turn_end_flushes_the_latest_timing_for_an_open_tool() {
         panic!("expected tool update");
     };
     assert_eq!(tool_timing, &Some(finished));
+}
+
+/// Reusing message IDs after a resend must not combine cancelled text with the deliverable.
+#[test]
+fn retry_flushes_text_without_closing_the_user_turn() {
+    let mut assembler = HistoryAssembler::new(0);
+    assembler.push_update(&agent_text("old", Some("m1")));
+    assert_eq!(
+        assembler.retry_prompt(),
+        vec![
+            message_at(0, "old", Some("m1")),
+            AssembledRecord {
+                seq: 1,
+                record: HistoryRecord::PromptRetried
+            },
+        ]
+    );
+    assembler.push_update(&agent_text("new", Some("m1")));
+    assert_eq!(
+        assembler.end_turn(StopReason::EndTurn),
+        vec![
+            message_at(2, "new", Some("m1")),
+            AssembledRecord {
+                seq: 3,
+                record: HistoryRecord::TurnEnded {
+                    stop_reason: StopReason::EndTurn
+                }
+            },
+        ]
+    );
+}
+
+#[test]
+fn retry_attributes_late_tool_deltas_to_the_opening_attempt() {
+    let mut assembler = HistoryAssembler::new(0);
+    let old = ToolCall::new("shared", "old tool").status(ToolCallStatus::Pending);
+    assembler.push_update(&SessionUpdate::ToolCall(old.clone()));
+    assembler.retry_prompt();
+    assembler.retry_prompt();
+
+    // ACP deltas may omit both title and source. Position and metadata come from the opening.
+    let done = tool_status_update("shared", ToolCallStatus::Completed);
+    let late = assembler.push_update(&done);
+    assert_eq!(
+        late,
+        vec![AssembledRecord {
+            seq: 0,
+            record: HistoryRecord::Update {
+                update: Box::new(SessionUpdate::ToolCall(
+                    old.status(ToolCallStatus::Completed)
+                )),
+                tool_timing: None,
+            },
+        }]
+    );
+
+    // An explicit opening in the replacement attempt legitimately reuses the same ID.
+    assembler.push_update(&SessionUpdate::ToolCall(ToolCall::new(
+        "shared", "new tool",
+    )));
+    let fresh = assembler.push_update(&done);
+    assert_eq!(fresh[0].seq, 3);
+    assert_eq!(assembler.end_turn(StopReason::EndTurn).len(), 1);
+}
+
+/// An unscoped delta uses the new opening once a retry has reopened the same ID.
+#[test]
+fn retry_routes_tool_deltas_to_the_reopened_id() {
+    let mut assembler = HistoryAssembler::new(0);
+    let old = ToolCall::new("shared", "old tool").status(ToolCallStatus::Pending);
+    assembler.push_update(&SessionUpdate::ToolCall(old));
+    assembler.retry_prompt();
+
+    let reopened = ToolCall::new("shared", "new tool").status(ToolCallStatus::Pending);
+    assembler.push_update(&SessionUpdate::ToolCall(reopened.clone()));
+
+    // ACP has no attempt identifier on the delta, so the assembler uses the active slot.
+    assert_eq!(
+        assembler.push_update(&tool_status_update("shared", ToolCallStatus::Completed)),
+        vec![AssembledRecord {
+            seq: 2,
+            record: HistoryRecord::Update {
+                update: Box::new(SessionUpdate::ToolCall(
+                    reopened.status(ToolCallStatus::Completed)
+                )),
+                tool_timing: None,
+            },
+        }]
+    );
+}
+
+#[test]
+fn only_an_unretried_turn_can_imply_success_for_an_open_parent_tool() {
+    for status in [ToolCallStatus::Pending, ToolCallStatus::InProgress] {
+        let tool = ToolCall::new("shared", "deliver").status(status);
+        let record_at = |seq, call| AssembledRecord {
+            seq,
+            record: HistoryRecord::Update {
+                update: Box::new(SessionUpdate::ToolCall(call)),
+                tool_timing: None,
+            },
+        };
+        let mut assembler = HistoryAssembler::new(0);
+        assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
+        assert_eq!(assembler.retry_prompt()[0], record_at(0, tool.clone()));
+        assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
+        assert_eq!(
+            assembler.end_turn(StopReason::EndTurn)[0],
+            record_at(2, tool.clone())
+        );
+        assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
+        let mut settled = tool.status(ToolCallStatus::Completed);
+        settled.meta = Some(
+            serde_json::from_value(serde_json::json!({
+                crate::TURN_END_SETTLED_META_KEY: true
+            }))
+            .unwrap(),
+        );
+        assert_eq!(
+            assembler.end_turn(StopReason::EndTurn)[0],
+            record_at(4, settled)
+        );
+    }
 }

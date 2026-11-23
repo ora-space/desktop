@@ -3,8 +3,7 @@
 //! Kept apart from the actor's command loop so the turn's many termination paths stay readable
 //! together: each one records why the turn ended before its owner can observe it settled.
 
-use super::events::{drain_queued_prompt_events, settle_cancelled_prompt};
-use super::handoff::{AgentPrompt, prompt_for_agent};
+use super::handoff::{AgentPrompt, prompt_for_agent, rebuild_prompt};
 use super::prompt_liveness::PromptLiveness;
 use super::prompt_retry::{StalledPrompt, retry_stalled_prompt};
 use super::scheduling::{ActiveInput, ActiveInputState};
@@ -12,12 +11,106 @@ use super::session_followers::{FollowerOutput, SessionFollowers};
 use super::title_acquisition::PollAttempt;
 use super::tool_timing::ToolTimings;
 use super::*;
+use crate::attach::LoadRestoration;
+use crate::model_config::current_model;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
 use ora_logging::{ora_debug, ora_warn};
-use tokio::time::timeout;
+
+impl<H: AgentRuntimeHost> RuntimeActor<H> {
+    /// Ends a prompt the provider answered with a result: its stop reason describes the turn, its
+    /// usage is reported, and a completed turn may start title acquisition. Shared by the prompt
+    /// loop and by a turn cancel that found the answer already queued.
+    pub(crate) async fn finish_completed_prompt(
+        &mut self,
+        channel: SessionChannel,
+        response: PromptResponse,
+        operation_id: u64,
+        end: crate::turn_cancel::PromptEnd<'_>,
+    ) {
+        let crate::turn_cancel::PromptEnd {
+            events,
+            end_report,
+            followers,
+            tool_timings,
+        } = end;
+        self.record_cleanup(operation_id, Ok(()));
+        // The provider answered: its stop reason now describes the turn, so the end cause is not
+        // an interruption.
+        end_report.record(PromptEndCause::Settled);
+        ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
+        let token_usage = usage::normalize_token_usage(
+            &self.session.agent_ref,
+            response.usage.as_ref(),
+            response.meta.as_ref(),
+            &usage::NoUsageExtensions,
+        );
+        self.end_timed_turn(response.stop_reason, tool_timings);
+        followers.finish(response.stop_reason);
+        self.load_restoration = LoadRestoration::NotRestored;
+        self.maybe_start_title_acquisition(response.stop_reason);
+        if events
+            .try_send(Ok(PromptSessionEvent::Completed {
+                stop_reason: response.stop_reason,
+                token_usage,
+            }))
+            .is_ok()
+        {
+            self.channel = Some(channel);
+        } else {
+            self.isolate_channel(channel).await;
+        }
+    }
+}
+
+/// Whether one provider update is work the user would see or a tool already ran.
+///
+/// `Plan` is liveness activity, not output: it carries no assistant text and no tool side effect,
+/// so a failed prompt that only planned may still be retried safely.
+pub(crate) fn produced_output(update: &SessionUpdate) -> bool {
+    matches!(
+        update,
+        SessionUpdate::AgentMessageChunk(_)
+            | SessionUpdate::AgentThoughtChunk(_)
+            | SessionUpdate::ToolCall(_)
+            | SessionUpdate::ToolCallUpdate(_)
+    )
+}
+
+/// The one retry after a load is allowed only before output and only once.
+fn stale_load_retry_allowed(
+    reusable: bool,
+    produced_output: bool,
+    has_context: bool,
+    restoration: LoadRestoration,
+) -> bool {
+    reusable && !produced_output && has_context && restoration == LoadRestoration::Restored
+}
+
+/// One attempt at a prompt, including the single rebuild retry after a stale `session/load`.
+struct PromptAttempt {
+    /// Blocks a rebuilt channel must receive; `None` builds the ordinary prompt.
+    blocks: Option<Vec<ContentBlock>>,
+    /// The prompt was already recorded before the first attempt, so a retry must not repeat it.
+    skip_record: bool,
+    /// Only the attempt after a load may rebuild; the retry attempt may not recurse again.
+    allow_retry: bool,
+    /// Followers collected so far; the retry continues the same logical turn.
+    followers: Option<SessionFollowers>,
+}
+
+impl PromptAttempt {
+    fn initial() -> Self {
+        Self {
+            blocks: None,
+            skip_record: false,
+            allow_retry: true,
+            followers: None,
+        }
+    }
+}
 
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Streams one prompt while routing only events that belong to this provider session.
@@ -30,11 +123,43 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         end_report: PromptEndReport,
         events: mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     ) {
+        self.run_prompt_attempt(
+            operation_id,
+            prompt,
+            record_prompt,
+            inactivity_policy,
+            end_report,
+            events,
+            PromptAttempt::initial(),
+        )
+        .await
+    }
+
+    /// Runs one prompt attempt; a stale restored session can rebuild and call this again once.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_prompt_attempt(
+        &mut self,
+        operation_id: u64,
+        prompt: Vec<ContentBlock>,
+        record_prompt: RecordedTurn,
+        inactivity_policy: PromptInactivityPolicy,
+        end_report: PromptEndReport,
+        events: mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+        mut attempt: PromptAttempt,
+    ) {
+        let original_prompt = prompt.clone();
+        // Followers belong to the logical turn, so take them before any early return can drop
+        // the attempt without a terminal boundary.
+        let mut followers = attempt
+            .followers
+            .take()
+            .unwrap_or_else(SessionFollowers::new);
         // An exit without a terminal provider response cannot prove remote work stopped.
         self.record_cleanup(operation_id, Err(runtime_unavailable()));
         let Some(mut channel) = self.channel.take() else {
             // Nothing was sent, so no side of the turn can be credited with ending it.
             end_report.record(PromptEndCause::Unknown);
+            followers.finish(StopReason::Cancelled);
             return;
         };
         let client = channel.connection.client.clone();
@@ -49,11 +174,19 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         "session event queue overflowed",
                     )));
                     self.isolate_channel(channel).await;
+                    if attempt.skip_record {
+                        self.end_turn(StopReason::Cancelled);
+                    }
+                    followers.finish(StopReason::Cancelled);
                     return;
                 }
                 SessionControl::ConnectionLost(error) => {
                     end_report.record(PromptEndCause::SessionCrashed);
                     self.fail_prompt(&events, error);
+                    if attempt.skip_record {
+                        self.end_turn(StopReason::Cancelled);
+                    }
+                    followers.finish(StopReason::Cancelled);
                     return;
                 }
             }
@@ -69,23 +202,44 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             {
                 end_report.record(PromptEndCause::StreamDropped);
                 self.isolate_channel(channel).await;
+                if attempt.skip_record {
+                    self.end_turn(StopReason::Cancelled);
+                }
+                followers.finish(StopReason::Cancelled);
                 return;
             }
         }
         let content_count = prompt.len();
-        // Built before the prompt is recorded, so the transcript handed to a new
-        // agent describes the conversation up to this turn rather than including it.
+        // Cheap cutoff only; the transcript is rendered if the prompt actually fails. It is taken
+        // before the current prompt is recorded, so the rebuilt agent receives history up to this
+        // turn and the prompt exactly once.
+        let retry_cutoff = (attempt.allow_retry
+            && self.load_restoration == LoadRestoration::Restored)
+            .then(|| self.recorder.durable_bytes());
         let AgentPrompt {
             blocks,
             settles_handoff,
-        } = prompt_for_agent(self, &prompt);
-        let recorded = record_prompt.blocks.as_deref().unwrap_or(&prompt);
-        let outcome = match record_prompt.message_id {
-            Some(message_id) => self.recorder.record_identified_prompt(recorded, message_id),
-            None => self.recorder.record_prompt(recorded),
+        } = match attempt.blocks.take() {
+            Some(blocks) => AgentPrompt {
+                blocks,
+                // A rebuilt channel receives the transcript with this prompt, so accepting it
+                // both settles the handoff and earns the new binding.
+                settles_handoff: true,
+            },
+            None => prompt_for_agent(self, &prompt),
         };
-        let stopped_recording = matches!(outcome, RecordOutcome::JustFailed { .. });
-        self.settle_record(outcome);
+        let recorded = record_prompt.blocks.as_deref().unwrap_or(&prompt);
+        let stopped_recording = if attempt.skip_record {
+            false
+        } else {
+            let outcome = match record_prompt.message_id.clone() {
+                Some(message_id) => self.recorder.record_identified_prompt(recorded, message_id),
+                None => self.recorder.record_prompt(recorded),
+            };
+            let stopped = matches!(outcome, RecordOutcome::JustFailed { .. });
+            self.settle_record(outcome);
+            stopped
+        };
         if stopped_recording {
             // A turn already streaming is allowed to finish, because the agent's
             // work is real whether or not the file kept it. This one has not
@@ -94,10 +248,18 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             end_report.record(PromptEndCause::Unknown);
             let _ = events.try_send(Err(history_degraded()));
             self.channel = Some(channel);
+            followers.finish(StopReason::Cancelled);
+            return;
+        }
+        if self.turn_cancel.deadline().is_some() && !attempt.skip_record {
+            self.finish_unsent_prompt(channel, &end_report, &events, &mut followers);
             return;
         }
         let agent_session_id = self.provider_session_id().to_string();
-        let request = PromptRequest::new(agent_session_id.clone(), blocks);
+        let mut request = PromptRequest::new(agent_session_id.clone(), blocks);
+        if let Some(instruction) = &record_prompt.attempt_instruction {
+            request.prompt.push(instruction());
+        }
         ora_debug!(session_id = %self.session.id, content_count = content_count, policy = ?inactivity_policy, "session/prompt sent");
         let mut pending = match client
             .start_session_request::<_, PromptResponse>(
@@ -116,6 +278,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 self.end_turn(StopReason::Cancelled);
                 let _ = events.try_send(Err(map_acp_error(error)));
                 self.isolate_channel(channel).await;
+                followers.finish(StopReason::Cancelled);
                 return;
             }
         };
@@ -141,8 +304,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         }
         let mut permissions = HashMap::new();
-        let mut followers = SessionFollowers::new();
         let mut input_state = ActiveInputState::default();
+        let mut saw_output = false;
         #[cfg(feature = "test-support")]
         let windows = self
             .test_prompt_inactivity_windows
@@ -168,13 +331,47 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     &events,
                     &mut liveness,
                     &mut permissions,
-                    &request,
+                    &mut request,
+                    record_prompt.attempt_instruction.as_deref(),
+                    &mut saw_output,
                 )
                 .await
                 {
                     StalledPrompt::Resent(resent) => {
+                        tool_timings = ToolTimings::default();
                         pending = resent;
                         continue;
+                    }
+                    StalledPrompt::Cancelled {
+                        reusable,
+                        session_invalid,
+                    } => {
+                        // A turn cancel merged into the watchdog's stop: the turn ends as the
+                        // user's cancel, never resent, and only an answered cancel keeps the
+                        // provider session.
+                        end_report.record(PromptEndCause::UserStopped);
+                        end_report.mark_cancel_applied();
+                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                        followers.finish(StopReason::Cancelled);
+                        if reusable {
+                            self.record_cleanup(operation_id, Ok(()));
+                            if events
+                                .try_send(Ok(PromptSessionEvent::Completed {
+                                    stop_reason: StopReason::Cancelled,
+                                    token_usage: None,
+                                }))
+                                .is_ok()
+                                && !session_invalid
+                            {
+                                self.channel = Some(channel);
+                            } else {
+                                self.isolate_channel(channel).await;
+                            }
+                        } else {
+                            let _ = events.try_send(Err(RuntimeError::turn_cancel_unanswered()));
+                            self.isolate_channel(channel).await;
+                        }
+                        return;
                     }
                     StalledPrompt::Failed(error) => {
                         // The inactivity schedule gave up: this is a system timeout, never the
@@ -190,6 +387,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             };
             match input {
                 ActiveInput::Event(SessionEvent::Update(update)) => {
+                    saw_output |= produced_output(&update.update);
                     // Record before forwarding: a client that drops mid-turn must not also cost
                     // the durable record of what the provider produced.
                     self.observe_session_update(&update.update);
@@ -272,34 +470,84 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     }
                     match pending.finish(response) {
                         Ok(response) => {
-                            self.record_cleanup(operation_id, Ok(()));
-                            // The provider answered: its stop reason now describes the turn, so the
-                            // end cause is not an interruption.
-                            end_report.record(PromptEndCause::Settled);
-                            ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
-                            let token_usage = usage::normalize_token_usage(
-                                &self.session.agent_ref,
-                                response.usage.as_ref(),
-                                response.meta.as_ref(),
-                                &usage::NoUsageExtensions,
-                            );
-                            self.end_timed_turn(response.stop_reason, &tool_timings);
-                            followers.finish(response.stop_reason);
-                            self.maybe_start_title_acquisition(response.stop_reason);
-                            if events
-                                .try_send(Ok(PromptSessionEvent::Completed {
-                                    stop_reason: response.stop_reason,
-                                    token_usage,
-                                }))
-                                .is_ok()
-                            {
-                                self.channel = Some(channel);
-                            } else {
-                                self.isolate_channel(channel).await;
-                            }
+                            self.finish_completed_prompt(
+                                channel,
+                                response,
+                                operation_id,
+                                crate::turn_cancel::PromptEnd {
+                                    events: &events,
+                                    end_report: &end_report,
+                                    followers: &mut followers,
+                                    tool_timings: &tool_timings,
+                                },
+                            )
+                            .await;
                         }
                         Err(error) => {
                             let reusable = matches!(&error, ora_acp::AcpError::RequestFailed(_));
+                            let session_invalid = super::support::provider_session_invalid(&error);
+                            // A load can claim success while the provider session is gone; its
+                            // first prompt then fails before producing anything. Rebuild once and
+                            // resend the same prompt with the transcript this side still owns.
+                            let retry_blocks = retry_cutoff
+                                .and_then(|cutoff| rebuild_prompt(self, &original_prompt, cutoff));
+                            let retry_stale_load = stale_load_retry_allowed(
+                                reusable,
+                                saw_output,
+                                retry_blocks.is_some(),
+                                self.load_restoration,
+                            );
+                            if retry_stale_load && !self.session_mcp.preserve_provider_identity() {
+                                ora_debug!(
+                                    session_id = %self.session.id,
+                                    "first prompt after session/load failed without output; rebuilding and retrying",
+                                );
+                                let model = current_model(&self.reported_config_options);
+                                self.isolate_channel(channel).await;
+                                match self.rebuild_provider_session(model.as_deref()).await {
+                                    Ok(setup) => {
+                                        if !super::actor::publish_setup(&events, setup) {
+                                            self.record_cleanup(operation_id, Ok(()));
+                                            end_report.record(PromptEndCause::StreamDropped);
+                                            self.end_timed_turn(
+                                                StopReason::Cancelled,
+                                                &tool_timings,
+                                            );
+                                            followers.finish(StopReason::Cancelled);
+                                            return;
+                                        }
+                                        return Box::pin(self.run_prompt_attempt(
+                                            operation_id,
+                                            original_prompt,
+                                            record_prompt,
+                                            inactivity_policy,
+                                            end_report,
+                                            events,
+                                            PromptAttempt {
+                                                blocks: retry_blocks,
+                                                skip_record: true,
+                                                allow_retry: false,
+                                                followers: Some(followers),
+                                            },
+                                        ))
+                                        .await;
+                                    }
+                                    Err(rebuild_error) => {
+                                        ora_warn!(
+                                            session_id = %self.session.id,
+                                            error = %rebuild_error,
+                                            "failed to rebuild a stale restored session; returning the prompt failure",
+                                        );
+                                        self.record_cleanup(operation_id, Ok(()));
+                                        end_report.record(PromptEndCause::Unknown);
+                                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                                        followers.finish(StopReason::Cancelled);
+                                        self.load_restoration = LoadRestoration::NotRestored;
+                                        let _ = events.try_send(Err(map_prompt_error(error)));
+                                        return;
+                                    }
+                                }
+                            }
                             if reusable {
                                 self.record_cleanup(operation_id, Ok(()));
                             }
@@ -307,8 +555,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             end_report.record(PromptEndCause::Unknown);
                             self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                             followers.finish(StopReason::Cancelled);
-                            let delivered = events.try_send(Err(map_prompt_error(error))).is_ok();
-                            if reusable && delivered {
+                            self.load_restoration = LoadRestoration::NotRestored;
+                            let failure = map_prompt_error(error);
+                            // A request error is the Agent's own answer; a transport failure is not.
+                            let failure = if reusable {
+                                failure.answered()
+                            } else {
+                                failure
+                            };
+                            let delivered = events.try_send(Err(failure)).is_ok();
+                            if reusable && delivered && !session_invalid {
                                 self.channel = Some(channel);
                             } else {
                                 self.isolate_channel(channel).await;
@@ -373,52 +629,23 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         RuntimeCommand::Cancel { completion, .. } => completion,
                         _ => None,
                     };
-                    // `cancel_prompt` is the user pressing stop, while the owner-addressed cancel
-                    // is a consumer that stopped reading; the two must not be reported alike.
-                    end_report.record(if notify_owner {
-                        PromptEndCause::UserStopped
-                    } else {
-                        PromptEndCause::StreamDropped
-                    });
-                    self.cancel(&client, &permissions).await;
-                    let settled = timeout(
-                        CANCELLATION_GRACE,
-                        settle_cancelled_prompt(self, &mut channel, &client, pending, &events),
+                    self.settle_prompt_cancel(
+                        channel,
+                        pending,
+                        crate::turn_cancel::PromptStop {
+                            operation_id,
+                            client: &client,
+                            permissions: &permissions,
+                            events: &events,
+                            end_report: &end_report,
+                            followers: &mut followers,
+                            tool_timings: &tool_timings,
+                            saw_output: &mut saw_output,
+                        },
+                        notify_owner,
+                        completion,
                     )
                     .await;
-                    let reusable = matches!(
-                        settled,
-                        Ok(Some(Ok(_))) | Ok(Some(Err(ora_acp::AcpError::RequestFailed(_))))
-                    );
-                    if !reusable {
-                        drain_queued_prompt_events(self, &mut channel, &client, &events).await;
-                    }
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                    followers.finish(StopReason::Cancelled);
-                    let owner_notified = !notify_owner
-                        || events
-                            .try_send(Ok(PromptSessionEvent::Completed {
-                                stop_reason: StopReason::Cancelled,
-                                token_usage: None,
-                            }))
-                            .is_ok();
-                    if reusable && owner_notified {
-                        self.channel = Some(channel);
-                    } else {
-                        self.isolate_channel(channel).await;
-                    }
-                    let result = if reusable {
-                        Ok(())
-                    } else {
-                        Err(RuntimeError::internal(
-                            "provider did not confirm cancelled operation stopped",
-                            std::io::Error::other("cancellation grace expired or provider failed"),
-                        ))
-                    };
-                    self.record_cleanup(operation_id, result.clone());
-                    if let Some(completion) = completion {
-                        let _ = completion.send(result);
-                    }
                     return;
                 }
                 ActiveInput::Command(RuntimeCommand::Stop { response }) => {
@@ -478,6 +705,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     }
                 }
                 ActiveInput::Command(RuntimeCommand::CancelActivePrompt) => {}
+                // A running prompt is not quiet; the question is only asked between turns.
+                ActiveInput::Command(RuntimeCommand::TakeIdleTurnTraffic { response }) => {
+                    let _ = response.send(true);
+                }
                 ActiveInput::Command(RuntimeCommand::McpDesiredMaybeChanged) => {
                     self.note_desired_mcp();
                 }
@@ -511,5 +742,97 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{current_model, produced_output, stale_load_retry_allowed};
+    use crate::attach::LoadRestoration;
+    use agent_client_protocol_schema::v1::{
+        ContentBlock, ContentChunk, Plan, SessionUpdate, TextContent, ToolCall, ToolCallUpdate,
+        ToolCallUpdateFields,
+    };
+    use agent_client_protocol_schema::v1::{
+        SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+        SessionConfigSelect, SessionConfigSelectOption, SessionConfigSelectOptions,
+        SessionConfigValueId,
+    };
+
+    #[test]
+    fn a_stale_load_retry_requires_no_output_and_only_one_attempt() {
+        assert!(stale_load_retry_allowed(
+            true,
+            false,
+            true,
+            LoadRestoration::Restored
+        ));
+        assert!(!stale_load_retry_allowed(
+            true,
+            true,
+            true,
+            LoadRestoration::Restored
+        ));
+        assert!(!stale_load_retry_allowed(
+            true,
+            false,
+            false,
+            LoadRestoration::Restored
+        ));
+        assert!(!stale_load_retry_allowed(
+            false,
+            false,
+            true,
+            LoadRestoration::Restored
+        ));
+    }
+
+    #[test]
+    fn output_classification_covers_text_tools_and_controls() {
+        let text = || {
+            SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
+                TextContent::new("hello"),
+            )))
+        };
+        for update in [
+            text(),
+            SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::Text(
+                TextContent::new("thinking"),
+            ))),
+            SessionUpdate::ToolCall(ToolCall::new("tool", "Tool")),
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new("tool", ToolCallUpdateFields::new())),
+        ] {
+            assert!(produced_output(&update), "{update:?}");
+        }
+        // A plan can fail without any assistant output or tool side effect and is retryable.
+        assert!(!produced_output(&SessionUpdate::Plan(
+            Plan::new(Vec::new())
+        )));
+    }
+
+    /// An empty configuration report carries no model and must not terminate the actor.
+    #[test]
+    fn an_empty_provider_report_has_no_rebuild_model() {
+        pretty_assertions::assert_eq!(current_model(&[]), None);
+    }
+
+    #[test]
+    fn the_rebuild_model_comes_from_the_restored_provider() {
+        let option = SessionConfigOption::new(
+            SessionConfigId::new("model"),
+            "Model",
+            SessionConfigKind::Select(SessionConfigSelect::new(
+                SessionConfigValueId::new("deepseek/deepseek-v4-pro"),
+                SessionConfigSelectOptions::Ungrouped(vec![SessionConfigSelectOption::new(
+                    "deepseek/deepseek-v4-pro",
+                    "DeepSeek V4 Pro",
+                )]),
+            )),
+        )
+        .category(SessionConfigOptionCategory::Model);
+        assert_eq!(
+            current_model(&[option]),
+            Some("deepseek/deepseek-v4-pro".to_string())
+        );
     }
 }

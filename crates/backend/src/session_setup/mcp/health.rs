@@ -223,7 +223,7 @@ impl McpHealthStore {
         // The card view presents every eligible member; the Session view narrows by the caller's
         // selection after this workspace-scoped identity projection.
         let members = effective_members(catalog, configurations, &SessionMcpSelection::Automatic)
-            .map_err(SessionMcpError::into_backend)?;
+            .map_err(super::error::into_backend)?;
         let mut entries = Vec::with_capacity(members.len());
         for member in members {
             let identity = McpHealthIdentity::for_member(&member, cwd.as_deref());
@@ -262,7 +262,7 @@ impl McpHealthStore {
         })?;
         let cwd = parse_optional_absolute_cwd(request.cwd.as_deref())?;
         let member = find_eligible_member(catalog, configurations, &plugin_id)
-            .map_err(SessionMcpError::into_backend)?;
+            .map_err(super::error::into_backend)?;
         let Some(member) = member else {
             // Configuration-incomplete, uninstalled, or otherwise ineligible plugins are not
             // probed at all; their card keeps showing only the existing configuration state.
@@ -276,7 +276,7 @@ impl McpHealthStore {
         let status = self
             .ensure_probed(&member, &identity, ProbeReuse::Force)
             .await
-            .map_err(SessionMcpError::into_backend)?;
+            .map_err(super::error::into_backend)?;
         Ok(ProbeMcpHealthResponse {
             entry: McpHealthEntry {
                 identity: identity.to_contract(),

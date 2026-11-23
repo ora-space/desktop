@@ -11,7 +11,7 @@ use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process};
 use pretty_assertions::assert_eq;
 use support::*;
 
-/// The actual executable recovers through host/guardian after SIGKILL, retaining the original result identity.
+/// The actual executable settles its predecessor's Git after SIGKILL before recovering, retaining the original result identity.
 #[test]
 fn node_kill_and_immediate_restart_wait_for_old_git_cleanup() {
     ora_logging::with_trace_logging(|| {
@@ -65,9 +65,10 @@ fn node_kill_and_immediate_restart_wait_for_old_git_cleanup() {
     });
 }
 
-/// Owner death alone triggers guardian cleanup, even when no replacement Node starts.
+/// The Node's death alone makes the reaper end the Git it registered, even when no replacement
+/// Node starts.
 #[test]
-fn guardian_stops_git_without_node_restart() {
+fn reaper_stops_git_without_node_restart() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         fixture.seed();
@@ -81,7 +82,7 @@ fn guardian_stops_git_without_node_restart() {
     });
 }
 
-/// Graceful shutdown waits for the configured bound, then stops the original Run before exiting.
+/// Graceful shutdown waits for the configured bound, then ends the original command before exiting.
 #[test]
 fn shutdown_bounds_a_blocked_git_hook() {
     ora_logging::with_trace_logging(|| {
@@ -129,17 +130,18 @@ fn shutdown_allows_git_to_finish_within_grace() {
     });
 }
 
-/// Missing guardian evidence blocks the affected execution, not a distinct task using the same repository.
+/// A descendant that left Git's process group keeps the attempt lock held: the affected
+/// execution stays unknown without blocking a distinct task on the same repository, and it
+/// recovers once that descendant has ended.
 #[test]
-fn guardian_loss_keeps_conflicting_recovery_unknown_but_allows_other_work() {
+fn escaped_descendant_keeps_conflicting_recovery_unknown_but_allows_other_work() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
         let command = fixture.seed();
-        fixture.install_hook();
+        fixture.install_escaping_hook();
         let mut child = fixture.launch("lost");
         until(|| fixture.path().join("hook-ready").exists());
         let hook = fixture.pin("hook-pid");
-        fixture.kill_guardians();
         child.kill();
         std::fs::remove_file(
             fixture
@@ -184,25 +186,53 @@ fn guardian_loss_keeps_conflicting_recovery_unknown_but_allows_other_work() {
         );
         assert!(!hook.has_exited().unwrap());
         assert!(node.shutdown().is_err());
+        drop(node);
+
+        std::fs::write(fixture.path().join("release"), "continue").unwrap();
+        until(|| hook.has_exited().unwrap());
+        let mut node =
+            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        assert_eq!(node.recover().unwrap(), ora_node::NodeState::Ready);
+        assert!(matches!(
+            node.status(&query(&command)).unwrap().payload.state,
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Ready(_)
+            ))
+        ));
+        node.shutdown().unwrap();
     });
 }
 
-/// An alias of host state is rejected before Node creates a business database there.
+/// A Node that cannot start its reaper does not start: nothing would end its Git if it died.
 #[test]
-fn node_data_directory_cannot_alias_host_state() {
+fn node_does_not_start_without_its_reaper() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
+        let mut process = fixture.process();
+        process.reaper_program = Some(fixture.path().join("missing-reaper"));
+        let mut node = fixture.launch_with("no-reaper", process);
+        until(|| node.0.try_wait().unwrap().is_some());
+        assert_eq!(node.0.wait().unwrap().code(), Some(1));
+        assert!(!fixture.log("no-reaper").contains("Ready"));
+        assert!(!fixture.config().home_directory.exists());
+    });
+}
+
+/// The retired host's directory is deleted on startup, so one that holds the Node's own data is
+/// rejected before the Node creates a business database there.
+#[test]
+fn node_data_directory_cannot_live_in_the_retired_host_directory() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let host = fixture.path().join("host");
+        std::fs::create_dir(&host).unwrap();
         let alias = fixture.path().join("alias");
-        std::os::unix::fs::symlink(fixture.path().join("host"), &alias).unwrap();
+        std::os::unix::fs::symlink(&host, &alias).unwrap();
         let mut config = fixture.config();
         config.home_directory = alias;
-        assert!(Node::open(config, fixture.process(), Shutdown::default()).is_err());
-        assert!(
-            !fixture
-                .path()
-                .join("host")
-                .join("ora-node.sqlite3")
-                .exists()
-        );
+        let mut process = fixture.process();
+        process.host_directory = Some(host.clone());
+        assert!(Node::open(config, process, Shutdown::default()).is_err());
+        assert!(!host.join("ora-node.sqlite3").exists());
     });
 }

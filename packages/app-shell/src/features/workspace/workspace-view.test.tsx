@@ -1,11 +1,12 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createChatStore } from "@ora/chat";
-import type {
-  ContractsClient,
-  SwitchSessionAgentRequest,
-  ListAgentModelsResponse,
-  StartSessionRequest,
+import {
+  RemoteContractError,
+  type ContractsClient,
+  type SwitchSessionAgentRequest,
+  type ListAgentModelsResponse,
+  type StartSessionRequest,
 } from "@ora/contracts";
 import { TooltipProvider } from "@ora/ui";
 import { PlatformProvider } from "../../platform";
@@ -613,6 +614,86 @@ describe("WorkspaceView", () => {
     ).toBeVisible();
   });
 
+  it("names a deleted project folder, refuses to send into it, and recovers on a re-check", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    state.workspaces = [
+      {
+        id: "workspace-p1",
+        projectId: "p1",
+        kind: "main",
+        lifecycle: "active",
+        directory: { kind: "missing", path: "/gone/ora" },
+      },
+    ];
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    const client = createTestClient(clientHandlers);
+    const discover = vi.spyOn(client.agentRuntime, "listModels");
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const banner = (
+      await screen.findByText(/\/gone\/ora/)
+    ).closest<HTMLElement>('[role="alert"]')!;
+    expect(banner).toHaveAttribute("data-workspace-directory", "missing");
+    expect(
+      within(banner).getByText(/项目目录不存在|Project folder not found/),
+    ).toBeVisible();
+
+    const textbox = await screen.findByRole("textbox");
+    await user.type(textbox, "hello");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /发送消息|Send message/ }),
+      ).toHaveAttribute("aria-disabled", "true"),
+    );
+    await user.hover(
+      screen.getByRole("button", { name: /发送消息|Send message/ }),
+    );
+    expect(
+      await screen.findByText(
+        /项目目录不存在，恢复目录后才能发送|The project folder is missing; restore it to send/,
+      ),
+    ).toBeVisible();
+    // Discovery can only fail while the folder is gone, so it is not asked at all.
+    expect(discover).not.toHaveBeenCalled();
+
+    state.workspaces = state.workspaces.map((workspace) => ({
+      ...workspace,
+      directory: { kind: "present" },
+    }));
+    await user.click(
+      within(banner).getByRole("button", { name: /重新检查|Check again/ }),
+    );
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-workspace-directory="missing"]'),
+      ).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(discover).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: "workspace-p1" }),
+      ),
+    );
+  });
+
   it("does not repeat the default direct-chat mode in the composer context", async () => {
     const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
@@ -789,6 +870,65 @@ describe("WorkspaceView", () => {
       draftId: null,
     });
     expect(chatStore.getState().conversations.s1?.isLoaded).toBe(true);
+  });
+
+  it("explains a start refused for a vanished folder and reveals the missing-folder banner", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    const client: ContractsClient = createTestClient({
+      ...createFixtureHandlers(state),
+      // The folder disappears after the workspace list last probed it, so only the start
+      // refusal reveals it.
+      startSession: async () => {
+        state.workspaces = state.workspaces.map((workspace) => ({
+          ...workspace,
+          directory: { kind: "missing", path: "/gone/ora" },
+        }));
+        throw new RemoteContractError(
+          {
+            code: "workspace_unavailable",
+            params: {},
+            requestId: "00000000-0000-4000-8000-000000000003",
+          },
+          null,
+        );
+      },
+    });
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const composer = await screen.findByRole("textbox");
+    await waitFor(() => expect(composer).toBeEnabled());
+    await user.type(composer, "hello");
+    await user.click(
+      screen.getByRole("button", { name: /发送消息|Send message/ }),
+    );
+
+    const failures = await screen.findAllByText(
+      /无法访问项目目录|The project folder can't be accessed/,
+    );
+    expect(failures.length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Remote Ora request failed/)).toBeNull();
+    expect(
+      await screen.findByText(/项目目录不存在|Project folder not found/),
+    ).toBeVisible();
   });
 
   it("retries an ordinary chat with a fresh main-workspace session after attach fails", async () => {

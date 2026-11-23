@@ -1404,6 +1404,83 @@ fn rejects_duplicate_target_triples() {
     assert_eq!(field, ManifestField::ReleaseTargetTarget { index: 1 });
 }
 
+/// Builds the expected compiled form of one targeted release entry.
+fn release_target(target: &str, url: &str) -> crate::PluginReleaseTarget {
+    crate::PluginReleaseTarget {
+        target: crate::HookTarget::parse(target).expect("supported triple"),
+        url: ReleaseLocator::parse(url).expect("release url"),
+        sha256: Sha256Digest::parse(DIGEST).expect("digest"),
+    }
+}
+
+/// Listings published while Ora still shipped for macOS keep parsing: their darwin artifacts are
+/// dropped, the remaining targets stay selectable, and a darwin-only listing has no release.
+#[test]
+fn skips_retired_macos_artifacts_in_published_listings() {
+    let targets = |entries: &[&str]| {
+        entries
+            .iter()
+            .map(|target| {
+                format!(
+                    "\n[[targets]]\ntarget = \"{target}\"\nurl = \"https://example.com/{target}.orax\"\nsha256 = \"{DIGEST}\"\n"
+                )
+            })
+            .collect::<String>()
+    };
+    let header = "resolver = 1\nidentifier = \"weather\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Weather agent\"\n";
+    let mixed = header.to_owned()
+        + &targets(&[
+            "aarch64-apple-darwin",
+            "x86_64-unknown-linux-gnu",
+            "x86_64-apple-darwin",
+            "x86_64-pc-windows-msvc",
+        ]);
+    let darwin_only = header.to_owned() + &targets(&["aarch64-apple-darwin"]);
+
+    assert_eq!(
+        (
+            PluginManifest::parse(&mixed)
+                .expect("mixed listing parses")
+                .release_source()
+                .cloned(),
+            PluginManifest::parse(&darwin_only)
+                .expect("darwin-only listing parses")
+                .release_source()
+                .cloned(),
+        ),
+        (
+            Some(PluginReleaseSource::Targets(vec![
+                release_target(
+                    "x86_64-unknown-linux-gnu",
+                    "https://example.com/x86_64-unknown-linux-gnu.orax"
+                ),
+                release_target(
+                    "x86_64-pc-windows-msvc",
+                    "https://example.com/x86_64-pc-windows-msvc.orax"
+                ),
+            ])),
+            None,
+        )
+    );
+}
+
+/// An installed package built for macOS is refused instead of being treated as installable.
+#[test]
+fn rejects_installed_macos_artifact() {
+    let source = "resolver = 1\nidentifier = \"rtk-ai.rtk\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n\n[artifact]\ntarget = \"aarch64-apple-darwin\"\n";
+    let Err(ManifestError::InvalidField { field, reason }) =
+        PluginManifest::parse_installed(source)
+    else {
+        panic!("expected retired artifact target rejection");
+    };
+    assert_eq!(field, ManifestField::ArtifactTarget);
+    assert!(matches!(
+        reason,
+        InvalidFieldReason::InvalidHookTarget(HookTargetError::Retired { ref found })
+            if found == "aarch64-apple-darwin"
+    ));
+}
+
 /// An agent that bundles its CLI declares the targeted form the same way a hook does.
 #[test]
 fn parses_targeted_release_for_the_agent_kind() {

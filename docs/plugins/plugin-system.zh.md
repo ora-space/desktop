@@ -46,7 +46,7 @@
 
 manifest crate 检查形状（字段类型、identifier 语法、`[webview]` 恰好出现在 webview 插件上、`[workbench]` 只出现在 workbench 插件上），并忽略未知字段，这样增量的 schema 变化不会让旧客户端丢掉列表条目；破坏性变化由 `resolver` 把关。manager 补充依赖磁盘上的包的检查：`main.js` 恰好存在于 agent 和 workbench 包中；workbench 附带 `assets/index.html`；webview 的 `start_url` 被 `allowed_origins` 覆盖；MCP 的 stdio 命令解析为包内的普通文件；Hook 可执行文件解析为 `assets/` 下非符号链接的普通文件。
 
-一个发布要么是一个通用的 `url` + `sha256`，要么是一组 `[[targets]]`，每个带精确的 Rust target triple。只有附带原生二进制的种类允许按目标发布：`hook`（它本身就是那个二进制）和 `agent`（可以附带它的 CLI）。按目标安装的包带有声明其目标的 `[artifact]` 一节，在线安装和本地导入都会与宿主比对；目标从不属于身份的一部分。
+一个发布要么是一个通用的 `url` + `sha256`，要么是一组 `[[targets]]`，每个带精确的 Rust target triple。只有附带原生二进制的种类允许按目标发布：`hook`（它本身就是那个二进制）和 `agent`（可以附带它的 CLI）。按目标安装的包带有声明其目标的 `[artifact]` 一节，在线安装和本地导入都会与宿主比对；目标从不属于身份的一部分。Ora 不再支持 macOS（v0.6.0 是最后一个 macOS 版本），所以 `*-apple-darwin` triple 已退役：清单里的 darwin 条目会被跳过而不是让整个清单失败，只有 darwin 条目的清单没有可安装的发布，已安装包的 `[artifact]` 声明 darwin triple 时会被拒绝。
 
 ## 生命周期
 

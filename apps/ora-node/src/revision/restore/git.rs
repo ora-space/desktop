@@ -1,7 +1,7 @@
 //! The workload half of a restore (Node delivery push ADR D5 steps 4–6, Node clone ADR D9), run
 //! with delivery's hardened policy.
 //!
-//! Every command goes through [`DeliveryGit`], so restore shares delivery's runner (host-managed,
+//! Every command goes through [`DeliveryGit`], so restore shares delivery's runner (run directly by the Node,
 //! as the workload user) and its fixed configuration (no hooks, no fsmonitor, no signing) on top
 //! of clone's environment and protocol policy. Only the Workspace branch, the index and the
 //! worktree change; `refs/remotes/ora/**` and the repository configuration stay as they are.

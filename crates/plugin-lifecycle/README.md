@@ -7,6 +7,11 @@ interface.
 
 ## Control plane
 
+The Deno launcher accepts an injected process spawner for both the plugin and its host-spawned
+children. Stopping closes child spawn admission under the same mutex as dispatch and tracking,
+kills and reaps every tracked child, and propagates cleanup failures. A retained cleanup task
+continues when a caller drops its stop future; the returned result waits for that task.
+
 This crate is the sole owner of plugin processes. Nothing else in Ora starts, stops, or reaps one,
 which is what keeps the runtime state reported to the settings surface identical to the processes
 that actually exist. Every installed plugin is available. Agent and workbench processes start on

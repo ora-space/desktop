@@ -19,7 +19,7 @@ Each identity answers a different question and none stands in for another:
 | Controller lease epoch | The current coordinator's right to write |
 | Workspace runtime generation and sandbox id | One running instance and its durable target |
 | Runtime control epoch and session | One user or maintenance qualification |
-| Node and host incarnation | One running program instance |
+| Node incarnation | One running program instance |
 | Execution and effect id | Durable responsibility for fixed input |
 
 A stable execution id is not a new authorization and cannot be reused with an old permit to start a
@@ -33,9 +33,9 @@ cloud configuration without `management_tls`, a non-HTTPS Cloud endpoint, non-HT
 non-WSS router, see [Controller](controller.md#cloud-form). The Controller only dials out and keeps no
 Cloud business state in SQLite.
 
-In the Node image, root-owned management processes (the Node and the process host) hold the
-configuration, journals and private keys under the root-only `/run/ora`, while Git workloads and
-agent plugins run as UID/GID 1000 and cannot read management material or write control journals, see
+In the Node image, the root-owned management process (the Node) holds the configuration, journals
+and private keys under the root-only `/run/ora`, while Git workloads and agent plugins run as UID/GID
+1000 and cannot read management material or write control journals, see
 [Container images](../operations/container-images.md). Static Git configuration may carry only
 non-secret CA trust, never personal credential helpers or an SSH fallback.
 

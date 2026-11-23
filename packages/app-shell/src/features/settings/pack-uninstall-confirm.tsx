@@ -12,6 +12,8 @@ import {
 } from "@ora/ui";
 import { useContractsClient } from "../../contracts-client-context";
 import { localizeContractError } from "../../i18n/contract-error";
+import { useWorkflowUninstallImpact } from "./use-workflow-uninstall-impact";
+import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
 
 /**
  * Ownership-aware pack uninstall confirmation: the plan's remove/preserve/already-missing
@@ -46,6 +48,10 @@ export function PackUninstallConfirm({
     plan.isError ||
     computed === null ||
     computed === undefined;
+  const uninstallImpact = useWorkflowUninstallImpact(
+    removable,
+    open && removable.length > 0,
+  );
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -58,6 +64,9 @@ export function PackUninstallConfirm({
             {t("settings.plugins.packUninstallDescription")}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {/* The plan already says which members leave; naming the workflows that bind them turns
+            a package operation into its consequence for the runs the user already built. */}
+        <WorkflowUninstallImpact state={uninstallImpact} />
         <div className="max-h-64 space-y-3 overflow-y-auto text-sm">
           {plan.isLoading && (
             <p className="text-muted-foreground">
@@ -119,7 +128,7 @@ export function PackUninstallConfirm({
         <AlertDialogFooter>
           <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
           <AlertDialogAction
-            disabled={busy || planUnavailable}
+            disabled={busy || planUnavailable || uninstallImpact.checking}
             onClick={(event) => {
               event.preventDefault();
               onConfirm();

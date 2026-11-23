@@ -4,7 +4,10 @@ use super::connection::AgentAcpClient;
 use super::routing::{SessionChannel, SessionEvent};
 use crate::AgentRuntimeHost;
 use crate::RuntimeError;
-use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
+use crate::actor::actor_prompt::produced_output;
+use agent_client_protocol_schema::v1::{
+    RequestPermissionOutcome, RequestPermissionResponse, SessionUpdate,
+};
 use ora_contracts::PromptSessionEvent;
 use tokio::sync::mpsc;
 
@@ -12,11 +15,14 @@ use tokio::sync::mpsc;
 ///
 /// Idle traffic must not leak into the next prompt, but dropping `SessionInfoUpdate` here would
 /// lose a push title that arrived after attach and before the first eligible prompt.
+///
+/// Returns whether any drained event was turn traffic, so an idle actor can report it.
 pub(super) async fn drain_idle_events(
     client: &AgentAcpClient,
     events: &mut mpsc::Receiver<SessionEvent>,
     title_updates: &mpsc::WeakUnboundedSender<RuntimeCommand>,
-) {
+) -> bool {
+    let mut traffic = false;
     // Bound the synchronous snapshot so a noisy provider cannot keep an idle actor
     // from returning to its command loop forever.
     let queued = events.len();
@@ -24,6 +30,7 @@ pub(super) async fn drain_idle_events(
         let Ok(event) = events.try_recv() else {
             break;
         };
+        traffic |= is_turn_traffic(&event);
         if let SessionEvent::Update(update) = &event
             && let Some(title_updates) = title_updates.upgrade()
         {
@@ -33,6 +40,32 @@ pub(super) async fn drain_idle_events(
         }
         settle_idle_event(client, event).await;
     }
+    traffic
+}
+
+/// Whether an event belongs to a turn rather than to the session.
+///
+/// Session-level notifications (title, available commands, modes, config options, usage) are
+/// sent between turns by design and do not count; every other update, including kinds this
+/// runtime does not know, and every permission request does.
+pub(super) fn is_turn_traffic(event: &SessionEvent) -> bool {
+    match event {
+        SessionEvent::Update(update) => !session_level(&update.update),
+        SessionEvent::Permission(_) => true,
+        SessionEvent::Response(_) => false,
+    }
+}
+
+/// Whether an update describes the session rather than any turn.
+fn session_level(update: &SessionUpdate) -> bool {
+    matches!(
+        update,
+        SessionUpdate::SessionInfoUpdate(_)
+            | SessionUpdate::AvailableCommandsUpdate(_)
+            | SessionUpdate::CurrentModeUpdate(_)
+            | SessionUpdate::ConfigOptionUpdate(_)
+            | SessionUpdate::UsageUpdate(_)
+    )
 }
 
 /// Settles one unexpected idle event without allowing it to leak into a later operation.
@@ -57,6 +90,7 @@ pub(super) async fn settle_cancelled_prompt<Response, H: AgentRuntimeHost>(
     client: &AgentAcpClient,
     pending: ora_acp::PendingSessionRequest<Response>,
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+    saw_output: &mut bool,
 ) -> Option<Result<Response, ora_acp::AcpError>>
 where
     Response: serde::de::DeserializeOwned,
@@ -64,6 +98,7 @@ where
     loop {
         match channel.events.recv().await {
             Some(SessionEvent::Update(update)) => {
+                *saw_output |= produced_output(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);
@@ -97,6 +132,7 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
     channel: &mut SessionChannel,
     client: &AgentAcpClient,
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
+    saw_output: &mut bool,
 ) {
     // Only drain the snapshot that was accepted before isolation was requested. Events
     // arriving after this point belong to the abandoned provider request.
@@ -107,6 +143,7 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
         };
         match event {
             SessionEvent::Update(update) => {
+                *saw_output |= produced_output(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);

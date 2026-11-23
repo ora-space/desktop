@@ -68,16 +68,19 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             let _ = cleanup.send(Ok(()));
                             return;
                         }
-                        RuntimeCommand::Prompt { operation_id, prompt, record_prompt, inactivity_policy, model, end_report, events, accepted } => {
+                        RuntimeCommand::Prompt { operation_id, prompt, record_prompt, commit_admission, inactivity_policy, model, end_report, events, accepted } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
                             // Admission goes through the same attach as the idle loop's. The
                             // channel is already back, so nothing is opened here; what still has
                             // to hold is that the provider carries the current MCP set.
-                            match self.ensure_attached(model.as_deref()).await {
+                            match self.ensure_attached(model.as_deref()).await.and_then(|setup| {
+                                if accepted.is_closed() { return Err(crate::support::runtime_unavailable()); }
+                                if let Some(commit) = commit_admission { commit()?; }
+                                Ok(setup)
+                            }) {
                                 Ok(setup) => {
-                                    let _ = accepted.send(Ok(()));
-                                    if super::publish_setup(&events, setup) {
+                                    if accepted.send(Ok(())).is_ok() && super::publish_setup(&events, setup) {
                                         self.run_prompt(operation_id, prompt, record_prompt, inactivity_policy, end_report, events).await;
                                         self.refresh_idle_mcp_if_owed().await;
                                     } else {
@@ -126,6 +129,23 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             // it is not a cancellation of the independent title fallback.
                         }
                         RuntimeCommand::CancelActivePrompt => {}
+                        RuntimeCommand::TakeIdleTurnTraffic { response } => {
+                            // A title poll only borrows the idle channel; hand it back and drain
+                            // as an idle actor would, so the answer is not lost to the poll.
+                            if super::events::drain_idle_events(
+                                &channel.connection.client.clone(),
+                                &mut channel.events,
+                                &self.command_sender,
+                            )
+                            .await
+                            {
+                                self.turn_cancel.note_idle_traffic();
+                            }
+                            self.channel = Some(channel);
+                            self.title_acquisition.preempt_attempt(attempt);
+                            let _ = response.send(self.turn_cancel.take_idle_traffic());
+                            return;
+                        }
                         RuntimeCommand::ClaimDirectProviderCall { response } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);

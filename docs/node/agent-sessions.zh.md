@@ -17,9 +17,59 @@ checkout 中，只启动该执行指明的 Agent 插件的精确版本，把每�
 
 Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时，握手声明 `agent_session`；没有时拒绝新会话，但启动时仍会结算
 未完成的会话。设置了 `process.workload_uid` 时还需要 `agent.workload_directory`：一个已存在的绝对路径，属于 Node 身份，
-其他人都不可写，且不与 Node home、进程宿主目录或 clone 根目录重叠。它由沙盒入口程序创建，Node 从不创建。
+其他人都不可写，且不与 Node home、clone 根目录或配置的旧字段 `process.host_directory` 重叠。它由沙盒入口程序创建，Node 从不创建。
 配置了 `agent.ora_git_directory`、`git_access`，且 `process.workload_uid` 不同于 Node 有效 UID 时，每个会话还有自己的 [ora-git](ora-git.zh.md) socket，以
 `ORA_GIT_SOCKET` 导出。
+
+## Checkout 准入
+
+启用 Agent 时，握手还声明 `shared_checkout_sessions`。一个 checkout 最多容纳
+`MAX_SESSIONS_PER_CHECKOUT = 8` 个未结束会话。每个会话有独立的插件进程、历史、命令和终态；结束一个不会停止兄弟会话。
+已结束会话释放名额，不同 checkout 分别计数。
+
+恢复安全仍要求独占。checkout 有 `legacy_unknown` 恢复或任何未清理恢复尝试、新会话带 `prior_revision`
+而仍有兄弟未结束、或未结束兄弟自己的恢复尚未到达 `agent_admitted` 时（`pending`、`git_admitted` 和
+`restored` 都要等待：恢复会话在 Agent 获准启动之前仍独自准备 checkout），新会话以 `checkout_busy`
+拒绝。处于 `agent_admitted` 的兄弟允许与普通会话共享，但仍排除另一个恢复。`checkout_busy` 的判定先于
+数量上限；达到上限时使用 `checkout_session_limit`。
+
+这些拒绝保留新执行，并原子写入序号 1 的 `AgentSessionEnded{reason: agent_failed, detail}`，然后返回
+Completed 状态。actor、插件和恢复都不会启动，也不存在会话历史，因此被拒绝的执行不可交付：对它的
+`deliver_revision` 以 `session_not_settled` 失败，而不是把共享 checkout 快照成它的 Revision。控制连接
+保持打开，兄弟会话继续接受命令。拒绝只发生在裸启动上：受控启动永远先被运行时单例以既有路径
+（`resource_conflict` 并关闭连接）拒绝，不会进入 checkout 分类；该单例与 checkout 准入相互独立。
+
+## 把共享 checkout 交给工作负载用户
+
+设置了 `process.workload_uid` 时，每个会话启动都在自己的 Agent 启动之前亲自把 checkout 交给工作负载
+用户，不依赖兄弟会话已经做过：准入顺序说明不了兄弟的遍历是否已经完成，甚至是否执行过。遍历期间，
+存活的兄弟 Agent 会以工作负载用户身份改动这棵树，所以遍历对每个名称只解析一次：每个条目都相对列出它的
+目录的描述符用 `openat(O_PATH | O_NOFOLLOW)` 钉住，此后只通过这个描述符检查（`fstat`）、重属主
+（`fchownat(AT_EMPTY_PATH)`），目录也只通过它列举。链接按链接本身重属主，从不跟随；条目钉住之后，兄弟
+再把名称换成链接或另一个目录，都不会改变遍历的动作。钉住之前就消失的条目（`.git/index.lock`、
+构建产物）直接跳过；checkout 根本身必须存在，无权打开、列举或重属主的条目仍使启动失败。已经正确的树只花
+一次遍历。交付准备中的重属主步骤使用同一遍历，启动与交付的遍历共用一个 Node 级上限（见下）。
+
+- **深度。** 遍历每层目录持有一个描述符，所以 checkout 的目录嵌套超过 4096 层时，遍历在打开下一层之前
+  就拒绝：启动以 `agent_failed{checkout_too_deep}` 结束，从该 checkout 交付以 `checkout_too_deep` 失败。
+  一次遍历因此至多持有 4099 个描述符。
+- **`fs.protected_hardlinks` 是硬链接的保证。** 遍历看到的是 inode，看不到它在别处的名称，所以遍历自身无法
+  阻止硬链接进来的外部文件被重属主：Agent 把外部文件硬链接进 checkout，并在遍历钉住它之后立刻删掉这个链接，
+  链接数就只剩一，外部 inode 随即被重属主。阻止这件事的是宿主拒绝创建这个链接。设置了
+  `process.workload_uid` 时，除非 `/proc/sys/fs/protected_hardlinks` 读出 `1`，Node 拒绝启动，并在每次
+  启动遍历和交付遍历之前重新读取；之后宿主改成其他值时，该次启动以 `agent_failed{agent_start_failed}`、
+  该次交付以 `failed{snapshot_failed}` 被拒绝，日志点名该 sysctl。在这项保护下，工作负载 Agent 只能链接自己
+  拥有的文件，或本来就能读写的普通文件，root 拥有的文件（已安装的 Agent 包、Node 状态）永远进不了 checkout。
+  该 sysctl 没有命名空间：容器看到的是宿主的值，内核默认值是 0。
+- **留在原处的硬链接。** 作为纵深防御，链接数大于一且尚不属于工作负载用户的文件保留原属主，因为它的另一个
+  名称可能在 checkout 之外。这只能挡住留在原处的链接（见上）。checkout 内正当地互为硬链接的文件（Git 不会
+  在工作区中创建这种文件，本地克隆硬链接的对象本来就属于执行克隆的工作负载用户）因此保留旧属主和其权限位
+  允许的访问，直到只剩一个名称。
+- **描述符上限。** 描述符是进程级资源，而工作负载用户能写的每个 checkout 都可能被弄得很深。所以 Node 在
+  所有 checkout 上同时至多运行 9 次遍历——一个 checkout 可有的八次启动遍历加上 Node 同时只准备的一个交付；
+  更多的启动或交付等待许可，只在深树上增加延迟。Node 自身（控制连接、SQLite、插件管道、`ora-git` socket）
+  约需 1,024 个描述符，因此无论多少 checkout 很深，遍历至多需要 9 × 4,099 + 1,024 ≈ 38,000。请给独立 UID
+  的 Node 至少 38,000 的软 `RLIMIT_NOFILE`（推荐 65,536）。
 
 ## 每个执行一个运行时
 
@@ -31,7 +81,7 @@ Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时
 |---|---|
 | `SessionStore` | `MemorySessionStore`：Node 重启后从不恢复会话 |
 | `AgentAttach` | 该执行自己的单插件生命周期；没有 Effect 消费者（Node 不投射 Skill） |
-| `SessionSetup` | `NoSessionMcp`：MCP 配置在 Node 上没有投递路径 |
+| `SessionSetup` | `NodeSessionMcp`：显式版本绑定与可选的代际更新；见[生命周期](session-stop.zh.md) |
 | `RuntimeEvents` | 每一行历史都变成 Thread 事件；标题和模型目录事件被丢弃 |
 | `WorkspaceDirectory` | checkout |
 
@@ -55,7 +105,8 @@ Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时
 - `home/`：`0700`，属于工作负载用户。对插件和宿主启动的进程，`HOME`、XDG 目录、`DENO_DIR` 和
   `DENO_NO_UPDATE_CHECK=1` 都指向这里。
 
-启动之前，checkout 在不跟随链接的情况下交给工作负载用户。插件停止后会话目录被删除，服务打开时也会删除遗留的目录。
+启动之前，checkout 在不跟随链接的情况下交给工作负载用户（目录嵌套超过 4096 层的 checkout 以
+`agent_failed{checkout_too_deep}` 结束）。插件停止后会话目录被删除，服务打开时也会删除遗留的目录。
 
 ## 执行如何运行
 
@@ -73,8 +124,56 @@ Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时
    然后把自己结算为 `executed`。
 7. 结束时，会话停止，释放运行时，停止插件并等待进程树退出，释放租约，丢弃排队的命令，写入终止结果，然后忘掉这个会话。
 
-只有 ACP 成功完成才允许下一个轮次。prompt 出错或流意外关闭时，会话以 `agent_failed` 结束，带 `agent_turn_failed` 或
-`agent_stream_closed`；原始的服务商诊断信息从不进入历史或日志，已经排队的 `EndSession` 保留它显式的原因。
+除非会话另有选择（见下文），只有 ACP 成功完成才允许下一个轮次。prompt 出错或流意外关闭时，会话以 `agent_failed`
+结束，带 `agent_turn_failed` 或 `agent_stream_closed`；原始的服务商诊断信息从不进入历史或日志，已经排队的
+`EndSession` 保留它显式的原因。
+
+## 取消一轮
+
+以 `keep_session_on_cancel` 启动的会话受理针对它任一轮次的 `CancelTurn`；以 `keep_session_on_failure` 启动的会话
+在一轮失败后也可能保留。取消在账本处生效：取消、这一轮的准入和它的 MCP 等候超时共用这一个串行边界，先提交的
+决定这一轮。持久受理本身就会唤醒会话，不等受理回复写出；一次停止的截止时刻从第一个取消的受理时刻起算。在准入之前的
+整个准备阶段（恢复 prior Revision、布置工作负载、模型授权），取消同样立即生效。模型授权进入结束、会话在等
+Controller 的 `EndSession` 时，待结算的取消把这段等待限制在它自己的截止时刻之内，到时按当时已知的原因写结束
+决定。重启时先写结束决定、结算待结算的取消，再等停止证据。
+
+- **排队中的轮次**（包括正在等 Agent 或 MCP 门禁的）：立即丢弃，命令结算为 `discarded`，结论 `not_started`。
+  等候已过截止时刻的，先按超时结算，取消随后得到 `already_ended`。
+- **已准入、prompt 还没写出**：不再写出 prompt；`TurnEnded{cancelled}`，然后 `stopped`，会话保留。
+- **正在执行**：运行时先不等待地看这次 prompt 的回应是否已经可读。已经可读说明 Agent 赢了竞争：这一轮保留它
+  自己的结果（停止原因或失败），取消得到 `already_ended`。否则以 `cancelled` 应答挂起的权限请求，发 `session/cancel`，等到第一个取消的受理时刻加 G
+  （暂定 15 秒）。之后的取消和正在进行的看门狗停止并入同一次停止和截止时刻，看门狗不再重发。`session/cancel`
+  写出之后的任何回应（即使是 `end_turn`）都是对取消的回应：写 `TurnEnded{cancelled}`，再判定这次停止；没有回应时以 `turn_cancel_unanswered` 结束会话。
+- **已结束、已被丢弃、已超时失败或不存在**：`already_ended` 或 `unknown`，不做其他事。
+
+停下的一轮只有同时满足下列条件才保留会话：会话选择了对应的结束方式；Agent 插件版本在 Node 已验证的轮次边界
+清单里（目前为空：在一致性测试加入版本之前，这类停止都以 `turn_boundary_unverified` 结束会话）；这一轮的每个
+工具调用都是 `completed` 或 `failed`，且没有子代理投影；静默窗口 Q（暂定 2 秒）内没有轮次流量（标题、用量、
+模式、命令和配置通知不算）。否则会话以 `turn_not_quiescent` 结束。之后的轮次中引用已停下轮次的工具调用或子代理
+来源的更新不记入任何一轮，会话以 `turn_leak_detected` 结束。
+
+ACP 请求报错时，Agent 进程可能仍在，但 provider 会话已经失效。Agent 明确报告会话已关闭或不存在时，运行时
+丢弃这个会话的连接；下一轮先恢复，再发送 `session/prompt`。MCP 生命周期模式只恢复原 provider ID，load 失败时
+保持 blocked，这些 load 同样计入 Agent 进程替换预算。替换进程不结束 Ora 会话，也不新建 provider ID。
+普通模型错误和认证错误仍保留既有的 provider 连接。
+
+`apps/ora-node/tests/turn_boundary/probe.py` 是手动运行的 Linux 一致性探针，通过 Deno 和插件真实的 framed ACP
+桥接调用解包后未修改的 Agent 包。`PATH` 需要 Python 3.10+ 和 Deno。本地模型 fixture 驱动真实 Agent 的工具，
+不需要模型凭据，也不调用外部模型。逐项运行 `shell`、`subagent`、`background`、`error`：
+
+```sh
+python3 apps/ora-node/tests/turn_boundary/probe.py --agent opencode \
+  --package /tmp/extracted-agent-package --scenario background --output /tmp/new-probe-output
+```
+
+Claude 包使用 `--agent claude`。每次指定新的输出目录，保存包文件哈希、ACP 流量、模型请求和总结。退出码 1
+表示发现违约，或探针没能实际触发目标场景。有限时间内没有观察到违约，不自动登记版本：修改轮次边界清单前要
+综合所有场景、工具收尾与后台工作。实测数据写入 circus 运行 issue。
+
+每当会话决定结束，这份结束决定、所有未解除停止责任的停止时钟和所有待结算取消的 `session_ending` 在一个事务中
+写入，然后才向 Agent 发停止信号，所以重启后原因和时钟都不变。原因还不确定时（模型授权在 Controller 的
+`EndSession` 到达之前结束），结束决定等原因确定后再写；
+没有事先决定就写入的终态（例如重启收口）同样先结算它们，所以没有取消会缺少结论，也没有结论排在终态之后。
 
 ## 定时运行的业务事实
 
@@ -88,7 +187,7 @@ Cloud 可以把会话输入作为定时 occurrence 受理（`spec.trigger = sche
   非法值、超过 2000 字符的 detail 或没有标记都只表示「未报告」。wire 会拒绝的 detail（例如含 NUL）同样按「未报告」处理，
   所以畸形的注解不会让结算该运行的终态事务失败。不会改用更早的轮次。Node 不替 Cloud 解析 Thread，只上报类型化的值
   （`scheduled_result`），由 Cloud 校验。
-- 产物在 Workspace 可能被释放之前，从 checkout 固定的 `.ora-scheduled-artifacts/` 目录只读采集。采集沿用与本地定时运行
+- 产物在 Workspace 可能被释放之前，从 checkout 固定的 `.ora-scheduled-artifacts/` 目录只读采集。共享 checkout 上这次读取可能包含兄弟会话的写入，清单不是按单个会话隔离的 diff。采集沿用与本地定时运行
   一致的类型白名单（markdown、json、txt、log、xml、html）、路径与符号链接／硬链接拒绝规则，以及单文件 10 MiB、单运行
   64 个、总计 64 MiB 的上限。名称按 NFC 归一后做 Unicode 大小写折叠，大小写不敏感文件系统会当成同一路径的两种拼写只声明
   一个，另一个记为拒绝。被接受的候选连同大小和 SHA-256 组成上报的 `artifact_manifest`，由 Cloud 在接收上传时核对；
@@ -116,12 +215,18 @@ Cloud 可以把会话输入作为定时 occurrence 受理（`spec.trigger = sche
 以同样的顺序存在于 JSONL 中，崩溃时 JSONL 最多领先一行。一旦 Thread 追加失败，镜像就永久停止，会话以
 `agent_failed{thread_unavailable}` 结束。
 
-重启后 Agent 从不恢复。未结束的恢复先交接原 Scope/Run，只有停止确认后才报告 `interrupted`；停止未知时会话保留未终态、禁止交付与 checkout 复用（见[Revision 恢复](revisions.zh.md)）。正常关闭会取消进行中的对话，
+重启后 Agent 从不恢复。未结束的恢复先交接原 Git 尝试，只有停止确认后才报告 `interrupted`；停止未知时会话保留未终态、禁止交付与 checkout 复用（见[Revision 恢复](revisions.zh.md)）。正常关闭会取消进行中的对话，
 等待插件清理，并在释放数据库租约之前提交终止证据。会话仍在运行时，`sealed_history` 返回 `history_unavailable`，否则返回
 它的 JSONL。
 
-插件进程和 Agent CLI 由 Node 直接启动（进程组，整棵树终止），还不在宿主和 guardian 的进程范围内，因为 guardian 不提供
-插件需要的 stdin 和协议流。Node 崩溃时，插件会因 stdio 关闭而退出，但忽略这一点的后代进程不会被回收。
+插件进程和 Agent CLI 由 Node 直接启动（进程组，整棵树终止），不向 Node 的 `ora-reaper` 登记。Node 崩溃时，插件会因
+stdio 关闭而退出；忽略这一点的后代进程会一直运行到重启恢复，恢复在记录停止并报告 `interrupted` 之前杀掉所有带尝试标记的
+进程（见 [Agent 停止责任](session-stop.zh.md)）。
+
+会话结束时（任何结束方式），以及 MCP 生命周期替换 Agent 进程时，Agent 启动且保留了尝试标记的进程都会被杀掉：工具后台作业、
+开发服务器、MCP 服务和语言服务，以及从会话中启动的共享守护进程（例如 Gradle daemon 或 sccache 服务）。轮次之间不会杀任何进程。
+需要在会话结束后继续运行的守护进程，请在 Ora 之外启动。清空或改写了环境（PostgreSQL、nginx 会用进程标题改写它）或换了用户的
+孤儿程序找不到，会继续运行；限制与部署前提见 [Agent 停止责任](session-stop.zh.md)。
 
 ## 账本
 

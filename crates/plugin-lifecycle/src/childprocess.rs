@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 
 use base64::Engine;
@@ -167,6 +167,8 @@ struct Inner<S: ProcessSpawner, E: ChildProcessEnvironmentProvider> {
     environment_provider: E,
     next_id: AtomicU64,
     tracked: StdMutex<HashMap<String, Tracked<S::Process>>>,
+    admission: tokio::sync::Mutex<bool>,
+    cleanup_failed: AtomicBool,
     /// Filled in once by [`PluginProcessHost::attach_runtime`] after the plugin connection this
     /// handler serves becomes ready; see the module docs for why this cannot be known upfront.
     runtime: watch::Sender<Option<ProcessPluginRuntime>>,
@@ -228,6 +230,8 @@ where
             environment_provider,
             next_id: AtomicU64::new(1),
             tracked: StdMutex::new(HashMap::new()),
+            admission: tokio::sync::Mutex::new(true),
+            cleanup_failed: AtomicBool::new(false),
             runtime,
             _runtime_rx: runtime_rx,
         }))
@@ -242,12 +246,10 @@ where
         let _ = self.0.runtime.send(Some(runtime));
     }
 
-    /// Kills every process this handler is still tracking, best effort.
-    ///
-    /// Called once the plugin generation this handler serves has stopped for any reason —
-    /// intentional stop, uninstall, restart, or failure — so a host-spawned process never outlives
-    /// the plugin that asked for it.
-    pub async fn kill_all(&self) {
+    /// Closes spawn admission before taking the complete cleanup set, then reports kill/wait
+    /// failures to the runtime owner. Sending a signal alone is not exit confirmation.
+    pub async fn kill_all(&self) -> io::Result<()> {
+        *self.0.admission.lock().await = false;
         let processes: Vec<Arc<S::Process>> = self
             .0
             .tracked
@@ -256,15 +258,20 @@ where
             .values()
             .map(|tracked| Arc::clone(&tracked.process))
             .collect();
-        for process in processes {
-            if let Err(error) = process.kill().await {
-                ora_warn!(
-                    plugin_id = %self.0.plugin_id,
-                    error = %error,
-                    "failed to kill a host-managed child process during plugin teardown"
-                );
+        for process in &processes {
+            if process.kill().await.is_err() {
+                self.0.cleanup_failed.store(true, Ordering::Release);
             }
         }
+        for process in processes {
+            if process.wait().await.is_err() {
+                self.0.cleanup_failed.store(true, Ordering::Release);
+            }
+        }
+        if self.0.cleanup_failed.load(Ordering::Acquire) {
+            return Err(io::Error::other("host child cleanup unconfirmed"));
+        }
+        Ok(())
     }
 
     /// Pushes one notification to the plugin, waiting for `attach_runtime` if it has not run yet.
@@ -384,6 +391,14 @@ where
             spec = spec.env(key, value);
         }
 
+        let admission = self.0.admission.lock().await;
+        if !*admission {
+            return Err(ChildProcessError::new(
+                ChildProcessErrorKind::Io,
+                "plugin generation is stopping",
+            )
+            .into());
+        }
         let mut process = self
             .0
             .spawner
@@ -396,8 +411,12 @@ where
             process.take_stderr(),
         );
         let (Some(stdin), Some(stdout), Some(stderr)) = stdio else {
-            let _ = process.kill().await;
-            let _ = process.wait().await;
+            if process.kill().await.is_err() {
+                self.0.cleanup_failed.store(true, Ordering::Release);
+            }
+            if process.wait().await.is_err() {
+                self.0.cleanup_failed.store(true, Ordering::Release);
+            }
             return Err(ChildProcessError::new(
                 ChildProcessErrorKind::Io,
                 "spawned process stdio is unavailable",
@@ -436,6 +455,7 @@ where
                 },
             );
 
+        drop(admission);
         tokio::spawn(watch_exit(self.clone(), process_id.clone(), process));
 
         Ok(json!(ChildProcessSpawnResult { process_id, pid }))
@@ -592,6 +612,9 @@ async fn watch_exit<S, E>(
     E: ChildProcessEnvironmentProvider,
 {
     let status = process.wait().await;
+    if status.is_err() {
+        host.0.cleanup_failed.store(true, Ordering::Release);
+    }
     let tracked = host
         .0
         .tracked

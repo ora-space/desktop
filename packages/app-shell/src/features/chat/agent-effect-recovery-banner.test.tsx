@@ -163,86 +163,100 @@ describe("AgentEffectRecoveryBanner", () => {
     ]);
   });
 
-  it("lists preserved conflicts and retries only the affected Target", async () => {
-    const ready = await readyEffectHandlers().getEffectTargetStatus();
-    let retried = false;
-    const getEffectTargetStatus = vi.fn(async () => ({
-      status: {
-        ...ready.status!,
-        targetId: "target-1",
-        desiredGeneration: 1,
-        observedGeneration: 1,
-        appliedGeneration: retried ? 1 : 0,
-        readyGeneration: retried ? 1 : 0,
-        phase: retried ? ("current" as const) : ("planning" as const),
-        conditions: retried
-          ? []
-          : [
-              {
-                id: "condition-1",
-                ownerKind: "resource",
-                ownerId: "resource-1",
-                subjectKind: "desired_effect",
-                subjectId: "desired-1",
-                code: "preserved_item_conflict",
-                impact: "blocking" as const,
-                retry: "on_change" as const,
-                generation: 1n,
-                message:
-                  "A Preserved Item already occupies the required native identity: grilling.",
-                firstObservedAt: 1n,
-                lastObservedAt: 1n,
-              },
-            ],
-      },
-    }));
-    const retryEffectTarget = vi.fn(async (request: { targetId: string }) => {
-      expect(request).toEqual({ targetId: "target-1" });
-      retried = true;
-      return { requested: true };
-    });
-    const client = createTestClient({
-      ...pluginHandlers(createPluginMemory()),
-      getEffectTargetStatus,
-      retryEffectTarget,
-    });
-    function Gate() {
-      const readiness = useAgentEffectReadiness(
-        "workspace-1",
-        AGENT_REF.claude,
-      );
-      return (
-        <>
-          <button aria-label="send" disabled={readiness.kind !== "ready"}>
-            Send
-          </button>
-          <AgentEffectRecoveryBanner readiness={readiness} />
-        </>
-      );
-    }
-    render(<Gate />, {
-      wrapper: createHookWrapper(
-        client,
-        createTestQueryClient(),
-        createChatStore(client.session),
-      ),
-    });
+  it.each([
+    {
+      code: "preserved_item_conflict",
+      message:
+        "A Preserved Item already occupies the required native identity: grilling.",
+      hint: /Move the old Skill directories|\u79fb\u8d70/,
+    },
+    {
+      code: "skill_directory_link",
+      message:
+        "Symbolic links and Windows junctions are not supported: .agents/skills/review/vendor/linked",
+      hint: /Replace the listed symbolic links|\u66ff\u6362\u4e3a\u666e\u901a/,
+    },
+  ])(
+    "shows $code and retries only the affected Target",
+    async ({ code, message, hint }) => {
+      const ready = await readyEffectHandlers().getEffectTargetStatus();
+      let retried = false;
+      const getEffectTargetStatus = vi.fn(async () => ({
+        status: {
+          ...ready.status!,
+          targetId: "target-1",
+          desiredGeneration: 1,
+          observedGeneration: 1,
+          appliedGeneration: retried ? 1 : 0,
+          readyGeneration: retried ? 1 : 0,
+          phase: retried ? ("current" as const) : ("planning" as const),
+          conditions: retried
+            ? []
+            : [
+                {
+                  id: "condition-1",
+                  ownerKind: "resource",
+                  ownerId: "resource-1",
+                  subjectKind: "desired_effect",
+                  subjectId: "desired-1",
+                  code,
+                  impact: "blocking" as const,
+                  retry: "on_change" as const,
+                  generation: 1n,
+                  message,
+                  firstObservedAt: 1n,
+                  lastObservedAt: 1n,
+                },
+              ],
+        },
+      }));
+      const retryEffectTarget = vi.fn(async (request: { targetId: string }) => {
+        expect(request).toEqual({ targetId: "target-1" });
+        retried = true;
+        return { requested: true };
+      });
+      const client = createTestClient({
+        ...pluginHandlers(createPluginMemory()),
+        getEffectTargetStatus,
+        retryEffectTarget,
+      });
+      function Gate() {
+        const readiness = useAgentEffectReadiness(
+          "workspace-1",
+          AGENT_REF.claude,
+        );
+        return (
+          <>
+            <button aria-label="send" disabled={readiness.kind !== "ready"}>
+              Send
+            </button>
+            <AgentEffectRecoveryBanner readiness={readiness} />
+          </>
+        );
+      }
+      render(<Gate />, {
+        wrapper: createHookWrapper(
+          client,
+          createTestQueryClient(),
+          createChatStore(client.session),
+        ),
+      });
 
-    const banner = await screen.findByRole("alert");
-    expect(banner).toHaveTextContent(
-      "A Preserved Item already occupies the required native identity: grilling.",
-    );
-    expect(screen.getByRole("button", { name: "send" })).toBeDisabled();
-    await userEvent.click(
-      screen.getByRole("button", { name: /重新同步|Retry sync/ }),
-    );
+      const banner = await screen.findByRole("alert");
+      expect(banner).toHaveTextContent(message);
+      expect(banner).toHaveTextContent(hint);
+      expect(screen.getByRole("button", { name: "send" })).toBeDisabled();
+      await userEvent.click(
+        screen.getByRole("button", { name: /重新同步|Retry sync/ }),
+      );
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "send" })).toBeEnabled(),
-    );
-    expect(retryEffectTarget).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  });
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "send" })).toBeEnabled(),
+      );
+      expect(retryEffectTarget).toHaveBeenCalledOnce();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
 
   it("renders only when a failed Target has an action", () => {
     const client = createTestClient({});

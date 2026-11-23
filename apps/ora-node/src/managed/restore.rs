@@ -1,9 +1,10 @@
 //! Original restore identities and stop evidence; timeouts never release checkout responsibility.
-use super::{CloneHost, ProcessConfig, transport};
-use ora_node_db::{RestoreAttempt, SessionJournal};
+use super::{
+    DirectGit, ProcessConfig,
+    attempt_lock::{AttemptLocks, StopEvidence},
+};
+use ora_node_db::{AttemptId, RestoreAttempt, SessionJournal};
 use ora_node_protocol::ExecutionId;
-use ora_process_client::ProcessHost;
-use ora_process_protocol::*;
 use std::{io, time::Duration};
 
 /// Expiry ends actor polling; explicit handover can still obtain late original evidence.
@@ -19,14 +20,21 @@ pub(crate) struct RestoreStops {
     pub(crate) journal: SessionJournal,
     config: ProcessConfig,
     bound: Duration,
+    locks: AttemptLocks,
 }
 
 impl RestoreStops {
-    pub(crate) fn new(journal: SessionJournal, config: ProcessConfig, bound: Duration) -> Self {
+    pub(crate) fn new(
+        journal: SessionJournal,
+        config: ProcessConfig,
+        bound: Duration,
+        locks: AttemptLocks,
+    ) -> Self {
         Self {
             journal,
             config,
             bound,
+            locks,
         }
     }
 
@@ -42,10 +50,11 @@ impl RestoreStops {
             .map_err(io::Error::other)
     }
 
-    /// Anchors once before Close, including recovery from a crash before the original anchor.
-    pub(crate) fn request(&self, run: RunId) -> io::Result<()> {
+    /// Anchors once before the stop request, including recovery from a crash before the
+    /// original anchor.
+    pub(crate) fn request(&self, attempt: &AttemptId) -> io::Result<()> {
         self.journal
-            .request_restore_stop(run, Self::now_ms(), self.bound.as_millis() as i64)
+            .request_restore_stop(attempt, Self::now_ms(), self.bound.as_millis() as i64)
             .map_err(io::Error::other)
     }
 
@@ -61,18 +70,14 @@ impl RestoreStops {
                 .is_some_and(|at| Self::now_ms() >= at);
             if expired && check == StopCheck::WithinBound {
                 self.journal
-                    .mark_restore_stop_unconfirmed(attempt.process.intent.run, Self::now_ms())
+                    .mark_restore_stop_unconfirmed(&attempt.process.id, Self::now_ms())
                     .map_err(io::Error::other)?;
                 continue;
             }
             // A failed timestamp write cannot prevent the safety-critical stop request. It also
             // cannot manufacture a cleaned association or a new origin on the next retry.
-            if let Err(error) = self.request(attempt.process.intent.run) {
-                let _ = tokio::time::timeout(
-                    Duration::from_millis(self.config.cleanup_timeout_ms),
-                    self.prove(&attempt),
-                )
-                .await;
+            if let Err(error) = self.request(&attempt.process.id) {
+                self.locks.terminate(&attempt.process.id);
                 return Err(error);
             }
             // The anchor write itself may consume the remaining bound. Re-read its durable
@@ -82,7 +87,7 @@ impl RestoreStops {
                 .pending_restore_attempts(execution)
                 .map_err(io::Error::other)?
                 .into_iter()
-                .find(|current| current.process.intent.run == attempt.process.intent.run)
+                .find(|current| current.process.id == attempt.process.id)
                 .ok_or_else(|| io::Error::other("original restore attempt disappeared"))?;
             let bound_at = current
                 .stop_bound_at_ms
@@ -90,7 +95,7 @@ impl RestoreStops {
             let remaining = bound_at.saturating_sub(Self::now_ms());
             if remaining <= 0 {
                 self.journal
-                    .mark_restore_stop_unconfirmed(attempt.process.intent.run, Self::now_ms())
+                    .mark_restore_stop_unconfirmed(&attempt.process.id, Self::now_ms())
                     .map_err(io::Error::other)?;
                 if check == StopCheck::WithinBound {
                     continue;
@@ -102,13 +107,15 @@ impl RestoreStops {
             };
             let proof =
                 tokio::time::timeout(Duration::from_millis(budget), self.prove(&attempt)).await;
-            if matches!(proof, Ok(Ok(true))) {
+            if matches!(proof, Ok(true)) {
                 self.journal
-                    .confirm_restore_stop(attempt.process.intent.run)
+                    .confirm_restore_stop(&attempt.process.id)
                     .map_err(io::Error::other)?;
+                // The evidence is durable now; the lock file has nothing left to prove.
+                self.locks.retire(&attempt.process.id);
             } else {
                 self.journal
-                    .mark_restore_stop_unconfirmed(attempt.process.intent.run, Self::now_ms())
+                    .mark_restore_stop_unconfirmed(&attempt.process.id, Self::now_ms())
                     .map_err(io::Error::other)?;
             }
         }
@@ -129,32 +136,18 @@ impl RestoreStops {
             .unwrap_or(/*default*/ false)
     }
 
-    /// Original Scope closure is required before exit or a consistent host-authoritative non-launch.
-    async fn prove(&self, attempt: &RestoreAttempt) -> io::Result<bool> {
-        let original = &attempt.process;
-        let client = ProcessHost::new(original.host_directory.clone(), original.expected_uid);
-        transport::close(
-            &client,
-            original.intent.scope,
-            Duration::from_millis(self.config.cleanup_timeout_ms),
-        )
-        .await?;
-        let reply = client
-            .execute(HostOperation::QueryRun {
-                run: original.intent.run,
-            })
-            .await?;
-        Ok(matches!(reply, HostReply::Run(view)
-        if view.scope == original.intent.scope
-            && view.run == original.intent.run
-            && view.last_observed.as_ref().is_some_and(|snapshot| {
-                snapshot.id == original.intent.run
-                    && (matches!(snapshot.direct, DirectProcessState::Exited(_))
-                        || matches!(
-                            (&snapshot.launch, snapshot.direct, &snapshot.cleanup),
-                            (LaunchFact::NotStarted(_), DirectProcessState::NotStarted, CleanupState::Complete(_))
-                        ))
-            })))
+    /// Ends what the original command's clue names and asks its lock whether the tree is gone.
+    ///
+    /// A lock that can be taken is the whole proof: whether the command exited, was killed or
+    /// never started, nothing of it can still write. A missing lock file is no proof.
+    async fn prove(&self, attempt: &RestoreAttempt) -> bool {
+        self.locks
+            .await_stop(
+                &attempt.process.id,
+                Duration::from_millis(self.config.cleanup_timeout_ms),
+            )
+            .await
+            == StopEvidence::Stopped
     }
 
     /// Waits only until the persisted first-request bound, then transfers responsibility intact.
@@ -186,7 +179,7 @@ pub(crate) struct RestoreContext {
     pub(crate) cancellation: crate::session::RestoreCancel,
 }
 
-impl CloneHost {
+impl DirectGit {
     /// Associates the next restore's commands without sharing mutable runner state with delivery.
     pub(crate) fn track_restore(&mut self, stops: RestoreStops) {
         self.restore_stops = Some(stops);

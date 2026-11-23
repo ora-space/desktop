@@ -20,7 +20,15 @@ pub(super) enum Plan {
 }
 
 /// Reads the queue in acceptance order; an `EndSession` anywhere in it takes precedence.
+///
+/// `CancelTurn` entries are not turns: the conversation settles them itself, and an end settles
+/// the ones still queued as `session_ending` together with its decision, so they are neither run
+/// nor discarded here.
 pub(super) fn plan(queued: Vec<QueuedCommand>) -> Plan {
+    let queued: Vec<_> = queued
+        .into_iter()
+        .filter(|queued| !matches!(queued.command, SessionCommand::CancelTurn(_)))
+        .collect();
     let end = queued
         .iter()
         .position(|queued| matches!(queued.command, SessionCommand::EndSession(_)));
@@ -49,7 +57,7 @@ pub(super) fn plan(queued: Vec<QueuedCommand>) -> Plan {
             command: SessionCommand::SubmitUserTurn(turn),
         }) => Plan::Turn { command_id, turn },
         Some(QueuedCommand {
-            command: SessionCommand::EndSession(_),
+            command: SessionCommand::EndSession(_) | SessionCommand::CancelTurn(_),
             ..
         })
         | None => Plan::Wait,

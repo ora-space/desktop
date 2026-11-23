@@ -80,10 +80,11 @@ interface WorkflowTransferNode {
   data: {
     kind: string;
     title: string;
+    /** `null` is a value JSON graphs can carry; it means the node declares no bindings. */
     agentConfig?: {
       skills?: readonly { skillId: string; enabled: boolean }[];
       mcps?: readonly { mcpId: string; enabled: boolean }[];
-    };
+    } | null;
   };
 }
 
@@ -294,7 +295,10 @@ export function collectWorkflowDependencies(
 
   for (const node of nodes) {
     const config = node.data.agentConfig;
-    if (node.data.kind !== "agent" || config === undefined) {
+    // Graphs are JSON, so an Agent node can carry an explicit `null` config (and the backend
+    // imports such a document as-is). Treat it like a missing binding list rather than
+    // dereferencing it, which would take down the report that is rendering.
+    if (node.data.kind !== "agent" || config == null) {
       continue;
     }
     for (const binding of config.mcps ?? []) {

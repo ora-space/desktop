@@ -26,6 +26,7 @@ use uuid::Uuid;
 const SCAN_INTERVAL: Duration = Duration::from_secs(30);
 const TARGET_BATCH_SIZE: usize = 16;
 const LEASE_DURATION: Duration = Duration::from_secs(300);
+const BARRIER_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 
 /// Coalesced in-process hint; SQLite remains the durable source of owed work.
@@ -256,7 +257,7 @@ impl<Sessions: ReplacedAgentSessions> EffectWorker<Sessions> {
             sessions: self.sessions.as_ref(),
             runtime,
             coordinated: Mutex::new(BTreeSet::new()),
-            held_barriers: Mutex::new(HashMap::new()),
+            held_barriers: CoordinationBarriers::default(),
         };
         let reconciler = EffectReconciler::new(
             &self.repository,
@@ -337,7 +338,47 @@ struct PluginConsumerAdapter<'a, Sessions> {
     sessions: &'a Sessions,
     runtime: &'a Handle,
     coordinated: Mutex<BTreeSet<EffectTargetId>>,
-    held_barriers: Mutex<HashMap<PluginId, crate::session_setup::BarrierGuard>>,
+    held_barriers: CoordinationBarriers,
+}
+
+/// Owns one local session fence per plugin for a single reconcile attempt.
+#[derive(Default)]
+struct CoordinationBarriers {
+    held: Mutex<HashMap<PluginId, crate::session_setup::BarrierGuard>>,
+}
+
+impl CoordinationBarriers {
+    /// Retiring and active Targets can share a non-reentrant plugin mutex.
+    async fn reserve(
+        &self,
+        plugin_id: &PluginId,
+        barrier: &ora_agent_runtime::AgentSessionBarrier,
+    ) -> Result<(), tokio::time::error::Elapsed> {
+        if self
+            .held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(plugin_id)
+        {
+            return Ok(());
+        }
+        let guard = barrier
+            .acquire_with_timeout(BarrierReason::EffectMutation, BARRIER_ACQUIRE_TIMEOUT)
+            .await?;
+        self.held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(plugin_id.clone(), guard);
+        Ok(())
+    }
+
+    /// Restores admission after all coordinated participants are reactivated.
+    fn release(&self) {
+        self.held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
 }
 
 impl<Sessions> PluginConsumerAdapter<'_, Sessions> {
@@ -376,24 +417,36 @@ impl<Sessions> PluginConsumerAdapter<'_, Sessions> {
 }
 
 impl<Sessions: ReplacedAgentSessions> ConsumerAdapter for PluginConsumerAdapter<'_, Sessions> {
+    /// Acquires the local fence before Effect Core opens a durable mutation attempt.
+    fn reserve_coordination(&self, target: &EffectTarget) -> Result<(), ConsumerAdapterError> {
+        let plugin_id =
+            PluginId::parse(&target.consumer.stable_key).map_err(ConsumerAdapterError::new)?;
+        let session_barrier = self.sessions.session_barriers().for_plugin(&plugin_id);
+        self.runtime
+            .block_on(self.held_barriers.reserve(&plugin_id, &session_barrier))
+            .map_err(|error| {
+                ora_warn!(
+                    operation = "effect_reconcile",
+                    target = target.identity.as_str(),
+                    plugin = %plugin_id,
+                    timeout_ms = BARRIER_ACQUIRE_TIMEOUT.as_millis() as u64,
+                    "Timed out acquiring Agent Session Barrier for Effect mutation"
+                );
+                ConsumerAdapterError::new(error)
+            })
+    }
+
+    /// Releases the local fence before readiness verification and cleanup.
+    fn release_coordination(&self) {
+        self.held_barriers.release();
+    }
+
     fn coordinate(
         &self,
         target: &EffectTarget,
         plan: &CoordinationPlan,
     ) -> Result<CoordinationReceipt, ConsumerAdapterError> {
         let contract = self.coordination_contract(target, plan)?;
-        let plugin_id =
-            PluginId::parse(&target.consumer.stable_key).map_err(ConsumerAdapterError::new)?;
-        let barrier = self.runtime.block_on(
-            self.sessions
-                .session_barriers()
-                .for_plugin(&plugin_id)
-                .acquire(BarrierReason::EffectMutation),
-        );
-        self.held_barriers
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(plugin_id, barrier);
         let proof = match self.running_runtime(target)? {
             Some(runtime) => {
                 let receipt = self
@@ -437,12 +490,6 @@ impl<Sessions: ReplacedAgentSessions> ConsumerAdapter for PluginConsumerAdapter<
             .remove(&target.identity);
         let plugin_id =
             PluginId::parse(&target.consumer.stable_key).map_err(ConsumerAdapterError::new)?;
-        drop(
-            self.held_barriers
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&plugin_id),
-        );
         if was_coordinated {
             self.sessions
                 .detach_sessions_for_replaced_plugin(&plugin_id);
@@ -474,6 +521,103 @@ impl<Sessions: ReplacedAgentSessions> ConsumerAdapter for PluginConsumerAdapter<
             projection: projection.digest.clone(),
             proof,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ora_agent_runtime::AgentSessionBarriers;
+
+    #[derive(Default)]
+    struct TestSessions {
+        barriers: Arc<AgentSessionBarriers>,
+    }
+
+    impl ReplacedAgentSessions for TestSessions {
+        /// No plugin process is attached in this fixture.
+        fn detach_sessions_for_replaced_plugin(&self, _plugin_id: &PluginId) {}
+
+        /// Exposes the actual session mutexes used by the adapter.
+        fn session_barriers(&self) -> Arc<AgentSessionBarriers> {
+            self.barriers.clone()
+        }
+    }
+
+    /// Checks release through the ConsumerAdapter implementation used by the reconciler.
+    #[test]
+    fn plugin_consumer_adapter_releases_reserved_barriers() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = ora_db::DatabaseBootstrapper::new(crate::test_clock::TestClock)
+            .bootstrap_repository_pool(
+                &ora_db::DatabaseLocation::path(directory.path().join("ora.sqlite3")),
+                &ora_db::default_migration_catalog().unwrap(),
+            )
+            .unwrap();
+        let plugin_host = PluginApi::open(
+            pool.clone(),
+            directory.path().to_path_buf(),
+            std::path::PathBuf::from("deno"),
+            SystemClock,
+            crate::app_event::AppEventHub::new().publisher(),
+            Arc::new(crate::settings::Settings::new(pool)),
+        )
+        .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let sessions = TestSessions::default();
+        let adapter = PluginConsumerAdapter {
+            plugin_host: &plugin_host,
+            sessions: &sessions,
+            runtime: runtime.handle(),
+            coordinated: Mutex::default(),
+            held_barriers: CoordinationBarriers::default(),
+        };
+        let plugin = PluginId::new("ora-space", "opencode").unwrap();
+        let barrier = sessions.barriers.for_plugin(&plugin);
+        runtime
+            .block_on(adapter.held_barriers.reserve(&plugin, &barrier))
+            .unwrap();
+        assert!(barrier.is_held());
+        ConsumerAdapter::release_coordination(&adapter);
+        assert!(barrier.try_acquire(BarrierReason::McpRefresh).is_some());
+    }
+
+    /// Exercises the worker's real reservation path against a non-reentrant plugin barrier.
+    #[test]
+    fn effect_coordination_deduplicates_and_times_out_before_mutation() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let plugin = PluginId::new("ora-space", "opencode").unwrap();
+            let barrier = ora_agent_runtime::AgentSessionBarrier::default();
+            let reservations = CoordinationBarriers::default();
+            reservations.reserve(&plugin, &barrier).await.unwrap();
+            assert!(barrier.is_held());
+            reservations.reserve(&plugin, &barrier).await.unwrap();
+            reservations.release();
+            assert!(!barrier.is_held());
+
+            let owner = barrier.acquire(BarrierReason::McpRefresh).await;
+            let started = tokio::time::Instant::now();
+            let result = tokio::time::timeout(
+                BARRIER_ACQUIRE_TIMEOUT * 2,
+                reservations.reserve(&plugin, &barrier),
+            )
+            .await
+            .expect("the worker reservation must enforce its own deadline");
+            assert!(result.is_err());
+            let elapsed = started.elapsed();
+            assert!(elapsed >= BARRIER_ACQUIRE_TIMEOUT);
+            assert!(elapsed <= BARRIER_ACQUIRE_TIMEOUT + Duration::from_millis(1));
+            drop(owner);
+            reservations.reserve(&plugin, &barrier).await.unwrap();
+        });
     }
 }
 

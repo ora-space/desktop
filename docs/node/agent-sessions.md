@@ -20,11 +20,84 @@ and the [run-scoped model proxy](https://github.com/ora-space/specs/blob/main/de
 The Deno path must be absolute and the timeout positive. With this section the handshake advertises
 `agent_session`; without it new sessions are refused but unfinished ones are still settled at startup.
 When `process.workload_uid` is set, `agent.workload_directory` is required: an existing absolute path
-owned by the Node identity, writable by no one else and not overlapping the Node home, process host
-directory or clone root. The sandbox entrypoint creates it; the Node never does.
+owned by the Node identity, writable by no one else and not overlapping the Node home, the clone
+root or a configured legacy `process.host_directory`. The sandbox entrypoint creates it; the Node
+never does.
 With `agent.ora_git_directory`, `git_access` and a `process.workload_uid` different from the Node's
 effective UID, each session also gets its own
 [ora-git](ora-git.md) socket, exported as `ORA_GIT_SOCKET`.
+
+## Checkout admission
+
+With Agents enabled the handshake also advertises `shared_checkout_sessions`. One checkout may host
+up to `MAX_SESSIONS_PER_CHECKOUT = 8` unfinished sessions. Each has its own plugin process, history,
+commands and terminal result; ending one does not stop its siblings. Completed sessions release their
+slots, and different checkouts count independently.
+
+Restore safety still requires exclusivity. A start is refused with `checkout_busy` when the checkout
+has a `legacy_unknown` restore or any uncleaned restore attempt, when the new session has a
+`prior_revision` while any sibling is unfinished, or while an unfinished sibling's own restore has
+not yet reached `agent_admitted` (so `pending`, `git_admitted` and `restored` all wait: the
+restoring session still prepares the checkout before its Agent is admitted). An `agent_admitted`
+sibling may share with ordinary sessions, but still excludes another restore. `checkout_busy` is
+decided before the count; at the limit the code is `checkout_session_limit`.
+
+These refusals retain the new execution and atomically record sequence 1 as
+`AgentSessionEnded{reason: agent_failed, detail}` before returning its Completed status. No actor,
+plugin or restore starts, and no session history exists, so a refused execution is not
+deliverable: `deliver_revision` for it fails as `session_not_settled` instead of snapshotting the
+shared checkout. The control connection stays open and every sibling continues to accept
+commands. Refusal happens on bare starts only: a controlled start never reaches checkout
+classification, because the runtime singleton refuses any unfinished execution first with
+`resource_conflict` and the connection close it always had; that singleton is separate from
+checkout admission.
+
+## Handing a shared checkout to the workload user
+
+With `process.workload_uid` set, every session start hands its checkout to the workload user
+itself, before its own Agent starts; no start relies on a sibling having done it, because
+admission order says nothing about whether that sibling's walk finished, or ran at all. Live
+sibling Agents change the tree as the workload user while the walk runs, so the walk resolves
+every name exactly once: it pins each entry with `openat(O_PATH | O_NOFOLLOW)` relative to the
+descriptor of the directory that listed it, and from then on inspects (`fstat`), re-owns
+(`fchownat(AT_EMPTY_PATH)`) and, for a directory, lists that pinned inode only through its
+descriptor. A link is re-owned as the link itself and never followed, and a name a sibling swaps
+after it was pinned — for a link or another directory — changes nothing the walk does.
+An entry that disappears before it is pinned (`.git/index.lock`, build output) is skipped; the
+checkout root itself must exist, and an entry the walk may not open, list or re-own still fails the
+start. A tree that is already right costs only a walk. Delivery preparation uses the same walk for
+its own re-own step, and start and delivery walks share one Node-wide bound (below).
+
+- **Depth.** The walk holds one descriptor per directory level, so it refuses a checkout nested
+  more than 4096 directories deep before opening the next level: the start ends
+  `agent_failed{checkout_too_deep}`, and a delivery from that checkout fails `checkout_too_deep`.
+  One walk then holds at most 4099 descriptors.
+- **`fs.protected_hardlinks` is the hard-link guarantee.** A walk sees inodes, not where else
+  they are named, so nothing in it can keep a hard-linked foreign file from being re-owned: an
+  Agent that links an outside file into the checkout and removes that link right after the walk
+  pinned it leaves a link count of one, and the outside inode is re-owned. What prevents this is
+  the host refusing the link itself. With `process.workload_uid` set the Node refuses to start
+  unless `/proc/sys/fs/protected_hardlinks` reads `1`, and reads it again before every start and
+  delivery walk. A host changed to any other value afterwards refuses that start
+  (`agent_failed{agent_start_failed}`) or delivery (`failed{snapshot_failed}`), with a log naming
+  the sysctl. Under the protection a workload Agent may only link files it owns, or regular files
+  it may already read and write, so root-owned files (an installed agent package, Node state) can
+  never enter a checkout. The sysctl is not namespaced: a container sees the host's value, and the
+  kernel default is 0.
+- **Hard links that stay in place.** As defence in depth, a file with more than one link that does
+  not already belong to the workload user keeps its owner, since its other name may lie outside
+  the checkout. This only stops links that stay in place (see above). A checkout file legitimately
+  hard-linked to another one inside it (Git creates none in a worktree, and the objects a local
+  clone hard-links already belong to the workload user that cloned them) therefore stays with its
+  old owner and whatever access its mode grants, until only one name is left.
+- **Descriptor limit.** Descriptors are process-wide, and every checkout the workload user can
+  write may be made deep. The Node therefore runs at most 9 walks at once across all checkouts —
+  the eight start walks one checkout can have plus the one delivery it prepares at a time; a
+  further start or delivery waits for a permit, which costs latency only on deep trees. With a
+  baseline of about 1,024 descriptors for the Node itself (control connections, SQLite, plugin
+  pipes, `ora-git` sockets), walks need at most 9 × 4,099 + 1,024 ≈ 38,000 however many
+  checkouts are deep. Give a separate-UID Node a soft `RLIMIT_NOFILE` of at least 38,000 (65,536
+  recommended).
 
 ## One runtime per execution
 
@@ -38,7 +111,7 @@ construction.
 |---|---|
 | `SessionStore` | `MemorySessionStore`: a Node never resumes a session after restarting |
 | `AgentAttach` | The execution's own one-plugin lifecycle; no Effect consumer (Nodes project no Skills) |
-| `SessionSetup` | `NoSessionMcp`: MCP configuration has no delivery path on a Node |
+| `SessionSetup` | `NodeSessionMcp`: explicit versioned bindings and opt-in generation updates; [lifecycle](session-stop.md) |
 | `RuntimeEvents` | Every history line becomes a Thread event; title and model-catalog events are dropped |
 | `WorkspaceDirectory` | The checkout |
 
@@ -70,7 +143,8 @@ workload UID (group equal to it, no supplementary groups, no capabilities, `no_n
 - `home/`: `0700`, owned by the workload user. `HOME`, the XDG directories, `DENO_DIR` and
   `DENO_NO_UPDATE_CHECK=1` point there for the plugin and host-spawned processes alike.
 
-Before launch the checkout is handed to the workload user without following links. The session
+Before launch the checkout is handed to the workload user without following links (a checkout
+nested deeper than 4096 directories ends `agent_failed{checkout_too_deep}`). The session
 directory is removed once the plugin stopped, and leftovers are removed when the service opens.
 
 ## How an execution runs
@@ -95,9 +169,79 @@ directory is removed once the plugin stopped, and leftovers are removed when the
 7. At the end the session stops, releases its runtime, stops the plugin and waits for its tree to exit,
    releases the lease, discards any queued command, writes the terminal result and forgets the session.
 
-Only a successful ACP completion admits another turn. A prompt error or unexpected stream closure ends
-the session as `agent_failed` with `agent_turn_failed` or `agent_stream_closed`; no raw provider
-diagnostic enters history or logs, and an `EndSession` already queued keeps its explicit reason.
+Unless the session chose otherwise (below), only a successful ACP completion admits another turn. A
+prompt error or unexpected stream closure ends the session as `agent_failed` with `agent_turn_failed`
+or `agent_stream_closed`; no raw provider diagnostic enters history or logs, and an `EndSession`
+already queued keeps its explicit reason.
+
+## Cancelling one turn
+
+A session started with `keep_session_on_cancel` accepts `CancelTurn` for any of its turns; one started
+with `keep_session_on_failure` may also outlive a failed turn. A cancel takes effect at the ledger,
+which is the one serial boundary for a cancel, the turn's admission and its MCP wait timeout: whichever
+commits first decides the turn. The durable acceptance itself wakes the session, before the accepted
+reply is written, and a stop's deadline counts from the first cancel's acceptance. Cancels also take
+effect throughout the preparation before admission: during a prior Revision restore, the workload
+placement and model authorization. While model access is ending and the session waits for the
+Controller's `EndSession`, a pending cancel bounds that wait to its own deadline; the decision then
+records the reason known at that point. A restart records the end decision and settles pending
+cancels before it waits for stop evidence.
+
+- **Queued turn**, including one waiting for the agent or an MCP gate: dropped, its command settled
+  `discarded`, settlement `not_started`, at once. A wait already past its deadline is settled as the
+  timeout first, and the cancel finds the turn `already_ended`.
+- **Admitted, prompt not yet written**: the prompt is never written; `TurnEnded{cancelled}`, then
+  `stopped`, and the session stays.
+- **Running turn**: the runtime first looks, without waiting, for the prompt's answer. An answer
+  already readable is a race the Agent won: the turn keeps its own result, a stop reason or a
+  failure, and the cancel is `already_ended`. Otherwise the runtime answers pending permissions `cancelled`, sends
+  `session/cancel`, and
+  waits until the first cancel's acceptance plus G (15 s for now); later cancels and a running
+  watchdog stop merge into the same stop and deadline, and the watchdog does not resend. Any
+  answer after `session/cancel`, even `end_turn`, answers the cancel: it writes
+  `TurnEnded{cancelled}` and then the stop is judged; no answer ends the session with
+  `turn_cancel_unanswered`.
+- **Finished, already dropped, failed by timeout, or unknown**: `already_ended` or `unknown`, nothing
+  else changes.
+
+A stopped turn keeps the session only when the session chose that kind of end, the agent plugin
+version is on the Node's verified turn-boundary list (none yet: such stops end the session with
+`turn_boundary_unverified` until conformance runs add versions), every tool call of the turn is
+`completed` or `failed` and it projected no child, and no turn traffic arrives in the quiet window Q
+(2 s for now; title, usage, mode, command and config notifications do not count). Otherwise the
+session ends with `turn_not_quiescent`. A later turn's update that names a stopped turn's tool call or
+child source joins no turn and ends the session with `turn_leak_detected`.
+
+An ACP request error can leave the agent process alive while invalidating its provider session.
+When the agent explicitly reports a closed or missing session, the runtime detaches that session;
+the next turn restores it before sending `session/prompt`. MCP lifecycle sessions restore only the
+original provider ID, remain blocked if loading fails, and count these loads toward the agent process
+replacement budget. Replacing that process does not end the Ora session or create a new provider ID.
+Ordinary model or authentication errors keep their existing provider registration.
+
+The opt-in Linux probe at `apps/ora-node/tests/turn_boundary/probe.py` exercises an extracted,
+unmodified agent package through Deno and the plugin's real framed ACP bridge. Python 3.10+ and
+Deno must be on `PATH`. Its loopback model fixture drives the real Agent's tools; it uses no model
+credentials or external inference. Run each of `shell`, `subagent`, `background`, and `error`:
+
+```sh
+python3 apps/ora-node/tests/turn_boundary/probe.py --agent opencode \
+  --package /tmp/extracted-agent-package --scenario background --output /tmp/new-probe-output
+```
+
+Use `--agent claude` for a Claude package. Each invocation requires a new output directory and
+records package hashes, ACP traffic, model requests and its summary there. Exit status 1 means a
+violation was observed or the probe could not exercise its target. A successful finite observation
+does not automatically register a version: evaluate the complete scenario set, tool cleanup and
+background work before changing the turn-boundary list. Keep measurements in the circus run issue.
+
+Whenever the session's end is decided, the decision, the stop clock of every outstanding stop
+responsibility and a `session_ending` settlement for every pending cancel are written in one
+transaction before the agent is signalled, so a restart keeps the original reason and clock. When
+the reason is not yet known (model access ending before the Controller's `EndSession`), the decision
+waits for it; a terminal written
+without a prior decision, such as restart settlement, settles them first as well, so no cancel is left
+without its settlement and none follows the terminal.
 
 ## Scheduled run business facts
 
@@ -119,7 +263,8 @@ used tools states no verdict, and its artifacts are still declared.
   final one. Node never parses a Thread on Cloud's behalf; it reports the typed value
   (`scheduled_result`) and Cloud verifies it.
 - Artifacts are read from the fixed `.ora-scheduled-artifacts/` directory of the checkout before the
-  Workspace can be released. Collection is read-only and applies the closed type whitelist
+  Workspace can be released. On a shared checkout this read can include sibling sessions' writes;
+  the manifest is not a per-session isolated diff. Collection is read-only and applies the closed type whitelist
   (markdown, json, txt, log, xml, html), the same path, symbolic-link and hard-link refusals as local
   scheduled runs, and the per-file 10 MiB, per-run 64-artifact and 64 MiB total bounds. A name is
   identified after NFC normalization and Unicode case folding, so two spellings one case-insensitive
@@ -161,15 +306,24 @@ order and a crash leaves the JSONL at most one line ahead. Once a Thread append 
 for good and the session ends as `agent_failed{thread_unavailable}`.
 
 After a restart, agents are never resumed. An unfinished restore first hands over its original
-Scope/Run; only stop confirmation permits `interrupted`. Unknown original stop evidence keeps the
+Git attempts; only stop confirmation permits `interrupted`. Unknown original stop evidence keeps the
 session nonterminal and fences delivery and checkout reuse (see [Revision recovery](revisions.md)). Graceful shutdown cancels live conversations, waits for plugin
 cleanup and commits terminal evidence before releasing the database lease. `sealed_history` answers
 `history_unavailable` while a session still runs and otherwise returns its JSONL.
 
 The plugin process and agent CLI are started by the Node directly (process group, whole-tree
-termination) and are not yet inside the host and guardian process scope, because the guardian does not
-provide the stdin and protocol streams a plugin needs. When the Node crashes, the plugin exits on its
-closed stdio, but a descendant that ignores that is not reclaimed.
+termination) and are not registered with the Node's `ora-reaper`. When the Node crashes, the plugin
+exits on its closed stdio; a descendant that ignores that keeps running until restart recovery, which
+kills every process carrying the attempt mark before it records the stop and reports `interrupted`
+(see [Agent stop ownership](session-stop.md)).
+
+Ending a session kills what its Agent started and what kept the attempt mark, on every end path and
+when MCP lifecycle replaces the Agent process: tool background jobs, dev servers, MCP and language
+servers, and shared daemons (for example a Gradle daemon or an sccache server) launched from the
+session. Nothing is killed between turns. Start a daemon outside Ora when it must outlive the
+session. Orphaned programs that cleared or rewrote their environment (PostgreSQL and nginx rewrite
+it with their process title) or changed user are not found and survive; see
+[Agent stop ownership](session-stop.md) for the limits and the deployment prerequisite.
 
 ## Ledger
 

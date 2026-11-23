@@ -42,6 +42,8 @@ a response to an earlier Hello and enforcing handshake order belong to the sessi
 | `runtime_control` | `bind_runtime` and the `controlled_*` envelopes | `runtime_control_state` |
 | `plugin_install` | `install_plugins`, `remove_plugins` | `plugins_result` |
 | `agent_session` | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected` |
+| `turn_cancel` | `cancel_turn`; `keep_session_on_cancel` / `keep_session_on_failure` in a session start | `turn_cancel_settled`, `session_command_rejected{turn_cancel_unsupported}` |
+| `shared_checkout_sessions` | Up to 8 unfinished Agent sessions per checkout, with restore fencing | Refused starts end as `agent_failed{checkout_busy}` or `agent_failed{checkout_session_limit}` without closing the connection |
 | `model_proxy` | Model-bound session starts | `model_adapter` in `hello_accepted` (see below) |
 | `revision_delivery` | `deliver_revision`, `upload_grant` | `revision_result`, `upload_grant_needed` |
 | `revision_restore` | `start_agent_session` with `prior_revision` | Restore failure codes in `agent_session_ended` |
@@ -95,6 +97,19 @@ fact). See [Runtime control](../controller/runtime-control.md).
   marks a shortened one) and shares the execution's gap-free sequence with the terminal
   `agent_session_ended`, whose `detail` is a short snake_case code. Commands carry a `command_id`;
   their replies have no sequence and need no acknowledgement, and a lost reply is recovered by resending.
+- **Turn cancel.** A Controller asks for it with `turn_cancel: true` in `hello`; only then does the
+  Node answer `turn_cancel: true` and add the `turn_cancel` capability, so an older Controller, which
+  decodes capabilities as a closed set, sees the handshake unchanged. Over such a connection a session
+  start may set `keep_session_on_cancel` and `keep_session_on_failure` (omitted means `false`; they
+  are part of the compared input); a start that sets either over a connection that did not negotiate
+  `turn_cancel` is a protocol violation and is refused before admission. `cancel_turn { node_id, command_id, turn_id }` is accepted like
+  any session command, refused with `turn_cancel_unsupported` when the session did not choose
+  `keep_session_on_cancel`, and gets exactly one sequenced, acknowledged `turn_cancel_settled
+  { command_id, turn_id, outcome }`, where `outcome` is `stopped`, `not_started`, `already_ended`,
+  `unknown` or `session_ending` (the session will not be kept; not a terminal and not proof that the
+  Agent stopped). While a session that chose either behaviour is unfinished or has unacknowledged
+  events, a Controller that did not negotiate `turn_cancel` is refused with `4403` before
+  `hello_accepted`. See [Agent sessions](agent-sessions.md#cancelling-one-turn).
 - **Revisions.** A delivery names the ended session, the clone, the base commit, a ref under
   `refs/ora/revisions/`, the Git Server `git_repository_url`, a `delivery_ref` under
   `refs/ora/deliveries/`, the `workspace_ref` and one history object key. `revision_delivered`
@@ -114,6 +129,42 @@ fact). See [Runtime control](../controller/runtime-control.md).
 
 Result families use disjoint `kind` tags inside the untagged `ExecutionResult`; the Revision family is
 boxed to keep `ExecutionState` small.
+
+## Session MCP lifecycle contract types
+
+The active frame enums include `UpdateSessionMcp`, `GetSessionMcpState`, `ProbeSessionMcp` and
+`SessionMcpReply`, using `SessionMcpMessage<P>` envelopes. A start opts in with
+`mcp_lifecycle: true`; the default remains false. The Node advertises `session_mcp_lifecycle`
+when Agent sessions are enabled.
+They carry operation/execution correlation and a request id of at most 128 UTF-8 bytes, with no
+event sequence or acknowledgement. Direct serde conversion must be followed by `ValidateMessage`.
+
+Updates distinguish configured members (exact version, configuration revision and scalar Settings)
+from unavailable members (id and a closed missing-plugin/settings code). The same canonical sorted
+16-member and 64 KiB limits apply. Generations and revisions cannot exceed `2^53 - 1`; new updates
+start at 1, while a manual probe can name startup generation 0 but requires a nonzero probe attempt.
+Input Debug redacts values. Snapshot identity types cannot represent Settings, commands or headers;
+health and convergence use separate closed error vocabularies. A current snapshot must have exactly
+matching desired/active identities, and missing/disabled/ended-session replies cannot carry snapshots.
+Capacity refusals also omit snapshots. A configuration-revision conflict reports its code on the
+reply itself, independently of the current desired state's convergence failure.
+Authorization, immutable selection membership, update ordering and persistence exclusion belong to
+the receiving session owner, not these shape validators.
+
+The authenticated owner publishes the complete new desired generation before replying Accepted.
+The immutable selection cannot grow or shrink. Lower generations are stale; identical retransmits
+are duplicates; conflicting values at a retained configuration revision are refused. Updates and
+health observations stay in memory. A connection may retain 64 unanswered lifecycle requests;
+excess requests receive `capacity_exceeded` without resolving packages or retaining their values.
+
+New lifecycle `SubmitUserTurn` commands must carry `mcp_generation`. A missing or future floor
+receives `mcp_update_required` without entering the durable queue. Exact duplicate comparison comes
+first. Actual prompt admission waits for the latest generation and commits Executed inside the
+same boundary as target updates. Earlier admitted turns' business time is excluded from queued
+turns' MCP budgets; updates and retries do not reset elapsed blocking time. A turn blocked on MCP for 300 seconds produces the reliable,
+sequenced `SessionTurnFailed` event with `mcp_refresh_wait_timeout`; queued command failure and
+its outbox event commit atomically. The session stays open, and EndSession takes priority.
+See [Session lifecycle and host probes](session-stop.md).
 
 ## Identities, status and acknowledgement
 

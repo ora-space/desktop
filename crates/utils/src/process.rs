@@ -1,24 +1,21 @@
 use std::process::Command;
 
 #[cfg(target_os = "linux")]
-mod linux_detached;
-#[cfg(target_os = "linux")]
-pub use linux_detached::configure_linux_detached_child;
-
-#[cfg(unix)]
-mod pipe_capture;
-#[cfg(unix)]
-pub use pipe_capture::{PipeCapture, PipeRead, PipeReadState};
-
-#[cfg(target_os = "linux")]
 mod child_identity;
 #[cfg(target_os = "linux")]
 pub use child_identity::LinuxChildIdentity;
 #[cfg(target_os = "linux")]
+mod environment_mark;
+#[cfg(target_os = "linux")]
+pub use environment_mark::{
+    ClaimedProcess, EnvironmentMark, MarkScan, MarkScope, linux_boot_ticks,
+};
+#[cfg(target_os = "linux")]
 mod linux_process;
 #[cfg(target_os = "linux")]
 pub use linux_process::{
-    LinuxPidFd, LinuxProcessStat, ProcessSignal, linux_process, linux_process_snapshot,
+    LinuxPidFd, LinuxProcessStat, ProcessSignal, linux_has_effective_capability, linux_process,
+    linux_process_snapshot,
 };
 
 /// Configures a background child so it does not surface a console window on Windows.

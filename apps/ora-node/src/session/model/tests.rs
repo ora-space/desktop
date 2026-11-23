@@ -5,6 +5,8 @@ use crate::model_proxy::{ModelAccess, ModelAccessStatus, tests::Gateway};
 use crate::session::ports::{QueuedCommand, SessionCommand};
 use ora_node_protocol::{AgentSessionEnded, CommandId, ModelBindingId, Sequence, ThreadEvent};
 use pretty_assertions::assert_eq;
+#[path = "../../../tests/support/session_stops.rs"]
+mod stops;
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
 /// The ending path must return before plugin discovery or process launch.
@@ -75,6 +77,7 @@ struct State {
 #[derive(Clone, Default)]
 struct Ledger {
     state: Arc<Mutex<State>>,
+    stops: stops::Stops,
     read: Arc<Notify>,
     terminal: Arc<Notify>,
     deferred: Arc<Notify>,
@@ -82,6 +85,54 @@ struct Ledger {
 
 impl SessionLedger for Ledger {
     type Error = std::io::Error;
+    fn fail_session_turn(
+        &self,
+        _execution: &ExecutionId,
+        _failure: ora_node_protocol::SessionTurnFailed,
+    ) -> Result<(), Self::Error> {
+        Err(std::io::Error::other(
+            "model fixture has no lifecycle turns",
+        ))
+    }
+    fn settle_turn_cancel(
+        &self,
+        _execution: &ExecutionId,
+        _command_id: &CommandId,
+        _outcome: ora_node_protocol::TurnCancelOutcome,
+        _target: Option<&CommandId>,
+    ) -> Result<ora_node_protocol::TurnCancelOutcome, Self::Error> {
+        Err(std::io::Error::other("model fixture has no turn cancels"))
+    }
+    fn record_session_stop(
+        &self,
+        identity: &ora_node_db::SessionStopIdentity,
+        scope: ora_node_db::SessionStopScope,
+        at_ms: i64,
+    ) -> Result<(), Self::Error> {
+        self.stops.record(identity, scope, at_ms)
+    }
+    fn session_stop_records(
+        &self,
+        execution: Option<&ExecutionId>,
+    ) -> Result<Vec<ora_node_db::SessionStopRecord>, Self::Error> {
+        self.stops.records(execution)
+    }
+    fn change_session_stop(
+        &self,
+        attempt: &ora_node_db::AttemptId,
+        change: ora_node_db::SessionStopChange,
+    ) -> Result<(), Self::Error> {
+        self.stops.change(attempt, change)
+    }
+    fn decide_session_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+        at_ms: i64,
+        bound_at_ms: i64,
+    ) -> Result<(), Self::Error> {
+        self.stops.decide(execution, ended, at_ms, bound_at_ms)
+    }
 
     /// Deferred stop evidence has not sealed the session, even after its actor is gone.
     fn session_completed(&self, _execution: &ExecutionId) -> Result<bool, Self::Error> {
@@ -170,6 +221,7 @@ async fn delayed_end(
             &actor_wake,
             stopping,
             END_RECONCILE_WAIT,
+            &mut || Ok(None),
         )
         .await
     });
@@ -245,12 +297,14 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
     };
     let sessions = AgentSessions::new(
         SessionConfig {
+            stop: Default::default(),
             home_directory: root.path().into(),
             deno_path: root.path().join("must-not-be-executed"),
             timezone: chrono_tz::UTC,
             agent_ready_timeout: Duration::from_secs(/*secs*/ 1),
             model_proxy: Some(gateway.config.clone()),
             workload: crate::SessionWorkload::Shared,
+            turn_cancel: Default::default(),
         },
         node.clone(),
         ledger.clone(),
@@ -262,6 +316,11 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
         ora_node_protocol::OperationId::new("operation-1"),
         execution.clone(),
         AgentSessionSpec {
+            host_mcp_servers: Vec::new(),
+            mcp_lifecycle: false,
+            keep_session_on_cancel: false,
+            keep_session_on_failure: false,
+            mcp: Vec::new(),
             agent_configuration: None,
             node_id: node.node_id.clone(),
             agent_plugin_id: PluginId::new("official/ora-space.opencode"),
@@ -297,6 +356,9 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
             node,
             reason: AgentSessionEndReason::UserEnded,
             detail: None,
+            plugin_id: None,
+            setting_id: None,
+            transport: None,
             scheduled_result: None,
             artifact_manifest: None,
         })
@@ -361,7 +423,8 @@ async fn missing_durable_end_and_node_shutdown_have_bounded_outcomes() {
             &execution,
             &Notify::new(),
             stopping.clone(),
-            Duration::ZERO
+            Duration::ZERO,
+            &mut || Ok(None),
         )
         .await,
         Err("model_access_revoked")
@@ -373,7 +436,8 @@ async fn missing_durable_end_and_node_shutdown_have_bounded_outcomes() {
             &execution,
             &Notify::new(),
             stopping,
-            END_RECONCILE_WAIT
+            END_RECONCILE_WAIT,
+            &mut || Ok(None),
         )
         .await,
         Ok(EndSessionReason::Cancelled)
@@ -424,12 +488,14 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                 let execution = ExecutionId::new("8b0e5a52-6f1c-4c55-9d3e-2a7b1f0c9e41");
                 let sessions = AgentSessions::new(
                     SessionConfig {
+                        stop: Default::default(),
                         home_directory: root.path().into(),
                         deno_path: root.path().join("must-not-run"),
                         timezone: chrono_tz::UTC,
                         agent_ready_timeout: Duration::from_secs(/*secs*/ 1),
                         model_proxy: None,
                         workload: crate::SessionWorkload::Shared,
+                        turn_cancel: Default::default(),
                     },
                     node.clone(),
                     ledger.clone(),
@@ -441,6 +507,11 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                     OperationId::new("operation"),
                     execution.clone(),
                     AgentSessionSpec {
+                        host_mcp_servers: Vec::new(),
+                        mcp_lifecycle: false,
+                        keep_session_on_cancel: false,
+                        keep_session_on_failure: false,
+                        mcp: Vec::new(),
                         workspace_directory: Vec::new(),
                         agent_configuration: None,
                         node_id: node.node_id.clone(),
@@ -484,6 +555,9 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                         node,
                         reason: AgentSessionEndReason::AgentFailed,
                         detail: Some("prior_revision_unavailable".into()),
+                        plugin_id: None,
+                        setting_id: None,
+                        transport: None,
                         scheduled_result: None,
                         artifact_manifest: None,
                     })
@@ -497,4 +571,27 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                 );
             })
     });
+}
+
+/// A pending cancel bounds the wait for the durable end: the reconciliation ends by the cancel's
+/// deadline even though the Controller's `EndSession` has not arrived.
+#[tokio::test(start_paused = true)]
+async fn a_pending_cancel_bounds_the_wait_for_the_end_command() {
+    let ledger = Ledger::default();
+    let (_stop, stopping) = watch::channel(/*init*/ false);
+    let started = tokio::time::Instant::now();
+    let bound = started + Duration::from_secs(/*secs*/ 15);
+    assert_eq!(
+        reconcile(
+            &ledger,
+            &ExecutionId::new("execution-1"),
+            &Notify::new(),
+            stopping,
+            END_RECONCILE_WAIT,
+            &mut || Ok(Some(bound)),
+        )
+        .await,
+        Err("model_access_revoked")
+    );
+    assert_eq!(tokio::time::Instant::now(), bound);
 }

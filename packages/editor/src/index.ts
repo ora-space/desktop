@@ -1,8 +1,6 @@
 // --- Utils ---
 export {
   cn,
-  isMac,
-  formatShortcutKey,
   parseShortcutKeys,
   isMarkInSchema,
   isNodeInSchema,

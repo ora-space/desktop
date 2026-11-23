@@ -82,14 +82,19 @@ request stays pending for the next pass.
 ## Filesystem safety and recovery
 
 Filesystem Resources are Workspace roots plus validated portable relative paths; the adapter
-refuses links or ancestors that escape the Workspace. Each managed directory contains
+refuses symbolic links and Windows junctions in the Resource path and skill trees. It ignores
+ordinary files at the skill root unless they occupy a required skill name. Unsupported entries produce a blocking Resource condition
+with a Workspace-relative path. After fixing the entry, use Retry sync. Each managed directory contains
 `.ora-managed.json`. Mutation requires an exact match between the database ledger, the marker
 identity, the native identity and the last applied fingerprint. A missing managed directory may be
 rebuilt; unowned, marker-mismatched or drifted directories are never silently overwritten or
 deleted.
 
 Every mutation has a durable `Prepared → Applied → Finalized` journal with exact expected and
-planned state. A transient failure before the journal exists enters a counted retry schedule. Once a
+planned state. The worker waits up to five seconds per plugin for the session barrier before writing
+the journal. A timeout enters the normal retry schedule. Barriers are released after reactivation
+before readiness verification. Other transient failures before a journal exists also enter the
+counted retry schedule. Once a
 journal exists, an interrupted or ambiguous operation moves its Attempt, Target and Resource to
 `RecoveryRequired` after the worker's lease expires, with blocking manual Conditions; a still-valid
 worker is never quarantined. The scheduler excludes a recovering Target instead of guessing or

@@ -9,10 +9,11 @@ export function availableSkills(skills: readonly Skill[]): Skill[] {
 }
 
 /** Loads configurable skills through the contracts client and caches them. */
-export function useSkills() {
+export function useSkills(enabled = true) {
   const client = useContractsClient();
   return useQuery({
     queryKey: skillKeys.skills,
     queryFn: () => client.skill.list({}).then((response) => response.skills),
+    enabled,
   });
 }
