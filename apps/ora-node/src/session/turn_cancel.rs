@@ -1,9 +1,11 @@
 //! Timing of a turn cancel and the Agent versions whose stopped turns may keep their session
 //! (cancel-turn D2).
 //!
-//! A conformance run verifies the turn boundary of one exact plugin version on one platform, so the
-//! list names all three: what keeps a stopped turn's work from outliving it depends on the
-//! platform, and the same version is unverified on a platform nobody has measured.
+//! A verified turn boundary is what the Agent and the Node give together: the Agent answers the
+//! prompt and reports nothing more for the turn, and the Node's turn process fence kills what the
+//! turn started in sessions of its own before the session is kept. A conformance run checks that
+//! combination for one exact plugin version on one platform, so the list names all three: the
+//! same version is unverified on a platform whose fence nobody has measured.
 use ora_node_protocol::{PluginId, PluginVersion};
 use std::time::Duration;
 
@@ -14,6 +16,9 @@ pub struct TurnCancelConfig {
     pub grace: Duration,
     /// Q: how long a stopped turn must stay silent before the next turn is sent.
     pub quiet: Duration,
+    /// F: how long the turn process fence may take, after the answer, to show that the turn's
+    /// processes are gone. Past it the session ends with `turn_processes_unstopped`.
+    pub process_fence: Duration,
     /// Agent plugin versions whose turn boundary a conformance run verified, per platform. A
     /// cancelled or failed turn of any other Agent ends the session with
     /// `turn_boundary_unverified`.
@@ -28,13 +33,13 @@ pub struct TurnBoundary {
     pub platform: TurnBoundaryPlatform,
 }
 
-/// The platform a turn boundary was verified on.
+/// The platform a turn boundary was verified on; each has its own turn process fence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TurnBoundaryPlatform {
-    /// The platform this Node runs on.
+    /// The attempt mark and procfs fence this Node runs.
     Linux,
-    /// A Node on Windows would stop a turn's work by other means, Job Objects for example,
-    /// measured before any version is listed for it.
+    /// A Node on Windows would need a fence of its own, Job Objects for example, measured before
+    /// any version is listed for it.
     Windows,
 }
 
@@ -57,12 +62,13 @@ impl TurnCancelConfig {
 }
 
 impl Default for TurnCancelConfig {
-    /// G 15 s and Q 2 s as first set by the decision; no Agent is verified yet, so every stop of
-    /// a running turn ends the session until conformance runs add versions.
+    /// G 15 s, Q 2 s and F 5 s as first set by the decisions; no Agent is verified yet, so every
+    /// stop of a running turn ends the session until conformance runs add versions.
     fn default() -> Self {
         Self {
             grace: Duration::from_secs(15),
             quiet: Duration::from_secs(2),
+            process_fence: Duration::from_secs(5),
             turn_boundary: Vec::new(),
         }
     }

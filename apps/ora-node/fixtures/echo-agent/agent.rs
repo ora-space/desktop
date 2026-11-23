@@ -346,6 +346,10 @@ impl EchoAgent {
             return acp(output, json!({"jsonrpc":JSON_RPC_VERSION,"id":id,"error":{"code":-32603,"message":"Session is closed"}})).await;
         }
         super::background::start(&cwd, &text)?;
+        super::background::respawn(&cwd, &text);
+        if let Some(helper) = super::background::helper(&cwd, &text)? {
+            message(output, &session_id, &helper).await?;
+        }
         if text.contains("[mcp]") {
             message(
                 output,

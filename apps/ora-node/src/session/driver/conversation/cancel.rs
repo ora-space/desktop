@@ -29,6 +29,8 @@ pub(super) struct StoppedTurn {
     pub(super) cause: StopCause,
     /// Cancels merged into this stop, in acceptance order.
     pub(super) merged: Vec<CommandId>,
+    /// Where the turn started; written when its prompt was admitted.
+    pub(super) start: TurnStartCell,
 }
 
 /// What the D2 judgement concluded.
@@ -244,8 +246,15 @@ impl<L: SessionLedger> Conversation<'_, L> {
     }
 
     /// Applies D2 to a stopped turn: the session is kept only if it chose to keep after this
-    /// kind of end, the Agent version has a verified turn boundary, the turn left nothing
-    /// running, and no turn traffic arrives within the quiet window.
+    /// kind of end, the Agent version has a verified turn boundary, the turn left no tool call
+    /// open, the processes it started in sessions of their own are shown gone, and no turn
+    /// traffic arrives within the quiet window.
+    ///
+    /// The process fence runs before the quiet window, so Q also watches the Agent's answer to
+    /// losing those processes: an Agent that starts work by itself when a background task dies
+    /// sends turn traffic then. The next turn and the `stopped` settlement both wait for the
+    /// fence. An `EndSession` or a cancel that arrives meanwhile is served once the bounded fence
+    /// returns: its wake-up stays pending, and the quiet window and the final merge read it.
     pub(super) async fn judge(&self, mut stopped: StoppedTurn) -> Judged {
         let chosen = match stopped.cause {
             StopCause::Cancel => self.keep.on_cancel,
@@ -263,6 +272,20 @@ impl<L: SessionLedger> Conversation<'_, L> {
         }
         if !self.mirror.fence().turn_settled() {
             return Judged::End(SessionEnd::agent_failed("turn_not_quiescent"));
+        }
+        match self
+            .processes
+            .stop(
+                self.execution,
+                stopped.start.get(),
+                self.turn_cancel.process_fence,
+            )
+            .await
+        {
+            TurnStop::Stopped => {}
+            TurnStop::Unstopped { .. } => {
+                return Judged::End(SessionEnd::agent_failed("turn_processes_unstopped"));
+            }
         }
         let quiet = tokio::time::sleep(self.turn_cancel.quiet);
         tokio::pin!(quiet);

@@ -11,6 +11,14 @@
 //!
 //! Each job first records its PID in `background.pid`, so a test can pin it before checking that
 //! it never wrote.
+//!
+//! Two markers start processes from the Agent itself instead:
+//!
+//! - `[helper]` starts a long-lived helper in the Agent's own session, the way an Agent launches
+//!   a language server lazily, and records its PID in `helper.pid`; a later `[helper]` reports
+//!   whether that same helper still runs;
+//! - `[respawn]` makes the Agent restart a `setsid` job each time it dies, until the Agent exits,
+//!   as an Agent that supervises a tool job and keeps it running after it answered.
 
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -86,4 +94,64 @@ pub(super) fn run(args: &[String]) -> std::io::Result<()> {
     std::fs::rename("background.pid.tmp", "background.pid")?;
     std::thread::sleep(Duration::from_millis(delay));
     std::fs::write("background-leak", b"written after the session stopped\n")
+}
+
+/// Starts or finds the `[helper]` process; the answer the prompt reports about it, if asked.
+pub(super) fn helper(cwd: &Path, prompt: &str) -> std::io::Result<Option<String>> {
+    if !prompt.contains("[helper]") {
+        return Ok(None);
+    }
+    let record = cwd.join("helper.pid");
+    if let Ok(pid) = std::fs::read_to_string(&record)
+        && let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", pid.trim()))
+        && stat.contains("(sleep) S")
+    {
+        return Ok(Some(format!("helper {} running", pid.trim())));
+    }
+    // No new session or group: the helper stays wherever the Agent runs. The handle is dropped
+    // without waiting, as an Agent that keeps a helper for its lifetime does.
+    let child = Command::new("/bin/sleep")
+        .arg("600")
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    std::fs::write(&record, child.id().to_string())?;
+    Ok(Some(format!("helper {} started", child.id())))
+}
+
+/// Starts the `[respawn]` supervisor on its own thread; it runs until the Agent exits.
+pub(super) fn respawn(cwd: &Path, prompt: &str) {
+    if !prompt.contains("[respawn]") {
+        return;
+    }
+    let cwd = cwd.to_path_buf();
+    std::thread::spawn(move || {
+        loop {
+            let mut command = Command::new("/bin/sleep");
+            command
+                .arg("60")
+                .current_dir(&cwd)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            // SAFETY: setsid is async-signal-safe and touches only the forked child.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            // One job at a time: the next one starts as soon as the last one died.
+            match command.spawn() {
+                Ok(mut job) => {
+                    let _ = job.wait();
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+    });
 }

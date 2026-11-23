@@ -2,6 +2,7 @@
 use super::*;
 mod admission;
 mod cancel;
+use crate::session::stop::turn::{TurnProcesses, TurnStartCell, TurnStop};
 pub(super) use cancel::{Acceptance, Keep, TurnBook, pending_cancel_bound, settle_before_start};
 use ora_node_protocol::TurnCancelOutcome;
 
@@ -42,8 +43,10 @@ pub(super) struct Conversation<'a, L: SessionLedger> {
     /// Attached to the end decision this conversation records before it stops the Agent.
     pub(super) node: ora_node_protocol::NodeRuntimeIdentity,
     pub(super) keep: Keep,
-    /// Whether this Agent version has a verified turn boundary (D2).
+    /// Whether this Agent version has a verified turn boundary on this platform (D2).
     pub(super) boundary_verified: bool,
+    /// Records where each turn starts and stops what a stopped turn left running.
+    pub(super) processes: TurnProcesses,
     pub(super) turn_cancel: &'a crate::session::TurnCancelConfig,
     /// Acceptance times of pending cancels, written by the protocol side at durable acceptance.
     pub(super) cancel_acceptance: &'a cancel::Acceptance,
@@ -202,11 +205,11 @@ impl<L: SessionLedger> Conversation<'_, L> {
         checkout: &ExecutionId,
         ready_timeout: std::time::Duration,
     ) -> Result<TurnOutcome, SessionEnd> {
-        let mut stream = match self
+        let (mut stream, start) = match self
             .admit_turn(&turn, command_id, agent_ref, checkout, ready_timeout)
             .await?
         {
-            admission::Admitted::Stream(stream) => stream,
+            admission::Admitted::Stream(stream, start) => (stream, start),
             admission::Admitted::Outcome(outcome) => return Ok(outcome),
         };
         // Business time belongs to the admitted turn, never to queued MCP wait budgets.
@@ -235,6 +238,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                                 turn_id: turn_id.clone(),
                                 cause: cancel::StopCause::Cancel,
                                 merged: std::mem::take(&mut merged),
+                                start: start.clone(),
                             });
                         }
                         // The Agent finished the turn before the cancel reached it: the turn keeps
@@ -257,6 +261,7 @@ impl<L: SessionLedger> Conversation<'_, L> {
                                 turn_id: turn_id.clone(),
                                 cause: cancel::StopCause::Failure(code),
                                 merged: std::mem::take(&mut merged),
+                                start: start.clone(),
                             });
                         }
                         break TurnOutcome::Failed(code);

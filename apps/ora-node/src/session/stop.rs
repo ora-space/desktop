@@ -5,6 +5,7 @@ pub(crate) mod marks;
 pub(crate) mod spawner;
 #[cfg(test)]
 mod tests;
+pub(super) mod turn;
 
 use super::{SessionLedger, workload::SessionPlacement};
 use crate::{SessionStopConfig, managed::attempt_lock::StopEvidence};

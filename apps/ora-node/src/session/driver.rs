@@ -572,7 +572,7 @@ where
                     setup: session_setup.clone(),
                     last: tokio::sync::Mutex::new(None),
                 }),
-            spawner,
+            spawner: spawner.clone(),
             lifecycle: lifecycle.clone(),
             taps,
             plugin_id: plugin_id.clone(),
@@ -618,6 +618,7 @@ where
                     .config
                     .turn_cancel
                     .verifies(&spec.agent_plugin_id, &spec.agent_plugin_version),
+                processes: super::stop::turn::TurnProcesses::new(spawner),
                 turn_cancel: &shared.config.turn_cancel,
                 stop_config: &shared.config.stop,
                 cancel_acceptance: &shared.cancel_acceptance,

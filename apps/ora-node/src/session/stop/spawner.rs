@@ -80,6 +80,15 @@ impl SessionAttemptSpawner {
             }))),
         })
     }
+    /// The stop files of the current attempt, shared by every attempt of the Node.
+    pub(super) fn files(&self) -> StopFiles {
+        self.attempt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .files
+            .clone()
+    }
+
     /// Connection loss can trigger a restart only while the execution admits children.
     pub(crate) fn is_open(&self) -> bool {
         self.attempt
