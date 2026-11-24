@@ -1,6 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { IconLoader2 } from "@tabler/icons-react";
+import type { DiscoveredCommands } from "./agent-commands";
 import { Composer } from "./composer";
 import { LandingHeading } from "./empty-state";
 import { MessageList } from "./message-list";
@@ -79,6 +80,8 @@ interface ChatViewProps {
   roles?: Agent[];
   /** `null`, also when omitted, while the Agent has not reported its commands. */
   availableCommands?: acp.AvailableCommand[] | null;
+  /** Shown in the composer while no report describes the Agent the next message goes to. */
+  discoveredCommands?: DiscoveredCommands;
 }
 
 /** Stable so an unreported catalog does not re-render the memoized message list. */
@@ -126,6 +129,7 @@ export function ChatView({
   skills = [],
   roles = [],
   availableCommands = null,
+  discoveredCommands,
 }: ChatViewProps) {
   const { t } = useTranslation();
   // A loading session takes the thread layout even before its turns arrive, so the
@@ -321,6 +325,7 @@ export function ChatView({
                   skills={skills}
                   roles={roles}
                   availableCommands={availableCommands}
+                  discoveredCommands={discoveredCommands}
                 />
               </TooltipTrigger>
               <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>

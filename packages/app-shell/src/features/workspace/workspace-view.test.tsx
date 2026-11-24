@@ -2146,6 +2146,94 @@ describe("WorkspaceView", () => {
     expect(screen.queryByText(pending)).not.toBeInTheDocument();
   });
 
+  it("shows a reopened session what its agent offers until the session reports for itself", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        workspaceId: "workspace-t1",
+        title: "Reopened",
+      },
+    ];
+    state.sessions = [
+      {
+        id: "s1",
+        workspaceId: "workspace-t1",
+        agentRef: AGENT_REF.opencode,
+        status: "stopped",
+        title: null,
+        historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
+      },
+    ];
+    state.discoveredCommandsByCli = {
+      [AGENT_REF.opencode]: [{ name: "review", description: "Review" }],
+    };
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    clientHandlers.promptSession = async function* () {
+      yield {
+        type: "session_update" as const,
+        update: {
+          sessionUpdate: "available_commands_update" as const,
+          availableCommands: [],
+        },
+      };
+      yield { type: "completed" as const, stopReason: "end_turn" as const };
+    };
+    const client = createTestClient(clientHandlers);
+    const discover = vi.spyOn(client.agentRuntime, "discover");
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+    const textarea = await screen.findByRole("textbox");
+    await waitFor(() =>
+      expect(chatStore.getState().conversations.s1?.isLoaded).toBe(true),
+    );
+    await user.type(textarea, "/");
+    expect(await screen.findByRole("option", { name: /review/ })).toBeVisible();
+    expect(
+      screen.queryByText(appI18n.t("chat.actionMenu.commandsPending")),
+    ).not.toBeInTheDocument();
+    // The picker and the menu share one discovery, and opening the session asked for nothing else.
+    expect(discover).toHaveBeenCalledOnce();
+    expect(chatStore.getState().conversations.s1?.availableCommands).toBeNull();
+
+    await user.type(textarea, "mcp hello");
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(chatStore.getState().conversations.s1).toMatchObject({
+        isResponding: false,
+        availableCommands: [],
+      }),
+    );
+    await user.type(textarea, "/review");
+    expect(
+      textarea.querySelector("[data-unsupported-command='review']"),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("option", { name: /review/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("resumes a session whose history stopped recording", async () => {
     const user = userEvent.setup();
     const state = createFixtureState();

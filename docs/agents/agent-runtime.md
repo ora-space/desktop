@@ -147,13 +147,27 @@ turn locally until `startSession` returns.
 The frontend remembers, per agent and in browser storage only, the model last picked for a chat
 that had not started, and offers it only while the agent's current catalog still lists it.
 
-### Model discovery
+### Discovery
 
-Pre-session models come from the plugin's `agent/list_models`, called on demand with the
-Workspace's working directory and a 60-second budget. Ora does not cache the result; the plugin owns
-discovery and any cache, and if it needs ACP to discover models it launches a separate one-shot
-process through the host's child-process API rather than using Ora's shared connection. A failure
-affects only that request; empty lists are valid.
+Pre-session models and commands come from the plugin's `agent/discover` (or, for older plugins,
+`agent/list_models`, which knows no commands), called on demand with the Workspace's working directory
+and a 60-second budget. Ora does not cache the result; the plugin owns discovery and any cache, and if
+it needs ACP it launches a separate one-shot process through the host's child-process API rather than
+using Ora's shared connection. A failure affects only that request; empty lists are valid.
+
+A caller says whether it wants commands. The plugin then waits for the agent's first command report,
+at most two seconds after `session/new` answered, and answers without commands when none arrived.
+Callers that only need models (the workflow editor, scheduled-task validation) do not ask, so they
+never wait. The workflow editor therefore has its own frontend cache entry: an answer without commands
+must not hide them from the chat composer.
+
+The composer shows the commands the session reported; before any report, and while a move onto another
+agent is pending, it shows the discovered commands of the agent the next message goes to. Only a
+session's own report decides whether a typed command is unsupported, because discovery runs without MCP
+servers. Commands are untrusted text: the composer shows them as plain text, at most 500, drops names
+that are empty, over 128 bytes or contain whitespace or control characters, and cuts descriptions at
+4096 bytes and hints at 256. Delivery is never cut, and a report over 500 commands leaves one warning
+in Desktop's log.
 
 ### Permissions
 
@@ -202,7 +216,7 @@ cancelled turn and keeps the actor reusable.
 | Bound | Value |
 |---|---|
 | `initialize` | 15 s |
-| Plugin model discovery | 60 s |
+| Plugin discovery | 60 s |
 | `session/new` / `session/load` inactivity | 30 s, or 120 s when MCP servers are delivered; rearmed by setup notifications |
 | Prompt inactivity windows | 45 s, then 60 s, 90 s and 120 s for up to three retries; paused by running tools and permission waits; subagent frames renew open CodeAgent delegations |
 | Cancellation settlement grace | 5 s |

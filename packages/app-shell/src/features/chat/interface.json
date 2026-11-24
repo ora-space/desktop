@@ -53,6 +53,10 @@
       "exports": ["displayPath"],
       "purpose": "Files and workflow activity normalize displayed ACP worktree paths consistently."
     },
+    "./use-discovered-commands": {
+      "exports": ["useDiscoveredCommands"],
+      "purpose": "Workspace supplies the surface's agent and session state to chat-owned stand-ins for an unreported command list."
+    },
     "./translations": {
       "exports": ["chatTranslations"],
       "purpose": "The single i18n composition loads this feature's pure resource bundle.",
