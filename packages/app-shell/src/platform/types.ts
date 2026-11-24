@@ -103,7 +103,8 @@ export type DesktopUpdateStatus =
 /** Exposes update status and installation without coupling shared UI to Tauri IPC. */
 export interface DesktopUpdateCapability {
   getStatus(): Promise<DesktopUpdateStatus>;
-  install(): Promise<void>;
+  /** Installs the confirmed version; the host refuses when another release replaced it. */
+  install(version: string): Promise<void>;
   /** Runs an update check on demand, outside the scheduled delayed and cron checks. */
   check(): Promise<void>;
   onStatus(

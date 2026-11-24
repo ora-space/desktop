@@ -71,7 +71,7 @@ describe("PendingUpdate", () => {
     expect(dialog.textContent).not.toContain(MARKUP);
     expect(install).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "立即更新" }));
-    expect(install).toHaveBeenCalledTimes(1);
+    expect(install).toHaveBeenCalledExactlyOnceWith("0.3.0");
   });
 
   it("installs nothing when the confirmation is cancelled", async () => {

@@ -5,9 +5,10 @@ use crate::update::artifact_store::{
 };
 use crate::update::release_notes::{ReleaseNote, ReleaseNoteCategory, ReleaseNoteEntry};
 use crate::update::service::proxy_url;
-use crate::update::state::{ReadyUpdate, RuntimeUpdateState};
-use crate::update::{DesktopUpdateStatus, ManualUpdateReason};
+use crate::update::state::{OfferedRelease, ReadyUpdate, RuntimeUpdateState};
+use crate::update::{DesktopUpdateStatus, ManualUpdateReason, UpdateError};
 use ora_application::NetworkProxySettings;
+use ora_logging::with_trace_logging;
 use ora_utils::hash::sha256_reader;
 use pretty_assertions::assert_eq;
 use semver::Version;
@@ -85,6 +86,26 @@ async fn commit_release(
         .await
         .expect("commit succeeds");
     (descriptor, artifact)
+}
+
+/// The version that a running build of these tests claims to be.
+fn running() -> Version {
+    Version::new(0, 2, 0)
+}
+
+/// Builds a manifest with the offered notes between ones that are not part of the update.
+fn manifest() -> Value {
+    let note = |version: &str| {
+        let mut note = serde_json::to_value(release_note()).expect("note serializes");
+        note["version"] = json!(version);
+        note
+    };
+    json!({
+        "ora_release_notes": {
+            "schema": 1,
+            "versions": [note("0.4.0"), note("0.3.0"), note("0.2.0")],
+        }
+    })
 }
 
 /// Builds notes as the update service attaches them to an offered release.
@@ -301,7 +322,7 @@ async fn runtime_state_keeps_status_and_installable_data_together() {
             notes: vec![release_note()],
         }
     );
-    let installing = state.begin_install().expect("ready state installs");
+    let installing = state.begin_install("0.3.0").expect("ready state installs");
     assert_eq!(
         (state.status(), installing.installer),
         (
@@ -311,6 +332,106 @@ async fn runtime_state_keeps_status_and_installable_data_together() {
             "test-installer".to_owned(),
         )
     );
+}
+
+/// A confirmation is for one release, so a replacement is kept but not installed by it.
+#[tokio::test]
+async fn a_replaced_release_is_not_installed_by_an_older_confirmation() {
+    let home = TempDir::new().expect("temp home");
+    let store = open_store(home.path());
+    let (descriptor, artifact) = commit_release(&store, "0.4.0", b"signed-package").await;
+    let mut state = OfferedRelease::from_manifest(&json!({}), &running(), "0.4.0".to_owned())
+        .ready("installer", descriptor, artifact);
+
+    assert!(matches!(
+        state.begin_install("0.3.0"),
+        Err(UpdateError::ReleaseReplaced)
+    ));
+    assert_eq!(
+        state.status(),
+        DesktopUpdateStatus::Ready {
+            version: "0.4.0".to_owned(),
+            notes: Vec::new(),
+        }
+    );
+    assert!(state.begin_install("0.4.0").is_ok());
+}
+
+/// Both kinds of offer carry the notes between the running version and the offered one.
+#[tokio::test]
+async fn offers_carry_the_notes_of_their_own_manifest() {
+    let home = TempDir::new().expect("temp home");
+    let store = open_store(home.path());
+    let (descriptor, artifact) = commit_release(&store, "0.3.0", b"signed-package").await;
+    let offered = || OfferedRelease::from_manifest(&manifest(), &running(), "0.3.0".to_owned());
+
+    assert_eq!(
+        offered().ready("installer", descriptor, artifact).status(),
+        DesktopUpdateStatus::Ready {
+            version: "0.3.0".to_owned(),
+            notes: vec![release_note()],
+        }
+    );
+    assert_eq!(
+        offered()
+            .manual::<&str>(ManualUpdateReason::SystemPackage)
+            .status(),
+        DesktopUpdateStatus::ManualUpdate {
+            version: "0.3.0".to_owned(),
+            reason: ManualUpdateReason::SystemPackage,
+            notes: vec![release_note()],
+        }
+    );
+}
+
+/// Broken notes leave the offer itself untouched.
+#[test]
+fn broken_notes_never_withhold_an_offer() {
+    with_trace_logging(|| {
+        assert_eq!(
+            OfferedRelease::from_manifest(
+                &json!({ "ora_release_notes": { "schema": 1 } }),
+                &running(),
+                "0.3.0".to_owned(),
+            )
+            .manual::<&str>(ManualUpdateReason::UnpackagedBinary)
+            .status(),
+            DesktopUpdateStatus::ManualUpdate {
+                version: "0.3.0".to_owned(),
+                reason: ManualUpdateReason::UnpackagedBinary,
+                notes: Vec::new(),
+            }
+        );
+    });
+}
+
+/// A failed check keeps an installable release with its notes, and reports anything else.
+#[tokio::test]
+async fn a_failed_check_keeps_the_ready_release_and_its_notes() {
+    let home = TempDir::new().expect("temp home");
+    let store = open_store(home.path());
+    let (descriptor, artifact) = commit_release(&store, "0.3.0", b"signed-package").await;
+    let retained = OfferedRelease::from_manifest(&manifest(), &running(), "0.3.0".to_owned())
+        .ready("installer", descriptor, artifact)
+        .ready()
+        .expect("release is ready");
+    let error = UpdateError::NoPendingUpdate;
+
+    assert_eq!(
+        RuntimeUpdateState::after_failed_check(Some(retained.clone()), true, &error).status(),
+        DesktopUpdateStatus::Ready {
+            version: "0.3.0".to_owned(),
+            notes: vec![release_note()],
+        }
+    );
+    for (retained, valid) in [(Some(retained), false), (None, true)] {
+        assert_eq!(
+            RuntimeUpdateState::after_failed_check(retained, valid, &error).status(),
+            DesktopUpdateStatus::Failed {
+                message: error.to_string(),
+            }
+        );
+    }
 }
 
 /// Verifies proxy credentials are encoded into the updater URL.

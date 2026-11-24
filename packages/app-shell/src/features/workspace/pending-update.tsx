@@ -90,7 +90,7 @@ export function PendingUpdate() {
             <AlertDialogAction
               onClick={() => {
                 setConfirming(false);
-                void updates.install();
+                void updates.install(version);
               }}
             >
               {t("update.confirmAction")}

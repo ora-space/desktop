@@ -5,9 +5,11 @@
 //! them and never turns into an update error.
 
 use chrono::NaiveDate;
+use ora_logging::ora_warn;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use thiserror::Error;
 
 const MANIFEST_FIELD: &str = "ora_release_notes";
@@ -48,7 +50,7 @@ pub struct ReleaseNote {
 
 /// Explains why manifest notes stay hidden, for the Desktop log only.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub(super) enum HiddenNotes {
+enum HiddenNotes {
     #[error("the notes are malformed")]
     Malformed,
     #[error("the notes use an unknown schema")]
@@ -61,12 +63,26 @@ pub(super) enum HiddenNotes {
     InvalidTarget,
 }
 
+/// Returns the notes an update may show, or none when the manifest's are unusable.
+///
+/// Unusable notes are logged and hidden here, so they can never turn into an update failure.
+pub(super) fn visible_notes(manifest: &Value, current: &Version, target: &str) -> Vec<ReleaseNote> {
+    notes_between(manifest, current, target).unwrap_or_else(|reason| {
+        ora_warn!(
+            message = "Desktop update notes are hidden",
+            version = target,
+            reason = %reason,
+        );
+        Vec::new()
+    })
+}
+
 /// Returns the notes in `(stable(current), stable(target)]`, newest first.
 ///
 /// Unknown fields are ignored so that a newer generator can add some. Any other deviation hides all
 /// notes, because a list that silently lost some would pass for complete. Manifests without notes
 /// have an empty list.
-pub(super) fn notes_between(
+fn notes_between(
     manifest: &Value,
     current: &Version,
     target: &str,
@@ -89,9 +105,13 @@ pub(super) fn notes_between(
     if listed.len() > MAX_VERSIONS {
         return Err(HiddenNotes::TooManyVersions);
     }
+    let mut seen = BTreeSet::new();
     let mut selected = Vec::new();
     for value in listed {
         let (version, note) = read_note(value).ok_or(HiddenNotes::InvalidContent)?;
+        if !seen.insert(version.clone()) {
+            return Err(HiddenNotes::InvalidContent);
+        }
         if version > current && version <= target {
             selected.push((version, note));
         }
@@ -135,7 +155,10 @@ fn stable(version: &Version) -> Version {
 
 /// Rejects blank text and characters that could hide or reorder what the text says.
 fn is_plain_text(text: &str) -> bool {
-    !text.trim().is_empty()
+    // The generator trims U+FEFF as well, which Rust does not count as whitespace.
+    !text
+        .trim_matches(|character: char| character.is_whitespace() || character == '\u{FEFF}')
+        .is_empty()
         && !text.chars().any(|character| {
             character.is_control()
                 || matches!(
@@ -262,6 +285,67 @@ mod tests {
             ),
             Err(HiddenNotes::TooManyVersions)
         );
+    }
+
+    /// The generator's own output is read here, because a renamed or resized envelope would silently
+    /// hide the notes of every installed client.
+    #[test]
+    fn reads_the_manifest_the_generator_writes() {
+        let mut manifest: Value = serde_json::from_str(include_str!(
+            "../../../../../scripts/update-manifest-fixture.json"
+        ))
+        .expect("generated manifest parses");
+        let newest = manifest["version"].as_str().expect("version").to_owned();
+
+        assert_eq!(
+            versions(&manifest, "0.1.0", &newest),
+            listed(&[
+                "1.10.0", "1.9.0", "1.8.0", "1.7.0", "1.6.0", "1.5.0", "1.4.0", "1.3.0", "1.2.0",
+                "1.1.0"
+            ])
+        );
+
+        manifest["ora_release_notes"]["versions"]
+            .as_array_mut()
+            .expect("versions are listed")
+            .push(note("1.0.0"));
+        assert_eq!(
+            versions(&manifest, "0.1.0", &newest),
+            Err(HiddenNotes::TooManyVersions)
+        );
+    }
+
+    /// Repeated versions are ambiguous, and the webview lists notes by version.
+    #[test]
+    fn hides_notes_that_repeat_a_version() {
+        assert_eq!(
+            versions(
+                &manifest(vec![note("0.8.0"), note("0.8.0")]),
+                "0.7.0",
+                "0.8.0"
+            ),
+            Err(HiddenNotes::InvalidContent)
+        );
+    }
+
+    /// Unusable notes become no notes, and usable ones pass through.
+    #[test]
+    fn unusable_notes_are_hidden_instead_of_failing() {
+        ora_logging::with_trace_logging(|| {
+            let usable = manifest(vec![note("0.8.0")]);
+            let current = Version::new(0, 7, 0);
+            assert_eq!(
+                visible_notes(&usable, &current, "0.8.0"),
+                notes_between(&usable, &current, "0.8.0").expect("notes are usable")
+            );
+            for unusable in [
+                json!({ "ora_release_notes": "text" }),
+                json!({ "ora_release_notes": { "schema": 2, "versions": [] } }),
+                manifest(vec![json!({})]),
+            ] {
+                assert_eq!(visible_notes(&unusable, &current, "0.8.0"), Vec::new());
+            }
+        });
     }
 
     /// A later generator may add fields, but a schema this build does not know hides the notes.

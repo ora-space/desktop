@@ -1,7 +1,10 @@
 //! Runtime state machine for one Desktop update operation.
 
+use super::release_notes::visible_notes;
 use super::{DesktopUpdateStatus, ManualUpdateReason, ReleaseNote, UpdateError};
 use crate::update::artifact_store::{ArtifactDescriptor, StoredArtifact};
+use semver::Version;
+use serde_json::Value;
 
 /// Binds an installer handle to the exact verified artifact it is allowed to install.
 #[derive(Clone)]
@@ -10,6 +13,44 @@ pub(super) struct ReadyUpdate<I> {
     pub(super) descriptor: ArtifactDescriptor,
     pub(super) artifact: StoredArtifact,
     pub(super) notes: Vec<ReleaseNote>,
+}
+
+/// One check's offer, which keeps a release and the notes of its own manifest together.
+pub(super) struct OfferedRelease {
+    version: String,
+    notes: Vec<ReleaseNote>,
+}
+
+impl OfferedRelease {
+    /// Reads the notes between the running version and the one a manifest offers.
+    pub(super) fn from_manifest(manifest: &Value, running: &Version, version: String) -> Self {
+        let notes = visible_notes(manifest, running, &version);
+        Self { version, notes }
+    }
+
+    /// Offers a release that this installation cannot install itself.
+    pub(super) fn manual<I>(self, reason: ManualUpdateReason) -> RuntimeUpdateState<I> {
+        RuntimeUpdateState::ManualUpdate {
+            version: self.version,
+            reason,
+            notes: self.notes,
+        }
+    }
+
+    /// Offers a release whose package has been verified.
+    pub(super) fn ready<I>(
+        self,
+        installer: I,
+        descriptor: ArtifactDescriptor,
+        artifact: StoredArtifact,
+    ) -> RuntimeUpdateState<I> {
+        RuntimeUpdateState::Ready(ReadyUpdate {
+            installer,
+            descriptor,
+            artifact,
+            notes: self.notes,
+        })
+    }
 }
 
 /// Keeps the webview status and installable data in one state so they cannot diverge.
@@ -83,10 +124,32 @@ impl<I: Clone> RuntimeUpdateState<I> {
         }
     }
 
-    /// Starts installation only when the state owns the matching installer and artifact.
-    pub(super) fn begin_install(&mut self) -> Result<ReadyUpdate<I>, UpdateError> {
+    /// Decides what a failed check leaves behind: an update that is still installable keeps its notes,
+    /// anything else reports the failure.
+    pub(super) fn after_failed_check(
+        retained: Option<ReadyUpdate<I>>,
+        retained_is_valid: bool,
+        error: &UpdateError,
+    ) -> Self {
+        match retained {
+            Some(ready) if retained_is_valid => Self::Ready(ready),
+            Some(_) | None => Self::Failed {
+                message: error.to_string(),
+            },
+        }
+    }
+
+    /// Starts installation only when the state owns the confirmed release and its artifact.
+    ///
+    /// A background check can replace the release between the confirmation and this call; the
+    /// replacement stays ready but is never installed on a confirmation that was not for it.
+    pub(super) fn begin_install(&mut self, version: &str) -> Result<ReadyUpdate<I>, UpdateError> {
         let previous = std::mem::replace(self, Self::Current);
         match previous {
+            Self::Ready(ready) if ready.descriptor.identity.release_version != version => {
+                *self = Self::Ready(ready);
+                Err(UpdateError::ReleaseReplaced)
+            }
             Self::Ready(ready) => {
                 *self = Self::Installing(ready.clone());
                 Ok(ready)

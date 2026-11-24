@@ -101,6 +101,8 @@ pub enum UpdateError {
     ProxyCredentials,
     #[error("no update is ready to install")]
     NoPendingUpdate,
+    #[error("the confirmed release was replaced by another one")]
+    ReleaseReplaced,
     #[error("failed to register update schedule")]
     Scheduler(#[source] SchedulerError),
 }
