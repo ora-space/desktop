@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decodeReleaseNotes, type ReleaseNote } from "./bundled-release-notes";
+import type { ReleaseNote } from "../../lib/release-note";
+import { decodeReleaseNotes } from "./bundled-release-notes";
 import {
   planReleaseNotesPrompt,
   stableVersionOf,
@@ -89,6 +90,53 @@ describe("planReleaseNotesPrompt", () => {
       expect(plan("0.1.0", record)).toBeNull();
     },
   );
+
+  describe("with notes of versions that had no release notes feature", () => {
+    const backfilled = ["0.3.0", "0.4.0", "0.5.0", "0.6.0"].map(note);
+    const planWith = (
+      extra: readonly ReleaseNote[],
+      appVersion: string,
+      promptedVersion: string | null,
+      newInstallation = false,
+    ) =>
+      planReleaseNotesPrompt({
+        notes: [...backfilled, ...extra],
+        appVersion,
+        promptedVersion,
+        newInstallation,
+      });
+
+    it.each([null, "0.5.0", "0.6.0"])(
+      "never lists them on the card (record %s)",
+      (record) => {
+        expect(
+          versions(
+            planWith(["0.6.1", "0.7.0"].map(note), "0.7.0", record)?.notes,
+          ),
+        ).toEqual(["0.7.0", "0.6.1"]);
+      },
+    );
+
+    it.each(["0.3.0", "0.6.0", "0.6.0-rc.1", "0.6.0+yellow"])(
+      "neither prompts nor remembers a build of %s",
+      (appVersion) => {
+        for (const newInstallation of [true, false])
+          expect(planWith([], appVersion, null, newInstallation)).toBeNull();
+      },
+    );
+
+    it.each(["0.6.1", "0.7.0-rc.1"])("prompts the later %s", (appVersion) => {
+      const planned = planWith(["0.6.1", "0.7.0"].map(note), appVersion, null);
+      expect(planned?.version).toBe(stableVersionOf(appVersion));
+      expect(planned?.notes).not.toEqual([]);
+    });
+
+    it("lists them in the history", () => {
+      expect(
+        versions(visibleReleaseNotes([...backfilled, note("0.7.0")], "0.7.0")),
+      ).toEqual(["0.7.0", "0.6.0", "0.5.0", "0.4.0", "0.3.0"]);
+    });
+  });
 
   it("remembers a fresh installation without prompting", () => {
     expect(plan("0.8.0", null, /*newInstallation*/ true)).toEqual({

@@ -214,7 +214,7 @@ export const chatTranslations = {
     "chat.actionMenu.plugins": "Plugins",
     "chat.actionMenu.actions": "Actions",
     "chat.actionMenu.commandsPending":
-      "执行一轮对话后，Agent自带命令和skill才会显示",
+      "执行一轮对话后，Agent 自带命令和 skill 才会显示",
     "chat.actionMenu.showMore": "显示另外 {{count}} 项",
     "chat.actionMenu.showLess": "收起",
     "chat.actionMenu.filesSearching": "正在搜索文件…",

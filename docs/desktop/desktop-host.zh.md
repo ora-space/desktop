@@ -80,6 +80,7 @@ worktree 根目录是非敏感配置，在 设置 → 数据与隐私 中选择�
 
 - 已下载的包在后续检查失败时仍可安装；只有在没有任何可安装的包时才报告 `Failed`，安装失败会恢复到 `Ready`。
 - Linux 发布的是 AppImage，所以 `deb`/`rpm` 安装或裸可执行文件会在下载之前就报告 `ManualUpdate` 及原因，外壳会指向发布页而不是提供安装按钮。
+- `Ready` 和 `ManualUpdate` 带有清单里的更新日志，见[更新日志](../development/release-notes.zh.md#更新之前)。
 - 更新器公钥在 `apps/desktop/src-tauri/tauri.conf.json` 中；发布构建需要 GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY` 中对应的私钥。
 
 状态变化以 `desktop-update-status-changed` 发出。生命周期、缓存布局和不变量见 [`src/update/README.md`](../../apps/desktop/src-tauri/src/update/README.md)。

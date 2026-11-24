@@ -35,6 +35,30 @@ Deno.test("the repository's release notes are valid", async () => {
   await readReleaseNotes(fileURLToPath(new URL("..", import.meta.url)));
 });
 
+// Backfilled after the fact, so each carries the date its release was published.
+Deno.test(
+  "the repository keeps the backfilled notes for the history",
+  async () => {
+    const notes = await readReleaseNotes(
+      fileURLToPath(new URL("..", import.meta.url)),
+    );
+    const published = {
+      "0.3.0": "2026-09-29",
+      "0.4.0": "2026-10-15",
+      "0.5.0": "2026-10-26",
+      "0.6.0": "2026-11-20",
+    };
+    assert.deepEqual(
+      Object.fromEntries(
+        notes
+          .filter(({ version }) => Object.hasOwn(published, version))
+          .map(({ version, date }) => [version, date]),
+      ),
+      published,
+    );
+  },
+);
+
 Deno.test("a complete notes file keeps every field", () => {
   const note = {
     ...releaseNote("0.7.0"),
@@ -108,7 +132,7 @@ const invalidNotes: [string, unknown, RegExp][] = [
   ].map((character): [string, unknown, RegExp] => [
     `the character U+${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
     { ...valid, entries: [{ ...entry, "en-US": `a${character}b` }] },
-    /control, line separator, or bidirectional/,
+    /control, line separator, bidirectional/,
   ]),
 ];
 for (const [label, content, expected] of invalidNotes) {
@@ -145,6 +169,34 @@ Deno.test("notes that are not UTF-8 are rejected", () =>
     );
   }),
 );
+
+// The Desktop host applies the same rules to manifest notes and reads the same cases. A case carries
+// its document as text when a JSON reader may refuse it, such as lone surrogates in Rust.
+const sharedCases: {
+  name: string;
+  valid: boolean;
+  note?: object;
+  text?: string;
+}[] = JSON.parse(
+  await Deno.readTextFile(
+    new URL("./release-note-fixtures.json", import.meta.url),
+  ),
+);
+for (const { name, valid: accepted, note, text } of sharedCases) {
+  Deno.test(
+    `the shared case with ${name} is ${accepted ? "accepted" : "rejected"}`,
+    () => {
+      const document = text === undefined ? note : JSON.parse(text);
+      const parse = () =>
+        parseReleaseNote(
+          `${document.version}.json`,
+          JSON.stringify({ schema: 1, ...document }),
+        );
+      if (accepted) parse();
+      else assert.throws(parse);
+    },
+  );
+}
 
 Deno.test("a build without a notes directory has no notes", () =>
   withTempDirectory(async (root) => {

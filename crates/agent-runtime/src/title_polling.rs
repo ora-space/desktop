@@ -232,9 +232,17 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 event = channel.events.recv() => {
                     match event {
                         Some(SessionEvent::Update(update, _)) => {
-                            channel.observe_commands(&update.update);
                             self.observe_session_update(&update.update);
-                            channel.pending_updates.push_back(update);
+                            // The other updates wait for the next prompt one by one; a catalog
+                            // replaces every earlier one.
+                            if matches!(
+                                update.update,
+                                SessionUpdate::AvailableCommandsUpdate(_)
+                            ) {
+                                channel.retain_commands(&update);
+                            } else {
+                                channel.pending_updates.push_back(update);
+                            }
                         }
                         Some(event) => {
                             settle_idle_event(&client, event).await;

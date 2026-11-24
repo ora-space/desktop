@@ -1,15 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { cn } from "@ora/ui";
 import type { Locale } from "../../i18n/resource-bundle";
-import type { ReleaseNote, ReleaseNoteCategory } from "./bundled-release-notes";
-
-/** The reading order of a version: what needs attention first, then what is new. */
-const CATEGORY_ORDER: readonly ReleaseNoteCategory[] = [
-  "important",
-  "feature",
-  "improvement",
-  "fix",
-];
+import {
+  RELEASE_NOTE_CATEGORIES,
+  type ReleaseNote,
+} from "../../lib/release-note";
 
 /** Renders notes as plain text in the interface language, grouped by category within each version. */
 export function ReleaseNoteList({ notes }: { notes: readonly ReleaseNote[] }) {
@@ -34,7 +29,7 @@ export function ReleaseNoteList({ notes }: { notes: readonly ReleaseNote[] }) {
               {note.date}
             </time>
           </header>
-          {CATEGORY_ORDER.map((category) => {
+          {RELEASE_NOTE_CATEGORIES.map((category) => {
             const entries = note.entries.filter(
               (entry) => entry.category === category,
             );

@@ -616,6 +616,16 @@ export function createChatStore(
           );
           throw error;
         }
+        // Written before a stop is honoured: the session is already on this agent, so whatever an
+        // earlier one offered is gone even if no prompt follows. Agents usually report after
+        // answering setup, so a setup that collected none has not said there are none.
+        updateConversation(set, key, (conversation) => ({
+          ...conversation,
+          availableCommands:
+            prepared.availableCommands.length > 0
+              ? prepared.availableCommands
+              : null,
+        }));
         if (controller.signal.aborted) {
           // Stopped mid-startup: the session exists but we never open its stream.
           updateTurn(set, key, turnId, (current) =>
@@ -655,12 +665,6 @@ export function createChatStore(
         // to the landing layout and replay the slide-down animation.
         updateConversation(set, key, (conversation) => ({
           ...conversation,
-          // Agents usually report after answering setup, so a setup that collected none has
-          // not said there are none.
-          availableCommands:
-            prepared.availableCommands.length > 0
-              ? prepared.availableCommands
-              : null,
           isLoaded: true,
         }));
       }

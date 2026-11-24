@@ -1,0 +1,130 @@
+{
+  "version": "1.10.0",
+  "notes": "Ora v1.10.0",
+  "pub_date": "2026-12-10T00:00:00.000Z",
+  "ora_release_notes": {
+    "schema": 1,
+    "versions": [
+      {
+        "version": "1.10.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      },
+      {
+        "version": "1.9.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      },
+      {
+        "version": "1.8.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      },
+      {
+        "version": "1.7.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      },
+      {
+        "version": "1.6.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      },
+      {
+        "version": "1.5.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      },
+      {
+        "version": "1.4.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      },
+      {
+        "version": "1.3.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      },
+      {
+        "version": "1.2.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      },
+      {
+        "version": "1.1.0",
+        "date": "2026-12-10",
+        "entries": [
+          {
+            "category": "fix",
+            "zh-CN": "示例条目",
+            "en-US": "Sample entry"
+          }
+        ]
+      }
+    ]
+  },
+  "platforms": {
+    "windows-x86_64": {
+      "url": "https://github.com/ora-space/desktop/releases/download/v1.10.0/Ora_1.2.3_x64-setup.exe",
+      "signature": "signature-windows\n"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/ora-space/desktop/releases/download/v1.10.0/Ora%201.2.3.AppImage",
+      "signature": "signature-linux\n"
+    }
+  }
+}

@@ -342,6 +342,32 @@ describe("RunNodeSessionChat", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("explains commands a node session has not loaded yet", async () => {
+    const user = userEvent.setup();
+    const { chatStore } = renderDock("awaiting_input", false);
+    const setCatalog = (availableCommands: acp.AvailableCommand[] | null) =>
+      act(() =>
+        chatStore.setState(({ conversations }) => ({
+          conversations: {
+            [sessionId]: { ...conversations[sessionId]!, availableCommands },
+          },
+        })),
+      );
+    const textarea = screen.getByRole("textbox");
+    setCatalog(null);
+
+    await user.type(textarea, "/review");
+    const pending = appI18n.t("chat.actionMenu.commandsPending");
+    expect(await screen.findByText(pending)).toBeVisible();
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
+
+    setCatalog([]);
+    await waitFor(() => expect(screen.queryByText(pending)).toBeNull());
+    expect(
+      textarea.querySelector(".composer-unsupported-command"),
+    ).not.toBeNull();
+  });
+
   it("places the shared conversation navigator inside the node session", () => {
     renderDock("awaiting_input", false, [
       {
