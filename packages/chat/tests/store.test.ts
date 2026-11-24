@@ -302,6 +302,118 @@ test("publishes an active prompt incrementally while its session loads", async (
   assert.equal(completed?.turns[0]?.stopReason, "end_turn");
 });
 
+for (const ending of ["completed", "failed"] as const) {
+  test(`keeps a model chosen while following a turn that ${ending}`, async () => {
+    const on = (currentValue: string): acp.SessionConfigOption[] => [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue,
+        options: [
+          { value: "a", name: "A" },
+          { value: "b", name: "B" },
+        ],
+      },
+    ];
+    const joined = {
+      type: "session_update",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: on("a"),
+      },
+    } as const;
+    let resume: () => void = () => {};
+    const chosen = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const client: ChatSessionClient = {
+      load: () => ({
+        async *[Symbol.asyncIterator]() {
+          yield joined;
+          yield textEvent("user_message_chunk", "prompt", "user-1");
+          yield textEvent("agent_message_chunk", "partial", "agent-1");
+          await chosen;
+          yield textEvent("agent_message_chunk", " rest", "agent-1");
+          await new Promise<void>((resolve) => setTimeout(resolve, 25));
+          if (ending === "failed") throw new Error("stream lost");
+          yield { type: "turn_ended", stopReason: "end_turn" } as const;
+          yield { type: "completed" } as const;
+        },
+      }),
+      prompt: () => events<PromptSessionEvent>([]),
+      respondToPermission: async () => ({}),
+      // This agent reports the change only here.
+      setConfig: async () => ({ configOptions: on("b") }),
+    };
+    const store = createChatStore(client);
+    const current = () =>
+      store.getState().conversations["ora-1"]?.configOptions;
+
+    const loading = store.getState().loadSession("ora-1");
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual(current(), on("a"));
+
+    await store.getState().setSessionConfig("ora-1", "model", "b");
+    assert.deepEqual(current(), on("b"));
+    resume();
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(current(), on("b"));
+
+    if (ending === "failed") await assert.rejects(loading);
+    else await loading;
+    assert.deepEqual(current(), on("b"));
+  });
+}
+
+test("an option change the agent reports while following a turn wins over an earlier choice", async () => {
+  const on = (currentValue: string): acp.SessionConfigOption[] => [
+    {
+      id: "model",
+      name: "Model",
+      type: "select",
+      currentValue,
+      options: [{ value: currentValue, name: currentValue }],
+    },
+  ];
+  let resume: () => void = () => {};
+  const chosen = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const client: ChatSessionClient = {
+    load: () => ({
+      async *[Symbol.asyncIterator]() {
+        yield textEvent("user_message_chunk", "prompt", "user-1");
+        await chosen;
+        yield {
+          type: "session_update",
+          update: {
+            sessionUpdate: "config_option_update",
+            configOptions: on("c"),
+          },
+        } as const;
+        yield { type: "turn_ended", stopReason: "end_turn" } as const;
+        yield { type: "completed" } as const;
+      },
+    }),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: on("b") }),
+  };
+  const store = createChatStore(client);
+  const loading = store.getState().loadSession("ora-1");
+  await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  await store.getState().setSessionConfig("ora-1", "model", "b");
+  resume();
+  await loading;
+
+  assert.deepEqual(
+    store.getState().conversations["ora-1"]?.configOptions,
+    on("c"),
+  );
+});
+
 test("clears isResponding at each turn_ended during history replay", async () => {
   let finishAfterFirstTurn: () => void = () => {};
   const afterFirstTurn = new Promise<void>((resolve) => {
