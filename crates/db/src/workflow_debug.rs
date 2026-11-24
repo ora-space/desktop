@@ -9,7 +9,10 @@ use uuid::Uuid;
 
 mod attempts;
 mod configuration;
+mod normalize;
 mod operations;
+mod pending;
+mod read_set;
 pub use operations::DebugClaim;
 #[cfg(test)]
 mod tests;
@@ -25,6 +28,8 @@ pub enum DebugRejection {
     RequestConflict,
     #[error("operation_in_progress")]
     OperationInProgress,
+    #[error("missing_input_evidence: {0}")]
+    MissingFact(String),
     #[error("invalid_target")]
     InvalidTarget,
     #[error("invalid_patch at {path}: {reason}")]
@@ -33,6 +38,7 @@ pub enum DebugRejection {
 
 /// The immutable attempt inputs and candidate graph supplied to the server's node strategy.
 pub struct DebugPlanningInput {
+    read_nodes: std::collections::BTreeSet<String>,
     pub target: WorkflowDebugTarget,
     pub candidate: WorkflowGraph,
     pub pool: WorkflowVariablePool,
@@ -42,6 +48,7 @@ pub struct DebugPlanningInput {
     pub current_scopes: Vec<ora_domain::WorkflowExecutionScope>,
     pub current_payload: Option<ora_application::WorkflowRunPayload>,
     pub predicted_branch: Option<String>,
+    pub member_configurations: std::collections::BTreeMap<String, Value>,
 }
 
 /// The SQLite owner for debug history, input evidence and confirmation admission.
@@ -68,25 +75,30 @@ impl WorkflowDebugStore {
             if operations::blocked(&tx, &request.run_id)? {
                 return Err(DebugRejection::OperationInProgress.into());
             }
-            let (revision, epoch) = run_version(&tx, &request.run_id)?;
+            let revision = run_version(&tx, &request.run_id)?;
             if revision != request.base_revision {
                 return Err(DebugRejection::StalePreview.into());
             }
             let input = configuration::prepare(&tx, request)?;
             let impact = plan(&input)?;
+            let nodes = serde_json::to_string(&input.read_nodes)?;
+            let facts = read_set::facts(&tx, &request.run_id, &nodes)?;
+            let kind = input.candidate.execution_node(&input.target.node_id).ok_or(DebugRejection::InvalidTarget)?.node_type.as_str();
             let preview = WorkflowDebugPreview {
                 preview_id: Uuid::new_v4().to_string(),
                 base_revision: revision,
                 target: input.target,
+                member_configurations: (!input.member_configurations.is_empty()).then_some(input.member_configurations),
                 impact,
                 workspace: WorkflowDebugWorkspace::Keep,
                 external_actions_may_repeat: true,
             };
             tx.execute(
-                "INSERT INTO workflow_debug_previews(id,run_id,target,base_revision,patch,plan,epoch)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![preview.preview_id,request.run_id,request.node_run_id,revision,
-                    serde_json::to_string(&request.patch)?,serde_json::to_string(&preview)?,epoch],
+                "INSERT INTO workflow_debug_previews(id,run_id,base_revision,patch,plan,snapshot_id,root_scope,node_type,read_nodes,read_facts)
+                 SELECT ?1,r.id,?3,?4,?5,r.snapshot_id,root.scope_id,?6,?7,?8 FROM workflow_runs r
+                 JOIN workflow_run_root_scopes root ON root.run_id=r.id WHERE r.id=?2",
+                params![preview.preview_id,request.run_id,revision,
+                    serde_json::to_string(&request.patch)?,serde_json::to_string(&preview)?,kind,nodes,serde_json::to_string(&facts)?],
             )?;
             tx.commit()?;
             Ok(preview)
@@ -114,11 +126,10 @@ impl WorkflowDebugStore {
     }
 }
 
-/// Reads the run-wide execution epoch under the same transaction as the preview or claim.
-fn run_version(db: &Connection, run: &str) -> Result<(u32, i64), DatabaseError> {
+/// Reads the active configuration revision under the same transaction as the preview or claim.
+fn run_version(db: &Connection, run: &str) -> Result<u32, DatabaseError> {
     db.query_row(
-        "SELECT COALESCE((SELECT MAX(revision) FROM workflow_debug_operations WHERE run_id=r.id),0),
-           r.debug_epoch FROM workflow_runs r WHERE r.id=?1 AND r.is_deleted=0 AND r.run_status<>0",
-        [run], |row| Ok((row.get(0)?,row.get(1)?)),
+        "SELECT COALESCE((SELECT MAX(revision) FROM workflow_debug_operations WHERE run_id=r.id),0) FROM workflow_runs r WHERE r.id=?1 AND r.is_deleted=0 AND r.run_status<>0",
+        [run], |row| row.get(0),
     ).optional()?.ok_or(DebugRejection::InvalidTarget.into())
 }

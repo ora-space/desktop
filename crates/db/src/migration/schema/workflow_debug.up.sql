@@ -1,17 +1,20 @@
-ALTER TABLE workflow_runs ADD COLUMN debug_epoch INTEGER NOT NULL DEFAULT 0;
-CREATE TRIGGER workflow_debug_run_fact AFTER UPDATE OF run_status, snapshot_id, state, input, payload, is_deleted ON workflow_runs
-BEGIN UPDATE workflow_runs SET debug_epoch = debug_epoch + 1 WHERE id = NEW.id; END;
+-- Monotonic writer versions distinguish replacement attempts and change-then-restore races.
+CREATE TABLE workflow_debug_node_versions (
+    run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    node_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    PRIMARY KEY(run_id,node_id)
+);
 CREATE TRIGGER workflow_debug_node_insert AFTER INSERT ON workflow_node_runs
-BEGIN UPDATE workflow_runs SET debug_epoch = debug_epoch + 1 WHERE id = NEW.run_id; END;
+BEGIN
+    INSERT INTO workflow_debug_node_versions VALUES(NEW.run_id,NEW.node_id,1)
+        ON CONFLICT(run_id,node_id) DO UPDATE SET version=version+1;
+END;
 CREATE TRIGGER workflow_debug_node_change AFTER UPDATE ON workflow_node_runs
-BEGIN UPDATE workflow_runs SET debug_epoch = debug_epoch + 1 WHERE id = NEW.run_id; END;
-CREATE TRIGGER workflow_debug_scope_insert AFTER INSERT ON workflow_execution_scopes
-BEGIN UPDATE workflow_runs SET debug_epoch = debug_epoch + 1 WHERE id = NEW.run_id; END;
-CREATE TRIGGER workflow_debug_scope_change AFTER UPDATE ON workflow_execution_scopes
-BEGIN UPDATE workflow_runs SET debug_epoch = debug_epoch + 1 WHERE id = NEW.run_id; END;
-CREATE TRIGGER workflow_debug_root_change AFTER UPDATE ON workflow_run_root_scopes
-BEGIN UPDATE workflow_runs SET debug_epoch = debug_epoch + 1 WHERE id = NEW.run_id; END;
-
+BEGIN
+    INSERT INTO workflow_debug_node_versions VALUES(NEW.run_id,NEW.node_id,1)
+        ON CONFLICT(run_id,node_id) DO UPDATE SET version=version+1;
+END;
 CREATE TABLE workflow_debug_attempts (
     node_run_id TEXT PRIMARY KEY REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
     snapshot_id TEXT NOT NULL REFERENCES workflow_snapshots(id),
@@ -21,14 +24,27 @@ CREATE TABLE workflow_debug_attempts (
     dispatch_input TEXT
 );
 
+CREATE TRIGGER workflow_debug_dispatch_recorded AFTER UPDATE OF dispatch_input ON workflow_debug_attempts
+BEGIN
+    UPDATE workflow_debug_node_versions SET version=version+1 WHERE (run_id,node_id)=(
+        SELECT run_id,node_id FROM workflow_node_runs WHERE id=NEW.node_run_id);
+END;
+CREATE TRIGGER workflow_debug_node_removed AFTER DELETE ON workflow_node_runs
+BEGIN
+    UPDATE workflow_debug_node_versions SET version=version+1 WHERE run_id=OLD.run_id AND node_id=OLD.node_id;
+END;
+
 CREATE TABLE workflow_debug_previews (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
-    target TEXT NOT NULL REFERENCES workflow_node_runs(id),
+    snapshot_id TEXT NOT NULL REFERENCES workflow_snapshots(id),
+    root_scope TEXT NOT NULL REFERENCES workflow_execution_scopes(id),
+    node_type TEXT NOT NULL,
+    read_nodes TEXT NOT NULL,
+    read_facts TEXT NOT NULL,
     base_revision INTEGER NOT NULL,
     patch TEXT NOT NULL,
     plan TEXT NOT NULL,
-    epoch INTEGER NOT NULL,
     UNIQUE(run_id, id)
 );
 

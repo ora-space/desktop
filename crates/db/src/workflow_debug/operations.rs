@@ -13,7 +13,7 @@ pub enum DebugClaim {
 }
 
 impl WorkflowDebugStore {
-    /// Checks an existing idempotency key before the epoch, including after a lost response.
+    /// Checks an existing idempotency key before the read set, including after a lost response.
     pub fn claim(&self, request: &CommitWorkflowDebugRequest) -> Result<DebugClaim, DatabaseError> {
         if request.request_id.trim().is_empty() {
             return Err(DebugRejection::RequestConflict.into());
@@ -33,15 +33,15 @@ impl WorkflowDebugStore {
                 }
                 return Ok(DebugClaim::Existing(entry));
             }
-            let (revision, epoch) = run_version(&tx, &request.run_id)?;
-            let fresh: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM workflow_debug_previews p
-                WHERE p.id=?1 AND p.run_id=?2 AND p.base_revision=?3 AND p.epoch=?4
-                AND NOT EXISTS(SELECT 1 FROM workflow_debug_operations o WHERE o.preview_id=p.id))",
-                params![request.preview_id, request.run_id, revision, epoch],
-                |r| r.get(0),
-            )?;
-            if !fresh {
+            let revision = run_version(&tx, &request.run_id)?;
+            let receipt = tx.query_row(
+                "SELECT p.read_nodes,p.read_facts FROM workflow_debug_previews p
+                 WHERE p.id=?1 AND p.run_id=?2 AND p.base_revision=?3
+                   AND NOT EXISTS(SELECT 1 FROM workflow_debug_operations o WHERE o.preview_id=p.id)",
+                params![request.preview_id,request.run_id,revision],
+                |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))
+            ).optional()?.ok_or(DebugRejection::StalePreview)?;
+            if read_set::facts(&tx,&request.run_id,&receipt.0)? != serde_json::from_str::<Value>(&receipt.1)? {
                 return Err(DebugRejection::StalePreview.into());
             }
             if blocked(&tx, &request.run_id)? {
@@ -56,12 +56,6 @@ impl WorkflowDebugStore {
                 &format!("{OPERATION} WHERE o.id=?1"),
                 [tx.last_insert_rowid()],
                 history_row,
-            )?;
-            // Even a failed stop may have external consequences. Never reuse sibling previews
-            // from before the fence once it has been released.
-            tx.execute(
-                "UPDATE workflow_runs SET debug_epoch=debug_epoch+1 WHERE id=?1",
-                [&request.run_id],
             )?;
             tx.commit()?;
             Ok(DebugClaim::Claimed(entry))
@@ -81,15 +75,14 @@ impl WorkflowDebugStore {
             let entry = tx.query_row(&format!("{OPERATION} WHERE o.run_id=?1 AND o.request_id=?2"),
                 params![run,request],history_row).optional()?.ok_or(DebugRejection::InvalidTarget)?;
             if entry.operation.phase != WorkflowDebugPhase::Stopping {return Ok(entry.operation);}
-            let (revision, _) = run_version(&tx,run)?;
+            let revision = run_version(&tx,run)?;
             if revision != entry.operation.base_revision {return Err(DebugRejection::StalePreview.into());}
-            let target_current: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM workflow_node_runs n
-                JOIN workflow_debug_attempts a ON a.node_run_id=n.id JOIN workflow_runs r ON r.id=n.run_id
-                JOIN workflow_execution_scopes s ON s.id=n.scope_id LEFT JOIN workflow_node_runs owner ON owner.id=s.parent_loop_node_run_id
-                JOIN workflow_run_root_scopes root ON root.run_id=r.id
-                WHERE r.id=?1 AND n.id=?2 AND n.is_deleted=0 AND r.snapshot_id=a.snapshot_id
-                AND root.scope_id=COALESCE(owner.scope_id,s.id))",
-                params![run,entry.preview.target.node_run_id],|r|r.get(0))?;
+            let target_current: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM workflow_debug_previews p
+                JOIN workflow_runs r ON r.id=p.run_id JOIN workflow_run_root_scopes root ON root.run_id=r.id
+                WHERE p.id=?1 AND p.snapshot_id=r.snapshot_id AND p.root_scope=root.scope_id
+                AND CASE WHEN ?2 IS NOT NULL THEN EXISTS(SELECT 1 FROM workflow_node_runs n WHERE n.id=?2 AND n.run_id=r.id AND n.is_deleted=0)
+                ELSE NOT EXISTS(SELECT 1 FROM workflow_node_runs n WHERE n.run_id=r.id AND n.scope_id=?3 AND n.node_id=?4 AND n.iteration IS ?5 AND n.is_deleted=0) END)",
+                params![entry.preview.preview_id,entry.preview.target.node_run_id,entry.preview.target.scope_id,entry.preview.target.node_id,entry.preview.target.index],|r|r.get(0))?;
             if !target_current { return Err(DebugRejection::StalePreview.into()); }
             let revision = revision.checked_add(1).ok_or(DebugRejection::StalePreview)?;
             // The strategy may create new attempts inside settle. They must see the new revision.

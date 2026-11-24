@@ -324,3 +324,5 @@ work as interrupted. Interrupted outer rows fail as `interrupted_by_restart` and
 interrupted rows inside a running container fail while the container and run survive, and the round
 settles as failed. Valid interactive waits are preserved, and tools with unknown side effects are never
 replayed automatically.
+
+A debug preview selects an existing attempt by `nodeRunId` or an undispatched position by `pendingTarget: { rootScopeId, scopeId, nodeId }`. A pending foreach member also requires `containerNodeRunId` and its zero-based `index`. Preview checks the scheduler’s ready projection. If normal dispatch wins before confirmation, refresh the view and select the recorded attempt. An independent sibling can advance while the target and its dependencies stay valid. Container previews include the member configurations that will apply at the new entrance.

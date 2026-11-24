@@ -3,6 +3,9 @@ use crate::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
+#[path = "pending_tests.rs"]
+mod pending_tests;
+
 /// Seeds a real migrated database with two runs of the same published definition.
 fn fixture() -> (tempfile::TempDir, DatabaseLocation, WorkflowDebugStore) {
     let temp = tempfile::tempdir().unwrap();
@@ -33,7 +36,7 @@ fn fixture() -> (tempfile::TempDir, DatabaseLocation, WorkflowDebugStore) {
 fn impact(input: &DebugPlanningInput) -> Result<WorkflowDebugImpact, DebugRejection> {
     Ok(WorkflowDebugImpact {
         keep: vec![],
-        invalidate: vec![input.target.node_run_id.clone()],
+        invalidate: input.target.node_run_id.clone().into_iter().collect(),
         stop: vec![],
         schedule: vec![input.target.node_id.clone()],
         predicted_branch: None,
@@ -180,7 +183,7 @@ fn bind_graph(db: &Connection, graph: Value) -> Result<(), DatabaseError> {
 fn item_three_uses_its_own_input_and_revision_suffix() {
     let (_temp, _path, store) = fixture();
     let graph = json!({"nodes":[
-        {"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
+        {"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"},{"name":"reordered","valueType":"array[string]"}]}},
         {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["agent","output"]}}},
         {"id":"agent","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"{{#iter.item#}}"}}},
         {"id":"out","data":{"kind":"output","outputs":[{"name":"result","variableSelector":["iter","output"]}]}}],
@@ -189,6 +192,18 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
         .pool
         .with_connection(|db| {
             bind_graph(db, graph)?;
+            let mut payload = ora_application::WorkflowRunPayload::default();
+            for (key, value) in [
+                ("start.items", json!(["a", "b", "c", "d", "e"])),
+                ("start.reordered", json!(["e", "c"])),
+            ] {
+                payload.variable_pool.declare(key, "array[string]", "start");
+                payload.variable_pool.set(key, "start", value).unwrap();
+            }
+            db.execute(
+                "UPDATE workflow_runs SET payload=?1 WHERE id='other'",
+                [serde_json::to_string(&payload)?],
+            )?;
             insert_attempt(db, "it1", "iter", "iteration", /*index*/ None)?;
             Ok(())
         })
@@ -228,11 +243,13 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
     }
     store
         .pool
-        .with_connection(|db| insert_attempt(db, "out-before", "out", "output", /*index*/ None))
+        .with_connection(|db| {
+            insert_attempt(db, "out-before", "out", "output", /*index*/ None)
+        })
         .unwrap();
     let mut request = edit("new-{{#iter.item#}}", 0);
     request.run_id = "other".into();
-    request.node_run_id = "f2".into();
+    request.selection = WorkflowDebugSelection::NodeRunId("f2".into());
     let p = store
         .preview(&request, |input| {
             assert_eq!(
@@ -310,6 +327,13 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
             old.configuration.unwrap()["agentConfig"]["prompt"].clone()
         ),
         (true, Some(0), json!("{{#iter.item#}}"))
+    );
+    let container_request=serde_json::from_value(json!({"runId":"other","nodeRunId":"it1","baseRevision":1,
+        "patch":[{"op":"replace","path":"/iterationConfig/iteratorSelector","value":["start","reordered"]}]})).unwrap();
+    let container = store.preview(&container_request, impact).unwrap();
+    assert_eq!(
+        container.member_configurations.unwrap()["agent"]["agentConfig"]["prompt"],
+        "{{#iter.item#}}"
     );
     assert_eq!(attempt("f1").revision, Some(0));
     assert_eq!(

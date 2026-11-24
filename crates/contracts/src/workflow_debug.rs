@@ -18,9 +18,33 @@ pub enum WorkflowDebugPatch {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreviewWorkflowDebugRequest {
     pub run_id: String,
-    pub node_run_id: String,
+    #[serde(flatten)]
+    pub selection: WorkflowDebugSelection,
     pub base_revision: u32,
     pub patch: Vec<WorkflowDebugPatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "workflow-run.ts")]
+#[serde(rename_all = "camelCase")]
+pub enum WorkflowDebugSelection {
+    NodeRunId(String),
+    PendingTarget(PendingWorkflowDebugTarget),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "workflow-run.ts")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PendingWorkflowDebugTarget {
+    pub root_scope_id: String,
+    pub scope_id: String,
+    pub node_id: String,
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_node_run_id: Option<String>,
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -36,7 +60,12 @@ pub struct CommitWorkflowDebugRequest {
 #[ts(export_to = "workflow-run.ts")]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowDebugTarget {
-    pub node_run_id: String,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_run_id: Option<String>,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_scope_id: Option<String>,
     pub scope_id: String,
     pub node_id: String,
     pub container_node_run_id: Option<String>,
@@ -62,6 +91,10 @@ pub struct WorkflowDebugPreview {
     pub preview_id: String,
     pub base_revision: u32,
     pub target: WorkflowDebugTarget,
+    /// Effective member configurations after rebuilding a selected container from its entrance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Record<string, unknown>")]
+    pub member_configurations: Option<std::collections::BTreeMap<String, serde_json::Value>>,
     #[serde(flatten)]
     pub impact: WorkflowDebugImpact,
     pub workspace: WorkflowDebugWorkspace,
@@ -147,6 +180,8 @@ pub struct GetWorkflowDebugAttemptResponse {
 /// Emits the shared workflow-run wire types from their Rust declarations.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkflowDebugPatch::export(config)?;
+    WorkflowDebugSelection::export(config)?;
+    PendingWorkflowDebugTarget::export(config)?;
     PreviewWorkflowDebugRequest::export(config)?;
     CommitWorkflowDebugRequest::export(config)?;
     WorkflowDebugTarget::export(config)?;

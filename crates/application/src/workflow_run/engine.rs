@@ -37,6 +37,7 @@ mod variable_template;
 mod variable_value;
 
 pub use agent_config::AgentMcp;
+pub use branch_projection::{BranchProjection, ProjectedNodeState};
 pub use engine::WorkflowRunEngine;
 pub use execution_document::{AuthoringParticipation, UnrecognizedAuthoringNode};
 pub use failure::{NodeFailure, NodeFailureDetail, NodeFailureKind};

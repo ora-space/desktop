@@ -205,12 +205,19 @@ export type ListWorkflowRunsResponse = { runs: Array<WorkflowRunSummary> };
  */
 export type NodeCompletionRequester = "human" | "agent";
 
+export type PendingWorkflowDebugTarget = {
+  rootScopeId: string;
+  scopeId: string;
+  nodeId: string;
+  containerNodeRunId?: string;
+  index?: number;
+};
+
 export type PreviewWorkflowDebugRequest = {
   runId: string;
-  nodeRunId: string;
   baseRevision: number;
   patch: Array<WorkflowDebugPatch>;
-};
+} & ({ "nodeRunId": string } | { "pendingTarget": PendingWorkflowDebugTarget });
 
 /**
  * Identifies the failed or cancelled run whose resume preview should be loaded.
@@ -394,6 +401,10 @@ export type WorkflowDebugPreview = {
   previewId: string;
   baseRevision: number;
   target: WorkflowDebugTarget;
+  /**
+   * Effective member configurations after rebuilding a selected container from its entrance.
+   */
+  memberConfigurations?: Record<string, unknown>;
   workspace: WorkflowDebugWorkspace;
   externalActionsMayRepeat: boolean;
   keep: Array<string>;
@@ -403,8 +414,13 @@ export type WorkflowDebugPreview = {
   predictedBranch: string | null;
 };
 
+export type WorkflowDebugSelection = { "nodeRunId": string } | {
+  "pendingTarget": PendingWorkflowDebugTarget;
+};
+
 export type WorkflowDebugTarget = {
-  nodeRunId: string;
+  nodeRunId?: string;
+  rootScopeId?: string;
   scopeId: string;
   nodeId: string;
   containerNodeRunId: string | null;

@@ -22,6 +22,7 @@ fn bound_graph(
 pub(super) fn read_target(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowDebugTarget> {
     Ok(WorkflowDebugTarget {
         node_run_id: row.get("id")?,
+        root_scope_id: None,
         scope_id: row.get("scope_id")?,
         node_id: row.get("node_id")?,
         container_node_run_id: row.get("container_attempt")?,

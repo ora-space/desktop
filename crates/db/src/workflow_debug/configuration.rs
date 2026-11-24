@@ -6,7 +6,9 @@ pub(super) fn prepare(
     db: &Connection,
     request: &PreviewWorkflowDebugRequest,
 ) -> Result<DebugPlanningInput, DatabaseError> {
-    let (target, snapshot, entry, dispatch, kind, graph_json) = db.query_row(
+    let (target, snapshot, entry, dispatch, kind, graph_json) = match &request.selection {
+        WorkflowDebugSelection::PendingTarget(position) => super::pending::resolve(db, &request.run_id, position)?,
+        WorkflowDebugSelection::NodeRunId(id) => db.query_row(
         "SELECT n.node_id,n.scope_id,n.iteration,s.round_index,e.container_attempt,
                 e.snapshot_id,e.entry_state,CASE WHEN n.node_type='condition' AND json_valid(n.payload)
                     THEN json_extract(n.payload,'$.debugCondition') ELSE e.dispatch_input END AS observed_input,n.node_type,snap.graph,n.id
@@ -19,7 +21,7 @@ pub(super) fn prepare(
          WHERE n.run_id=?1 AND n.id=?2 AND n.is_deleted=0
            AND (n.scope_id=root.scope_id OR (parent.scope_id=root.scope_id AND parent.is_deleted=0))
            AND (e.snapshot_id IS NULL OR e.snapshot_id=r.snapshot_id)",
-        params![request.run_id, request.node_run_id],
+        params![request.run_id, id],
         |row| Ok((
             super::attempts::read_target(row)?,
             row.get::<_, Option<String>>("snapshot_id")?,
@@ -28,7 +30,8 @@ pub(super) fn prepare(
             row.get::<_, String>("node_type")?,
             row.get::<_, String>("graph")?,
         )),
-    ).optional()?.ok_or(DebugRejection::InvalidTarget)?;
+    ).optional()?.ok_or(DebugRejection::InvalidTarget)?,
+    };
     if !matches!(kind.as_str(), "agent" | "condition" | "loop" | "iteration") {
         return Err(DebugRejection::InvalidTarget.into());
     }
@@ -67,6 +70,8 @@ pub(super) fn prepare(
         request.base_revision,
         &mut graph,
     )?;
+    let previous =
+        WorkflowGraph::parse(&graph.to_string()).map_err(|e| invalid("", &e.to_string()))?;
     let data = graph["nodes"]
         .as_array_mut()
         .and_then(|nodes| {
@@ -143,7 +148,24 @@ pub(super) fn prepare(
         |r| r.get(0),
     )?;
     let current_payload = raw.as_deref().map(serde_json::from_str).transpose()?;
+    let member_configurations = graph["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|member| {
+            let id = member["id"].as_str()?;
+            let owner = candidate
+                .region_owner(id)
+                .or_else(|| candidate.loop_owner(id));
+            (owner == Some(target.node_id.as_str()))
+                .then(|| (id.to_owned(), member["data"].clone()))
+        })
+        .collect();
+    let mut read_nodes = super::read_set::nodes(&previous, &target.node_id);
+    read_nodes.extend(super::read_set::nodes(&candidate, &target.node_id));
     Ok(DebugPlanningInput {
+        read_nodes,
+        member_configurations,
         target,
         candidate,
         pool,
@@ -165,18 +187,19 @@ pub(super) fn replay(
     revision: u32,
     data: &mut Value,
 ) -> Result<(), DatabaseError> {
+    for node in data["nodes"].as_array_mut().into_iter().flatten() {
+        if let Some(node_data) = node.get_mut("data") {
+            super::normalize::data(node_data);
+        }
+    }
     let mut stmt = db.prepare(
-        "SELECT p.patch, n.node_type,n.node_id FROM workflow_debug_operations op
+        "SELECT p.patch,p.node_type,json_extract(p.plan,'$.target.nodeId') FROM workflow_debug_operations op
         JOIN workflow_debug_previews p ON p.id=op.preview_id
-        JOIN workflow_node_runs n ON n.id=p.target
-        JOIN workflow_debug_attempts e ON e.node_run_id=n.id
-        JOIN workflow_execution_scopes s ON s.id=n.scope_id
-        LEFT JOIN workflow_node_runs parent ON parent.id=s.parent_loop_node_run_id
-        WHERE op.run_id=?1 AND op.revision<=?2 AND e.snapshot_id=?3
-          AND (e.container_attempt IS NULL OR e.container_attempt=?4)
-          AND (n.iteration IS NULL OR n.iteration<=?5)
-          AND (s.round_index IS NULL OR s.round_index<=?6)
-          AND COALESCE(parent.scope_id,n.scope_id)=(SELECT COALESCE(owner.scope_id,scope.id)
+        WHERE op.run_id=?1 AND op.revision<=?2 AND p.snapshot_id=?3
+          AND (json_extract(p.plan,'$.target.containerNodeRunId') IS NULL OR json_extract(p.plan,'$.target.containerNodeRunId')=?4)
+          AND COALESCE(json_extract(p.plan,'$.target.index'),-1)<=COALESCE(?5,-1)
+          AND COALESCE(json_extract(p.plan,'$.target.round'),-1)<=COALESCE(?6,-1)
+          AND p.root_scope=(SELECT COALESCE(owner.scope_id,scope.id)
               FROM workflow_execution_scopes scope LEFT JOIN workflow_node_runs owner
               ON owner.id=scope.parent_loop_node_run_id WHERE scope.id=?7)
         ORDER BY op.revision",
