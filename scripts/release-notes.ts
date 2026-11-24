@@ -28,8 +28,9 @@ export interface ReleaseNote {
 }
 
 const stableVersionPattern = /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){2}$/;
-// Bidirectional embeddings, overrides, and isolates can make text read differently from its content.
-const forbiddenTextPattern = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/u;
+// Texts stay on one line, and bidirectional controls cannot make them read differently from their
+// content.
+const forbiddenTextPattern = /[\p{Cc}\p{Bidi_Control}\u2028\u2029]/u;
 
 /** Returns the stable version whose notes a build ships, so prereleases and build suffixes share them. */
 export function stableVersionOf(version: string): string {
@@ -116,7 +117,7 @@ export function parseReleaseNote(fileName: string, text: string): ReleaseNote {
         }
         if (forbiddenTextPattern.test(value)) {
           return reject(
-            `${label}.${locale} contains a control or bidirectional formatting character`,
+            `${label}.${locale} contains a control, line separator, or bidirectional formatting character`,
           );
         }
       }
@@ -162,12 +163,20 @@ export async function readReleaseNotes(root: string): Promise<ReleaseNote[]> {
         `${RELEASE_NOTES_DIRECTORY}/${file.name}: must be a regular file`,
       );
     }
-    notes.push(
-      parseReleaseNote(
-        file.name,
-        await readFile(path.join(directory, file.name), "utf8"),
-      ),
-    );
+    const bytes = await readFile(path.join(directory, file.name));
+    let text: string;
+    try {
+      // Lenient decoding would turn damaged bytes into replacement characters that still parse.
+      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+        bytes,
+      );
+    } catch (cause) {
+      throw new Error(
+        `${RELEASE_NOTES_DIRECTORY}/${file.name}: must be valid UTF-8`,
+        { cause },
+      );
+    }
+    notes.push(parseReleaseNote(file.name, text));
   }
   return notes;
 }

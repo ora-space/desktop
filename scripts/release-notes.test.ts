@@ -94,13 +94,21 @@ const invalidNotes: [string, unknown, RegExp][] = [
     },
     /exceeds/,
   ],
-  ...["\n", "\u0000", "\u007f", "\u202E", "\u2066"].map(
-    (character): [string, unknown, RegExp] => [
-      `the character U+${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
-      { ...valid, entries: [{ ...entry, "en-US": `a${character}b` }] },
-      /control or bidirectional/,
-    ],
-  ),
+  ...[
+    "\n",
+    "\u0000",
+    "\u007f",
+    "\u061C",
+    "\u200F",
+    "\u2028",
+    "\u2029",
+    "\u202E",
+    "\u2066",
+  ].map((character): [string, unknown, RegExp] => [
+    `the character U+${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    { ...valid, entries: [{ ...entry, "en-US": `a${character}b` }] },
+    /control, line separator, or bidirectional/,
+  ]),
 ];
 for (const [label, content, expected] of invalidNotes) {
   Deno.test(`notes with ${label} are rejected`, () => {
@@ -114,6 +122,28 @@ for (const [label, content, expected] of invalidNotes) {
     );
   });
 }
+
+Deno.test("notes that are not UTF-8 are rejected", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, {});
+    const [before, after] = JSON.stringify({
+      ...releaseNote("0.7.0"),
+      entries: [{ ...entry, "en-US": "split here" }],
+    }).split("split");
+    await Deno.writeFile(
+      path.join(root, "release-notes", "0.7.0.json"),
+      new Uint8Array([
+        ...new TextEncoder().encode(before),
+        0xff,
+        ...new TextEncoder().encode(after),
+      ]),
+    );
+    await assert.rejects(
+      readReleaseNotes(root),
+      /release-notes\/0\.7\.0\.json: must be valid UTF-8/,
+    );
+  }),
+);
 
 Deno.test("a build without a notes directory has no notes", () =>
   withTempDirectory(async (root) => {

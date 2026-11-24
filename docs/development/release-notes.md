@@ -21,14 +21,14 @@ commit.
 }
 ```
 
-| Field                                | Rule                                                                                                            |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `schema`                             | `1`                                                                                                             |
-| `version`                            | A stable version without `v`, equal to the file name                                                            |
-| `date`                               | The planned release date, `YYYY-MM-DD`; it may differ from the actual one                                       |
-| `entries`                            | At least one entry                                                                                              |
-| `entries[].category`                 | `important`, `feature`, `improvement`, or `fix`                                                                 |
-| `entries[].zh-CN`, `entries[].en-US` | Required plain text on one line, at most 500 characters, without control or bidirectional formatting characters |
+| Field                                | Rule                                                                                                                             |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`                             | `1`                                                                                                                              |
+| `version`                            | A stable version without `v`, equal to the file name                                                                             |
+| `date`                               | The planned release date, `YYYY-MM-DD`; it may differ from the actual one                                                        |
+| `entries`                            | At least one entry                                                                                                               |
+| `entries[].category`                 | `important`, `feature`, `improvement`, or `fix`                                                                                  |
+| `entries[].zh-CN`, `entries[].en-US` | Required plain text on one line, at most 500 characters, without control, line separator, or bidirectional formatting characters |
 
 No other fields are accepted; notes do not list source pull requests or commit ranges.
 
