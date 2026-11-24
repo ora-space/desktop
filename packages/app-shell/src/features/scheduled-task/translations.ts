@@ -22,6 +22,8 @@ export const scheduledTaskTranslations = {
       "此项目目录未使用 Git，无法为它创建定时任务。定时任务在独立工作树中运行，只能用于 Git 仓库项目。",
     "scheduledTask.projectNotGit.switch":
       "此项目目录未使用 Git，不能把任务改到这个项目。定时任务在独立工作树中运行，只能用于 Git 仓库项目。",
+    "scheduledTask.projectNotGit.unfrozen":
+      "此任务由旧版本创建，没有记录基础分支，保存时需要从项目读取；此项目目录未使用 Git，所以无法保存。",
     "scheduledTask.projectNotGit.enable":
       "此项目目录未使用 Git，任务无法启用。关闭“创建后立即启用”后仍可保存其他修改。",
     "scheduledTask.projectNotGit.disabled":
@@ -148,6 +150,8 @@ export const scheduledTaskTranslations = {
       "This project folder isn't a Git repository, so a scheduled task can't be created for it. Scheduled tasks run in an isolated worktree and need a Git repository project.",
     "scheduledTask.projectNotGit.switch":
       "This project folder isn't a Git repository, so the task can't be moved to it. Scheduled tasks run in an isolated worktree and need a Git repository project.",
+    "scheduledTask.projectNotGit.unfrozen":
+      "This task was saved by an older version without a base branch, so saving it reads the branch from the project. This project folder isn't a Git repository, so it can't be saved.",
     "scheduledTask.projectNotGit.enable":
       "This project folder isn't a Git repository, so the task can't be enabled. Turn off \"Enable immediately\" to save your other changes.",
     "scheduledTask.projectNotGit.disabled":

@@ -101,6 +101,10 @@ pub struct ScheduledTask {
     pub prompt: String,
     pub revision: u64,
     pub approval: Option<ScheduledTaskApproval>,
+    /// Branch frozen as the base of every run's worktree. `None` only for definitions an older
+    /// build stored before freezing; the backend then resolves it from the project on the next
+    /// save, which needs a Git repository, so the editor must know.
+    pub worktree_base_branch: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

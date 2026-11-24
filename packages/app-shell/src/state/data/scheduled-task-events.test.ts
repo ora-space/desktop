@@ -45,6 +45,7 @@ const TASK: ScheduledTask = {
   prompt: "Review the current changes",
   revision: 1n,
   approval: { policy: "full_auto_in_worktree", consentedAt: 10n },
+  worktreeBaseBranch: "main",
   createdAt: 10n,
   updatedAt: 10n,
 };

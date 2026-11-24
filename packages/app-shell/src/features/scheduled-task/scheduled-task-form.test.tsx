@@ -24,6 +24,8 @@ const SWITCH_REFUSAL =
   "此项目目录未使用 Git，不能把任务改到这个项目。定时任务在独立工作树中运行，只能用于 Git 仓库项目。";
 const ENABLE_REFUSAL =
   "此项目目录未使用 Git，任务无法启用。关闭“创建后立即启用”后仍可保存其他修改。";
+const UNFROZEN_REFUSAL =
+  "此任务由旧版本创建，没有记录基础分支，保存时需要从项目读取；此项目目录未使用 Git，所以无法保存。";
 const DISABLED_NOTE =
   "此项目目录未使用 Git，任务只能保持停用；其他修改仍可保存。";
 
@@ -40,6 +42,7 @@ const DISABLED_TASK: ScheduledTask = {
   prompt: "Review the current changes",
   revision: 1n,
   approval: { policy: "full_auto_in_worktree", consentedAt: 10n },
+  worktreeBaseBranch: "main",
   createdAt: 10n,
   updatedAt: 10n,
 };
@@ -141,6 +144,19 @@ describe("ScheduledTaskForm project Git requirement", () => {
     await user.click(screen.getByRole("switch", { name: "创建后立即启用" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(ENABLE_REFUSAL);
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  });
+
+  it("blocks saving an older task with no frozen base branch on a plain folder", async () => {
+    const { queryClient } = renderForm(
+      { project1: "notRepository" },
+      { ...DISABLED_TASK, worktreeBaseBranch: null },
+    );
+    await waitForWorkspaceList(queryClient);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      UNFROZEN_REFUSAL,
+    );
     expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
   });
 
