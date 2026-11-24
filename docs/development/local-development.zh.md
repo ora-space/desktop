@@ -32,7 +32,8 @@ task run:desktop        # 以开发模式运行 Desktop
 
 - 日志在 `.data/logs/ora.log`；`task logdy` 在本地的 Logdy UI 中跟踪它们。
 - Agent 来自插件，所以开始聊天之前，先从市场源安装 Agent 插件，或导入一个本地的 `.orax`。
-- `task package:desktop` 按 release 工作流的方式构建完整的本地安装包，并启用 release 版的 sidecar。
+- `task package:desktop` 按 release 工作流的方式构建完整的本地安装包，并启用 release 版的 sidecar。带 `--tag` 时还要求有
+  [更新日志](release-notes.zh.md)。
 
 ## Controller 和 Node
 
