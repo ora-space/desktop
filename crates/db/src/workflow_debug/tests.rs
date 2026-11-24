@@ -226,6 +226,10 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
             })
             .unwrap();
     }
+    store
+        .pool
+        .with_connection(|db| insert_attempt(db, "out-before", "out", "output", /*index*/ None))
+        .unwrap();
     let mut request = edit("new-{{#iter.item#}}", 0);
     request.run_id = "other".into();
     request.node_run_id = "f2".into();
@@ -286,6 +290,9 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
             })
             .unwrap()
     };
+    let output = attempt("out-before");
+    assert_eq!(output.revision, Some(0));
+    assert_eq!(output.configuration.unwrap()["kind"], "output");
     let old = attempt("f2");
     assert_eq!(
         old.retired_by_operation_id,

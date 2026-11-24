@@ -57,7 +57,6 @@ CREATE TABLE workflow_debug_retired_attempts (
 
 -- Record only new attempts. A retry waiting for its backoff has no dispatch evidence yet.
 CREATE TRIGGER workflow_debug_admit AFTER INSERT ON workflow_node_runs
-WHEN NEW.node_type IN ('agent','condition','loop','iteration')
 BEGIN
     INSERT INTO workflow_debug_attempts(node_run_id, snapshot_id, revision, container_attempt, entry_state)
     SELECT NEW.id, r.snapshot_id,
@@ -69,10 +68,11 @@ BEGIN
                    AND owner.node_type = 'iteration' AND owner.is_deleted = 0
                WHERE NEW.iteration IS NOT NULL AND json_extract(n.value,'$.id') = NEW.node_id
            )),
-           json_object('runInput', r.input, 'runPayload', r.payload, 'scopeState', s.state,
+           CASE WHEN NEW.node_type IN ('agent','condition','loop','iteration') THEN
+               json_object('runInput', r.input, 'runPayload', r.payload, 'scopeState', s.state,
                        'scopeId', NEW.scope_id, 'round', s.round_index, 'index', NEW.iteration,
                        'completedAttempts', (SELECT json_group_array(id) FROM workflow_node_runs
-                            WHERE run_id = r.id AND scope_id = NEW.scope_id AND is_deleted = 0 AND status = 2))
+                            WHERE run_id = r.id AND scope_id = NEW.scope_id AND is_deleted = 0 AND status = 2)) END
     FROM workflow_runs r JOIN workflow_snapshots snap ON snap.id = r.snapshot_id
     LEFT JOIN workflow_execution_scopes s ON s.id = NEW.scope_id
     WHERE r.id = NEW.run_id;

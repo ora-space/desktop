@@ -29,6 +29,9 @@ pub(super) fn prepare(
             row.get::<_, String>("graph")?,
         )),
     ).optional()?.ok_or(DebugRejection::InvalidTarget)?;
+    if !matches!(kind.as_str(), "agent" | "condition" | "loop" | "iteration") {
+        return Err(DebugRejection::InvalidTarget.into());
+    }
     let snapshot = snapshot.ok_or(DebugRejection::MissingInputEvidence)?;
     let entry: Value = serde_json::from_str(&entry.ok_or(DebugRejection::MissingInputEvidence)?)?;
     let dispatch: Option<Value> = dispatch.as_deref().map(serde_json::from_str).transpose()?;
