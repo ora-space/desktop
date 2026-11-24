@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { appVersion } from "../../lib/app-version";
-import { bundledReleaseNotes, type ReleaseNote } from "./bundled-release-notes";
+import type { ReleaseNote } from "../../lib/release-note";
+import { bundledReleaseNotes } from "./bundled-release-notes";
 import { ReleaseNoteList } from "./release-note-list";
 import { visibleReleaseNotes } from "./release-notes-model";
 

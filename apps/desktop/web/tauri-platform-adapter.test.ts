@@ -42,6 +42,17 @@ describe("TauriPlatformAdapter", () => {
     expect(invokeMock).toHaveBeenCalledExactlyOnceWith("is_new_installation");
   });
 
+  it("installs the confirmed version only", async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    const { updates } = createTauriPlatformAdapter();
+
+    await updates?.install("0.8.0");
+    expect(invokeMock).toHaveBeenCalledExactlyOnceWith(
+      "install_desktop_update",
+      { version: "0.8.0" },
+    );
+  });
+
   it("maps surface commands to the desktop command names and request shapes", async () => {
     const record = {
       instance: 7,

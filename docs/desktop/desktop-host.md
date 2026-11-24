@@ -132,6 +132,8 @@ again. Development builds keep the commands for tests but register no network wo
 - Linux releases ship an AppImage, so a `deb`/`rpm` installation or a bare executable reports
   `ManualUpdate` with a reason before any download, and the shell points the user to the release
   instead of offering an install.
+- `Ready` and `ManualUpdate` carry the manifest's release notes, see
+  [Release notes](../development/release-notes.md#before-an-update).
 - The updater public key is in `apps/desktop/src-tauri/tauri.conf.json`; release builds need the
   matching private key in the GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY`.
 

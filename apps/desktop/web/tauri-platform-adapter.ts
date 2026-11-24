@@ -111,7 +111,7 @@ function createTauriLocationActions(): LocationActionsCapability {
 function createTauriUpdates(): DesktopUpdateCapability {
   return {
     getStatus: () => invoke<DesktopUpdateStatus>("get_desktop_update_status"),
-    install: () => invoke("install_desktop_update"),
+    install: (version) => invoke("install_desktop_update", { version }),
     check: () => invoke("check_desktop_update"),
     onStatus: (listener) =>
       listen<DesktopUpdateStatus>(DESKTOP_UPDATE_EVENT, (event) => {

@@ -21,14 +21,14 @@ commit.
 }
 ```
 
-| Field                                | Rule                                                                                                                             |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`                             | `1`                                                                                                                              |
-| `version`                            | A stable version without `v`, equal to the file name                                                                             |
-| `date`                               | The planned release date, `YYYY-MM-DD`; it may differ from the actual one                                                        |
-| `entries`                            | At least one entry                                                                                                               |
-| `entries[].category`                 | `important`, `feature`, `improvement`, or `fix`                                                                                  |
-| `entries[].zh-CN`, `entries[].en-US` | Required plain text on one line, at most 500 characters, without control, line separator, or bidirectional formatting characters |
+| Field                                | Rule                                                                                                                                             |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `schema`                             | `1`                                                                                                                                              |
+| `version`                            | A stable version without `v`, equal to the file name                                                                                             |
+| `date`                               | The planned release date, `YYYY-MM-DD`; it may differ from the actual one                                                                        |
+| `entries`                            | 1 to 50 entries                                                                                                                                  |
+| `entries[].category`                 | `important`, `feature`, `improvement`, or `fix`                                                                                                  |
+| `entries[].zh-CN`, `entries[].en-US` | Required plain text on one line, at most 500 characters, without control, line separator, bidirectional formatting, or lone surrogate characters |
 
 No other fields are accepted; notes do not list source pull requests or commit ranges.
 
@@ -63,3 +63,21 @@ version newer than the running stable version (`0.7.0-rc.1` shows up to `0.7.0`)
 Without a record, `is_new_installation` separates a fresh installation from an upgrade: it is true when
 this process opened a database that had no applied migration. An upgrade without a record lists every
 applicable version.
+
+### Before an update
+
+`latest.json` carries the notes of the latest ten versions up to the released one in
+`ora_release_notes: { schema, versions }`, beside the standard `notes` text, which must stay a string for the
+updater plugin. Only known fields are written. The release job fails when the released version has no
+notes or any file is invalid.
+
+The manifest is not signed and every installed client reads it, so Desktop treats the notes as an
+untrusted contract, apart from the update check. Unknown fields are ignored; an unknown schema, a broken
+content rule, more than ten versions or more than 50 entries hides all notes and logs the reason. The
+check, download and installation do not change. Within one schema, the limits written here may never
+exceed those of a released client.
+
+Settings → Release notes shows the offered release above the history, with the notes above the running
+stable version up to the offered one, and the install action, which still asks for one confirmation because
+installing restarts the app. Manifest notes never enter the history and are not stored. An installation that must be updated
+manually sees the notes without that action.

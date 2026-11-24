@@ -5,7 +5,7 @@ import { AppI18nProvider } from "../../i18n/i18n";
 import { appI18n } from "../../i18n/i18n-instance";
 import { PlatformProvider } from "../../platform";
 import { createStubPlatform } from "../../test/stub-platform";
-import type { ReleaseNote } from "./bundled-release-notes";
+import type { ReleaseNote } from "../../lib/release-note";
 import { ReleaseNotesCard } from "./release-notes-card";
 import { ReleaseNotesHistory } from "./release-notes-history";
 import { useReleaseNotesStore } from "./release-notes-store";

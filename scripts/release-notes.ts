@@ -17,6 +17,8 @@ export const RELEASE_NOTE_CATEGORIES = [
 export const RELEASE_NOTE_LOCALES = ["zh-CN", "en-US"] as const;
 /** Bounds each localized text, in Unicode code points, so one entry stays readable in a card. */
 export const MAX_RELEASE_NOTE_TEXT_LENGTH = 500;
+/** Bounds one version, because clients would hide the notes of a longer one. */
+export const MAX_RELEASE_NOTE_ENTRIES = 50;
 
 export type ReleaseNoteEntry = {
   category: (typeof RELEASE_NOTE_CATEGORIES)[number];
@@ -32,7 +34,8 @@ export interface ReleaseNote {
 const stableVersionPattern = /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){2}$/;
 // Texts stay on one line, and bidirectional controls cannot make them read differently from their
 // content.
-const forbiddenTextPattern = /[\p{Cc}\p{Bidi_Control}\u2028\u2029]/u;
+// Lone surrogates are valid JSON here but not for clients, which would refuse the whole update manifest.
+const forbiddenTextPattern = /[\p{Cc}\p{Cs}\p{Bidi_Control}\u2028\u2029]/u;
 
 /** Returns the stable version whose notes a build ships, so prereleases and build suffixes share them. */
 export function stableVersionOf(version: string): string {
@@ -88,6 +91,9 @@ export function parseReleaseNote(fileName: string, text: string): ReleaseNote {
   if (!Array.isArray(entries) || entries.length === 0) {
     return reject("entries must be a non-empty array");
   }
+  if (entries.length > MAX_RELEASE_NOTE_ENTRIES) {
+    return reject(`entries exceeds ${MAX_RELEASE_NOTE_ENTRIES} items`);
+  }
   return {
     schema,
     version,
@@ -119,7 +125,7 @@ export function parseReleaseNote(fileName: string, text: string): ReleaseNote {
         }
         if (forbiddenTextPattern.test(value)) {
           return reject(
-            `${label}.${locale} contains a control, line separator, or bidirectional formatting character`,
+            `${label}.${locale} contains a control, line separator, bidirectional formatting, or lone surrogate character`,
           );
         }
       }
@@ -183,6 +189,68 @@ export async function readReleaseNotes(root: string): Promise<ReleaseNote[]> {
   return notes;
 }
 
+/** Clients hide every note beyond these limits, so they may never exceed a released client's. */
+export const MAX_MANIFEST_VERSIONS = 10;
+export const MANIFEST_NOTES_SCHEMA = 1;
+
+/** The notes an update manifest carries, with their own schema because older clients read them. */
+export interface ManifestNotes {
+  schema: typeof MANIFEST_NOTES_SCHEMA;
+  versions: Omit<ReleaseNote, "schema">[];
+}
+
+/**
+ * Selects the latest notes not above the released stable version. Throws when that version has none or
+ * any file is invalid: packaging accepted the same commit, so only a defect can get here, and a
+ * manifest must not be published silently without its notes.
+ */
+export async function selectManifestNotes(
+  root: string,
+  version: string,
+): Promise<ManifestNotes> {
+  const released = stableVersionOf(version);
+  const notes = (await readReleaseNotes(root)).filter(
+    (note) => compareStableVersions(note.version, released) <= 0,
+  );
+  requireNotesOf(notes, version);
+  return {
+    schema: MANIFEST_NOTES_SCHEMA,
+    // Only fields that clients know travel, so a later file field cannot leak into the manifest.
+    versions: notes
+      .sort((left, right) => compareStableVersions(right.version, left.version))
+      .slice(0, MAX_MANIFEST_VERSIONS)
+      .map(({ version, date, entries }) => ({
+        version,
+        date,
+        entries: entries.map((entry) => ({
+          category: entry.category,
+          "zh-CN": entry["zh-CN"],
+          "en-US": entry["en-US"],
+        })),
+      })),
+  };
+}
+
+/** Throws unless the notes include the stable version that a release or package ships. */
+function requireNotesOf(notes: ReleaseNote[], version: string): void {
+  const stableVersion = stableVersionOf(version);
+  if (!notes.some((note) => note.version === stableVersion)) {
+    throw new Error(
+      `Packaging ${version} requires ${RELEASE_NOTES_DIRECTORY}/${stableVersion}.json`,
+    );
+  }
+}
+
+/** Orders stable versions by their numbers, since text order would put 0.10.0 before 0.9.0. */
+function compareStableVersions(left: string, right: string): number {
+  const rightParts = right.split(".").map(Number);
+  for (const [index, part] of left.split(".").map(Number).entries()) {
+    const difference = part - (rightParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
 /**
  * Returns the notes that a frontend build injects. Untagged builds skip the packaging checks, so
  * unreadable notes hide all of them instead of failing the build.
@@ -204,13 +272,7 @@ export async function requireReleaseNotes(
   root: string,
   version: string,
 ): Promise<void> {
-  const stableVersion = stableVersionOf(version);
-  const notes = await readReleaseNotes(root);
-  if (!notes.some((note) => note.version === stableVersion)) {
-    throw new Error(
-      `Packaging ${version} requires ${RELEASE_NOTES_DIRECTORY}/${stableVersion}.json`,
-    );
-  }
+  requireNotesOf(await readReleaseNotes(root), version);
   await requireCommittedReleaseNotes(root);
 }
 

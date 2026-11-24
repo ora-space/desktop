@@ -1,6 +1,10 @@
 {
   "owner": "Release notes presentation",
   "modules": {
+    "./release-note-list": {
+      "exports": ["ReleaseNoteList"],
+      "purpose": "The offered release shows manifest notes with the same plain-text presentation."
+    },
     "./release-notes-card": {
       "exports": ["ReleaseNotesCard"],
       "purpose": "The shell mounts one card that announces the notes of a newly installed version."
