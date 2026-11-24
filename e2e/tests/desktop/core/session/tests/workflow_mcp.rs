@@ -244,42 +244,33 @@ fn graph_with_skipped_review() -> [Value; 2] {
     router["id"] = json!("router");
     router["data"]["agentConfig"]["prompt"] = json!("FAKE_REPLY: skip");
     router["data"]["agentConfig"]["mcps"] = json!([]);
-    let common_nodes = json!([
-        base["nodes"][0],
+    let mut nodes = vec![
+        base["nodes"][0].clone(),
         router,
-        {"id": "gate", "data": {"kind": "condition", "cases": [
+        json!({"id": "gate", "data": {"kind": "condition", "cases": [
             {"id": "review", "logic": "and", "conditions": [
                 {"variableSelector": ["router", "output"], "operator": "equals", "value": "review"}
             ]}
-        ]}},
-        {"id": "fallback", "data": {"kind": "output", "outputs": [
+        ]}}),
+        json!({"id": "fallback", "data": {"kind": "output", "outputs": [
             {"name": "result", "variableSelector": ["router", "output"]}
-        ]}}
-    ]);
-    let common_edges = json!([
-        {"source": "start", "target": "router"},
-        {"source": "router", "target": "gate"},
-        {"source": "gate", "sourceHandle": "else", "target": "fallback"}
-    ]);
+        ]}}),
+    ];
+    let mut edges = vec![
+        json!({"source": "start", "target": "router"}),
+        json!({"source": "router", "target": "gate"}),
+        json!({"source": "gate", "sourceHandle": "else", "target": "fallback"}),
+    ];
     let mut reviewer = base["nodes"][1].clone();
     reviewer["id"] = json!("reviewer");
-    let mut branch = json!({"nodes": common_nodes, "edges": common_edges});
-    branch["nodes"]
-        .as_array_mut()
-        .unwrap()
-        .push(reviewer.clone());
-    branch["edges"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"source": "gate", "sourceHandle": "review", "target": "reviewer"}));
+    let mut branch_nodes = nodes.clone();
+    branch_nodes.push(reviewer.clone());
+    let mut branch_edges = edges.clone();
+    branch_edges.push(json!({"source": "gate", "sourceHandle": "review", "target": "reviewer"}));
+    let branch = json!({"nodes": branch_nodes, "edges": branch_edges});
 
     reviewer["data"]["containerId"] = json!("loop");
-    let mut loop_graph = json!({
-        "schemaVersion": 2,
-        "nodes": common_nodes,
-        "edges": common_edges
-    });
-    loop_graph["nodes"].as_array_mut().unwrap().extend([
+    nodes.extend([
         json!({"id": "loop", "data": {"kind": "loop", "loopConfig": {
             "maxIterations": 1, "variables": [], "until": {"logic": "and", "conditions": []},
             "outputs": [{"name": "result", "variableSelector": ["reviewer", "output"]}]
@@ -287,11 +278,14 @@ fn graph_with_skipped_review() -> [Value; 2] {
         json!({"id": "entry", "data": {"kind": "start", "containerId": "loop"}}),
         reviewer,
     ]);
-    loop_graph["edges"].as_array_mut().unwrap().extend([
+    edges.extend([
         json!({"source": "gate", "sourceHandle": "review", "target": "loop"}),
         json!({"source": "entry", "target": "reviewer"}),
     ]);
-    [branch, loop_graph]
+    [
+        branch,
+        json!({"schemaVersion": 2, "nodes": nodes, "edges": edges}),
+    ]
 }
 
 /// A chain whose first agent binds the MCP plugin and whose second step fails on its first
