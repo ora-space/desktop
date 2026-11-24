@@ -29,10 +29,11 @@ export function useDesktopUpdate(): {
         unsubscribe = stop;
         if (!active) stop();
       })
-      // Read after subscribing, so no change is missed in between; any event is newer than a snapshot
-      // that answers after it.
+      // Read after subscribing, so no change is missed in between.
       .finally(() => {
         if (!active) return;
+        // Events from before this request may be older than the snapshot; later ones are newer.
+        observed = false;
         return updates.getStatus().then((next) => {
           if (active && !observed) setStatus(next);
         });

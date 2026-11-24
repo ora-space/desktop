@@ -16,7 +16,9 @@ const READY: DesktopUpdateStatus = {
 };
 
 /** Follows an updater whose snapshot the test answers by hand. */
-function renderFollower() {
+function renderFollower({
+  duringSubscribe,
+}: { duringSubscribe?: DesktopUpdateStatus } = {}) {
   let resolve: (status: DesktopUpdateStatus) => void = () => undefined;
   const answer = new Promise<DesktopUpdateStatus>((settle) => {
     resolve = settle;
@@ -31,6 +33,7 @@ function renderFollower() {
     check: async () => undefined,
     onStatus: async (next) => {
       listener = next;
+      if (duringSubscribe !== undefined) next(duringSubscribe);
       return stop;
     },
   };
@@ -66,6 +69,25 @@ describe("useDesktopUpdate", () => {
     });
 
     expect(result.current.status).toEqual(READY);
+  });
+
+  it("lets the snapshot replace an event from before it was requested", async () => {
+    const { result, snapshot } = renderFollower({
+      duringSubscribe: {
+        kind: "downloading",
+        version: "0.3.0",
+        downloaded: 1,
+        total: 2,
+      },
+    });
+
+    await waitFor(() => expect(result.current.status.kind).toBe("downloading"));
+    await act(async () => {
+      snapshot.resolve(READY);
+      await snapshot.promise;
+    });
+
+    await waitFor(() => expect(result.current.status).toEqual(READY));
   });
 
   it("starts from the snapshot when no event arrives", async () => {
