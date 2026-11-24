@@ -19,52 +19,6 @@ use agent_client_protocol_schema::v1::{
 use ora_logging::{ora_debug, ora_warn};
 use stale_load::{describes_provider, stale_load_retry_allowed};
 
-impl<H: AgentRuntimeHost> RuntimeActor<H> {
-    /// Ends a prompt the provider answered with a result: its stop reason describes the turn, its
-    /// usage is reported, and a completed turn may start title acquisition. Shared by the prompt
-    /// loop and by a turn cancel that found the answer already queued.
-    pub(crate) async fn finish_completed_prompt(
-        &mut self,
-        channel: SessionChannel,
-        response: PromptResponse,
-        operation_id: u64,
-        end: crate::turn_cancel::PromptEnd<'_>,
-    ) {
-        let crate::turn_cancel::PromptEnd {
-            events,
-            end_report,
-            followers,
-            tool_timings,
-        } = end;
-        self.record_cleanup(operation_id, Ok(()));
-        // The provider answered: its stop reason now describes the turn, so the end cause is not
-        // an interruption.
-        end_report.record(PromptEndCause::Settled);
-        ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
-        let token_usage = usage::normalize_token_usage(
-            &self.session.agent_ref,
-            response.usage.as_ref(),
-            response.meta.as_ref(),
-            &usage::NoUsageExtensions,
-        );
-        self.end_timed_turn(response.stop_reason, tool_timings);
-        followers.finish(response.stop_reason);
-        self.load_restoration = LoadRestoration::NotRestored;
-        self.maybe_start_title_acquisition(response.stop_reason);
-        if events
-            .try_send(Ok(PromptSessionEvent::Completed {
-                stop_reason: response.stop_reason,
-                token_usage,
-            }))
-            .is_ok()
-        {
-            self.channel = Some(channel);
-        } else {
-            self.isolate_channel(channel).await;
-        }
-    }
-}
-
 /// Whether one provider update is work the user would see or a tool already ran.
 ///
 /// `Plan` is liveness activity, not output: it carries no assistant text and no tool side effect,
@@ -701,30 +655,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     events,
                     accepted,
                 }) => {
-                    // Capture the durable cutoff, the in-progress pending records, and the live
-                    // follower registration atomically (no await), then let the follower's relay
-                    // task stream the merged prefix before live events. The actor returns to its
-                    // select loop immediately, so a slow view can never backpressure the prompt.
-                    self.record_cleanup(operation_id, Ok(()));
-                    let cutoff = self.recorder.durable_bytes();
-                    let pending = self.recorder.pending_records();
-                    if accepted.send(Ok(())).is_ok() {
-                        // The follower's queue is new and empty, so this precedes its replay.
-                        if let Some(update) = channel.reported_commands() {
-                            let _ = events.try_send(Ok(LoadSessionEvent::session_update(update)));
-                        }
-                        followers.insert(
-                            operation_id,
-                            FollowerOutput {
-                                events,
-                                completion: cleanup,
-                            },
-                            self.sessions_root.clone(),
-                            self.session.id.to_string(),
-                            cutoff,
-                            pending,
-                        );
-                    }
+                    self.follow_prompt(
+                        operation_id,
+                        &channel,
+                        &mut followers,
+                        FollowerOutput {
+                            events,
+                            completion: cleanup,
+                        },
+                        accepted,
+                    );
                 }
                 ActiveInput::Command(RuntimeCommand::ClaimDirectProviderCall { response }) => {
                     let _ = response.send(self.provider_session_id().to_string());
@@ -782,6 +722,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     }
 }
 
+#[path = "actor_prompt/completion.rs"]
+mod completion;
+#[path = "actor_prompt/follow.rs"]
+mod follow;
 #[path = "actor_prompt/stale_load.rs"]
 mod stale_load;
 #[cfg(test)]
