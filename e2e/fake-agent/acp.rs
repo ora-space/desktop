@@ -1,12 +1,8 @@
 //! Minimal but complete ACP agent behavior behind the plugin's `agent/acp` channel.
 
-use std::collections::BTreeMap;
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-
+use super::journal::{
+    record_acp_call, record_completion_call, record_mcp_call, record_prompt, record_setup_call,
+};
 use agent_client_protocol_schema::v1::*;
 use ora_plugin_protocol::{
     AgentModel, INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE, JSON_RPC_VERSION, METHOD_NOT_FOUND_CODE,
@@ -14,15 +10,14 @@ use ora_plugin_protocol::{
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const MODEL_CONFIG_ID: &str = "model";
-
-/// Journal of the session-lifecycle ACP calls this agent served, in order.
-///
-/// Written into the package root the host runs the plugin from, which is the only channel a test
-/// has into what the agent was actually asked. Ordering is the assertion that matters: it is what
-/// separates a session restored in place from one Ora had to rebuild.
-const ACP_JOURNAL: &str = "acp_calls.txt";
 
 /// Marker file that makes `session/load` fail, standing in for an agent that lost the session.
 ///
@@ -43,10 +38,8 @@ const FAIL_DELAY_MARKER: &str = "[fail-delay-ms:";
 /// sessions and a restarted plugin process alike.
 const PROMPT_FAILURE_JOURNAL: &str = "prompt_failures.txt";
 
-/// Journal of every rendered prompt served, appended as one JSON line per call so scenario
-/// tests can assert prompt-level content (injected skill blocks, workspace boundaries) while
-/// node outputs stay production-realistic final answers.
-const PROMPT_JOURNAL: &str = "acp_prompts.jsonl";
+/// Marker file making `initialize` advertise `sessionCapabilities.additionalDirectories`.
+const ADDITIONAL_DIRECTORIES_MARKER: &str = "advertise_additional_directories";
 
 /// Prompt marker that keeps the fake agent alive and silent after it receives the prompt.
 const SILENT_MARKER: &str = "[fake-agent-silent]";
@@ -61,8 +54,6 @@ const SKIP_COMPLETION_MARKER: &str = "[fake-agent-skip-completion]";
 const COMPLETION_SERVER_NAME: &str = "ora-workflow-completion";
 /// Prompt block the host appends to a workflow attempt with its single-use attempt token.
 const COMPLETION_BLOCK: &str = "<workflow_completion>";
-/// Journal of host completion tool calls the fake agent made, one JSON line per attempt.
-const COMPLETION_JOURNAL: &str = "mcp_completion_calls.jsonl";
 
 /// Prefix a workflow task's deterministic answer carries so tests can tell the fake's replies
 /// from user-authored template text.
@@ -219,14 +210,23 @@ impl FakeAcpAgent {
     fn handle_request(&mut self, method: &str, params: Value) -> Result<AcpCallResult, AcpError> {
         if method == AGENT_METHOD_NAMES.initialize {
             let request: InitializeRequest = parse_params(method, params)?;
+            let mut session_capabilities = SessionCapabilities::new()
+                .list(SessionListCapabilities::new())
+                .delete(SessionDeleteCapabilities::new())
+                .close(SessionCloseCapabilities::new());
+            if Path::new(ADDITIONAL_DIRECTORIES_MARKER).exists()
+                && let Ok(with_cap) = serde_json::from_value::<SessionCapabilities>(json!({
+                    "list": {},
+                    "delete": {},
+                    "close": {},
+                    "additionalDirectories": {},
+                }))
+            {
+                session_capabilities = with_cap;
+            }
             let capabilities = AgentCapabilities::new()
                 .load_session(true)
-                .session_capabilities(
-                    SessionCapabilities::new()
-                        .list(SessionListCapabilities::new())
-                        .delete(SessionDeleteCapabilities::new())
-                        .close(SessionCloseCapabilities::new()),
-                );
+                .session_capabilities(session_capabilities);
             return success(
                 InitializeResponse::new(request.protocol_version)
                     .agent_capabilities(capabilities)
@@ -238,6 +238,12 @@ impl FakeAcpAgent {
             self.next_session_id += 1;
             let session_id = format!("fake-session-{}", self.next_session_id);
             let model = default_model_id().to_string();
+            record_setup_call(
+                method,
+                &session_id,
+                &request.additional_directories,
+                request.meta.as_ref(),
+            );
             self.sessions.insert(
                 session_id.clone(),
                 FakeSession {
@@ -259,6 +265,12 @@ impl FakeAcpAgent {
         if method == AGENT_METHOD_NAMES.session_load {
             let request: LoadSessionRequest = parse_params(method, params)?;
             let session_id = request.session_id.to_string();
+            record_setup_call(
+                method,
+                &session_id,
+                &request.additional_directories,
+                request.meta.as_ref(),
+            );
             record_acp_call(method, &session_id);
             record_mcp_call(method, &session_id, &request.mcp_servers);
             if Path::new(LOAD_REFUSAL_MARKER).exists() {
@@ -517,17 +529,6 @@ fn config_options(current_model: &str) -> Vec<SessionConfigOption> {
     ]
 }
 
-/// Appends one served session call to the journal beside this package.
-fn record_acp_call(method: &str, session_id: &str) {
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(ACP_JOURNAL)
-    {
-        let _ = writeln!(file, "{method} {session_id}");
-    }
-}
-
 /// Reads `[fail-delay-ms:N]` so a test can attach a load follower during the first attempt.
 fn prompt_delay(prompt: &str) -> Option<u64> {
     let start = prompt.find(FAIL_DELAY_MARKER)?;
@@ -596,24 +597,6 @@ fn prompt_mode(prompt: &str) -> Option<PromptMode> {
     }
 }
 
-/// Records one served prompt so tests can assert prompt-level content that never belongs in a
-/// node's output (injected context blocks, required-skill invocations).
-fn record_prompt(session_id: &str, prompt: &str) {
-    let result = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(PROMPT_JOURNAL)
-        .and_then(|mut file| {
-            writeln!(
-                file,
-                "{}",
-                json!({"sessionId": session_id, "prompt": prompt})
-            )
-        });
-    if let Err(error) = result {
-        eprintln!("fake-agent could not record the prompt for session `{session_id}`: {error}");
-    }
-}
 /// Returns the one model marked as the discovery default.
 fn default_model_id() -> &'static str {
     "anthropic/claude-sonnet-4"
@@ -690,35 +673,6 @@ fn success<Response: Serialize>(response: Response) -> Result<AcpCallResult, Acp
         notifications: Vec::new(),
         result,
     })
-}
-
-/// Records only server identities so integration assertions never journal MCP credentials.
-fn record_mcp_call(method: &str, session_id: &str, servers: &[McpServer]) {
-    let names: Vec<_> = servers
-        .iter()
-        .map(|server| match server {
-            McpServer::Stdio(server) => server.name.clone(),
-            McpServer::Http(server) => server.name.clone(),
-            McpServer::Sse(server) => server.name.clone(),
-            _ => panic!("unsupported fixture MCP transport"),
-        })
-        .collect();
-    let result = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("mcp_calls.jsonl")
-        .and_then(|mut file| {
-            writeln!(
-                file,
-                "{}",
-                json!({"method": method, "sessionId": session_id, "servers": names})
-            )
-        });
-    if let Err(error) = result {
-        eprintln!(
-            "fake-agent could not record MCP call `{method}` for session `{session_id}`: {error}"
-        );
-    }
 }
 
 /// Finds the loopback endpoint of the host completion capability in one session's MCP list.
@@ -808,16 +762,4 @@ fn completion_call(endpoint: &str, token: &str) -> serde_json::Value {
         "accepted": accepted,
         "signalId": signal_id,
     })
-}
-
-/// Journals one completion tool call without the attempt token or the endpoint's server token.
-fn record_completion_call(outcome: serde_json::Value) {
-    let result = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(COMPLETION_JOURNAL)
-        .and_then(|mut file| writeln!(file, "{outcome}"));
-    if let Err(error) = result {
-        eprintln!("fake-agent could not record the completion tool call: {error}");
-    }
 }

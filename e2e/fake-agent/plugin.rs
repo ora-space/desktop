@@ -9,6 +9,7 @@ use ora_plugin_protocol::{
 use serde_json::{Value, json};
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::Path;
 use tokio::io::{stdin, stdout};
 
 use super::acp::{FakeAcpAgent, models};
@@ -20,6 +21,10 @@ use super::acp::{FakeAcpAgent, models};
 /// of what it was asked. Recording every call is what lets a test assert both that discovery
 /// happened and that connection startup did not perform it.
 pub(super) const DISCOVERY_JOURNAL: &str = "list_models_calls.txt";
+/// Marker file making `ora/register` declare legacy `effectResources` & `effect/*` methods.
+const LEGACY_EFFECT_MARKER: &str = "register_legacy_effect_resources";
+/// Journal written if the host ever invokes a retired `effect/*` method.
+const EFFECT_CALLS_JOURNAL: &str = "effect_calls.txt";
 
 /// Mutable process state shared by the outer plugin methods.
 #[derive(Default)]
@@ -38,20 +43,40 @@ struct PluginError {
 pub(super) async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = stdin();
     let mut output = stdout();
+    let legacy_effects = Path::new(LEGACY_EFFECT_MARKER).exists();
+    let mut methods = vec![
+        AGENT_START_METHOD.to_string(),
+        AGENT_STOP_METHOD.to_string(),
+        AGENT_LIST_MODELS_METHOD.to_string(),
+    ];
+    if legacy_effects {
+        methods.extend([
+            "effect/coordinate".to_string(),
+            "effect/reactivate".to_string(),
+            "effect/verify_ready".to_string(),
+        ]);
+    }
     let registration = PluginRegistrationParams {
-        methods: vec![
-            AGENT_START_METHOD.to_string(),
-            AGENT_STOP_METHOD.to_string(),
-            AGENT_LIST_MODELS_METHOD.to_string(),
-        ],
+        methods,
         emits: vec![AGENT_ACP_METHOD.to_string()],
     };
+    let mut params = serde_json::to_value(&registration)?;
+    if legacy_effects && let Some(object) = params.as_object_mut() {
+        object.insert(
+            "effectResources".to_string(),
+            json!([{
+                "workspaceRelativePath": ".claude/skills",
+                "materializationFormat": "ora/skill-directory.v1",
+                "coordination": "quiesce_before_mutation"
+            }]),
+        );
+    }
     write_message(
         &mut output,
         &json!({
             "jsonrpc": JSON_RPC_VERSION,
             "method": REGISTER_METHOD,
-            "params": registration,
+            "params": params,
         }),
     )
     .await?;
@@ -127,10 +152,15 @@ impl FakePlugin {
                 serde_json::to_value(AgentListModelsResult { models: models() })
                     .map_err(PluginError::internal)
             }
-            _ => Err(PluginError {
-                code: METHOD_NOT_FOUND_CODE,
-                message: format!("unknown plugin method {method}"),
-            }),
+            _ => {
+                if method.starts_with("effect/") {
+                    record_effect_call(method);
+                }
+                Err(PluginError {
+                    code: METHOD_NOT_FOUND_CODE,
+                    message: format!("unknown plugin method {method}"),
+                })
+            }
         }
     }
 }
@@ -161,5 +191,16 @@ fn record_discovery(cwd: &str) {
         .open(DISCOVERY_JOURNAL)
     {
         let _ = writeln!(file, "{cwd}");
+    }
+}
+
+/// Appends any unexpected retired `effect/*` call to a journal beside this package.
+fn record_effect_call(method: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(EFFECT_CALLS_JOURNAL)
+    {
+        let _ = writeln!(file, "{method}");
     }
 }
