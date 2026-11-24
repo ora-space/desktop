@@ -8,8 +8,6 @@ mod time;
 #[cfg(test)]
 mod durability_tests;
 #[cfg(test)]
-mod effect_repository_tests;
-#[cfg(test)]
 mod git_cleanup_tests;
 #[cfg(test)]
 mod repository_tests;
@@ -31,12 +29,11 @@ pub use migration::{
 pub use repository::{
     CascadeDeleteOutcome, PackInstallationMemberRecord, PackInstallationRecord,
     PackMemberOwnership, PluginMarketplaceSourceRecord, PluginSkillProjection, RepositoryPool,
-    SourceMutationOutcome, SqliteAgentDefinitionRepository, SqliteCascadeRepository,
-    SqliteEffectRepository, SqliteGitCleanupJobRepository, SqlitePackInstallationRepository,
-    SqlitePluginMarketplaceSourceRepository, SqlitePluginSourceNamespaceRepository,
-    SqliteProjectRepository, SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
-    SqliteSessionRepository, SqliteSkillRepository, SqliteTaskRepository,
-    SqliteTaskWorkspaceRepository, SqliteUserConfigRepository,
+    SqliteAgentDefinitionRepository, SqliteCascadeRepository, SqliteGitCleanupJobRepository,
+    SqlitePackInstallationRepository, SqlitePluginMarketplaceSourceRepository,
+    SqlitePluginSourceNamespaceRepository, SqliteProjectRepository, SqliteScheduledRunRepository,
+    SqliteScheduledTaskRepository, SqliteSessionRepository, SqliteSkillRepository,
+    SqliteTaskRepository, SqliteTaskWorkspaceRepository, SqliteUserConfigRepository,
     SqliteWorkflowDocumentSourceRepository, SqliteWorkflowRepository,
     SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
     SqliteWorktreeProvisioningLeaseRepository, SqliteWorktreeRepository,

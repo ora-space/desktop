@@ -21,7 +21,7 @@ pub(crate) use package_health::{
     persist_promoted_package,
 };
 pub use package_health::{has_usable_package, skill_package_is_usable};
-pub use ports::{LocalSkillSourceRevision, SkillIdGenerator, SkillRepository};
+pub use ports::{SkillIdGenerator, SkillRepository};
 pub use storage::{
     BACKUP_DIR_NAME, CreateHandle, DeleteHandle, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
     STAGING_DIR_NAME, SkillStorage, SkillStorageError, SwapHandle, TransactionJournal,

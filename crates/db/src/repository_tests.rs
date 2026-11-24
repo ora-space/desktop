@@ -36,12 +36,11 @@ impl TimestampSource for FixedTimestampSource {
     }
 }
 
-/// Verifies plugin Skills use the existing Effect source table as their origin and package locator.
+/// Verifies plugin Skills store `package_root` directly on `skills` and disappear when removed.
 #[test]
 fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
     let (temp_dir, pool) = bootstrapped_pool();
-    let repository =
-        SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let repository = SqliteSkillRepository::new(pool.clone());
     let plugin_id = PluginId::new("official", "review-pack").unwrap();
     let package_root = temp_dir.path().join("plugins/review-pack/review");
     std::fs::create_dir_all(&package_root).unwrap();
@@ -54,11 +53,6 @@ fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
                 name: "review".to_string(),
                 description: "Reviews changes".to_string(),
                 package_root: package_root.clone(),
-                skill_md_digest: ora_effect::Digest::sha256(b"manifest"),
-                package_fingerprint: ora_effect::Fingerprint::from(
-                    ora_utils::directory::fingerprint_directory(&package_root, &[])
-                        .unwrap_or_else(|error| panic!("fingerprint package: {error}")),
-                ),
             }],
             10,
         )
@@ -76,74 +70,15 @@ fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
         }
     );
 
-    let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
-    project_repository
-        .create_project(
-            Project::new(
-                ProjectId::new("project-with-plugin-skill"),
-                "Plugin Skill Project",
-                AuditFields::new(15, 15, false),
-            ),
-            WorkspaceLocation::local_filesystem(workspace_path.to_string_lossy()),
-        )
-        .unwrap();
-    let (workspace_id, generation, namespace, identifier) = pool
-        .with_connection(|connection| {
-            connection
-                .query_row(
-                    "SELECT scopes.workspace_id, scopes.generation,
-                            sources.namespace, sources.identifier
-                     FROM effect_desired_effects desired
-                     JOIN effect_scopes scopes ON scopes.id = desired.scope_id
-                     JOIN effect_revisions revisions ON revisions.id = desired.revision_id
-                     JOIN effect_sources sources ON sources.id = revisions.source_id",
-                    [],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                        ))
-                    },
-                )
-                .map_err(Into::into)
-        })
-        .unwrap();
-    assert_eq!(
-        (generation, namespace, identifier),
-        (1, "official/review-pack".to_string(), "review".to_string())
-    );
-
     repository.remove_plugin_skills(&plugin_id, 20).unwrap();
     assert!(repository.list_skills().unwrap().is_empty());
-    let (generation, desired_count) = pool
-        .with_connection(|connection| {
-            connection
-                .query_row(
-                    "SELECT scopes.generation, COUNT(desired.id)
-                     FROM effect_scopes scopes
-                     LEFT JOIN effect_desired_effects desired
-                       ON desired.scope_id = scopes.id
-                     WHERE scopes.workspace_id = ?1
-                     GROUP BY scopes.workspace_id",
-                    [workspace_id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-                )
-                .map_err(Into::into)
-        })
-        .unwrap();
-    assert_eq!((generation, desired_count), (2, 0));
 }
 /// Verifies project creation materializes the shared main workspace used by ordinary sessions.
 #[test]
 fn project_creation_creates_main_workspace() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool);
     let project = Project::new(
         ProjectId::new("project-1"),
@@ -185,8 +120,7 @@ fn project_creation_creates_main_workspace() {
 fn project_creation_admits_local_main_workspace_without_probing_the_directory() {
     let (temp_dir, pool) = bootstrapped_pool();
     let missing_path = temp_dir.path().join("missing-repository");
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool);
     project_repository
         .create_project(
@@ -218,8 +152,7 @@ fn project_creation_admits_local_main_workspace_without_probing_the_directory() 
 fn session_round_trip_persists_workspace_and_mcp_selection() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let session_repository = SqliteSessionRepository::new(pool);
     project_repository
@@ -267,8 +200,7 @@ fn session_round_trip_persists_workspace_and_mcp_selection() {
 fn standalone_session_list_excludes_workflow_node_sessions() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let session_repository = SqliteSessionRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
@@ -570,8 +502,7 @@ fn bind_node_run_session_rejects_cancelled_node_run() {
 fn workflow_run_round_trip_uses_workspace_id() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool);
@@ -659,8 +590,7 @@ fn workflow_run_round_trip_uses_workspace_id() {
 fn restart_resets_variable_values_and_keeps_the_catalog() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
@@ -1963,8 +1893,7 @@ fn fail_orphaned_node_runs_writes_interrupted_by_restart_error_detail() {
 fn deleting_workflow_run_does_not_delete_workspace_or_session() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let session_repository = SqliteSessionRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
@@ -2289,8 +2218,7 @@ fn seed_run(
     finished_at: Option<i64>,
 ) -> WorkflowRunId {
     let workspace_path = existing_workspace_path(temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
@@ -2377,8 +2305,7 @@ fn create_run_workspace_session(pool: &RepositoryPool, run_id: &WorkflowRunId) -
 /// Seeds a created-but-never-started Pending run for deletion-policy fixtures.
 fn seed_pending_run(temp_dir: &TempDir, pool: &RepositoryPool) -> WorkflowRunId {
     let workspace_path = existing_workspace_path(temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());

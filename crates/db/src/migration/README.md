@@ -71,8 +71,10 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   nothing ever promotes a local checkout. Remote locations and deleted rows are untouched. Its
   downgrade is intentionally empty because older builds admit an active local Workspace the same
   way.
-- Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a
-  Workspace seeds its new Scope from published Sources in the same transaction.
+- Migration `0025` adds nullable `package_root` onto `skills`, backfills plugin Skill roots from
+  retired Effect source revisions, and drops all remaining `effect_*` triggers and tables in
+  child-before-parent order. Its downgrade is intentionally empty because the ledger and its
+  filesystem ownership markers cannot be meaningfully restored once cleaned up.
 
 ## Application bootstrap
 

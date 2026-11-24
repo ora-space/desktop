@@ -1,39 +1,24 @@
-use super::effect::EffectWriteContext;
-use crate::{LocalTimestampSource, TimestampSource};
 use ora_application::{ProjectRepository, RepositoryError};
-use ora_domain::{AuditFields, Project, ProjectId, WorkspaceId, WorkspaceLocation};
-use ora_effect::EffectScopeId;
+use ora_domain::{AuditFields, Project, ProjectId, WorkspaceLocation};
 use rusqlite::{Row, Transaction, TransactionBehavior, params};
-use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
 
 /// Persists project snapshots through SQLite while hiding storage details from handlers.
 #[derive(Clone, Debug)]
-pub struct SqliteProjectRepository<Clock = LocalTimestampSource> {
+pub struct SqliteProjectRepository {
     pool: RepositoryPool,
-    clock: Clock,
 }
 
 impl SqliteProjectRepository {
     /// Builds a project repository from the shared repository pool.
     pub fn new(pool: RepositoryPool) -> Self {
-        Self {
-            pool,
-            clock: LocalTimestampSource,
-        }
+        Self { pool }
     }
 }
 
-impl<Clock: TimestampSource> SqliteProjectRepository<Clock> {
-    /// Injects the audit clock used after acquiring Effect write transactions.
-    pub fn with_clock(pool: RepositoryPool, clock: Clock) -> Self {
-        Self { pool, clock }
-    }
-}
-
-impl<Clock: TimestampSource> ProjectRepository for SqliteProjectRepository<Clock> {
+impl ProjectRepository for SqliteProjectRepository {
     /// Inserts a new project row and returns the stored project snapshot.
     fn create_project(
         &self,
@@ -43,7 +28,6 @@ impl<Clock: TimestampSource> ProjectRepository for SqliteProjectRepository<Clock
         self.pool
             .with_connection_mut(|connection| {
                 let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let write = EffectWriteContext::new(&transaction, &self.clock);
                 transaction.execute(
                     "INSERT INTO projects (id, name, repository_kind, repository_url, default_branch, created_at, updated_at, is_deleted)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -100,20 +84,6 @@ impl<Clock: TimestampSource> ProjectRepository for SqliteProjectRepository<Clock
                         project.audit_fields.created_at,
                         project.audit_fields.updated_at,
                     ],
-                )?;
-                let scope = EffectScopeId::Workspace(WorkspaceId::new(workspace_id.clone()));
-                write.create_scope(&transaction, &scope)?;
-                let mut changed_scopes = BTreeSet::new();
-                super::effect::seed_scope_sources(
-                    &transaction,
-                    &EffectScopeId::Workspace(WorkspaceId::new(workspace_id)),
-                    write.timestamp().millis(),
-                    &mut changed_scopes,
-                )?;
-                super::effect::advance_changed_scopes(
-                    &transaction,
-                    &changed_scopes,
-                    write.timestamp().millis(),
                 )?;
                 transaction.commit()?;
 

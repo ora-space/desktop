@@ -1,5 +1,4 @@
 mod agent_definition;
-mod effect;
 mod error;
 mod project;
 mod repository_error;
@@ -19,7 +18,6 @@ pub use agent_definition::{
     CreateAgentDefinitionHandler, DeleteAgentDefinitionHandler, GetAgentDefinitionHandler,
     ListAgentDefinitionsHandler, UpdateAgentDefinitionHandler, UuidAgentDefinitionIdGenerator,
 };
-pub use effect::{EffectApplicationError, EffectService};
 pub use error::ApplicationError;
 pub use project::{
     BranchLister, BranchListingError, BranchReference, Clock, CreateProjectHandler,
@@ -49,9 +47,9 @@ pub use session::{
 pub use skill::{
     BACKUP_DIR_NAME, CreateHandle, CreateSkillHandler, DeleteHandle, DeleteSkillHandler,
     FilesystemSkillStorage, GetSkillHandler, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
-    ListSkillsHandler, LocalSkillSourceRevision, STAGING_DIR_NAME, SkillIdGenerator,
-    SkillRepository, SkillStorage, SkillStorageError, SwapHandle, TransactionJournal,
-    UpdateSkillHandler, UuidSkillIdGenerator, has_usable_package, skill_package_is_usable,
+    ListSkillsHandler, STAGING_DIR_NAME, SkillIdGenerator, SkillRepository, SkillStorage,
+    SkillStorageError, SwapHandle, TransactionJournal, UpdateSkillHandler, UuidSkillIdGenerator,
+    has_usable_package, skill_package_is_usable,
 };
 pub use skill_import::{
     DuplicateSkillName, NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportError,

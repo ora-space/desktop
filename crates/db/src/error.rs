@@ -62,8 +62,6 @@ pub enum DatabaseError {
     CorruptScheduledMissReason(String),
     #[error("workflow document import state is corrupt: {0}")]
     CorruptWorkflowDocumentSourceState(String),
-    #[error("Effect state is corrupt: {0}")]
-    CorruptEffectState(String),
     #[error("workflow run execution context is incomplete")]
     IncompleteWorkflowRunContext,
     #[error("workflow scope has invalid round index: {0}")]
