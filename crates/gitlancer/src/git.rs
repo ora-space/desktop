@@ -9,6 +9,7 @@ pub mod push;
 pub mod repository;
 pub mod status;
 pub mod sync;
+pub mod work_tree_probe;
 pub mod worktree;
 
 use crate::exec::runner::GitRunner;

@@ -124,6 +124,10 @@ pub enum ParseError {
     #[error("invalid checkpoint diff output")]
     InvalidCheckpoint,
 
+    /// Returned when `rev-parse --is-inside-work-tree` prints neither `true` nor `false`.
+    #[error("invalid work tree probe output")]
+    InvalidWorkTreeProbe,
+
     /// Returned when a parser slot exists but the typed parser is not implemented yet.
     #[error("parser for feature {feature} is not implemented yet")]
     Unimplemented { feature: &'static str },

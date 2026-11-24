@@ -258,7 +258,8 @@ mod tests {
     use ora_application::ProjectRepository;
     use ora_contracts::{
         CreateProjectRequest, EmptyErrorParams, ListProjectsRequest, ListWorkspacesRequest,
-        PublicError, Workspace, WorkspaceDirectory, WorkspaceKind, WorkspaceLifecycle,
+        PublicError, Workspace, WorkspaceDirectory, WorkspaceGit, WorkspaceKind,
+        WorkspaceLifecycle,
     };
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, MigrationCatalog, SqliteProjectRepository,
@@ -547,7 +548,9 @@ mod tests {
             std::fs::create_dir(&folder).expect("create the project folder");
             assert_eq!(
                 only_workspace(&backend),
-                expected(WorkspaceDirectory::Present)
+                expected(WorkspaceDirectory::Present {
+                    git: WorkspaceGit::NotRepository,
+                })
             );
             assert_eq!(
                 backend

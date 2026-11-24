@@ -104,7 +104,7 @@ function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
     projectId: task.projectId,
     kind: "isolated" as const,
     lifecycle: "active" as const,
-    directory: { kind: "present" as const },
+    directory: { kind: "present" as const, git: "repository" as const },
   }));
   seed(state);
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
