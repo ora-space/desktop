@@ -353,6 +353,7 @@ pub enum PublicError {
     WorkspaceDiffBaselineUnavailable(EmptyErrorParams),
     WorkspaceDiffCommitMessageBlank(EmptyErrorParams),
     WorkspaceDiffTooLarge(EmptyErrorParams),
+    WorkspaceNotGitRepository(EmptyErrorParams),
     SessionNotFound(EmptyErrorParams),
     AgentNotInstalled(EmptyErrorParams),
     AgentRuntimeUnavailable(EmptyErrorParams),
@@ -501,6 +502,7 @@ impl PublicError {
             Self::WorkspaceDiffBaselineUnavailable(_) => "workspace_diff_baseline_unavailable",
             Self::WorkspaceDiffCommitMessageBlank(_) => "workspace_diff_commit_message_blank",
             Self::WorkspaceDiffTooLarge(_) => "workspace_diff_too_large",
+            Self::WorkspaceNotGitRepository(_) => "workspace_not_git_repository",
             Self::SessionNotFound(_) => "session_not_found",
             Self::AgentNotInstalled(_) => "agent_not_installed",
             Self::AgentRuntimeUnavailable(_) => "agent_runtime_unavailable",
@@ -740,6 +742,7 @@ mod tests {
             PublicError::WorkspaceDiffBaselineUnavailable(empty),
             PublicError::WorkspaceDiffCommitMessageBlank(empty),
             PublicError::WorkspaceDiffTooLarge(empty),
+            PublicError::WorkspaceNotGitRepository(empty),
             PublicError::SessionNotFound(empty),
             PublicError::AgentNotInstalled(empty),
             PublicError::AgentRuntimeUnavailable(empty),
@@ -918,6 +921,7 @@ mod tests {
                 | PublicError::WorkspaceDiffBaselineUnavailable(_)
                 | PublicError::WorkspaceDiffCommitMessageBlank(_)
                 | PublicError::WorkspaceDiffTooLarge(_)
+                | PublicError::WorkspaceNotGitRepository(_)
                 | PublicError::SessionNotFound(_)
                 | PublicError::AgentNotInstalled(_)
                 | PublicError::AgentRuntimeUnavailable(_)
@@ -1014,7 +1018,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 128);
+        assert_eq!(samples.len(), 129);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

@@ -5,10 +5,17 @@ export const diffTranslations = {
       "该工作区的 Diff 基线不可用。",
     "errors.workspace_diff_commit_message_blank": "提交信息不能为空。",
     "errors.workspace_diff_too_large": "变更过大，无法显示完整 Diff。",
+    "errors.workspace_not_git_repository":
+      "此目录未使用 Git，无法执行 Git 操作。",
     "diff.changes": "变更",
     "diff.taskChanges": "任务变更",
     "diff.loading": "正在加载变更…",
     "diff.loadError": "无法加载变更",
+    "diff.notGitTitle": "此目录未使用 Git",
+    "diff.notGitDetail":
+      "文件会直接保存在原目录，没有可供审阅的变更记录。在此目录运行 git init 后可重新检查。",
+    "diff.notGitRecheck": "重新检查",
+    "diff.notGitRechecking": "正在检查…",
     "diff.retry": "重试",
     "diff.scope": "变更范围",
     "diff.scopeBranch": "分支",
@@ -76,10 +83,17 @@ export const diffTranslations = {
       "The commit message must not be blank.",
     "errors.workspace_diff_too_large":
       "The changes are too large to display as a complete diff.",
+    "errors.workspace_not_git_repository":
+      "This folder isn't a Git repository, so Git operations are unavailable.",
     "diff.changes": "Changes",
     "diff.taskChanges": "Task changes",
     "diff.loading": "Loading changes...",
     "diff.loadError": "Unable to load changes",
+    "diff.notGitTitle": "This folder isn't a Git repository",
+    "diff.notGitDetail":
+      "Changes are saved directly in the folder, so there is no change history to review. Run git init in this folder, then check again.",
+    "diff.notGitRecheck": "Check again",
+    "diff.notGitRechecking": "Checking…",
     "diff.retry": "Retry",
     "diff.scope": "Change scope",
     "diff.scopeBranch": "Branch",

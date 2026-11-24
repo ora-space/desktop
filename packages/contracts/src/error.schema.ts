@@ -258,6 +258,9 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("workspace_diff_too_large"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("workspace_not_git_repository"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("session_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -662,6 +665,9 @@ export const contractErrorSchema = z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("workspace_diff_too_large"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workspace_not_git_repository"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("session_not_found"),

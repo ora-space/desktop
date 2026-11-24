@@ -90,6 +90,7 @@ export type ContractError =
       "params": EmptyErrorParams;
     }
     | { "code": "workspace_diff_too_large"; "params": EmptyErrorParams }
+    | { "code": "workspace_not_git_repository"; "params": EmptyErrorParams }
     | { "code": "session_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_not_installed"; "params": EmptyErrorParams }
     | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
@@ -359,6 +360,7 @@ export type PublicError =
     "params": EmptyErrorParams;
   }
   | { "code": "workspace_diff_too_large"; "params": EmptyErrorParams }
+  | { "code": "workspace_not_git_repository"; "params": EmptyErrorParams }
   | { "code": "session_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_not_installed"; "params": EmptyErrorParams }
   | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }

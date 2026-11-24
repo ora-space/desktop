@@ -678,7 +678,7 @@ describe("WorkspaceView", () => {
 
     state.workspaces = state.workspaces.map((workspace) => ({
       ...workspace,
-      directory: { kind: "present" },
+      directory: { kind: "present", git: "repository" },
     }));
     await user.click(
       within(banner).getByRole("button", { name: /重新检查|Check again/ }),

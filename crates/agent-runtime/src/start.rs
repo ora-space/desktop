@@ -597,8 +597,10 @@ async fn release_provider_session<H: AgentRuntimeHost>(
 }
 
 /// Extracts the latest setup command catalog while preserving other updates for the first prompt.
+///
+/// An Agent may report its commands only after answering setup, later than this short window. Such
+/// a report is kept by the idle drain and reaches the client with the next prompt instead.
 pub(super) async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<AvailableCommand> {
-    let mut available_commands = Vec::new();
     loop {
         // ACP sends setup updates before the response, but the shared router runs
         // independently and may need one short scheduling window to deliver them.
@@ -609,9 +611,11 @@ pub(super) async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<
         };
         match event {
             SessionEvent::Update(notification, _) => {
-                if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
-                    // Command updates replace the full catalog, so the last setup value wins.
-                    available_commands = update.available_commands.clone();
+                if matches!(
+                    notification.update,
+                    SessionUpdate::AvailableCommandsUpdate(_)
+                ) {
+                    channel.observe_commands(&notification.update);
                 } else {
                     channel.pending_updates.push_back(notification);
                 }
@@ -629,7 +633,7 @@ pub(super) async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<
             SessionEvent::Response(_) => {}
         }
     }
-    available_commands
+    channel.available_commands.clone()
 }
 
 #[cfg(test)]

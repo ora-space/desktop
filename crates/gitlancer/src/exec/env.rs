@@ -7,6 +7,8 @@ const GIT_CONFIG_COUNT: &str = "GIT_CONFIG_COUNT";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitEnv {
     pub terminal_prompt: bool,
+    /// Locale exported as `LANG`. A caller-level `LC_ALL` still outranks it; commands whose
+    /// diagnostics are classified by text opt into [`GitEnv::with_english_messages`].
     pub lang: String,
     pub pager: String,
     pub variables: BTreeMap<String, String>,
@@ -27,6 +29,15 @@ impl GitEnv {
     pub fn with_variable(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.variables.insert(name.into(), value.into());
         self
+    }
+
+    /// Pins `LC_ALL=C` for this command only, so a localized caller environment cannot translate
+    /// the diagnostics its caller classifies by their English text.
+    ///
+    /// Not a default: `LC_ALL` also overrides `LC_CTYPE` for everything Git starts, hooks included,
+    /// which commit and push must not impose on a user's UTF-8 setup.
+    pub fn with_english_messages(self) -> Self {
+        self.with_variable("LC_ALL", "C")
     }
 
     /// Adds one command-scoped Git config entry that outranks every config file.

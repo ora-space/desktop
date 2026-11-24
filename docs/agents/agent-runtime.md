@@ -113,12 +113,15 @@ turn locally until `startSession` returns.
 - **Load.** Loading reads Ora's own record and touches no agent: it creates no provider session and
   changes no lifecycle state, so a conversation opens even if its agent is gone. If an actor exists
   it answers its own load (replaying the record and then following a prompt in flight) without
-  taking ownership of that prompt.
+  taking ownership of that prompt. While it is attached, the command catalog its provider last
+  reported precedes the replay; the catalog is not recorded and ends with the attachment.
 - **Attach.** A prompt is what acquires a provider session. A session holding no channel registers a
   route on the current connection and calls `session/load` with its private provider id and the
   current MCP snapshot, discards whatever the agent recites, and marks the row `Running`. Options
-  and commands from that handshake reach the client as updates ahead of the turn. Admission waits
-  for the attach and the MCP check, so a send that cannot reach an agent fails as a send.
+  and commands from that handshake reach the client as updates ahead of the turn. An agent usually
+  reports its commands only after answering setup, so a command catalog that arrives while no prompt
+  runs is kept, newest only, and delivered at the start of the next prompt; other idle updates do
+  not cross into it. Admission waits for the attach and the MCP check, so a send that cannot reach an agent fails as a send.
 - **Rebuild.** An agent that cannot load the session, or fails to restore it, gets a replacement
   provider session from `session/new` with the same snapshot, and the next prompt carries the
   recorded transcript, exactly as an agent switch does. A load can also report success for a

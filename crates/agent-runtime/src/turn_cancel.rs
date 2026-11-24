@@ -338,6 +338,7 @@ async fn ready_response<H: AgentRuntimeHost>(
         match event {
             SessionEvent::Update(update, _) => {
                 *saw_output |= produced_output(&update.update);
+                channel.observe_commands(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);

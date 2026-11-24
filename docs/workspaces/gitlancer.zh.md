@@ -6,12 +6,12 @@
 
 ## 分层
 
-| 模块 | 负责 |
-|---|---|
+| 模块     | 负责                                                                                                                                                 |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `domain` | 仓库事实和不变量：`RepoRoot`、`WorktreeRoot`、`GitDir`、`RepoRelativePath`、`BranchName`、`CommitId`、`Repository`、`WorktreeHandle`、`WorktreeKind` |
-| `exec` | CLI 调用：`GitCommand`、`GitIntent`、`GitEnv`、`GitOutput`、`GitRunner`、`CliGitRunner`、`RecordingGitRunner` |
-| `git` | Ora 直接调用的类型化用例 |
-| `parse` | 把稳定的 porcelain 和 plumbing 输出转成类型化结果 |
+| `exec`   | CLI 调用：`GitCommand`、`GitIntent`、`GitEnv`、`GitOutput`、`GitRunner`、`CliGitRunner`、`RecordingGitRunner`                                        |
+| `git`    | Ora 直接调用的类型化用例                                                                                                                             |
+| `parse`  | 把稳定的 porcelain 和 plumbing 输出转成类型化结果                                                                                                    |
 
 `domain` 不启动进程也不解析输出。`WorktreeHandle::resolve_repo_relative_path` 对路径做词法规范化，拒绝绝对路径和逃出 worktree 的遍历，所以 `RepoRelativePath` 只能通过这个感知 worktree 的边界获得。根目录的构造函数假定调用方已经确认过 Git 身份；发现属于 `git`。
 
@@ -63,7 +63,7 @@ pub struct GitCommand {
 }
 ```
 
-`GitIntent` 只分类不强制；上层用它决定命令能否自动运行、是否需要确认、能否重试。`GitEnv::automation_defaults` 禁用终端提示，固定 `LANG=C` 并禁用分页，所以 Agent 驱动的命令不会卡在交互界面上，也不会返回本地化的输出。
+`GitIntent` 只分类不强制；上层用它决定命令能否自动运行、是否需要确认、能否重试。`GitEnv::automation_defaults` 禁用终端提示，固定 `LANG=C` 并禁用分页，所以 Agent 驱动的命令不会卡在交互界面上。调用方设置的 `LC_ALL` 仍会覆盖 `LANG`；按文本分类 stderr 的命令（工作树探测、未跟踪文件的 diff）会加上 `GitEnv::with_english_messages`，只为该命令固定 `LC_ALL=C`。它不作为默认值，因为 `LC_ALL` 也会覆盖提交和推送时运行的 hook 的 `LC_CTYPE`。
 
 `CliGitRunner` 运行系统的 `git`，测量耗时，报告可选的遥测，返回 `GitOutput { code, stdout, stderr, duration_ms }`。`run_bounded` 并发地读取 stdout 和 stderr，任一流超出预算就杀掉 Git（`GitExecError::OutputTooLarge`，diff 中映射为 `GitlancerError::DiffTooLarge`）。非零退出会保留退出码、参数和输出供诊断。`RecordingGitRunner` 不执行任何东西，用于测试命令构造。遥测通过 `gitlancer::logging::register` 选择开启，见[日志](../core/logging.zh.md#git-命令日志)。
 
