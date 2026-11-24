@@ -310,9 +310,17 @@ Deno.test("the packaging check leaves no trace in the checkout", () =>
       [...Deno.readDirSync(path.join(root, ".git"))]
         .map((entry) => entry.name)
         .sort();
-    const before = entries();
+    const index = () => Deno.readFile(path.join(root, ".git", "index"));
+    // A newer modification time would make git status refresh and rewrite the checkout's index.
+    const later = new Date(Date.now() + 60_000);
+    await Deno.utime(
+      path.join(root, "release-notes", "0.7.0.json"),
+      later,
+      later,
+    );
+    const before = [entries(), await index()];
     await requireReleaseNotes(root, "0.7.0");
-    assert.deepEqual(entries(), before);
+    assert.deepEqual([entries(), await index()], before);
   }),
 );
 

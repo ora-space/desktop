@@ -217,7 +217,7 @@ export async function requireReleaseNotes(
 /** Rejects notes that differ from HEAD; other local edits stay allowed for patched distributions. */
 async function requireCommittedReleaseNotes(root: string): Promise<void> {
   const temporary = await mkdtemp(path.join(tmpdir(), "ora-release-notes-"));
-  // Keeps the private index out of the checkout's Git directory and runs none of its hooks.
+  // Writes nothing to the checkout's Git directory and runs none of its hooks.
   const isolated = [
     ["core.splitIndex", "false"],
     ["core.fsmonitor", "false"],
@@ -227,7 +227,7 @@ async function requireCommittedReleaseNotes(root: string): Promise<void> {
   const git = async (args: string[], index?: string): Promise<string> => {
     const { stdout } = await promisify(execFile)(
       "git",
-      ["-C", root, ...isolated, ...args],
+      ["-C", root, "--no-optional-locks", ...isolated, ...args],
       {
         env:
           index === undefined
