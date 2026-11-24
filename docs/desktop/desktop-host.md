@@ -87,6 +87,7 @@ operation:
 | `write_workflow_export`, `read_workflow_import` | Workflow file export and import |
 | `download_today_log`, `download_plugin_log` | Copy a diagnostic log to a destination chosen in the save dialog |
 | `surface_*`, `plugin_webview_invoke` | Plugin surfaces, see [Surfaces](../plugins/surfaces.md) |
+| `is_new_installation` | Whether this process created the database, see [Release notes](../development/release-notes.md#display) |
 | `get_desktop_update_status`, `check_desktop_update`, `install_desktop_update` | See [Desktop updates](#desktop-updates) |
 
 ## Persistent paths

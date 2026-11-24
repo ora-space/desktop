@@ -100,6 +100,10 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Native {
+        handler: "commands::installation::is_new_installation",
+        permission: Permission::MainWebview,
+    },
+    Binding::Native {
         handler: "update::commands::get_desktop_update_status",
         permission: Permission::MainWebview,
     },

@@ -20,10 +20,12 @@ mod test_clock;
 #[cfg(test)]
 mod tests;
 
-pub use bootstrap::{DatabaseBootstrapper, reconcile_migration_history};
+pub use bootstrap::{BootstrappedDatabase, DatabaseBootstrapper, reconcile_migration_history};
 pub use error::{DatabaseError, MigrationDirection};
 pub use location::DatabaseLocation;
-pub use migration::{AppliedMigration, Migration, MigrationCatalog, default_migration_catalog};
+pub use migration::{
+    AppliedMigration, DatabaseOrigin, Migration, MigrationCatalog, default_migration_catalog,
+};
 pub use repository::{
     CascadeDeleteOutcome, PackInstallationMemberRecord, PackInstallationRecord,
     PackMemberOwnership, PluginMarketplaceSourceRecord, PluginSkillProjection, RepositoryPool,

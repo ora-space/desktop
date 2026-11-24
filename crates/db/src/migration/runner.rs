@@ -3,7 +3,7 @@ use rusqlite::{Connection, Transaction, params};
 
 use crate::{DatabaseError, MigrationCatalog, MigrationDirection, TimestampSource};
 
-use super::AppliedMigration;
+use super::{AppliedMigration, DatabaseOrigin};
 
 const CREATE_MIGRATIONS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS migrations (
@@ -15,11 +15,14 @@ CREATE TABLE IF NOT EXISTS migrations (
 "#;
 
 /// Aligns the applied version sequence for application startup without inspecting SQL drift.
+///
+/// Reports whether the database had any applied migration before this call, because that history
+/// is gone from view once the migrations are applied.
 pub fn reconcile_database_versions<T>(
     connection: &mut Connection,
     catalog: &MigrationCatalog,
     timestamp_source: &T,
-) -> Result<(), DatabaseError>
+) -> Result<DatabaseOrigin, DatabaseError>
 where
     T: TimestampSource,
 {
@@ -48,7 +51,12 @@ where
     rollback_migration_suffix(connection, &applied_migrations, shared_version_count)?;
     apply_migration_suffix(connection, catalog, timestamp_source, shared_version_count)?;
 
-    if applied_migrations.is_empty() && pending_up_count > 0 {
+    let origin = if applied_migrations.is_empty() {
+        DatabaseOrigin::Created
+    } else {
+        DatabaseOrigin::Existing
+    };
+    if origin == DatabaseOrigin::Created && pending_up_count > 0 {
         apply_first_install_data(connection, catalog)?;
     }
 
@@ -59,7 +67,7 @@ where
         );
     }
 
-    Ok(())
+    Ok(origin)
 }
 
 /// Reconciles SQL snapshot drift and target shortening by rebuilding the affected migration suffix.

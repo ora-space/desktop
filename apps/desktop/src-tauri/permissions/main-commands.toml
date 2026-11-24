@@ -77,6 +77,7 @@ commands.allow = [
     "initialize_hook",
     "install_desktop_update",
     "install_plugin",
+    "is_new_installation",
     "list_agent_models",
     "list_agents",
     "list_available_plugins",
