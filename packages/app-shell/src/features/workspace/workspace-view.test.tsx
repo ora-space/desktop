@@ -59,6 +59,7 @@ import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useWorkflowEditorStore } from "../workflow-editor/workflow-editor-store";
 import { directChatTitle } from "./workspace-view-utils";
 import { AGENT_REF } from "../../test/agent-identity";
+import { useDefaultAgentAdoption } from "../../state/hooks/use-default-agent-adoption";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
 function createFixtureState() {
@@ -2385,4 +2386,73 @@ describe("directChatTitle", () => {
   it("normalizes whitespace and takes exactly ten Unicode characters", () => {
     expect(directChatTitle("  你好   workspace mode  ")).toBe("你好 workspa");
   });
+});
+
+/** Mirrors the shell's preference repair before a workspace's first send. */
+function UpgradedWorkspace() {
+  useDefaultAgentAdoption();
+  return <WorkspaceView userName="Tester" />;
+}
+
+it("sends with the saved v1 agent after upgrade and model selection", async () => {
+  localStorage.setItem(
+    "ora.settings.v1",
+    JSON.stringify({
+      version: 1,
+      state: {
+        settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+      },
+    }),
+  );
+  await act(async () => {
+    await useSettingsStore.persist.rehydrate();
+  });
+  const state = createFixtureState();
+  state.projects = [{ id: "p1", name: "Ora" }];
+  const handlers = createFixtureHandlers(state);
+  const baseClient = createTestClient(handlers);
+  const started: StartSessionRequest[] = [];
+  const client = createTestClient({
+    ...handlers,
+    startSession: async (request, options) => {
+      started.push(request);
+      return baseClient.session.start(request, options);
+    },
+  });
+  const Wrapper = createHookWrapper(
+    client,
+    createTestQueryClient(),
+    createChatStore(client.session),
+  );
+  useWorkspaceSelectionStore.getState().selectProject("p1");
+  render(
+    <Wrapper>
+      <AppI18nProvider>
+        <PlatformProvider adapter={createStubPlatform()}>
+          <TooltipProvider>
+            <UpgradedWorkspace />
+          </TooltipProvider>
+        </PlatformProvider>
+      </AppI18nProvider>
+    </Wrapper>,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: /选择模型|Select model/ }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Small Pickle" }),
+  );
+  await user.keyboard("{Escape}");
+  await user.type(await screen.findByRole("textbox"), "hello after upgrade");
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(started).toEqual([
+      {
+        workspaceId: "workspace-p1",
+        agentRef: AGENT_REF.opencode,
+        model: "opencode/small-pickle",
+      },
+    ]),
+  );
 });

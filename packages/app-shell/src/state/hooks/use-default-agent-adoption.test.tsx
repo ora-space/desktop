@@ -1,5 +1,8 @@
 import { act, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useAgentModels } from "./use-agent-models";
+import { useTargetAgentCli } from "./use-target-agent-cli";
+import { useTargetAgentReadiness } from "./use-target-agent-readiness";
 import type {
   AgentStatus,
   GetAgentRuntimeStatusResponse,
@@ -168,4 +171,80 @@ describe("useDefaultAgentAdoption", () => {
 
     await expectAdopted(AGENT_REF.claude);
   });
+});
+
+it("upgrades a v1 preference to the installed identity used by model discovery", async () => {
+  localStorage.setItem(
+    "ora.settings.v1",
+    JSON.stringify({
+      version: 1,
+      state: {
+        settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+      },
+    }),
+  );
+  await act(async () => {
+    await useSettingsStore.persist.rehydrate();
+  });
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  const listModels = vi.fn(handlers.listAgentModels!);
+  const { result } = renderHookWithClient(
+    () => {
+      useDefaultAgentAdoption();
+      const selected = useTargetAgentCli({
+        projectId: null,
+        taskId: null,
+        sessionId: null,
+      });
+      return {
+        selected,
+        readiness: useTargetAgentReadiness({
+          projectId: null,
+          taskId: null,
+          sessionId: null,
+        }),
+        models: useAgentModels(selected, "workspace-upgrade"),
+      };
+    },
+    createTestClient({
+      ...handlers,
+      listAgentModels: listModels,
+      listSessions: async () => ({ sessions: [] }),
+    }),
+  );
+  await waitFor(() =>
+    expect(result.current.models.models.length).toBeGreaterThan(0),
+  );
+  expect(result.current.selected).toBe(AGENT_REF.opencode);
+  expect(result.current.readiness).toBe("ready");
+  expect(listModels.mock.calls[0]?.[0]).toEqual({
+    agentRef: AGENT_REF.opencode,
+    workspaceId: "workspace-upgrade",
+  });
+  expect(
+    JSON.parse(localStorage.getItem("ora.settings.v1")!).state.settings
+      .agentCli,
+  ).toBe(AGENT_REF.opencode);
+});
+
+it("preserves an ambiguous legacy identity instead of choosing a source", async () => {
+  useSettingsStore.setState({
+    settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+  });
+  await renderAdoption((state) => {
+    state.installedPlugins.push({
+      ...state.installedPlugins[0]!,
+      id: "thirdparty/ora-space.opencode",
+    });
+  });
+  await expectAdopted("ora-space.opencode");
+});
+
+it("preserves an absent legacy identity instead of adopting another agent", async () => {
+  useSettingsStore.setState({
+    settings: { ...DEFAULT_SETTINGS, agentCli: "missing.agent" },
+  });
+  await renderAdoption();
+  await expectAdopted("missing.agent");
 });
