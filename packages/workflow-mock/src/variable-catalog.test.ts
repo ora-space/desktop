@@ -434,6 +434,29 @@ describe("deriveWorkflowVariableCatalog loop scope rules", () => {
     expect(own(loopAgent.id)).toEqual(kept("value"));
   });
 
+  it.each([[null], [undefined], [1], [{}], [["string"]]])(
+    "types a loop variable whose type is not text as any: %j",
+    (valueType) => {
+      const config = loop.data.loopConfig!;
+      const untyped = node(loop.id, {
+        ...loop.data,
+        loopConfig: {
+          ...config,
+          variables: [{ ...config.variables[0]!, valueType }],
+        } as unknown as typeof config,
+      });
+      const value = deriveWorkflowVariableCatalog(
+        nodes.map((candidate) =>
+          candidate.id === loop.id ? untyped : candidate,
+        ),
+        edges,
+        loopAgent.id,
+        [],
+      ).find((entry) => entry.sourceNodeId === loop.id);
+      expect(value).toMatchObject({ variableName: "value", valueType: "any" });
+    },
+  );
+
   it("offers body members the loop variables and the Loop's upstream", () => {
     const visible = selectors(loopAgent.id);
     expect(visible).toEqual(

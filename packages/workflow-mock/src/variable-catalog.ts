@@ -239,7 +239,15 @@ function appendLoopVariables(
   const config = node.data.loopConfig;
   if (consumerLoopId === node.id) {
     for (const variable of namedEntries(config?.variables)) {
-      entries.push(nodeVariable(node, variable.name, variable.valueType));
+      // Consumers read the type as text; a draft may hold anything there.
+      const valueType: unknown = variable.valueType;
+      entries.push(
+        nodeVariable(
+          node,
+          variable.name,
+          typeof valueType === "string" ? variable.valueType : "any",
+        ),
+      );
     }
     return;
   }
