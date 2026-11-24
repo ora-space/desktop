@@ -31,6 +31,18 @@ export async function runScript(
   };
 }
 
+/** Builds the smallest valid release notes for one version. */
+export function releaseNote(version: string) {
+  return {
+    schema: 1,
+    version,
+    date: "2026-12-10",
+    entries: [
+      { category: "fix", "zh-CN": "示例条目", "en-US": "Sample entry" },
+    ],
+  };
+}
+
 /** Creates an independent index and a real formatter task for hook tests. */
 export async function initFormatterRepository(root: string): Promise<void> {
   await git(root, ["init", "--quiet"]);
