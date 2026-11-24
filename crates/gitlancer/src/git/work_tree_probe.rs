@@ -26,6 +26,9 @@ impl<R: GitRunner> Git<R> {
     /// directory. Only Git's explicit "not a git repository" answer becomes `NotInRepository`;
     /// any other failure (an untrusted owner, a broken `.git` link, Git missing) stays an error so
     /// callers never mistake a broken repository for a plain folder.
+    ///
+    /// `Git::discover_repository` treats any non-zero exit as "not a repository" because it only
+    /// decides whether to attempt an operation; the difference is intentional.
     pub fn probe_work_tree(&self, directory: &Path) -> Result<WorkTreeProbe, GitlancerError> {
         classify_work_tree_probe(self.runner().run(&GitCommand::new(
             directory.to_path_buf(),

@@ -185,11 +185,9 @@ impl WorkspaceApi {
         // Shared use lease: physical cleanup of this Workspace's checkout waits
         // for this read instead of removing the directory underneath it.
         let _worktree_use = self.git_cleanup.shared_worktree_use(workspace_id.as_ref());
-        let repository_root = self.load_repository_root(&workspace)?;
-        let cwd = resolve_workspace_cwd(&self.pool, &workspace_id, &self.relative_path_base)?;
         // Before the baseline check, so a plain folder explains itself even for scopes that
         // would otherwise report a missing baseline.
-        require_workspace_git(&cwd)?;
+        let (repository_root, cwd) = self.worktree_context(&workspace, &workspace_id)?;
 
         let base_commit_id = self.recorded_baseline(&workspace_id)?;
         let scope = map_diff_scope(request.scope);
@@ -348,8 +346,9 @@ impl WorkspaceApi {
         crate::task::absolute_project_root(PathBuf::from(path), &self.relative_path_base)
     }
 
-    /// Resolves the repository and checkout directory required by status and write operations,
-    /// refusing a checkout directory that Git does not manage.
+    /// Resolves the repository and checkout directory every Git review operation needs, refusing
+    /// a checkout directory that Git does not manage. The one place that enforces "Git review
+    /// needs a work tree".
     fn worktree_context(
         &self,
         workspace: &Workspace,
@@ -386,6 +385,11 @@ fn probe_directories(
     workspaces
         .chunks(PARALLEL_PROBES)
         .flat_map(|chunk| {
+            // A lone probe needs no fan-out; running it inline also keeps thread-scoped tracing
+            // subscribers attached in tests, as `git_cleanup` does for a single repository group.
+            if let [workspace] = chunk {
+                return vec![probe_directory(&workspace.location, relative_path_base)];
+            }
             std::thread::scope(|scope| {
                 // Collecting first starts every probe in the chunk before the first join; a lazy
                 // chain would start and join them one at a time.

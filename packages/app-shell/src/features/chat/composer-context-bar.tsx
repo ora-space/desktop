@@ -271,8 +271,9 @@ function BranchTab() {
   const setDialog = useUiStore((s) => s.setDialog);
 
   const projectId = selection.projectId;
-  // A worktree branches the project's folder with Git; a folder whose `.git` is gone since the
-  // task was created cannot offer a new one.
+  // A new worktree branches from the project's main workspace, which is what this resolves; a
+  // main folder that is not a Git repository (for example its `.git` was removed) cannot offer
+  // one.
   const offersNewWorktree =
     useWorkspaceGitAvailability({ projectId }) !== "notRepository";
   const projectTasks = tasks.filter((task) => task.projectId === projectId);
