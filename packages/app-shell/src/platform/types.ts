@@ -1,4 +1,5 @@
 import type { CloudConnection, MarketplaceAutoSyncEvent } from "@ora/contracts";
+import type { ReleaseNote } from "../lib/release-note";
 export type { MarketplaceAutoSyncEvent } from "@ora/contracts";
 
 export type PathSelectionKind = "file" | "directory";
@@ -76,7 +77,10 @@ export interface LocationActionsCapability {
  */
 export type ManualUpdateReason = "system_package" | "unpackaged_binary";
 
-/** Describes the native Desktop updater state shown by the shell's version control. */
+/**
+ * Describes the native Desktop updater state shown by the shell's version control. Notes come from
+ * the unsigned manifest; the host has bounded them, and an empty list means there are none to show.
+ */
 export type DesktopUpdateStatus =
   | { kind: "current" }
   | { kind: "checking" }
@@ -86,8 +90,13 @@ export type DesktopUpdateStatus =
       downloaded: number;
       total: number | null;
     }
-  | { kind: "ready"; version: string }
-  | { kind: "manual_update"; version: string; reason: ManualUpdateReason }
+  | { kind: "ready"; version: string; notes: ReleaseNote[] }
+  | {
+      kind: "manual_update";
+      version: string;
+      reason: ManualUpdateReason;
+      notes: ReleaseNote[];
+    }
   | { kind: "installing"; version: string }
   | { kind: "failed"; message: string };
 

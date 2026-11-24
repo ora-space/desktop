@@ -99,13 +99,15 @@ export const workspaceTranslations = {
     "update.checking": "正在检查更新…",
     "update.downloading": "正在下载 Ora {{version}}（{{progress}}）",
     "update.downloadingUnknownSize": "正在下载 Ora {{version}}",
-    "update.ready": "发现新版本 {{version}}，点击安装并重启",
+    "update.ready": "发现新版本 {{version}}，点击查看",
     "update.installing": "正在安装 Ora {{version}}…",
     "update.failed": "检查更新失败：{{message}}",
     "update.manual.system_package":
       "发现新版本 {{version}}。当前通过系统软件包安装，请用软件包管理器更新。",
     "update.manual.unpackaged_binary":
       "发现新版本 {{version}}。当前未以 AppImage 方式运行，无法自动更新。",
+    "update.available": "可更新到 Ora {{version}}",
+    "update.availableDescription": "当前版本 {{currentVersion}}",
     "update.confirmTitle": "安装 Ora {{version}}",
     "update.confirmDescription":
       "当前版本 {{currentVersion}}，将更新到 {{version}}。安装完成后 Ora 会自动重启。",
@@ -221,13 +223,15 @@ export const workspaceTranslations = {
     "update.checking": "Checking for updates…",
     "update.downloading": "Downloading Ora {{version}} ({{progress}})",
     "update.downloadingUnknownSize": "Downloading Ora {{version}}",
-    "update.ready": "Ora {{version}} is available. Install it and restart.",
+    "update.ready": "Ora {{version}} is available. Click to review it",
     "update.installing": "Installing Ora {{version}}…",
     "update.failed": "Could not check for updates: {{message}}",
     "update.manual.system_package":
       "Ora {{version}} is available. This installation came from a system package, so update it with your package manager.",
     "update.manual.unpackaged_binary":
       "Ora {{version}} is available. This build is not running as an AppImage, so it cannot update itself.",
+    "update.available": "Ora {{version}} is available",
+    "update.availableDescription": "Current version: {{currentVersion}}",
     "update.confirmTitle": "Install Ora {{version}}",
     "update.confirmDescription":
       "You are on {{currentVersion}} and will move to {{version}}. Ora restarts once the update is installed.",

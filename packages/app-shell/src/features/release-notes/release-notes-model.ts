@@ -1,4 +1,4 @@
-import type { ReleaseNote } from "./bundled-release-notes";
+import type { ReleaseNote } from "../../lib/release-note";
 
 /** Parses the stable part of a version, ignoring prerelease and build suffixes. */
 function parseStableVersion(version: string): number[] | null {

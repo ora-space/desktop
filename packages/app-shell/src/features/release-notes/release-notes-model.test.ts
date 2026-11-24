@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decodeReleaseNotes, type ReleaseNote } from "./bundled-release-notes";
+import type { ReleaseNote } from "../../lib/release-note";
+import { decodeReleaseNotes } from "./bundled-release-notes";
 import {
   planReleaseNotesPrompt,
   stableVersionOf,

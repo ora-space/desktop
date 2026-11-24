@@ -1,19 +1,7 @@
-import type { Locale } from "../../i18n/resource-bundle";
-
-const CATEGORIES = ["important", "feature", "improvement", "fix"] as const;
-
-export type ReleaseNoteCategory = (typeof CATEGORIES)[number];
-
-export type ReleaseNoteEntry = {
-  category: ReleaseNoteCategory;
-} & Record<Locale, string>;
-
-/** One stable version's notes, as validated and injected when the Desktop frontend was built. */
-export interface ReleaseNote {
-  version: string;
-  date: string;
-  entries: ReleaseNoteEntry[];
-}
+import {
+  RELEASE_NOTE_CATEGORIES,
+  type ReleaseNote,
+} from "../../lib/release-note";
 
 /**
  * The Desktop build injects every notes file of its checkout. Other hosts and tests leave it unset,
@@ -33,7 +21,7 @@ function isReleaseNote(value: unknown): value is ReleaseNote {
       (entry) =>
         typeof entry === "object" &&
         entry !== null &&
-        CATEGORIES.includes(entry.category) &&
+        RELEASE_NOTE_CATEGORIES.includes(entry.category) &&
         typeof entry["zh-CN"] === "string" &&
         typeof entry["en-US"] === "string",
     )

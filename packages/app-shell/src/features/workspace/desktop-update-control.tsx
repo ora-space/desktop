@@ -1,21 +1,9 @@
-import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { IconDownload, IconLoader2, IconRefresh } from "@tabler/icons-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  Button,
-  cn,
-} from "@ora/ui";
+import { Button, cn } from "@ora/ui";
 import { appVersion } from "../../lib/app-version";
-import { useOptionalPlatform } from "../../platform/use-platform";
 import type { DesktopUpdateStatus } from "../../platform/types";
+import { useDesktopUpdate } from "./use-desktop-update";
 
 /** Formats a byte count the way the download progress reads in both locales. */
 function formatMegabytes(bytes: number): string {
@@ -32,123 +20,66 @@ function VersionStamp() {
   );
 }
 
-/** Renders the version stamp and turns it into the install action once a package is ready. */
-export function DesktopUpdateControl() {
+/** Renders the version stamp and leads to the release an update would bring once there is one. */
+export function DesktopUpdateControl({ onReview }: { onReview: () => void }) {
   const { t } = useTranslation();
-  const platform = useOptionalPlatform();
-  const updates = platform?.updates;
-  const [status, setStatus] = useState<DesktopUpdateStatus>({
-    kind: "current",
-  });
-  const [confirming, setConfirming] = useState(false);
-
-  useEffect(() => {
-    if (updates === undefined) return;
-    let active = true;
-    void updates.getStatus().then((next) => {
-      if (active) setStatus(next);
-    });
-    let unsubscribe: (() => void) | undefined;
-    void updates
-      .onStatus((next) => {
-        if (active) setStatus(next);
-      })
-      .then((stop) => {
-        unsubscribe = stop;
-        if (!active) stop();
-      });
-    return () => {
-      active = false;
-      unsubscribe?.();
-    };
-  }, [updates]);
+  const { updates, status } = useDesktopUpdate();
 
   // The web host has no updater, but the settings sidebar still stamps the running version.
   if (updates === undefined) return <VersionStamp />;
 
-  // Only a downloaded package is installable; a manual update still deserves the badge so the
-  // tooltip can explain which channel to use instead.
-  const installableVersion = status.kind === "ready" ? status.version : null;
-  const notified =
-    installableVersion !== null || status.kind === "manual_update";
+  // A manual update is reviewed like an installable one; only its install action is withheld.
+  const reviewable = status.kind === "ready" || status.kind === "manual_update";
   const busy =
     status.kind === "checking" ||
     status.kind === "downloading" ||
     status.kind === "installing";
 
   return (
-    <>
-      <div className="flex items-center gap-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="relative h-7 flex-1 justify-start px-2 text-xs text-muted-foreground"
-          disabled={busy || installableVersion === null}
-          title={describeStatus(status, t)}
-          aria-label={describeStatus(status, t)}
-          onClick={() => setConfirming(true)}
-        >
-          {busy ? (
-            <IconLoader2 className="mr-1.5 size-3.5 animate-spin" />
-          ) : (
-            <IconDownload className="mr-1.5 size-3.5" />
-          )}
-          <span className="truncate">
-            {t("update.currentVersion", { version: appVersion })}
-          </span>
-          {notified && (
-            <span
-              data-testid="desktop-update-badge"
-              className="absolute right-2 top-1/2 size-2 -translate-y-1/2 rounded-full bg-destructive"
-            />
-          )}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0 text-muted-foreground"
-          disabled={busy}
-          title={t("update.checkNow")}
-          aria-label={t("update.checkNow")}
-          onClick={() => void updates.check()}
-        >
-          <IconRefresh
-            className={cn(
-              "size-3.5",
-              status.kind === "checking" && "animate-spin",
-            )}
+    <div className="flex items-center gap-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="relative h-7 flex-1 justify-start px-2 text-xs text-muted-foreground"
+        disabled={!reviewable}
+        title={describeStatus(status, t)}
+        aria-label={describeStatus(status, t)}
+        onClick={onReview}
+      >
+        {busy ? (
+          <IconLoader2 className="mr-1.5 size-3.5 animate-spin" />
+        ) : (
+          <IconDownload className="mr-1.5 size-3.5" />
+        )}
+        <span className="truncate">
+          {t("update.currentVersion", { version: appVersion })}
+        </span>
+        {reviewable && (
+          <span
+            data-testid="desktop-update-badge"
+            className="absolute right-2 top-1/2 size-2 -translate-y-1/2 rounded-full bg-destructive"
           />
-        </Button>
-      </div>
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t("update.confirmTitle", { version: installableVersion ?? "" })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("update.confirmDescription", {
-                currentVersion: appVersion,
-                version: installableVersion ?? "",
-              })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                setConfirming(false);
-                void updates.install();
-              }}
-            >
-              {t("update.confirmAction")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+        )}
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="size-7 shrink-0 text-muted-foreground"
+        disabled={busy}
+        title={t("update.checkNow")}
+        aria-label={t("update.checkNow")}
+        onClick={() => void updates.check()}
+      >
+        <IconRefresh
+          className={cn(
+            "size-3.5",
+            status.kind === "checking" && "animate-spin",
+          )}
+        />
+      </Button>
+    </div>
   );
 }
 
