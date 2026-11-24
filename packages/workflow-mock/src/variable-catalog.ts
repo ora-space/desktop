@@ -256,9 +256,10 @@ function appendLoopVariables(
 }
 
 /**
- * The type the backend declares for a Loop's named output: `any`, except that a Loop declares
- * `output` as a string like other producing nodes before its named outputs. Matching it keeps
- * aggregator candidate typing in agreement with the parse.
+ * The type the runtime declares for a Loop's named output: `any`, except that a Loop declares
+ * `output` as a string like other producing nodes before its named outputs. The parse-time
+ * check does not declare named outputs yet, so an Aggregator outside the Loop is still refused
+ * for any name other than `output` (ora-space/circus#1502).
  */
 function loopOutputType(name: string): WorkflowVariableValueType {
   return name === "output" ? "string" : "any";

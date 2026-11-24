@@ -367,7 +367,7 @@ describe("deriveWorkflowVariableCatalog loop scope rules", () => {
     ]);
   });
 
-  it("types an aggregator over Loop outputs as the backend declares them", () => {
+  it("types an aggregator over Loop outputs as the runtime declares them", () => {
     const aggregate = (variable: string): string | undefined =>
       deriveWorkflowVariableCatalog(
         [
