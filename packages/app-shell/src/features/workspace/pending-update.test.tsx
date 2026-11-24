@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -24,11 +24,15 @@ const NOTES: ReleaseNote[] = [
 function renderPending(status: DesktopUpdateStatus) {
   const install = vi.fn().mockResolvedValue(undefined);
   const getStatus = vi.fn(async () => status);
+  let publish: (next: DesktopUpdateStatus) => void = () => undefined;
   const updates: DesktopUpdateCapability = {
     getStatus,
     install,
     check: async () => undefined,
-    onStatus: async () => () => undefined,
+    onStatus: async (listener) => {
+      publish = listener;
+      return () => undefined;
+    },
   };
   const { container } = render(
     <AppI18nProvider>
@@ -37,7 +41,12 @@ function renderPending(status: DesktopUpdateStatus) {
       </PlatformProvider>
     </AppI18nProvider>,
   );
-  return { container, getStatus, install };
+  return {
+    container,
+    getStatus,
+    install,
+    publish: (next: DesktopUpdateStatus) => act(() => publish(next)),
+  };
 }
 
 describe("PendingUpdate", () => {
@@ -79,6 +88,44 @@ describe("PendingUpdate", () => {
 
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(install).not.toHaveBeenCalled();
+  });
+
+  it("asks again for a release that replaced the confirmed one", async () => {
+    const user = userEvent.setup();
+    const { install, publish } = renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: NOTES,
+    });
+    await user.click(await screen.findByRole("button", { name: "立即更新" }));
+    await screen.findByRole("alertdialog");
+
+    publish({
+      kind: "downloading",
+      version: "0.4.0",
+      downloaded: 0,
+      total: null,
+    });
+    publish({ kind: "ready", version: "0.4.0", notes: [] });
+
+    await screen.findByRole("region", { name: "可更新到 Ora 0.4.0" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  it("closes the confirmation when the release changes in one step", async () => {
+    const user = userEvent.setup();
+    const { publish } = renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: NOTES,
+    });
+    await user.click(await screen.findByRole("button", { name: "立即更新" }));
+    await screen.findByRole("alertdialog");
+
+    publish({ kind: "ready", version: "0.4.0", notes: [] });
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 
   it("still offers the installation without notes", async () => {

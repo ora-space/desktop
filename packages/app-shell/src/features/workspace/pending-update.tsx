@@ -23,6 +23,13 @@ export function PendingUpdate() {
   const { t } = useTranslation();
   const { updates, status } = useDesktopUpdate();
   const [confirming, setConfirming] = useState(false);
+  const installable = status.kind === "ready" ? status.version : null;
+  const [lastInstallable, setLastInstallable] = useState(installable);
+  // A confirmation is for the release the user was reading; a background check can replace it.
+  if (lastInstallable !== installable) {
+    setLastInstallable(installable);
+    setConfirming(false);
+  }
   if (
     updates === undefined ||
     (status.kind !== "ready" && status.kind !== "manual_update")
@@ -65,10 +72,7 @@ export function PendingUpdate() {
         </div>
       )}
       {/* Installing restarts the app without checking for running work, so it is confirmed once. */}
-      <AlertDialog
-        open={confirming && status.kind === "ready"}
-        onOpenChange={setConfirming}
-      >
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
