@@ -11,11 +11,9 @@ import {
   METHOD_NOT_FOUND,
   OPENCODE_MCP_CONFIG_V1,
   PLUGIN_METHODS,
-  type PluginEffectResource,
   type PluginRegistrationParams,
   type PluginTransport,
   type RequestId,
-  SKILL_DIRECTORY_V1,
 } from "./protocol/index.ts";
 import {
   createLogger,
@@ -45,26 +43,9 @@ export interface HostRequestOptions {
 }
 
 /**
- * The one materialization format Ora's agent Consumer adapter accepts.
- *
- * Exported as a value because the host compares it exactly and abandons the agent for the rest of
- * the process when it does not match — a typo here is not a degraded mode, it is a plugin that
- * never starts, reported once as an invalid Effect declaration.
+ * Built-in MCP configuration formats declared by host-managed MCP packages.
  */
-export { CLAUDE_MCP_CONFIG_V1, OPENCODE_MCP_CONFIG_V1, SKILL_DIRECTORY_V1 };
-
-export type EffectResourceDeclaration =
-  & Omit<
-    PluginEffectResource,
-    "materializationFormat"
-  >
-  & {
-    /** Narrowed to the built-in formats the host accepts. */
-    materializationFormat:
-      | typeof SKILL_DIRECTORY_V1
-      | typeof OPENCODE_MCP_CONFIG_V1
-      | typeof CLAUDE_MCP_CONFIG_V1;
-  };
+export { CLAUDE_MCP_CONFIG_V1, OPENCODE_MCP_CONFIG_V1 };
 
 /**
  * A host method failed, or could not be completed.
@@ -124,7 +105,6 @@ export class Plugin {
   readonly #console: PluginConsole;
   readonly #methods = new Map<string, MethodHandler>();
   readonly #emits = new Set<string>();
-  readonly #effectResources: EffectResourceDeclaration[] = [];
   readonly #notificationHandlers = new Map<string, NotificationHandler>();
   readonly #pendingHostRequests = new Map<number, PendingHostRequest>();
   #nextHostRequestId = 1;
@@ -160,18 +140,6 @@ export class Plugin {
       throw new Error("Emitted method names cannot be empty");
     }
     this.#emits.add(name);
-  }
-
-  /** Declares one runtime-consumed Effect Resource before registration is sent. */
-  declareEffectResource(resource: EffectResourceDeclaration): void {
-    this.#assertRegistering();
-    if (
-      resource.workspaceRelativePath.length === 0 ||
-      resource.materializationFormat.length === 0
-    ) {
-      throw new Error("Effect Resource locator and format cannot be empty");
-    }
-    this.#effectResources.push({ ...resource });
   }
 
   /** Handles one host-sent notification, which never produces a response. */
@@ -275,9 +243,6 @@ export class Plugin {
     const registration = {
       methods: [...this.#methods.keys()],
       emits: [...this.#emits],
-      ...(this.#effectResources.length === 0
-        ? {}
-        : { effectResources: this.#effectResources }),
     } satisfies PluginRegistrationParams;
     await writer.write({
       jsonrpc: JSON_RPC_VERSION,
