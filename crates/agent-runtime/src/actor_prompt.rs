@@ -12,58 +12,12 @@ use super::title_acquisition::PollAttempt;
 use super::tool_timing::ToolTimings;
 use super::*;
 use crate::attach::LoadRestoration;
-use crate::model_config::current_model;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
 use ora_logging::{ora_debug, ora_warn};
-
-impl<H: AgentRuntimeHost> RuntimeActor<H> {
-    /// Ends a prompt the provider answered with a result: its stop reason describes the turn, its
-    /// usage is reported, and a completed turn may start title acquisition. Shared by the prompt
-    /// loop and by a turn cancel that found the answer already queued.
-    pub(crate) async fn finish_completed_prompt(
-        &mut self,
-        channel: SessionChannel,
-        response: PromptResponse,
-        operation_id: u64,
-        end: crate::turn_cancel::PromptEnd<'_>,
-    ) {
-        let crate::turn_cancel::PromptEnd {
-            events,
-            end_report,
-            followers,
-            tool_timings,
-        } = end;
-        self.record_cleanup(operation_id, Ok(()));
-        // The provider answered: its stop reason now describes the turn, so the end cause is not
-        // an interruption.
-        end_report.record(PromptEndCause::Settled);
-        ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
-        let token_usage = usage::normalize_token_usage(
-            &self.session.agent_ref,
-            response.usage.as_ref(),
-            response.meta.as_ref(),
-            &usage::NoUsageExtensions,
-        );
-        self.end_timed_turn(response.stop_reason, tool_timings);
-        followers.finish(response.stop_reason);
-        self.load_restoration = LoadRestoration::NotRestored;
-        self.maybe_start_title_acquisition(response.stop_reason);
-        if events
-            .try_send(Ok(PromptSessionEvent::Completed {
-                stop_reason: response.stop_reason,
-                token_usage,
-            }))
-            .is_ok()
-        {
-            self.channel = Some(channel);
-        } else {
-            self.isolate_channel(channel).await;
-        }
-    }
-}
+use stale_load::{describes_provider, stale_load_retry_allowed};
 
 /// Whether one provider update is work the user would see or a tool already ran.
 ///
@@ -77,16 +31,6 @@ pub(crate) fn produced_output(update: &SessionUpdate) -> bool {
             | SessionUpdate::ToolCall(_)
             | SessionUpdate::ToolCallUpdate(_)
     )
-}
-
-/// The one retry after a load is allowed only before output and only once.
-fn stale_load_retry_allowed(
-    reusable: bool,
-    produced_output: bool,
-    has_context: bool,
-    restoration: LoadRestoration,
-) -> bool {
-    reusable && !produced_output && has_context && restoration == LoadRestoration::Restored
 }
 
 /// One attempt at a prompt, including the single rebuild retry after a stale `session/load`.
@@ -193,6 +137,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
         while let Some(notification) = channel.pending_updates.pop_front() {
             self.observe_session_update(&notification.update);
+            // Only a retry already has followers here, and they joined on the session it replaced.
+            if describes_provider(&notification.update) {
+                followers.send_update(&notification.update, None);
+            }
             if events
                 .try_send(Ok(PromptSessionEvent::SessionUpdate {
                     update: notification.update,
@@ -539,10 +487,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                     session_id = %self.session.id,
                                     "first prompt after session/load failed without output; rebuilding and retrying",
                                 );
-                                let model = current_model(&self.reported_config_options);
-                                self.isolate_channel(channel).await;
-                                match self.rebuild_provider_session(model.as_deref()).await {
+                                match self.replace_stale_session(channel).await {
                                     Ok(setup) => {
+                                        for update in &setup {
+                                            followers.send_update(update, None);
+                                        }
                                         if !super::actor::publish_setup(&events, setup) {
                                             self.record_cleanup(operation_id, Ok(()));
                                             end_report.record(PromptEndCause::StreamDropped);
@@ -706,30 +655,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     events,
                     accepted,
                 }) => {
-                    // Capture the durable cutoff, the in-progress pending records, and the live
-                    // follower registration atomically (no await), then let the follower's relay
-                    // task stream the merged prefix before live events. The actor returns to its
-                    // select loop immediately, so a slow view can never backpressure the prompt.
-                    self.record_cleanup(operation_id, Ok(()));
-                    let cutoff = self.recorder.durable_bytes();
-                    let pending = self.recorder.pending_records();
-                    if accepted.send(Ok(())).is_ok() {
-                        // The follower's queue is new and empty, so this precedes its replay.
-                        if let Some(update) = channel.reported_commands() {
-                            let _ = events.try_send(Ok(LoadSessionEvent::session_update(update)));
-                        }
-                        followers.insert(
-                            operation_id,
-                            FollowerOutput {
-                                events,
-                                completion: cleanup,
-                            },
-                            self.sessions_root.clone(),
-                            self.session.id.to_string(),
-                            cutoff,
-                            pending,
-                        );
-                    }
+                    self.follow_prompt(
+                        operation_id,
+                        &channel,
+                        &mut followers,
+                        FollowerOutput {
+                            events,
+                            completion: cleanup,
+                        },
+                        accepted,
+                    );
                 }
                 ActiveInput::Command(RuntimeCommand::ClaimDirectProviderCall { response }) => {
                     let _ = response.send(self.provider_session_id().to_string());
@@ -787,6 +722,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     }
 }
 
+#[path = "actor_prompt/completion.rs"]
+mod completion;
+#[path = "actor_prompt/follow.rs"]
+mod follow;
+#[path = "actor_prompt/stale_load.rs"]
+mod stale_load;
 #[cfg(test)]
 #[path = "actor_prompt/tests.rs"]
 mod tests;

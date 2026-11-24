@@ -441,7 +441,7 @@ describe("Composer", () => {
 
     const menu = await screen.findByRole("listbox", { name: "快捷操作" });
     expect(within(menu).getByRole("status")).toHaveTextContent(
-      "执行一轮对话后，Agent自带命令和skill才会显示",
+      "执行一轮对话后，Agent 自带命令和 skill 才会显示",
     );
     expect(within(menu).queryByRole("option")).not.toBeInTheDocument();
     expect(textarea).not.toHaveAttribute("aria-activedescendant");
@@ -528,7 +528,7 @@ describe("Composer", () => {
       await user.type(screen.getByRole("textbox"), text);
 
       expect(
-        screen.queryByText("执行一轮对话后，Agent自带命令和skill才会显示"),
+        screen.queryByText("执行一轮对话后，Agent 自带命令和 skill 才会显示"),
       ).not.toBeInTheDocument();
     },
   );
@@ -2517,6 +2517,29 @@ describe("ChatView", () => {
     );
 
     expect(screen.queryByText("pick a project")).toBeNull();
+  });
+
+  it("treats an omitted catalog as not reported", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <ChatView
+        turns={[]}
+        userName="Eric"
+        isResponding={false}
+        error={null}
+        onSend={() => {}}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+
+    await user.type(textarea, "/mcp");
+
+    expect(
+      await screen.findByText(
+        "执行一轮对话后，Agent 自带命令和 skill 才会显示",
+      ),
+    ).toBeVisible();
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
   });
 
   it("renders execution context immediately above the composer surface", () => {

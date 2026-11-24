@@ -2289,6 +2289,7 @@ fn subagent_frames_stop_renewing_once_the_parent_delegation_completed() {
 mod restored_sessions {
     mod command_catalog_tests;
     mod follower_retry_tests;
+    mod follower_setup_tests;
     use super::*;
     use pretty_assertions::assert_eq;
     /// Holds two or more sessions on one real routed ACP peer with a controllable provider.
@@ -2453,6 +2454,35 @@ mod restored_sessions {
             id: &str,
             title_acquisition: crate::TitleAcquisition,
         ) {
+            self.add_session_with(
+                id,
+                title_acquisition,
+                /*channel*/ None,
+                LiveMcpState::Active(crate::SessionMcpRevision::default()),
+            );
+        }
+
+        /// Seeds a session on a provider channel whose MCP set no longer is the desired one.
+        fn add_session_owing_mcp_refresh(&self, id: &str) {
+            let channel = self.supervisor.open_session_channel(id, id).unwrap();
+            let stale =
+                crate::SessionMcpRevision::for_generation(/*generation*/ 1, Vec::new());
+            self.add_session_with(
+                id,
+                crate::TitleAcquisition::disabled(),
+                Some(channel),
+                LiveMcpState::Active(stale),
+            );
+        }
+
+        /// Seeds one persisted session and the actor serving it.
+        fn add_session_with(
+            &self,
+            id: &str,
+            title_acquisition: crate::TitleAcquisition,
+            channel: Option<crate::routing::SessionChannel>,
+            live_mcp: LiveMcpState,
+        ) {
             let session = self
                 .manager
                 .inner
@@ -2477,11 +2507,11 @@ mod restored_sessions {
                         session_mcp: NoSessionMcp::default(),
                         cwd: self._directory.path().to_path_buf(),
                         connection: self.supervisor.clone(),
-                        channel: None,
+                        channel,
                         recorder,
                         handoff: crate::HandoffDebt::Settled,
                         title_acquisition,
-                        live_mcp: LiveMcpState::Active(crate::SessionMcpRevision::default()),
+                        live_mcp,
                         config_options: Vec::new(),
                     },
                 )

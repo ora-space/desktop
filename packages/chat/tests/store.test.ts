@@ -2046,6 +2046,86 @@ test("omits response duration when startup is stopped during preparation", async
   });
 });
 
+for (const { reported, expected } of [
+  { reported: [{ name: "incoming", description: "" }], expected: ["incoming"] },
+  { reported: [], expected: null },
+]) {
+  test(`stopping during an agent move drops the outgoing agent's commands for ${JSON.stringify(expected)}`, async () => {
+    let finishPrepare = () => {};
+    const prepared = new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    });
+    const client: ChatSessionClient = {
+      load: () => events<LoadSessionEvent>([]),
+      prompt: () =>
+        events<PromptSessionEvent>([
+          {
+            type: "session_update",
+            update: {
+              sessionUpdate: "available_commands_update",
+              availableCommands: [{ name: "outgoing", description: "" }],
+            },
+          },
+          { type: "completed", stopReason: "end_turn" },
+        ]),
+      respondToPermission: async () => ({}),
+      setConfig: async () => ({ configOptions: [] }),
+    };
+    const store = createChatStore(client);
+    const names = () =>
+      store
+        .getState()
+        .conversations["ora-1"]?.availableCommands?.map(({ name }) => name) ??
+      null;
+    await store.getState().sendMessage({ oraSessionId: "ora-1", text: "one" });
+    assert.deepEqual(names(), ["outgoing"]);
+
+    const sending = store.getState().sendMessage({
+      oraSessionId: "ora-1",
+      text: "two",
+      prepare: async () => {
+        await prepared;
+        return { availableCommands: reported };
+      },
+    });
+    store.getState().stopGeneration("ora-1");
+    finishPrepare();
+    await sending;
+
+    assert.deepEqual(names(), expected);
+  });
+}
+
+test("a live empty report replaces the commands the agent offered before", async () => {
+  let turns = 0;
+  const reports = [[{ name: "plan", description: "" }], []];
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () =>
+      events<PromptSessionEvent>([
+        {
+          type: "session_update",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: reports[turns++] ?? [],
+          },
+        },
+        // Cancelled, so only the report itself can settle the catalog.
+        { type: "completed", stopReason: "cancelled" },
+      ]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client);
+  const catalog = () =>
+    store.getState().conversations["ora-1"]?.availableCommands;
+
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "one" });
+  assert.deepEqual(catalog(), reports[0]);
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "two" });
+  assert.deepEqual(catalog(), []);
+});
+
 test("starts response duration after successful session preparation", async () => {
   let timestamp = 100;
   const client: ChatSessionClient = {
