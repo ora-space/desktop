@@ -20,8 +20,6 @@ import {
 } from "../../state/hooks/use-proxy-settings";
 import { SettingsHeading } from "./settings-heading";
 
-const DEFAULT_CHECK_URL = "https://google.com";
-
 interface ProxySettingsEditorProps {
   initialSettings: ProxySettings | null;
   controller: ProxySettingsController;
@@ -108,7 +106,7 @@ function ProxySettingsEditor({
   const [username, setUsername] = useState(initialSettings?.username ?? "");
   const [password, setPassword] = useState(initialSettings?.password ?? "");
   const [checkOpen, setCheckOpen] = useState(false);
-  const [checkUrl, setCheckUrl] = useState(DEFAULT_CHECK_URL);
+  const [checkUrl, setCheckUrl] = useState(controller.checkUrl);
 
   const parsed = parsedProxySettings(host, port, username, password);
   const hasFormValues =
@@ -227,7 +225,10 @@ function ProxySettingsEditor({
             <Button
               variant="outline"
               disabled={busy || parsed === null}
-              onClick={() => setCheckOpen(true)}
+              onClick={() => {
+                setCheckUrl(controller.checkUrl);
+                setCheckOpen(true);
+              }}
             >
               {t("settings.proxy.check")}
             </Button>
@@ -262,8 +263,9 @@ function ProxySettingsEditor({
           onUrlChange={setCheckUrl}
           onOpenChange={(open) => {
             setCheckOpen(open);
-            if (!open) setCheckUrl(DEFAULT_CHECK_URL);
+            if (!open) setCheckUrl(controller.checkUrl);
           }}
+          onSaveUrl={controller.saveCheckUrl}
           onCheck={(url) => controller.check(url, parsed)}
         />
       )}
@@ -280,6 +282,7 @@ interface CheckProxyDialogProps {
   onUrlChange: (url: string) => void;
   onOpenChange: (open: boolean) => void;
   onCheck: (url: string) => Promise<CheckProxySettingsResponse>;
+  onSaveUrl: (url: string) => Promise<unknown>;
 }
 
 /** Prompts for a URL and reports whether the current form proxy can reach it. */
@@ -292,6 +295,7 @@ function CheckProxyDialog({
   onUrlChange,
   onOpenChange,
   onCheck,
+  onSaveUrl,
 }: CheckProxyDialogProps) {
   const { t } = useTranslation();
 
@@ -300,6 +304,14 @@ function CheckProxyDialog({
     const nextUrl = url.trim();
     if (nextUrl === "") {
       toast.error(t("settings.proxy.checkUrlRequired"));
+      return;
+    }
+    try {
+      await onSaveUrl(nextUrl);
+    } catch (cause) {
+      toast.error(t("settings.proxy.checkUrlSaveError"), {
+        description: localizeContractError(cause, t),
+      });
       return;
     }
     try {

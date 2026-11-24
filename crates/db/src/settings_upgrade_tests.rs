@@ -23,6 +23,7 @@ fn settings_survive_upgrade_from_every_schema_prefix_and_restart() {
             ("log_level", "debug"),
             ("worktree_root", "C:/custom/worktrees"),
             ("cloud_server", "https://cloud.example"),
+            ("network_proxy_check_url", "https://custom.example/probe"),
             ("future_preference", "preserve me"),
         ];
         for count in 1..=latest.target_versions().len() {

@@ -14,6 +14,7 @@ preference.
 | `developer_mode` | Reveals developer-only controls | `getDeveloperMode`, `setDeveloperMode` |
 | `log_level` | Process-wide runtime log level | `getRuntimeLogLevel`, `setRuntimeLogLevel` |
 | `network_proxy_settings` | Optional host-level HTTP proxy | `getProxySettings`, `setProxySettings`, `clearProxySettings`, `checkProxySettings` |
+| `network_proxy_check_url` | Last explicitly confirmed HTTP(S) probe URL | `getProxyCheckUrl`, `setProxyCheckUrl` |
 | `worktree_root` | Creation root for new task worktrees | Native `get_worktree_root`, `set_worktree_root` |
 
 ## Developer mode and developer options
@@ -81,3 +82,9 @@ Connection checks default to `https://google.com`, with an editable URL. A faile
 reachability of that URL, which can depend on the site or network; it does not invalidate or change
 saved proxy settings. Background read failures keep an open check dialog and its URL draft while
 blocking checks until recovery.
+
+Confirming a check saves its HTTP(S) URL separately in `user_config` before probing, even if the
+target is unreachable. Cancelling discards the current draft and reopening restores the saved URL;
+restarts and upgrades retain it. Only a missing preference uses the Google default. Read failures
+remain errors, and a failed URL save keeps the draft and skips the probe. Confirming a URL does not
+save or clear proxy credentials.

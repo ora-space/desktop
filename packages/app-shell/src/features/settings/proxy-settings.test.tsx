@@ -365,3 +365,146 @@ it("resets a cancelled empty probe URL before opening a new check", async () => 
     within(reopened).getByRole("button", { name: /^验证$|^Check$/ }),
   ).toBeEnabled();
 });
+
+it("saves a confirmed target despite an unreachable result and restores it after remount", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "saved.example",
+    port: 3128,
+    username: "alice",
+    password: "secret",
+  };
+  const handlers = createFixtureHandlers(state);
+  handlers.checkProxySettings = async () => ({
+    outcome: "unreachable",
+    message: "offline",
+  });
+  const client = createTestClient(handlers);
+  const user = userEvent.setup();
+  const view = renderProxy(client);
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  const input = within(dialog).getByLabelText(/探测网址|URL to check/);
+  await user.clear(input);
+  await user.type(input, "https://custom.example/check");
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() =>
+    expect(state.proxyCheckUrl).toBe("https://custom.example/check"),
+  );
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+    ).toBeEnabled(),
+  );
+  await user.clear(input);
+  await user.type(input, "https://cancelled.example/");
+  await user.click(within(dialog).getByRole("button", { name: /取消|Cancel/ }));
+  view.unmount();
+  renderProxy(client);
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  expect(
+    within(await screen.findByRole("dialog")).getByLabelText(
+      /探测网址|URL to check/,
+    ),
+  ).toHaveValue("https://custom.example/check");
+  expect(state.proxySettings).toEqual({
+    host: "saved.example",
+    port: 3128,
+    username: "alice",
+    password: "secret",
+  });
+});
+
+it("preserves the URL draft and saved target on write failure, then retries before checking", async () => {
+  const state = createFixtureState();
+  state.proxyCheckUrl = "https://saved.example";
+  state.proxySettings = {
+    host: "proxy.example",
+    port: 3128,
+    username: null,
+    password: null,
+  };
+  const handlers = createFixtureHandlers(state);
+  const save = handlers.setProxyCheckUrl;
+  let failed = true;
+  handlers.setProxyCheckUrl = async (request) => {
+    if (failed) throw new Error("disk unavailable");
+    return save(request);
+  };
+  const client = createTestClient(handlers);
+  const check = vi.spyOn(client.proxy, "check");
+  const error = vi.spyOn(toast, "error");
+  const user = userEvent.setup();
+  renderProxy(client);
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  const input = within(dialog).getByLabelText(/探测网址|URL to check/);
+  await user.clear(input);
+  await user.type(input, "https://retry.example");
+  const confirm = within(dialog).getByRole("button", {
+    name: /^验证$|^Check$/,
+  });
+  await user.click(confirm);
+  await waitFor(() =>
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/网址未保存|URL was not saved/),
+      expect.anything(),
+    ),
+  );
+  expect(input).toHaveValue("https://retry.example");
+  expect(state.proxyCheckUrl).toBe("https://saved.example");
+  expect(check).not.toHaveBeenCalled();
+  failed = false;
+  await waitFor(() => expect(confirm).toBeEnabled());
+  await user.click(confirm);
+  await waitFor(() =>
+    expect(check).toHaveBeenCalledWith({
+      url: "https://retry.example",
+      settings: state.proxySettings,
+    }),
+  );
+});
+
+it("does not replace an unreadable saved URL with the default and recovers on retry", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "proxy.example",
+    port: 3128,
+    username: null,
+    password: null,
+  };
+  state.proxyCheckUrl = "https://saved.example/probe";
+  const handlers = createFixtureHandlers(state);
+  let failed = true;
+  handlers.getProxyCheckUrl = async () => {
+    if (failed) throw new Error("URL storage unavailable");
+    return { url: state.proxyCheckUrl };
+  };
+  const client = createTestClient(handlers);
+  const save = vi.spyOn(client.proxy, "setCheckUrl");
+  renderProxy(client);
+  await screen.findByRole("alert");
+  expect(
+    screen.queryByRole("button", { name: /验证代理|Check connection/ }),
+  ).toBeNull();
+  expect(save).not.toHaveBeenCalled();
+  failed = false;
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /重试|Retry/ }));
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  expect(
+    within(await screen.findByRole("dialog")).getByLabelText(
+      /探测网址|URL to check/,
+    ),
+  ).toHaveValue("https://saved.example/probe");
+});

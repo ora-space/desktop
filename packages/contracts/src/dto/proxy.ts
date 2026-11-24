@@ -36,6 +36,11 @@ export type ClearProxySettingsRequest = Record<symbol, never>;
 export type ClearProxySettingsResponse = { settings: ProxySettings | null };
 
 /**
+ * Requests the user's saved proxy probe target.
+ */
+export type GetProxyCheckUrlRequest = Record<symbol, never>;
+
+/**
  * Requests the configured network proxy without additional parameters.
  */
 export type GetProxySettingsRequest = Record<symbol, never>;
@@ -44,6 +49,11 @@ export type GetProxySettingsRequest = Record<symbol, never>;
  * Returns the configured network proxy.
  */
 export type GetProxySettingsResponse = { settings: ProxySettings | null };
+
+/**
+ * Returns the authoritative saved target, or the default only when no preference exists.
+ */
+export type ProxyCheckUrlResponse = { url: string };
 
 /**
  * Describes an optional host-level network proxy used by marketplace traffic.
@@ -66,6 +76,11 @@ export type ProxySettings = {
    */
   password: string | null;
 };
+
+/**
+ * Explicitly confirms a new HTTP(S) proxy probe target.
+ */
+export type SetProxyCheckUrlRequest = { url: string };
 
 /**
  * Requests replacing the configured network proxy.

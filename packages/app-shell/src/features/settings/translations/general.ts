@@ -72,9 +72,11 @@ export const settingsTranslations = {
     "settings.proxy.check": "验证代理",
     "settings.proxy.checkTitle": "验证代理设置",
     "settings.proxy.checkDescription":
-      "将使用当前表单中的代理配置探测下方网址，不会自动保存。无法连接可能由目标网站或网络限制引起，不代表代理配置有误。",
+      "点击验证会保存探测网址，并使用当前表单中的代理配置探测；不会自动保存代理配置。无法连接可能由目标网站或网络限制引起，不代表代理配置有误。",
     "settings.proxy.checkUrl": "探测网址",
     "settings.proxy.checkUrlRequired": "请输入要探测的网址。",
+    "settings.proxy.checkUrlSaveError":
+      "探测网址未保存，未执行探测。请检查网址并重试。",
     "settings.proxy.checkConfirm": "验证",
     "settings.proxy.checking": "验证中",
     "settings.proxy.checkSuccess": "代理验证成功。",
@@ -243,9 +245,11 @@ export const settingsTranslations = {
     "settings.proxy.check": "Check connection",
     "settings.proxy.checkTitle": "Check proxy settings",
     "settings.proxy.checkDescription":
-      "The URL below is fetched through the proxy currently shown in this form. Settings are not saved automatically. The site or network may prevent a connection; a failed check does not mean the proxy settings are invalid.",
+      "Check saves this URL and fetches it through the proxy shown in this form. Proxy settings are not saved automatically. The site or network may prevent a connection; a failed check does not mean the proxy settings are invalid.",
     "settings.proxy.checkUrl": "URL to check",
     "settings.proxy.checkUrlRequired": "Enter a URL to check.",
+    "settings.proxy.checkUrlSaveError":
+      "The URL was not saved and no check was run. Check the URL and retry.",
     "settings.proxy.checkConfirm": "Check",
     "settings.proxy.checking": "Checking",
     "settings.proxy.checkSuccess": "Proxy check succeeded.",

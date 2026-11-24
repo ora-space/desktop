@@ -9,6 +9,7 @@
 | `developer_mode` | 显示仅供开发者使用的控件 | `getDeveloperMode`、`setDeveloperMode` |
 | `log_level` | 进程级运行时日志级别 | `getRuntimeLogLevel`、`setRuntimeLogLevel` |
 | `network_proxy_settings` | 可选的宿主级 HTTP 代理 | `getProxySettings`、`setProxySettings`、`clearProxySettings`、`checkProxySettings` |
+| `network_proxy_check_url` | 用户明确确认的 HTTP(S) 探测网址 | `getProxyCheckUrl`、`setProxyCheckUrl` |
 | `worktree_root` | 新任务 worktree 的创建根目录 | 原生命令 `get_worktree_root`、`set_worktree_root` |
 
 ## 开发者模式与开发者选项
@@ -50,3 +51,5 @@ Marketplace 源在 设置 → 插件 → 管理 marketplace 中管理。对话�
 首装来源在执行 schema 步骤前与迁移历史一同提交。迁移或发行版初始化中断后，重启会继续待完成任务；默认源初始化不依赖发行版可选的首次安装 SQL。
 
 连接检查的默认网址为 `https://google.com`，可以自行编辑。失败表示该网址的连通性结果，可能受目标网站或网络限制影响，不判定或改写已保存的代理配置。后台读取失败时，已打开的探测弹窗和网址草稿保持不变，恢复成功前禁止探测。
+
+点击验证会先将 HTTP(S) 网址单独保存到 `user_config`，目标不可达也保留。取消放弃本次草稿，重新打开恢复已保存网址，重启和升级继续保留。只有缺失值使用 Google 默认值；读取失败显示错误，保存失败保留草稿且不执行探测。确认网址不会保存或清空代理凭据。

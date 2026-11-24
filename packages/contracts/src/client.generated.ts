@@ -101,7 +101,9 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       check: (request, options) => executeOperation("checkProxySettings", request, transport, options),
       clear: (request, options) => executeOperation("clearProxySettings", request, transport, options),
       get: (request, options) => executeOperation("getProxySettings", request, transport, options),
+      getCheckUrl: (request, options) => executeOperation("getProxyCheckUrl", request, transport, options),
       set: (request, options) => executeOperation("setProxySettings", request, transport, options),
+      setCheckUrl: (request, options) => executeOperation("setProxyCheckUrl", request, transport, options),
     },
     runtimeLogLevel: {
       get: (request, options) => executeOperation("getRuntimeLogLevel", request, transport, options),
