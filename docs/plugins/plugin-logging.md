@@ -137,3 +137,5 @@ the plugin installed. A retain-data uninstall leaves the log tree and level alon
 
 Output of host-managed child processes (`ora/childprocess/*`) goes to the plugin and is never
 persisted automatically; the plugin forwards what it wants through its logger.
+
+If the level file cannot be read, writes are blocked and the original file is preserved for repair. Unknown levels do not disable other readable entries. Repair the file and restart before editing, so changing one plugin cannot overwrite the other saved preferences.

@@ -47,6 +47,7 @@ pub struct PluginLogLevels {
 struct Inner {
     /// The persisted settings; absence means the default applies.
     configured: BTreeMap<PluginId, LogLevel>,
+    writable: bool,
     /// One publisher per plugin that has ever been subscribed to or configured.
     publishers: BTreeMap<PluginId, watch::Sender<LogLevel>>,
 }
@@ -54,39 +55,51 @@ struct Inner {
 impl PluginLogLevels {
     /// Loads `<data-dir>/plugins/log-levels.json`, treating an absent file as "nothing set".
     ///
-    /// An unreadable or unparsable file is reported and treated as empty: starting with every
-    /// plugin at the default is a safe state, and the next successful write replaces the file.
+    /// Readable entries remain active. Unknown entries or unreadable files block writes so
+    /// a later settings change cannot destroy preferences this version cannot understand.
     pub fn open(data_directory: &Path) -> Self {
         let path = data_directory
             .join(PLUGINS_DIRECTORY)
             .join(LOG_LEVELS_FILE_NAME);
+        let mut writable = true;
         let configured = match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<BTreeMap<String, LogLevel>>(&bytes) {
-                Ok(raw) => raw
-                    .into_iter()
-                    .filter_map(|(id, level)| match PluginId::parse(&id) {
-                        Ok(id) => Some((id, level)),
-                        Err(_) => {
-                            ora_warn!(
-                                path = %path.display(),
-                                plugin_id = %id,
-                                "ignoring plugin log level entry with an invalid plugin id"
-                            );
-                            None
-                        }
-                    })
-                    .collect(),
-                Err(error) => {
-                    ora_warn!(
-                        path = %path.display(),
-                        %error,
-                        "plugin log levels file is unreadable; every plugin uses the default"
-                    );
-                    BTreeMap::new()
+            Ok(bytes) => {
+                match serde_json::from_slice::<BTreeMap<String, serde_json::Value>>(&bytes) {
+                    Ok(raw) => raw
+                        .into_iter()
+                        .filter_map(|(id, level)| match PluginId::parse(&id) {
+                            Ok(id) => match serde_json::from_value::<LogLevel>(level) {
+                                Ok(level) => Some((id, level)),
+                                Err(_) => {
+                                    writable = false;
+                                    None
+                                }
+                            },
+                            Err(_) => {
+                                writable = false;
+                                ora_warn!(
+                                    path = %path.display(),
+                                    plugin_id = %id,
+                                    "ignoring plugin log level entry with an invalid plugin id"
+                                );
+                                None
+                            }
+                        })
+                        .collect(),
+                    Err(error) => {
+                        writable = false;
+                        ora_warn!(
+                            path = %path.display(),
+                            %error,
+                            "plugin log levels file is unreadable; every plugin uses the default"
+                        );
+                        BTreeMap::new()
+                    }
                 }
-            },
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
             Err(error) => {
+                writable = false;
                 ora_warn!(
                     path = %path.display(),
                     %error,
@@ -98,6 +111,7 @@ impl PluginLogLevels {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 configured,
+                writable,
                 publishers: BTreeMap::new(),
             })),
             path,
@@ -144,6 +158,15 @@ impl PluginLogLevels {
         level: LogLevel,
     ) -> Result<PluginLogLevelState, PluginLogLevelPersistError> {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if !inner.writable {
+            return Err(PluginLogLevelPersistError {
+                path: self.path.clone(),
+                source: io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "saved plugin log levels could not be loaded; repair the file and restart before editing",
+                ),
+            });
+        }
         let mut next = inner.configured.clone();
         next.insert(plugin_id.clone(), level);
         self.persist(&next)?;
@@ -162,6 +185,15 @@ impl PluginLogLevels {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if !inner.configured.contains_key(plugin_id) {
             return Ok(());
+        }
+        if !inner.writable {
+            return Err(PluginLogLevelPersistError {
+                path: self.path.clone(),
+                source: io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "saved plugin log levels could not be loaded; repair the file and restart before editing",
+                ),
+            });
         }
         let mut next = inner.configured.clone();
         next.remove(plugin_id);
@@ -212,9 +244,9 @@ mod tests {
         PluginId::new("official", name).expect("plugin id")
     }
 
-    /// Characterizes how one future value resets the whole map and the next write drops old keys.
+    /// Unknown values retain readable preferences and prevent destructive replacement.
     #[test]
-    fn unreadable_map_defaults_and_is_replaced_by_the_next_write() {
+    fn unknown_level_preserves_valid_entries_and_blocks_overwrite() {
         ora_logging::with_trace_logging(|| {
             let temp = TempDir::new().unwrap();
             let levels = PluginLogLevels::open(temp.path());
@@ -228,14 +260,14 @@ mod tests {
             assert_eq!(
                 reopened.state(&id("a")),
                 PluginLogLevelState {
-                    level: LogLevel::Info,
-                    configured: false
+                    level: LogLevel::Debug,
+                    configured: true
                 }
             );
-            reopened.set(&id("c"), LogLevel::Warn).unwrap();
+            assert!(reopened.set(&id("c"), LogLevel::Warn).is_err());
             let replaced: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-            assert_eq!(replaced, serde_json::json!({"official/c": "warn"}));
+            assert_eq!(replaced, raw);
         });
     }
 
