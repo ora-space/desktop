@@ -134,7 +134,8 @@ turn locally until `startSession` returns.
   error. The retry only applies to a reusable `RequestFailed` before any output; a cancelled or
   otherwise finished first prompt consumes it. A load follower registered during that first
   attempt stays with the logical turn across the rebuild, so it receives exactly one terminal
-  boundary.
+  boundary, and it is told the options and commands of the replacement. Commands the stale session
+  had reported are withdrawn until the replacement reports its own.
 - **Configure.** A session that holds a provider reports its own options and is configured through
   `setSessionConfig`. A model chosen while a session held no provider is an intent applied at the
   next attach. Reasoning effort is read only from the `thought_level` option a live session reports;

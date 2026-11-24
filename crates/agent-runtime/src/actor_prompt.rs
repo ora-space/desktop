@@ -12,12 +12,12 @@ use super::title_acquisition::PollAttempt;
 use super::tool_timing::ToolTimings;
 use super::*;
 use crate::attach::LoadRestoration;
-use crate::model_config::current_model;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
 use ora_logging::{ora_debug, ora_warn};
+use stale_load::{describes_provider, stale_load_retry_allowed};
 
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Ends a prompt the provider answered with a result: its stop reason describes the turn, its
@@ -77,16 +77,6 @@ pub(crate) fn produced_output(update: &SessionUpdate) -> bool {
             | SessionUpdate::ToolCall(_)
             | SessionUpdate::ToolCallUpdate(_)
     )
-}
-
-/// The one retry after a load is allowed only before output and only once.
-fn stale_load_retry_allowed(
-    reusable: bool,
-    produced_output: bool,
-    has_context: bool,
-    restoration: LoadRestoration,
-) -> bool {
-    reusable && !produced_output && has_context && restoration == LoadRestoration::Restored
 }
 
 /// One attempt at a prompt, including the single rebuild retry after a stale `session/load`.
@@ -193,6 +183,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
         while let Some(notification) = channel.pending_updates.pop_front() {
             self.observe_session_update(&notification.update);
+            // Only a retry already has followers here, and they joined on the session it replaced.
+            if describes_provider(&notification.update) {
+                followers.send_update(&notification.update, None);
+            }
             if events
                 .try_send(Ok(PromptSessionEvent::SessionUpdate {
                     update: notification.update,
@@ -539,10 +533,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                     session_id = %self.session.id,
                                     "first prompt after session/load failed without output; rebuilding and retrying",
                                 );
-                                let model = current_model(&self.reported_config_options);
-                                self.isolate_channel(channel).await;
-                                match self.rebuild_provider_session(model.as_deref()).await {
+                                match self.replace_stale_session(channel).await {
                                     Ok(setup) => {
+                                        for update in &setup {
+                                            followers.send_update(update, None);
+                                        }
                                         if !super::actor::publish_setup(&events, setup) {
                                             self.record_cleanup(operation_id, Ok(()));
                                             end_report.record(PromptEndCause::StreamDropped);
@@ -787,6 +782,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     }
 }
 
+#[path = "actor_prompt/stale_load.rs"]
+mod stale_load;
 #[cfg(test)]
 #[path = "actor_prompt/tests.rs"]
 mod tests;

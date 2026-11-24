@@ -2289,6 +2289,7 @@ fn subagent_frames_stop_renewing_once_the_parent_delegation_completed() {
 mod restored_sessions {
     mod command_catalog_tests;
     mod follower_retry_tests;
+    mod follower_setup_tests;
     use super::*;
     use pretty_assertions::assert_eq;
     /// Holds two or more sessions on one real routed ACP peer with a controllable provider.
