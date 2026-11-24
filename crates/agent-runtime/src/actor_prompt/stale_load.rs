@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::model_config::current_model;
-use agent_client_protocol_schema::v1::AvailableCommandsUpdate;
+use agent_client_protocol_schema::v1::{AvailableCommandsUpdate, ConfigOptionUpdate};
 
 /// The one retry after a load is allowed only before output and only once.
 pub(super) fn stale_load_retry_allowed(
@@ -28,17 +28,24 @@ pub(super) fn describes_provider(update: &SessionUpdate) -> bool {
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Releases the stale session, opens its replacement and returns what that one reported.
     ///
-    /// A catalog the stale session had reported is withdrawn when the replacement brings none
-    /// during setup: it usually reports only afterwards, and the commands still on screen belong
-    /// to a session that is gone.
+    /// Options and commands the stale session had reported are withdrawn when the replacement
+    /// brings none during setup: what is still on screen belongs to a session that is gone.
     pub(super) async fn replace_stale_session(
         &mut self,
         channel: SessionChannel,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
         let model = current_model(&self.reported_config_options);
+        let had_options = !self.reported_config_options.is_empty();
         let had_commands = channel.reported_commands().is_some();
         self.isolate_channel(channel).await;
         let mut setup = self.rebuild_provider_session(model.as_deref()).await?;
+        // `session/new` answers with every option the replacement offers, so none means none.
+        if had_options && self.reported_config_options.is_empty() {
+            setup.push(SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+                Vec::new(),
+            )));
+        }
+        // Commands usually arrive only after setup, and then replace this empty catalog.
         let reported = setup
             .iter()
             .any(|update| matches!(update, SessionUpdate::AvailableCommandsUpdate(_)));

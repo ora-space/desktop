@@ -135,7 +135,8 @@ turn locally until `startSession` returns.
   otherwise finished first prompt consumes it. A load follower registered during that first
   attempt stays with the logical turn across the rebuild, so it receives exactly one terminal
   boundary, and it is told the options and commands of the replacement. Commands the stale session
-  had reported are withdrawn until the replacement reports its own.
+  had reported are withdrawn until the replacement reports its own, and so are its options when the
+  replacement offers none.
 - **Configure.** A session that holds a provider reports its own options and is configured through
   `setSessionConfig`. A model chosen while a session held no provider is an intent applied at the
   next attach. Reasoning effort is read only from the `thought_level` option a live session reports;

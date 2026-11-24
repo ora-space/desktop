@@ -20,6 +20,8 @@ enum Report {
     Never,
     /// Only an option change, pushed within the setup window.
     OptionsInSetup,
+    /// Neither commands nor options: the replacement offers no options at all.
+    NoOptions,
 }
 
 /// The session state a client shows, as the updates that carry it.
@@ -27,6 +29,7 @@ enum Report {
 enum State {
     Commands(Vec<String>),
     Model(String),
+    NoOptions,
 }
 
 /// Reads one update's session state, if it carries any.
@@ -39,6 +42,9 @@ fn state(update: SessionUpdate) -> Option<State> {
                 .map(|command| command.name)
                 .collect(),
         )),
+        SessionUpdate::ConfigOptionUpdate(update) if update.config_options.is_empty() => {
+            Some(State::NoOptions)
+        }
         SessionUpdate::ConfigOptionUpdate(update) => Some(State::Model(
             crate::model_config::current_model(&update.config_options).unwrap_or_default(),
         )),
@@ -97,19 +103,25 @@ async fn replacing_agent(
                     "error":{"code":-32000, "message":"stale session"}})]
             }
             Some("session/new") => {
-                let created =
-                    answer(json!({"sessionId":"replacement", "configOptions":model("b")}));
+                let offered = match report {
+                    Report::NoOptions => json!([]),
+                    _ => model("b"),
+                };
+                let created = answer(json!({"sessionId":"replacement", "configOptions":offered}));
                 match report {
                     Report::InSetup => vec![created, commands("replacement", "fresh")],
                     Report::OptionsInSetup => vec![created, options("replacement", "a")],
-                    Report::AfterSetup | Report::Never => vec![created],
+                    Report::AfterSetup | Report::Never | Report::NoOptions => vec![created],
                 }
             }
             Some("session/set_config_option") => {
                 let applied = answer(json!({"configOptions":model("a")}));
                 match report {
                     Report::AfterSetup => vec![commands("replacement", "fresh"), applied],
-                    Report::InSetup | Report::Never | Report::OptionsInSetup => vec![applied],
+                    Report::InSetup
+                    | Report::Never
+                    | Report::OptionsInSetup
+                    | Report::NoOptions => vec![applied],
                 }
             }
             Some("session/prompt") => {
@@ -180,6 +192,7 @@ fn a_follower_sees_the_state_of_the_session_that_replaced_a_stale_one() {
         (Report::AfterSetup, vec![on("a"), none(), fresh()]),
         (Report::Never, vec![on("a"), none()]),
         (Report::OptionsInSetup, vec![on("a"), none(), on("a")]),
+        (Report::NoOptions, vec![State::NoOptions, none()]),
     ] {
         run_case(async move {
             let (owned, followed) = replaced_turn(report).await;
