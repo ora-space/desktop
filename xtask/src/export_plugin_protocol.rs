@@ -49,6 +49,7 @@ export const INTERNAL_ERROR = {INTERNAL_ERROR_CODE};\n\
 export const AGENT_NOT_INSTALLED = {AGENT_NOT_INSTALLED_CODE};\n\
 export const AGENT_UNUSABLE = {AGENT_UNUSABLE_CODE};\n\
 export const SUPPORTED_ACP_VERSION = {SUPPORTED_ACP_VERSION};\n\
+export const AGENT_COMMANDS_WAIT_CAP_MS = {AGENT_COMMANDS_WAIT_CAP_MS};\n\
 export const SKILL_DIRECTORY_V1 = {SKILL_DIRECTORY_V1:?} as const;\n\
 export const OPENCODE_MCP_CONFIG_V1 = {OPENCODE_MCP_CONFIG_V1:?} as const;\n\
 export const CLAUDE_MCP_CONFIG_V1 = {CLAUDE_MCP_CONFIG_V1:?} as const;\n\
@@ -60,6 +61,7 @@ export const PLUGIN_METHODS = {{\n\
 export const AGENT_METHODS = {{\n\
 \x20\x20start: {AGENT_START_METHOD:?},\n\
 \x20\x20stop: {AGENT_STOP_METHOD:?},\n\
+\x20\x20discover: {AGENT_DISCOVER_METHOD:?},\n\
 \x20\x20listModels: {AGENT_LIST_MODELS_METHOD:?},\n\
 \x20\x20acp: {AGENT_ACP_METHOD:?},\n\
 }} as const;\n\n\
@@ -97,6 +99,7 @@ mod tests {
     fn renders_snake_case_methods() {
         let source = render_constants();
 
+        assert!(source.contains("agent/discover"));
         assert!(source.contains("agent/list_models"));
         assert!(source.contains("effect/verify_ready"));
         assert!(source.contains("ora/childprocess/close_stdin"));
