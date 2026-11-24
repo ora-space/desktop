@@ -5,8 +5,12 @@ import { agentRuntimeKeys } from "../data/agent-runtime";
 import { refreshWorkspaceDirectories } from "../data/workspace";
 import { useAgentRuntimeStatus } from "./use-agent-runtime-status";
 
-/** Discovers one plugin-owned model catalog without creating an Ora provider session. */
-export function useAgentModels(
+/**
+ * Discovers what one agent offers a chat without creating an Ora provider session.
+ *
+ * The model picker and the slash menu both read this, so a chat surface starts one discovery.
+ */
+export function useAgentDiscovery(
   agentRef: string | null,
   workspaceId: string | null,
 ) {
@@ -18,12 +22,17 @@ export function useAgentModels(
   )?.status;
   const ready = runtimeStatus === "ready";
   const query = useQuery({
-    queryKey: agentRuntimeKeys.agentModels(agentRef, workspaceId),
+    queryKey: agentRuntimeKeys.agentDiscovery(
+      agentRef,
+      workspaceId,
+      "modelsAndCommands",
+    ),
     queryFn: () =>
       client.agentRuntime
-        .listModels({
+        .discover({
           agentRef: agentRef!,
           workspaceId: workspaceId!,
+          includeCommands: true,
         })
         .catch((error: unknown) => {
           // Discovery resolves the workspace folder before asking the plugin. A refusal here
@@ -49,6 +58,9 @@ export function useAgentModels(
   return {
     ...query,
     models: query.data?.models ?? [],
+    // Withheld while the agent cannot be reached, so what it once offered does not outlive it. Not
+    // knowing the commands stays `null`, which is not the same as the agent having none.
+    commands: ready ? (query.data?.commands ?? null) : null,
     isLoading:
       query.isLoading ||
       (agentRef !== null &&

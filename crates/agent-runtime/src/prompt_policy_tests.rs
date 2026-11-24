@@ -1,5 +1,7 @@
 //! Exercises prompt policy through the production admission, ACP peer, router, and session actor.
 
+#[path = "discovery_tests.rs"]
+mod discovery_tests;
 #[path = "plugin_replacement_tests.rs"]
 mod plugin_replacement_tests;
 #[path = "prompt_policy_tests/restore_replay.rs"]

@@ -37,11 +37,11 @@ UI hook 负责选中状态、草稿和输入框清理、变更进行中状态以
 
 | 触发 | 失效 |
 |---|---|
-| Agent 激活 | 运行时可用性，以及该 Agent 在所有 Workspace 中的模型查询 |
-| Agent 停止或移除 | 运行时可用性；不对已停止的运行时做模型发现 |
+| Agent 激活 | 运行时可用性，以及该 Agent 在所有 Workspace 中的发现查询 |
+| Agent 停止或移除 | 运行时可用性；不对已停止的运行时做发现 |
 | 插件变更完成 | 已安装和可用插件，以及本次会话的 Hook 生命周期结果 |
 | `PluginStatusChanged` | 已安装插件、运行时可用性和 Skill；不含可用插件和模型 |
-| `AgentModelsInvalidated` | 只有该 Agent 的模型查询前缀 |
+| `AgentModelsInvalidated` | 只有该 Agent 的发现查询前缀 |
 | 显式初始化 Hook | 只有 Hook 生命周期结果 |
 
 数据测试使用真实的 `QueryClient` 缓存和 observer，验证精确的失效和重新拉取行为。

@@ -5,7 +5,7 @@ import {
   RemoteContractError,
   type ContractsClient,
   type SwitchSessionAgentRequest,
-  type ListAgentModelsResponse,
+  type DiscoverAgentResponse,
   type StartSessionRequest,
 } from "@ora/contracts";
 import { TooltipProvider } from "@ora/ui";
@@ -629,7 +629,7 @@ describe("WorkspaceView", () => {
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
     const client = createTestClient(clientHandlers);
-    const discover = vi.spyOn(client.agentRuntime, "listModels");
+    const discover = vi.spyOn(client.agentRuntime, "discover");
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -1414,10 +1414,10 @@ describe("WorkspaceView", () => {
     state.projects = [{ id: "p1", name: "Ora" }];
     const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
     const baseClient = createTestClient(baseClientHandlers);
-    const discover = vi.fn(baseClient.agentRuntime.listModels);
+    const discover = vi.fn(baseClient.agentRuntime.discover);
     const client: ContractsClient = createTestClient({
       ...baseClientHandlers,
-      listAgentModels: discover,
+      discoverAgent: discover,
     });
     // One query client and one chat store across both renders, so this is the
     // same app session leaving a surface and coming back to it.
@@ -1471,11 +1471,11 @@ describe("WorkspaceView", () => {
     const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
-    let openHandshake: (response: ListAgentModelsResponse) => void = () => {};
+    let openHandshake: (response: DiscoverAgentResponse) => void = () => {};
     const client: ContractsClient = createTestClient({
       ...baseClientHandlers,
-      listAgentModels: () =>
-        new Promise<ListAgentModelsResponse>((resolve) => {
+      discoverAgent: () =>
+        new Promise<DiscoverAgentResponse>((resolve) => {
           openHandshake = resolve;
         }),
     });
@@ -1784,8 +1784,8 @@ describe("WorkspaceView", () => {
         await beforeSwitch();
         return baseClient.session.switchAgent(request, options);
       },
-      listAgentModels: async (request, options) => {
-        const response = await baseClient.agentRuntime.listModels(
+      discoverAgent: async (request, options) => {
+        const response = await baseClient.agentRuntime.discover(
           request,
           options,
         );

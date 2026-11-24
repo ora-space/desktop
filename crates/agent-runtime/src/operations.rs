@@ -1,8 +1,8 @@
 use super::{AgentRuntimeHost, AgentRuntimeManager};
 use crate::RuntimeError;
 use ora_contracts::{
-    GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, ListAgentModelsRequest,
-    ListAgentModelsResponse,
+    DiscoverAgentRequest, DiscoverAgentResponse, GetAgentRuntimeStatusRequest,
+    GetAgentRuntimeStatusResponse,
 };
 use std::sync::Arc;
 
@@ -34,11 +34,11 @@ impl<H: AgentRuntimeHost> AgentRuntime<H> {
         Ok(self.manager.agent_runtime_status())
     }
 
-    /// Discovers one agent's models for a workspace without creating a session.
-    pub async fn models(
+    /// Discovers what one agent offers in a workspace without creating a session.
+    pub async fn discover(
         &self,
-        request: ListAgentModelsRequest,
-    ) -> Result<ListAgentModelsResponse, RuntimeError> {
-        self.manager.agent_models(request).await
+        request: DiscoverAgentRequest,
+    ) -> Result<DiscoverAgentResponse, RuntimeError> {
+        self.manager.discover_agent(request).await
     }
 }

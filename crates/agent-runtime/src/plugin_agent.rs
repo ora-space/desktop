@@ -1,4 +1,5 @@
 mod control;
+mod discovery;
 mod effect;
 mod inbound;
 mod transport;
@@ -6,7 +7,8 @@ mod transport;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use control::{PluginAgentError, list_models, stop_agent};
+pub(crate) use control::{PluginAgentError, stop_agent};
+pub(crate) use discovery::{DiscoveryScope, discover};
 pub use effect::{AgentEffectError, coordinate, reactivate, verify_ready};
 pub(crate) use transport::PluginAcpTransport;
 

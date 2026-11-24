@@ -10,6 +10,7 @@ mod attach;
 mod clock;
 mod command;
 mod connection;
+mod discovery;
 mod end_cause;
 mod error;
 mod events;
@@ -287,32 +288,25 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         self.inner.connections.sync_plugin_agents();
     }
 
-    /// Reports the models one agent advertises before any session exists.
+    /// Reports what one agent offers before any session exists.
     ///
     /// Discovery is delegated to the plugin on demand and is never cached by Ora.
-    pub(crate) async fn agent_models(
+    pub(crate) async fn discover_agent(
         &self,
-        request: ora_contracts::ListAgentModelsRequest,
-    ) -> Result<ora_contracts::ListAgentModelsResponse, RuntimeError> {
+        request: ora_contracts::DiscoverAgentRequest,
+    ) -> Result<ora_contracts::DiscoverAgentResponse, RuntimeError> {
         let cwd = self.workspace_cwd(&WorkspaceId::new(request.workspace_id))?;
-        let supervisor = self
-            .inner
-            .connections
-            .for_agent(&domain_agent_ref(request.agent_ref)?)?;
-        let connection = supervisor.current()?;
-        let models = plugin_agent::list_models(&connection.runtime, &cwd)
+        let agent_ref = domain_agent_ref(request.agent_ref)?;
+        let connection = self.inner.connections.for_agent(&agent_ref)?.current()?;
+        let scope = if request.include_commands {
+            plugin_agent::DiscoveryScope::ModelsAndCommands
+        } else {
+            plugin_agent::DiscoveryScope::Models
+        };
+        let discovered = plugin_agent::discover(&connection.runtime, &cwd, scope)
             .await
             .map_err(agent_model_discovery_failed)?;
-        Ok(ora_contracts::ListAgentModelsResponse {
-            models: models
-                .iter()
-                .map(|model| ora_contracts::AgentModel {
-                    id: model.id.clone(),
-                    display_name: model.display_name.clone(),
-                    default: model.default,
-                })
-                .collect(),
-        })
+        Ok(discovery::response(&agent_ref, discovered))
     }
 
     /// Reports the live ACP handshake status of every supervised agent runtime.

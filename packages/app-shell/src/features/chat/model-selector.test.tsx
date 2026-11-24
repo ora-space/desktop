@@ -109,7 +109,7 @@ function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
   seed(state);
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
   const client = createTestClient(clientHandlers);
-  const discover = vi.spyOn(client.agentRuntime, "listModels");
+  const discover = vi.spyOn(client.agentRuntime, "discover");
   const setConfig = vi.spyOn(client.session, "setConfig");
   const chatStore = createChatStore(client.session);
   const queryClient = createTestQueryClient();

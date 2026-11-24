@@ -39,7 +39,7 @@ import {
 import { useAgentModelPreferenceStore } from "../../state/stores/agent-model-preference-store";
 import { currentValueName, findModelOption, selectableValues } from "@ora/chat";
 import { PluginLogoMark } from "../settings/plugin-logo";
-import { useAgentModels } from "../../state/hooks/use-agent-models";
+import { useAgentDiscovery } from "../../state/hooks/use-agent-discovery";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useWorkspaces } from "../../state/hooks/use-workspaces";
 import { missingWorkspaceDirectory } from "../../state/hooks/use-missing-workspace-directory";
@@ -196,7 +196,7 @@ export function ModelSelector({
   const usesSessionOptions =
     optionsSessionId !== null &&
     (!conversationLoaded || (liveOptions?.length ?? 0) > 0);
-  const discovered = useAgentModels(
+  const discovered = useAgentDiscovery(
     usesSessionOptions || directoryMissing ? null : agentCli,
     usesSessionOptions || directoryMissing ? null : workspaceId,
   );

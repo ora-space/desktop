@@ -17,8 +17,8 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       prepare: (request, options) => executeOperation("prepareAgentImport", request, transport, options),
     },
     agentRuntime: {
+      discover: (request, options) => executeOperation("discoverAgent", request, transport, options),
       getStatus: (request, options) => executeOperation("getAgentRuntimeStatus", request, transport, options),
-      listModels: (request, options) => executeOperation("listAgentModels", request, transport, options),
     },
     appEvents: {
       watch: (request, options) => executeStreamOperation("watchAppEvents", request, transport, options),

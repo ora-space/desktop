@@ -49,21 +49,42 @@ pub struct AgentModel {
     pub default: bool,
 }
 
-/// Requests the pre-session model list of one application-scoped agent runtime.
+/// One command an agent reported before any session exists.
+///
+/// The text is whatever the agent wrote, often taken from repository files, so a client shows it
+/// as plain text and checks it before showing it at all.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct ListAgentModelsRequest {
-    pub agent_ref: AgentRef,
-    pub workspace_id: String,
+pub struct AgentCommand {
+    pub name: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_hint: Option<String>,
 }
 
-/// Returns the models one agent advertises outside any session.
+/// Requests what one application-scoped agent offers in a workspace outside any session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct ListAgentModelsResponse {
+pub struct DiscoverAgentRequest {
+    pub agent_ref: AgentRef,
+    pub workspace_id: String,
+    /// Asking for commands may make the agent's plugin wait for them, so model-only callers do not.
+    pub include_commands: bool,
+}
+
+/// Returns what one agent offers outside any session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct DiscoverAgentResponse {
     pub models: Vec<AgentModel>,
+    /// Absent when nobody knows the agent's commands, which is not the same as it having none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub commands: Option<Vec<AgentCommand>>,
 }
 
 /// Requests the live detection status of every application-scoped agent runtime.
@@ -567,8 +588,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AgentStatus::export(config)?;
     AgentRuntimeStatus::export(config)?;
     AgentModel::export(config)?;
-    ListAgentModelsRequest::export(config)?;
-    ListAgentModelsResponse::export(config)?;
+    AgentCommand::export(config)?;
+    DiscoverAgentRequest::export(config)?;
+    DiscoverAgentResponse::export(config)?;
     GetAgentRuntimeStatusRequest::export(config)?;
     GetAgentRuntimeStatusResponse::export(config)?;
     SessionStatus::export(config)?;

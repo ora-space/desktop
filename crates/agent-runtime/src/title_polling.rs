@@ -326,6 +326,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             SessionUpdate::ConfigOptionUpdate(config) => {
                 self.reported_config_options = config.config_options.clone();
             }
+            SessionUpdate::AvailableCommandsUpdate(commands) => {
+                crate::discovery::warn_when_commands_exceed_limit(
+                    &self.session.agent_ref,
+                    commands.available_commands.len(),
+                );
+            }
             _ => {}
         }
     }

@@ -13,9 +13,21 @@ function caches() {
     available: pluginKeys.availablePlugins,
     skills: skillKeys.skills,
     availability: agentRuntimeKeys.agentRuntimeStatus,
-    modelsA: agentRuntimeKeys.agentModels("agent-a", "workspace-1"),
-    modelsAElsewhere: agentRuntimeKeys.agentModels("agent-a", "workspace-2"),
-    modelsB: agentRuntimeKeys.agentModels("agent-b", "workspace-1"),
+    modelsA: agentRuntimeKeys.agentDiscovery(
+      "agent-a",
+      "workspace-1",
+      "modelsAndCommands",
+    ),
+    modelsAElsewhere: agentRuntimeKeys.agentDiscovery(
+      "agent-a",
+      "workspace-2",
+      "modelsAndCommands",
+    ),
+    modelsB: agentRuntimeKeys.agentDiscovery(
+      "agent-b",
+      "workspace-1",
+      "modelsAndCommands",
+    ),
   };
   for (const key of Object.values(keys)) client.setQueryData(key, []);
   return {
