@@ -8,8 +8,9 @@ use std::time::Duration;
 
 /// How long one probe may take before its answer counts as `Unknown`.
 ///
-/// `rev-parse` normally answers in milliseconds; only a Git stuck on something like a stalled
-/// network mount gets near this, and it must not hold a whole workspace list with it.
+/// `rev-parse` normally answers in milliseconds; a Git stuck on something like a stalled network
+/// mount must not hold a whole workspace list with it. The limit bounds the Git process and its
+/// output; the directory `stat` calls around it are not bounded.
 const PROBE_TIME_LIMIT: Duration = Duration::from_secs(5);
 
 /// Asks Git, at this moment, whether commands run from `directory` act on a work tree.

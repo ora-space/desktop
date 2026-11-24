@@ -292,6 +292,29 @@ fn unreadable_git_directory_reports_unknown() {
     }
 }
 
+/// Verifies a project added through a symlink is checked along the real path Git walks: a
+/// damaged `.git` above the link's target reports `Unknown`, not `NotRepository`.
+#[cfg(unix)]
+#[test]
+fn symlinked_folder_under_a_damaged_repository_reports_unknown() {
+    let temporary = TempDir::new().expect("create temporary backend directory");
+    let repository = temporary.path().join("data").join("repo");
+    let target = repository.join("docs");
+    fs::create_dir_all(repository.join(".git")).expect("create damaged .git");
+    fs::create_dir_all(&target).expect("create link target");
+    let link = temporary.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).expect("create folder symlink");
+    let backend = open_backend(&temporary);
+    let project_id = create_project(&backend, &link);
+
+    assert_eq!(
+        main_workspace(&backend, &project_id).directory,
+        WorkspaceDirectory::Present {
+            git: WorkspaceGit::Unknown,
+        }
+    );
+}
+
 /// Verifies a missing folder reports `Missing` rather than any Git capability.
 #[test]
 fn missing_folder_reports_missing_without_git_capability() {

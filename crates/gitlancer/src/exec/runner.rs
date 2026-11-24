@@ -60,6 +60,10 @@ impl GitRunner for CliGitRunner {
     }
 
     /// Kills Git once `limit` passes and reports `TimedOut`, the kind budget-enforcing runners use.
+    ///
+    /// The limit covers the run and the wait for its output, including output a grandchild keeps
+    /// open after Git exits (the grandchild itself is left running). Not covered: reaping a killed
+    /// Git that the OS cannot stop yet (an uninterruptible filesystem wait).
     fn run_within(&self, command: &GitCommand, limit: Duration) -> Result<GitOutput, GitExecError> {
         run_cli(command, /*limits*/ None, Some(limit))
     }
@@ -107,10 +111,7 @@ fn run_cli(
             "0"
         },
     );
-    // `LC_ALL` outranks `LANG`, so a caller-level `LC_ALL` (a Desktop launched from a localized
-    // shell) would otherwise translate the diagnostics callers classify by their English text.
     process.env("LANG", &command.env.lang);
-    process.env("LC_ALL", &command.env.lang);
     process.env("GIT_PAGER", &command.env.pager);
     process.envs(&command.env.variables);
 
@@ -209,18 +210,35 @@ fn run_cli(
             }
             // The readers are left to finish on their own: a grandchild Git started can still
             // hold the pipes open, and waiting for it would defeat the deadline.
-            return Err(GitExecError::OutputReadFailed {
-                stream: "process status",
-                source: std::io::Error::new(
-                    ErrorKind::TimedOut,
-                    format!("git exceeded its {}ms time limit", limit.as_millis()),
-                ),
-            });
+            return Err(time_limit_exceeded(limit));
         }
         let _wait = state_changed
             .wait_timeout(state, remaining)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
     };
+    // Git can exit while a grandchild it started still holds the pipes; joining the readers would
+    // then wait for that grandchild, so under a deadline the wait for their completion is bounded
+    // too. On expiry the readers are detached and finish when the grandchild closes the pipes.
+    if let Some(limit) = deadline {
+        let (state_lock, state_changed) = &*reader_state;
+        let mut state = state_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !state.output_exceeded && state.completed_readers < 2 {
+            let remaining = limit.saturating_sub(started_at.elapsed());
+            if remaining.is_zero() {
+                drop(state);
+                if let Some(ref l) = logger {
+                    l.log_result(started_at.elapsed().as_millis() as u64, false, None);
+                }
+                return Err(time_limit_exceeded(limit));
+            }
+            state = state_changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+    }
     let stdout_result = join_bounded_reader(stdout_reader, "stdout", stdout_limit);
     let stderr_result = join_bounded_reader(stderr_reader, "stderr", stderr_limit);
     let duration_ms = started_at.elapsed().as_millis() as u64;
@@ -262,6 +280,17 @@ fn run_cli(
         stdout,
         stderr,
     })
+}
+
+/// Reports a command stopped at its deadline, with the kind budget-enforcing runners use.
+fn time_limit_exceeded(limit: Duration) -> GitExecError {
+    GitExecError::OutputReadFailed {
+        stream: "process status",
+        source: std::io::Error::new(
+            ErrorKind::TimedOut,
+            format!("git exceeded its {}ms time limit", limit.as_millis()),
+        ),
+    }
 }
 
 /// Tracks output-reader completion so process waiting can sleep without polling.
@@ -395,32 +424,72 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
-    /// Verifies every Git process gets the automation locale in `LC_ALL` too, whatever the
-    /// caller's environment says, so English diagnostics stay classifiable.
+    /// Verifies `LC_ALL` is pinned only for commands that opt into English messages, while an
+    /// ordinary command inherits whatever the caller's environment says.
     #[cfg(unix)]
     #[test]
-    fn pins_the_message_locale_for_every_invocation() {
-        let output = CliGitRunner
-            .run(&GitCommand::new(
+    fn pins_the_message_locale_only_when_asked() {
+        let locale_lines = |env: GitEnv| {
+            CliGitRunner
+                .run(&GitCommand::new(
+                    std::env::temp_dir(),
+                    vec![
+                        "-c".to_string(),
+                        "alias.print-env=!env".to_string(),
+                        "print-env".to_string(),
+                    ],
+                    env,
+                    GitIntent::ReadOnly,
+                ))
+                .unwrap()
+                .stdout
+                .lines()
+                .filter(|line| line.starts_with("LC_ALL="))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        let inherited = std::env::var("LC_ALL")
+            .map(|value| vec![format!("LC_ALL={value}")])
+            .unwrap_or_default();
+
+        assert_eq!(
+            (
+                locale_lines(GitEnv::default()),
+                locale_lines(GitEnv::default().with_english_messages()),
+            ),
+            (inherited, vec!["LC_ALL=C".to_string()])
+        );
+    }
+
+    /// Verifies the deadline also bounds the wait for output when Git exits but a process it
+    /// started keeps the pipes open.
+    #[cfg(unix)]
+    #[test]
+    fn deadline_covers_output_held_open_by_a_child_process() {
+        let started = std::time::Instant::now();
+        let result = CliGitRunner.run_within(
+            &GitCommand::new(
                 std::env::temp_dir(),
                 vec![
                     "-c".to_string(),
-                    "alias.print-env=!env".to_string(),
-                    "print-env".to_string(),
+                    "alias.linger=!sleep 10 &".to_string(),
+                    "linger".to_string(),
                 ],
                 GitEnv::default(),
                 GitIntent::ReadOnly,
-            ))
-            .unwrap();
-
-        assert_eq!(
-            output
-                .stdout
-                .lines()
-                .filter(|line| line.starts_with("LANG=") || line.starts_with("LC_ALL="))
-                .collect::<std::collections::BTreeSet<_>>(),
-            std::collections::BTreeSet::from(["LANG=C", "LC_ALL=C"])
+            ),
+            std::time::Duration::from_millis(200),
         );
+
+        assert!(
+            matches!(
+                &result,
+                Err(crate::error::GitExecError::OutputReadFailed { source, .. })
+                    if source.kind() == std::io::ErrorKind::TimedOut
+            ),
+            "{result:?}"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     /// Verifies bounded readers drain input while retaining no bytes beyond the budget.

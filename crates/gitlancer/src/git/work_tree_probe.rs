@@ -5,6 +5,7 @@ use crate::exec::env::GitEnv;
 use crate::exec::output::GitOutput;
 use crate::exec::runner::GitRunner;
 use crate::git::Git;
+use ora_utils::path::canonicalize;
 use std::path::Path;
 use std::time::Duration;
 
@@ -30,7 +31,8 @@ impl<R: GitRunner> Git<R> {
     /// a damaged or unreadable `.git` directory (missing `HEAD`, no objects, no permission). Any
     /// other failure (an untrusted owner, a broken `.git` link, Git missing, the limit passing)
     /// stays an error so callers never mistake a broken repository for a plain folder. The limit
-    /// keeps a Git stuck on a stalled mount from holding the caller.
+    /// bounds the Git process and its output (see `GitRunner::run_within`); the `.git` checks
+    /// that follow are plain `stat` calls and are not bounded.
     ///
     /// `Git::discover_repository` treats any non-zero exit as "not a repository" because it only
     /// decides whether to attempt an operation; the difference is intentional.
@@ -43,7 +45,7 @@ impl<R: GitRunner> Git<R> {
             &GitCommand::new(
                 directory.to_path_buf(),
                 vec!["rev-parse".to_string(), "--is-inside-work-tree".to_string()],
-                GitEnv::default(),
+                GitEnv::default().with_english_messages(),
                 GitIntent::ReadOnly,
             ),
             limit,
@@ -60,6 +62,10 @@ impl<R: GitRunner> Git<R> {
 /// `symlink_metadata` so a dangling `.git` symlink still counts as present. Any error other than
 /// "not found" (for example no permission to look) is inconclusive and propagates.
 fn require_no_git_entry(directory: &Path) -> Result<(), GitlancerError> {
+    // Git walks the real path, so a symlinked folder must be checked through its target's
+    // ancestors; a lexical walk would miss a damaged `.git` above the target. Failing to resolve
+    // the path is inconclusive and propagates.
+    let directory = canonicalize(directory)?;
     for ancestor in directory.ancestors() {
         let candidate = ancestor.join(".git");
         match std::fs::symlink_metadata(&candidate) {
@@ -78,7 +84,8 @@ const NOT_IN_REPOSITORY: &str = "not a git repository (or any";
 
 /// Maps the raw `rev-parse --is-inside-work-tree` outcome onto a probe answer.
 ///
-/// The runner pins `LANG` and `LC_ALL` to the automation locale, so Git's message is English.
+/// The probe pins `LC_ALL=C` on its own command, so Git's message is English whatever the
+/// caller's locale.
 fn classify_work_tree_probe(
     outcome: Result<GitOutput, GitExecError>,
 ) -> Result<WorkTreeProbe, GitlancerError> {

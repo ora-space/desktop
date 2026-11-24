@@ -94,9 +94,11 @@ pub struct GitCommand {
 
 `GitIntent` classifies but does not enforce; upper layers use it to decide whether a command may run
 automatically, needs confirmation or may be retried. `GitEnv::automation_defaults` disables terminal
-prompts, fixes `LANG=C` and `LC_ALL=C` (so a localized caller environment cannot override it) and
-disables paging, so an agent-driven command cannot block on interactive UI or return localized
-output.
+prompts, fixes `LANG=C` and disables paging, so an agent-driven command cannot block on interactive
+UI. A caller-level `LC_ALL` still outranks `LANG`; commands whose stderr is classified by text (the
+work tree probe, the untracked-file diff) add `GitEnv::with_english_messages`, which pins
+`LC_ALL=C` for that command only. It is not a default because `LC_ALL` would also override
+`LC_CTYPE` for hooks that commit and push run.
 
 `CliGitRunner` runs the system `git`, measures duration, reports optional telemetry and returns
 `GitOutput { code, stdout, stderr, duration_ms }`. `run_bounded` drains stdout and stderr
