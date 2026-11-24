@@ -103,7 +103,13 @@ work tree probe, the untracked-file diff) add `GitEnv::with_english_messages`, w
 `CliGitRunner` runs the system `git`, measures duration, reports optional telemetry and returns
 `GitOutput { code, stdout, stderr, duration_ms }`. `run_bounded` drains stdout and stderr
 concurrently and kills Git when a stream exceeds its budget (`GitExecError::OutputTooLarge`, mapped
-to `GitlancerError::DiffTooLarge` for diffs). A non-zero exit keeps the code, arguments and output
+to `GitlancerError::DiffTooLarge` for diffs). `run_within(command, limit)` is an opt-in deadline
+for one call; only the work tree probe uses it. `CliGitRunner` kills Git once the limit passes and
+returns `OutputReadFailed` with `ErrorKind::TimedOut`; the limit also covers waiting for output a
+grandchild keeps open after Git exits, and such a grandchild is left running. It does not bound
+reaping a killed Git the OS cannot stop yet (an uninterruptible filesystem wait), nor any work the
+caller does around the command, such as the probe's `.git` `stat` checks. Other runners receive the
+limit as the command's `time_limit`, which budget-enforcing runners honor. A non-zero exit keeps the code, arguments and output
 for diagnostics. `RecordingGitRunner` executes nothing and exists for command-construction tests.
 Telemetry is opt-in through `gitlancer::logging::register`, see
 [Logging](../core/logging.md#git-command-logging).

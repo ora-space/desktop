@@ -192,7 +192,7 @@ export function WorkspaceChatPane({
       pendingPermissions={conversation?.pendingPermissions ?? []}
       skills={skills}
       roles={roles}
-      availableCommands={conversation?.availableCommands ?? []}
+      availableCommands={conversation?.availableCommands ?? null}
       disabled={!canChat}
       // An untouched chat cannot send yet, but disabling this picker as
       // part of the composer would make choosing its first agent impossible.

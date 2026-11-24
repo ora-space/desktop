@@ -83,9 +83,10 @@ reverse order and removes its bookkeeping rows. It does not compare persisted SQ
 shared versions, so changing a previously published migration definition cannot trigger a schema
 rebuild during packaged application startup.
 
-After a database with no prior migration rows reaches its target, application bootstrap executes
-the catalog's first-install SQL in one separate transaction. An existing database never runs that
-SQL, including when a later build first supplies a non-empty list. The SQL is data initialization,
+Fresh database provenance and pending first-install work are recorded atomically before schema
+steps. After reaching the target, bootstrap runs pending catalog first-install SQL and clears its
+journal in one transaction. A restart resumes this work even if migrations were already committed;
+an older database without that journal never runs new distribution defaults. The SQL is data initialization,
 not migration history: it has no migration row, does not participate in drift comparison, and is
 not rolled back with a target suffix. If initialization fails, the already committed schema
 migrations remain applied and bootstrap returns the failure.
@@ -104,8 +105,7 @@ The public `reconcile_migration_history` interface opens and reconciles a databa
 tooling. `cargo xtask reconcile-migrations DATA_DIRECTORY` calls it before `task run:desktop`
 starts the application; packaged application startup never calls this interface.
 
-Explicit reconciliation uses the same first-install rule when it opens a database with no applied
-migration history.
+Explicit reconciliation also resumes first-install work from the durable journal.
 
 The prototype catalog describes only the current schema. It does not carry migrations for retired tables or columns, and the bookkeeping table is intentionally not compatible with databases created before SQL snapshots were introduced. Development databases may be recreated; no compatibility bridge is provided.
 

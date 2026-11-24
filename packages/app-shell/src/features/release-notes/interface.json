@@ -1,0 +1,18 @@
+{
+  "owner": "Release notes presentation",
+  "modules": {
+    "./release-notes-card": {
+      "exports": ["ReleaseNotesCard"],
+      "purpose": "The shell mounts one card that announces the notes of a newly installed version."
+    },
+    "./release-notes-history": {
+      "exports": ["ReleaseNotesHistory"],
+      "purpose": "Settings shows the history without owning the notes or the version rules."
+    },
+    "./translations": {
+      "exports": ["releaseNotesTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

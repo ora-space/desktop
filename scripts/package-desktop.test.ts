@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import process from "node:process";
 import { packageDesktop } from "./package-desktop.ts";
-import { withTempDirectory } from "./test-support.ts";
+import { commitAll, releaseNote, withTempDirectory } from "./test-support.ts";
 
 /** Installs distinct snapshots so restoration tests detect accidental rewrites. */
 async function packagingFixture(root: string): Promise<Map<string, string>> {
@@ -28,12 +28,26 @@ async function packagingFixture(root: string): Promise<Map<string, string>> {
   return files;
 }
 
+/** Commits the fixture together with the notes that a versioned package requires. */
+async function commitReleaseNotes(
+  root: string,
+  version: string,
+): Promise<void> {
+  await Deno.mkdir(path.join(root, "release-notes"), { recursive: true });
+  await Deno.writeTextFile(
+    path.join(root, "release-notes", `${version}.json`),
+    JSON.stringify(releaseNote(version)),
+  );
+  await commitAll(root);
+}
+
 for (const fails of [false, true]) {
   Deno.test(
     `packaging restores snapshots after ${fails ? "failure" : "success"}`,
     () =>
       withTempDirectory(async (root) => {
         const files = await packagingFixture(root);
+        await commitReleaseNotes(root, "1.2.3");
         const environment = { TAURI_SIGNING_PRIVATE_KEY: "fixture-key" };
         const listeners = [
           process.listenerCount("SIGINT"),
@@ -131,6 +145,51 @@ Deno.test("invalid release tags restore files without invoking the build", () =>
       ),
       [...files.values()],
     );
+  }),
+);
+
+Deno.test("a tagged package without its release notes is never built", () =>
+  withTempDirectory(async (root) => {
+    const files = await packagingFixture(root);
+    await commitReleaseNotes(root, "1.2.2");
+    const runBuild = () => Promise.reject(new Error("must not build"));
+    await assert.rejects(
+      packageDesktop({
+        root,
+        args: ["--tag", "v1.2.3", "--keep-config"],
+        environment: {},
+        runBuild,
+      }),
+      /requires release-notes\/1\.2\.3\.json/,
+    );
+    assert.deepEqual(
+      await Promise.all(
+        [...files.keys()].map((file) => Deno.readTextFile(file)),
+      ),
+      [...files.values()],
+    );
+  }),
+);
+
+Deno.test("an untagged package ignores release notes", () =>
+  withTempDirectory(async (root) => {
+    await packagingFixture(root);
+    await Deno.mkdir(path.join(root, "release-notes"));
+    await Deno.writeTextFile(
+      path.join(root, "release-notes", "0.1.0.json"),
+      "broken",
+    );
+    let built = false;
+    await packageDesktop({
+      root,
+      args: [],
+      environment: {},
+      runBuild: () => {
+        built = true;
+        return Promise.resolve();
+      },
+    });
+    assert.equal(built, true);
   }),
 );
 

@@ -185,7 +185,13 @@ export interface SessionConversation {
   /** Known holes in Ora's durable record reported by the latest successful replay. */
   historyNotices: SessionHistoryNotice[];
   turns: ChatTurn[];
-  availableCommands: acp.AvailableCommand[];
+  /**
+   * The slash commands the Agent last reported, or `null` while it has not answered.
+   *
+   * Opening a conversation never contacts its Agent, so "not asked yet" and "offers none" are
+   * different facts; only the second may be presented as a command being unsupported.
+   */
+  availableCommands: acp.AvailableCommand[] | null;
   sessionTitle: string | null;
   sessionUpdatedAt: string | null;
   isLoaded: boolean;

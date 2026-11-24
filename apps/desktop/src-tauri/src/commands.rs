@@ -161,6 +161,7 @@ pub(crate) mod cloud_connection;
 pub(crate) mod effect;
 pub(crate) mod files;
 pub(crate) mod git_identity;
+pub(crate) mod installation;
 pub(crate) mod plugin;
 pub(crate) mod project;
 pub(crate) mod scheduled_task;
