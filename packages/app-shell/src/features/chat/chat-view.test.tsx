@@ -441,7 +441,7 @@ describe("Composer", () => {
 
     const menu = await screen.findByRole("listbox", { name: "快捷操作" });
     expect(within(menu).getByRole("status")).toHaveTextContent(
-      "发送一条消息后，可使用 Agent 自带的命令和 skill",
+      "执行一轮对话后，Agent自带命令和skill才会显示",
     );
     expect(within(menu).queryByRole("option")).not.toBeInTheDocument();
     expect(textarea).not.toHaveAttribute("aria-activedescendant");
@@ -528,7 +528,7 @@ describe("Composer", () => {
       await user.type(screen.getByRole("textbox"), text);
 
       expect(
-        screen.queryByText("发送一条消息后，可使用 Agent 自带的命令和 skill"),
+        screen.queryByText("执行一轮对话后，Agent自带命令和skill才会显示"),
       ).not.toBeInTheDocument();
     },
   );
