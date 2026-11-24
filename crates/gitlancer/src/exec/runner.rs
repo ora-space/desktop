@@ -395,7 +395,11 @@ mod tests {
 
     /// Verifies a command that outlives its deadline is killed and reported as timed out promptly,
     /// even when a child it started keeps the output pipes open.
-    #[cfg(unix)]
+    ///
+    /// Runs on every platform: Git runs `!` aliases through a POSIX shell, which Git for Windows
+    /// bundles together with `sleep`, so the same alias stalls there too. Killing `git.exe` there
+    /// leaves the shell and `sleep` holding the pipes, which is exactly the case the deadline must
+    /// not wait for.
     #[test]
     fn kills_a_command_that_outlives_its_deadline() {
         let started = std::time::Instant::now();
@@ -426,6 +430,10 @@ mod tests {
 
     /// Verifies `LC_ALL` is pinned only for commands that opt into English messages, while an
     /// ordinary command inherits whatever the caller's environment says.
+    ///
+    /// Unix only: on Windows the alias's shell runs on the MSYS runtime, which may translate or
+    /// add locale variables, so `env` output there does not reflect what Git received. The
+    /// imports above stay used on Windows by the two deadline tests.
     #[cfg(unix)]
     #[test]
     fn pins_the_message_locale_only_when_asked() {
@@ -462,8 +470,8 @@ mod tests {
     }
 
     /// Verifies the deadline also bounds the wait for output when Git exits but a process it
-    /// started keeps the pipes open.
-    #[cfg(unix)]
+    /// started keeps the pipes open. Platform-neutral for the reason given above: the backgrounded
+    /// `sleep` inherits the pipes from Git's shell on Windows as well.
     #[test]
     fn deadline_covers_output_held_open_by_a_child_process() {
         let started = std::time::Instant::now();
