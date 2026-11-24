@@ -25,11 +25,11 @@ A project can be any folder; agents then write straight into it and there is not
 `listWorkspaces` reports a present directory as `{ kind: "present", git }`. `git` comes from one
 `git rev-parse --is-inside-work-tree` per listed directory, run on every list and never stored:
 
-| `git`           | Meaning                                                                   | Client behavior                                                                                                                                                             |
-| --------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `repository`    | The folder is inside a work tree                                          | Unchanged                                                                                                                                                                   |
-| `notRepository` | Git says the folder is not inside any repository                          | Changes explains this and issues no diff or status query; every new-worktree entry is hidden; the scheduled-task form explains why a task for the project cannot be enabled |
-| `unknown`       | Git could not answer (not installed, untrusted owner, damaged repository) | Unchanged, so the operation's own error surfaces                                                                                                                            |
+| `git`           | Meaning                                                                   | Client behavior                                                                                                                                                           |
+| --------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repository`    | The folder is inside a work tree                                          | Unchanged                                                                                                                                                                 |
+| `notRepository` | Git says the folder is not inside any repository                          | Changes explains this and issues no diff or status query; every new-worktree entry is hidden; the scheduled-task form explains why no task can be created for the project |
+| `unknown`       | Git could not answer (not installed, untrusted owner, damaged repository) | Unchanged, so the operation's own error surfaces                                                                                                                          |
 
 Git discovers repositories upward, so a plain folder nested inside another checkout is
 `repository` and the review operations act on that enclosing checkout. After `git init` (or

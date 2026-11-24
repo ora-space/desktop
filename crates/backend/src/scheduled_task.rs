@@ -382,7 +382,14 @@ fn invalid_runtime_selection(context: &'static str) -> BackendError {
 #[cfg(test)]
 mod tests {
     use super::require_requested_model;
-    use ora_contracts::AgentModel;
+    use crate::Backend;
+    use crate::test_backend::backend_paths;
+    use ora_contracts::{
+        AgentModel, CreateProjectRequest, CreateScheduledTaskRequest, EmptyErrorParams,
+        PublicError, ScheduledTaskExecutionLocation, ScheduledTaskSchedule,
+    };
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
 
     fn model(id: &str) -> AgentModel {
         AgentModel {
@@ -390,6 +397,49 @@ mod tests {
             display_name: id.to_string(),
             default: false,
         }
+    }
+
+    /// Verifies a project added as a plain folder refuses even a disabled draft with the typed
+    /// Git requirement. A Desktop project never persists a default branch, so creation always
+    /// probes the folder for one; on a plain folder Git fails, which must not surface as an
+    /// internal error.
+    #[tokio::test]
+    async fn rejects_a_disabled_draft_for_a_plain_folder_project_as_invalid() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let folder = temporary.path().join("plain");
+        std::fs::create_dir_all(&folder).expect("create plain project folder");
+        let backend =
+            Backend::open(backend_paths(temporary.path(), temporary.path())).expect("open backend");
+        let project_id = backend
+            .projects()
+            .create(CreateProjectRequest {
+                name: "Plain".to_string(),
+                main_workspace_path: folder.to_string_lossy().into_owned(),
+            })
+            .expect("create plain folder project")
+            .project
+            .id;
+
+        let error = backend
+            .scheduled_tasks()
+            .create(CreateScheduledTaskRequest {
+                name: "Nightly notes".to_string(),
+                enabled: false,
+                schedule: ScheduledTaskSchedule::EveryHours { interval: 24 },
+                execution_location: ScheduledTaskExecutionLocation::Local,
+                project_id,
+                agent_ref: "ora/claude-code".to_string(),
+                model: None,
+                prompt: "Summarize the folder".to_string(),
+                approval_policy: None,
+            })
+            .await
+            .expect_err("a plain folder cannot host a scheduled task");
+
+        assert_eq!(
+            error.public_error().clone(),
+            PublicError::InvalidRequest(EmptyErrorParams {})
+        );
     }
 
     #[test]

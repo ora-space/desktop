@@ -18,7 +18,7 @@ import { ScheduledTaskForm } from "./scheduled-task-form";
 void appI18n;
 
 const NOT_GIT_REASON =
-  "此项目目录未使用 Git。定时任务在独立工作树中运行，只有 Git 仓库项目的任务才能启用。";
+  "此项目目录未使用 Git，无法为它创建定时任务。定时任务在独立工作树中运行，只能用于 Git 仓库项目。";
 
 /** Opens a new-task form whose only project has a main folder probe reporting `git`. */
 function renderForm(git: WorkspaceGit) {
@@ -59,18 +59,14 @@ function renderForm(git: WorkspaceGit) {
 }
 
 describe("ScheduledTaskForm project Git requirement", () => {
-  it("names the reason and refuses enabling a task for a project folder that is not Git", async () => {
+  it("names the reason and blocks creating a task for a project folder that is not Git", async () => {
     renderForm("notRepository");
-    const user = userEvent.setup();
-
-    // A disabled definition is still accepted by the backend: an informational note, no block.
-    expect(await screen.findByText(NOT_GIT_REASON)).toBeInTheDocument();
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByRole("button", { name: "创建任务" })).toBeEnabled();
-
-    await user.click(screen.getByRole("switch", { name: "创建后立即启用" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(NOT_GIT_REASON);
+    // The backend refuses the task whether or not it is enabled, so no save is offered at all.
+    expect(
+      screen.getByRole("switch", { name: "创建后立即启用" }),
+    ).not.toBeChecked();
     expect(screen.getByRole("button", { name: "创建任务" })).toBeDisabled();
   });
 

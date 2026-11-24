@@ -19,16 +19,16 @@ Backend: a `local` task triggers on schedule while Desktop is running, and due p
 it was closed are recorded `missed` without backfill. Creating or updating a `cloud` task is rejected
 as an invalid request.
 
-| Operation | Effect |
-|---|---|
-| `createScheduledTask` | Validate and persist a new `local` task |
-| `getScheduledTask`, `listScheduledTasks` | Read visible definitions |
-| `updateScheduledTask` | Replace editable fields, guarded by the exact snapshot it replaces |
-| `deleteScheduledTask` | Soft-delete the definition; run and missed history is kept |
-| `revokeScheduledTaskApproval` | Withdraw unattended consent and disable the task |
-| `listScheduledTaskHistory` | Newest-first runs and missed occurrences |
-| `listScheduledRunArtifacts` | One run's collected artifacts and rejected candidates |
-| `readScheduledRunArtifact` | Bounded text preview of one stored artifact |
+| Operation                                | Effect                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------ |
+| `createScheduledTask`                    | Validate and persist a new `local` task                            |
+| `getScheduledTask`, `listScheduledTasks` | Read visible definitions                                           |
+| `updateScheduledTask`                    | Replace editable fields, guarded by the exact snapshot it replaces |
+| `deleteScheduledTask`                    | Soft-delete the definition; run and missed history is kept         |
+| `revokeScheduledTaskApproval`            | Withdraw unattended consent and disable the task                   |
+| `listScheduledTaskHistory`               | Newest-first runs and missed occurrences                           |
+| `listScheduledRunArtifacts`              | One run's collected artifacts and rejected candidates              |
+| `readScheduledRunArtifact`               | Bounded text preview of one stored artifact                        |
 
 ## Definition
 
@@ -41,7 +41,10 @@ an agent (`AgentRef`) with an optional model, a prompt, a revision and an option
   the old one.
 - **Target.** An enabled task's project needs an admissible local Main Workspace that is a Git
   repository, checked with the same probe interactive task creation uses. Validation failures are
-  invalid requests, and a concurrent modification returns `scheduled_task_conflict`.
+  invalid requests, and a concurrent modification returns `scheduled_task_conflict`. Creation also
+  freezes the worktree base branch; a project without a persisted default branch (every project
+  added as a folder) resolves it from the main workspace's HEAD, so even a disabled task for a
+  folder that is not a Git repository is rejected as an invalid request.
 - **Approval.** Unattended local execution requires explicit consent to the only supported policy,
   `full_auto_in_worktree`, recorded with its consent time. A task can be enabled only with that
   consent; revoking it disables the task.

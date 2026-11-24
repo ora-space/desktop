@@ -83,12 +83,11 @@ export function ScheduledTaskForm({
   const [validationError, setValidationError] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const pending = createTask.isPending || updateTask.isPending;
-  // Runs always provision a worktree, so the backend refuses to enable a task whose project is a
-  // plain folder (a disabled one may still be saved). Saying so beside the project choice beats a
-  // save that is certain to fail.
+  // Runs always provision a worktree, and creating a task already resolves the branch it would
+  // branch from, so the backend refuses any task (enabled or not) whose project is a plain
+  // folder. Saying so beside the project choice beats a save that is certain to fail.
   const projectNotGit =
     useWorkspaceGitAvailability({ projectId }) === "notRepository";
-  const targetRefused = enabled && projectNotGit;
   const agentEntries = useMemo(
     () =>
       task !== null && !agents.some((agent) => agent.agentRef === task.agentRef)
@@ -128,7 +127,7 @@ export function ScheduledTaskForm({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (targetRefused) return;
+    if (projectNotGit) return;
     const [hourText, minuteText] = time.split(":");
     const hour = Number(hourText);
     const minute = Number(minuteText);
@@ -250,11 +249,10 @@ export function ScheduledTaskForm({
                   }}
                 />
                 {projectNotGit && (
-                  // Informational until the task is set to be enabled; only then does it block.
                   <p
-                    role={targetRefused ? "alert" : undefined}
+                    role="alert"
                     data-selectable
-                    className={`text-xs ${targetRefused ? "text-destructive" : "text-muted-foreground"}`}
+                    className="text-xs text-destructive"
                   >
                     {t("scheduledTask.projectNotGit")}
                   </p>
@@ -426,7 +424,7 @@ export function ScheduledTaskForm({
               type="submit"
               disabled={
                 pending ||
-                targetRefused ||
+                projectNotGit ||
                 projects.length === 0 ||
                 (task === null && agents.length === 0)
               }

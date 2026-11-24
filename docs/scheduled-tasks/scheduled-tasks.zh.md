@@ -8,16 +8,16 @@
 
 定义用例、历史读取与本地调度器已接入 Desktop。触发点准入（`AdmitScheduledOccurrenceHandler`）和离线缺口记录（`RecordOfflineMissedOccurrenceHandler`）已在 `ora-application` 实现并组装进 Backend：`local` 任务在 Desktop 运行时按计划触发，Desktop 未运行期间的到期点记 `missed` 且不补跑。创建或更新 `cloud` 任务会作为无效请求被拒绝。
 
-| 操作 | 效果 |
-|---|---|
-| `createScheduledTask` | 校验并持久化一个新的 `local` 任务 |
-| `getScheduledTask`、`listScheduledTasks` | 读取可见的定义 |
-| `updateScheduledTask` | 替换可编辑字段，以被替换的精确快照为条件 |
-| `deleteScheduledTask` | 软删除定义；运行和错过的历史保留 |
-| `revokeScheduledTaskApproval` | 撤回无人值守的授权并停用任务 |
-| `listScheduledTaskHistory` | 按最新在前列出运行和错过的触发点 |
-| `listScheduledRunArtifacts` | 列出一次运行收集到的产物与被拒绝的候选 |
-| `readScheduledRunArtifact` | 读取一个已存储产物的有界文本预览 |
+| 操作                                     | 效果                                     |
+| ---------------------------------------- | ---------------------------------------- |
+| `createScheduledTask`                    | 校验并持久化一个新的 `local` 任务        |
+| `getScheduledTask`、`listScheduledTasks` | 读取可见的定义                           |
+| `updateScheduledTask`                    | 替换可编辑字段，以被替换的精确快照为条件 |
+| `deleteScheduledTask`                    | 软删除定义；运行和错过的历史保留         |
+| `revokeScheduledTaskApproval`            | 撤回无人值守的授权并停用任务             |
+| `listScheduledTaskHistory`               | 按最新在前列出运行和错过的触发点         |
+| `listScheduledRunArtifacts`              | 列出一次运行收集到的产物与被拒绝的候选   |
+| `readScheduledRunArtifact`               | 读取一个已存储产物的有界文本预览         |
 
 ## 定义
 
@@ -25,7 +25,7 @@
 
 - **计划**：`EveryHours { interval }`（至少 1）、`Daily { hour, minute }` 或 `Weekly { weekdays, hour, minute }`（至少一个工作日），都按本地墙钟时间。
 - **执行位置**：`local` 或 `cloud`，创建时确定；要换位置，复制任务并停用旧的。
-- **目标**：启用的任务所在项目需要一个可接纳的本地 Main Workspace，并且是 Git 仓库，检查方式与交互式创建任务相同。校验失败是无效请求，并发修改返回 `scheduled_task_conflict`。
+- **目标**：启用的任务所在项目需要一个可接纳的本地 Main Workspace，并且是 Git 仓库，检查方式与交互式创建任务相同。校验失败是无效请求，并发修改返回 `scheduled_task_conflict`。创建时还会冻结 worktree 的基础分支；没有持久化默认分支的项目（所有以目录方式添加的项目）从 Main Workspace 的 HEAD 解析它，因此目录不是 Git 仓库时，即使是未启用的任务也会作为无效请求被拒绝。
 - **授权**：无人值守的本地执行需要对唯一支持的策略 `full_auto_in_worktree` 的显式同意，并记录同意时间。只有带着这份同意，任务才能被启用；撤回同意会停用任务。
 - **Revision**：每次改变冻结输入的更新都会递增 `revision`，所以运行总能指明它执行的是哪个定义。
 
