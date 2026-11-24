@@ -10,9 +10,7 @@ use super::WorkflowRuns;
 use crate::Backend;
 use crate::test_backend::backend_paths;
 use crate::workflow::run::test_fixture::{SeededWorkflow, seeded_workflow};
-use ora_application::{
-    SessionRepository, WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunRepository,
-};
+use ora_application::{WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunRepository};
 use ora_contracts::{
     CancelWorkflowRunRequest, CreateWorkflowRunRequest, ImportPluginRequest, PluginDataDisposition,
     PublicError, RestartWorkflowRunRequest, ResumeWorkflowRunRequest, StartWorkflowRunRequest,
@@ -39,37 +37,6 @@ const MCP_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},
     {"id":"reviewer","data":{"kind":"agent","title":"Code review","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"official/ora-space.opencode","modelId":"m"},"prompt":"review","mcps":[{"mcpId":"local/github","enabled":true}]}}}
 ],"edges":[{"source":"start","target":"reviewer"}]}"#;
-
-/// Binds the MCP on a branch the empty case list never selects, so nothing in this graph would
-/// execute that node during a run.
-const BRANCHED_MCP_GRAPH: &str = r#"{"nodes":[
-    {"id":"start","data":{"kind":"start"}},
-    {"id":"gate","data":{"kind":"condition"}},
-    {"id":"reviewer","data":{"kind":"agent","title":"Code review","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"official/ora-space.opencode","modelId":"m"},"prompt":"review","mcps":[{"mcpId":"local/github","enabled":true}]}}},
-    {"id":"out","data":{"kind":"output"}}
-],"edges":[
-    {"source":"start","target":"gate"},
-    {"source":"gate","sourceHandle":"go","target":"reviewer"},
-    {"source":"gate","sourceHandle":"else","target":"out"}
-]}"#;
-
-/// Binds the MCP inside a loop body whose first round is the only one this graph would run.
-const LOOP_BODY_MCP_GRAPH: &str = r#"{"schemaVersion":2,"nodes":[
-    {"id":"start","data":{"kind":"start"}},
-    {"id":"loop","data":{"kind":"loop","loopConfig":{
-        "maxIterations":1,"variables":[],"until":{"logic":"and","conditions":[]},
-        "outputs":[{"name":"result","variableSelector":["reviewer","output"]}]
-    }}},
-    {"id":"out","data":{"kind":"output","outputs":[{"name":"result","variableSelector":["loop","result"]}]}},
-    {"id":"entry","data":{"kind":"start","containerId":"loop"}},
-    {"id":"reviewer","data":{"kind":"agent","containerId":"loop","title":"Code review","agentConfig":{"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},"executor":{"agentCli":"official/ora-space.opencode","modelId":"m"},"prompt":"review","mcps":[{"mcpId":"local/github","enabled":true}]}}},
-    {"id":"exit","data":{"kind":"loopExit","containerId":"loop"}}
-],"edges":[
-    {"source":"start","target":"loop"},
-    {"source":"loop","target":"out"},
-    {"source":"entry","target":"reviewer"},
-    {"source":"reviewer","target":"exit"}
-]}"#;
 
 /// One backend, one published workflow, and the run use cases every test drives.
 struct Fixture {
@@ -801,35 +768,10 @@ async fn a_target_snapshot_without_the_missing_binding_still_switches() {
         .expect("cancel the switched run so the fixture cannot outlive its runtime");
 }
 
-/// The whole frozen graph is a deployment unit: bindings inside branches that never run and
-/// inside loop bodies that never iterate are prerequisites all the same.
+/// Checks persisted node runs at the backend boundary. The desktop E2E observes sessions and ACP
+/// with an installed agent.
 #[tokio::test]
-async fn bindings_inside_branches_and_loop_bodies_block_start() {
-    for graph in [BRANCHED_MCP_GRAPH, LOOP_BODY_MCP_GRAPH] {
-        let fixture = Fixture::open(graph);
-        install_mcp_package(&fixture).await;
-        let run_id = fixture.create_run();
-        fixture.uninstall_plugin("local/github").await;
-
-        let error = fixture
-            .runs
-            .start(StartWorkflowRunRequest {
-                run_id: run_id.clone(),
-            })
-            .unwrap_err();
-        assert_eq!(
-            error.public_error().code(),
-            "workflow_mcp_not_found",
-            "the graph {graph} must validate every scoped node"
-        );
-        assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
-    }
-}
-
-/// Rejecting a start is read-only: no node is dispatched, so no node row, Session, or ACP
-/// conversation exists for the run afterwards.
-#[tokio::test]
-async fn a_rejected_start_creates_no_node_run_or_session() {
+async fn a_rejected_start_creates_no_node_run() {
     let fixture = Fixture::open(MCP_GRAPH);
     install_mcp_package(&fixture).await;
     let run_id = fixture.create_run();
@@ -854,12 +796,5 @@ async fn a_rejected_start_creates_no_node_run_or_session() {
             .unwrap()
             .is_empty(),
         "a rejected start must not create node-run rows"
-    );
-    assert!(
-        ora_db::SqliteSessionRepository::new(fixture.runs.pool.clone())
-            .list_sessions()
-            .unwrap()
-            .is_empty(),
-        "a rejected start must not create a Session"
     );
 }

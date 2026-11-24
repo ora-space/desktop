@@ -9,6 +9,7 @@ use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use ora_backend::{Backend, BackendError};
 use ora_contracts::*;
 use pretty_assertions::assert_eq;
+use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -62,13 +63,17 @@ async fn parked_nodes(
     .await?
 }
 
-/// Reads complete request observations after the corresponding response has been consumed.
-fn mcp_calls(package_root: &Path) -> Result<Vec<Value>, serde_json::Error> {
-    fs::read_to_string(package_root.join("mcp_calls.jsonl"))
-        .unwrap_or_default()
+/// Reads recorded ACP requests. A missing journal means no request has been recorded yet.
+fn mcp_calls(package_root: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    let journal = match fs::read_to_string(package_root.join("mcp_calls.jsonl")) {
+        Ok(journal) => journal,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(journal
         .lines()
         .map(serde_json::from_str)
-        .collect()
+        .collect::<Result<_, _>>()?)
 }
 
 /// Sends a human continuation through the workflow-owned session's ordinary prompt boundary.
@@ -218,6 +223,77 @@ fn single_agent_graph() -> Value {
     ], "edges": [{"source": "start", "target": "first"}]})
 }
 
+/// Puts a dispatchable agent before the MCP-dependent node so a leaked dispatch can reach ACP.
+fn graph_with_unbound_entry() -> Value {
+    let mut graph = single_agent_graph();
+    let mut entry = graph["nodes"][1].clone();
+    entry["id"] = json!("entry");
+    entry["data"]["agentConfig"]["mcps"] = json!([]);
+    graph["nodes"] = json!([graph["nodes"][0], entry, graph["nodes"][1]]);
+    graph["edges"] = json!([
+        {"source": "start", "target": "entry"},
+        {"source": "entry", "target": "first"}
+    ]);
+    graph
+}
+
+/// The routing agent selects the same fallback whether the review is a branch or a whole loop.
+fn graph_with_skipped_review() -> [Value; 2] {
+    let base = single_agent_graph();
+    let mut router = base["nodes"][1].clone();
+    router["id"] = json!("router");
+    router["data"]["agentConfig"]["prompt"] = json!("FAKE_REPLY: skip");
+    router["data"]["agentConfig"]["mcps"] = json!([]);
+    let common_nodes = json!([
+        base["nodes"][0],
+        router,
+        {"id": "gate", "data": {"kind": "condition", "cases": [
+            {"id": "review", "logic": "and", "conditions": [
+                {"variableSelector": ["router", "output"], "operator": "equals", "value": "review"}
+            ]}
+        ]}},
+        {"id": "fallback", "data": {"kind": "output", "outputs": [
+            {"name": "result", "variableSelector": ["router", "output"]}
+        ]}}
+    ]);
+    let common_edges = json!([
+        {"source": "start", "target": "router"},
+        {"source": "router", "target": "gate"},
+        {"source": "gate", "sourceHandle": "else", "target": "fallback"}
+    ]);
+    let mut reviewer = base["nodes"][1].clone();
+    reviewer["id"] = json!("reviewer");
+    let mut branch = json!({"nodes": common_nodes, "edges": common_edges});
+    branch["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(reviewer.clone());
+    branch["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"source": "gate", "sourceHandle": "review", "target": "reviewer"}));
+
+    reviewer["data"]["containerId"] = json!("loop");
+    let mut loop_graph = json!({
+        "schemaVersion": 2,
+        "nodes": common_nodes,
+        "edges": common_edges
+    });
+    loop_graph["nodes"].as_array_mut().unwrap().extend([
+        json!({"id": "loop", "data": {"kind": "loop", "loopConfig": {
+            "maxIterations": 1, "variables": [], "until": {"logic": "and", "conditions": []},
+            "outputs": [{"name": "result", "variableSelector": ["reviewer", "output"]}]
+        }}}),
+        json!({"id": "entry", "data": {"kind": "start", "containerId": "loop"}}),
+        reviewer,
+    ]);
+    loop_graph["edges"].as_array_mut().unwrap().extend([
+        json!({"source": "gate", "sourceHandle": "review", "target": "loop"}),
+        json!({"source": "entry", "target": "reviewer"}),
+    ]);
+    [branch, loop_graph]
+}
+
 /// A chain whose first agent binds the MCP plugin and whose second step fails on its first
 /// prompt, so the run settles as `Failed` with a `Succeeded` predecessor.
 fn failing_chain() -> Value {
@@ -276,19 +352,34 @@ fn pending_run(
     workspace_id: &str,
     graph: &Value,
 ) -> Result<WorkflowRun, Box<dyn std::error::Error>> {
+    let workflow_id = publish_graph(backend, "MCP preflight", graph)?;
+    create_pending_run(backend, workspace_id, &workflow_id)
+}
+
+/// Publishes a named graph so control and rejection runs can share the same snapshot.
+fn publish_graph(backend: &Backend, name: &str, graph: &Value) -> Result<String, BackendError> {
     let workflow = backend.workflows().create(CreateWorkflowRequest {
-        name: "MCP preflight".into(),
+        name: name.into(),
         graph: Some(graph.to_string()),
     })?;
     backend.workflows().publish(PublishWorkflowRequest {
         workflow_id: workflow.workflow.id.clone(),
         version: Some("v1".into()),
     })?;
+    Ok(workflow.workflow.id)
+}
+
+/// Freezes the latest published snapshot of the workflow in a pending run.
+fn create_pending_run(
+    backend: &Backend,
+    workspace_id: &str,
+    workflow_id: &str,
+) -> Result<WorkflowRun, Box<dyn std::error::Error>> {
     Ok(backend
         .workflow_runs()
         .create(CreateWorkflowRunRequest {
             workspace_id: workspace_id.to_string(),
-            workflow_id: workflow.workflow.id,
+            workflow_id: workflow_id.to_string(),
             locale: WorkflowRunLocale::EnUs,
             snapshot_id: None,
             kickoff_input: None,
@@ -311,6 +402,157 @@ async fn uninstall_mcp(backend: &Backend, plugin_id: &str) -> TestResult {
     Ok(())
 }
 
+/// Observations at the scheduler, persistence and ACP boundaries of a dispatch.
+#[derive(Debug, PartialEq, Eq)]
+struct DispatchSnapshot {
+    detail: GetWorkflowRunResponse,
+    session_ids: Vec<String>,
+    acp_calls: Vec<Value>,
+}
+
+impl DispatchSnapshot {
+    /// Reads the Session table directly because the session-list operation hides workflow sessions.
+    fn capture(
+        backend: &Backend,
+        database: &Connection,
+        package_root: &Path,
+        run_id: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let detail = backend.workflow_runs().get(GetWorkflowRunRequest {
+            run_id: run_id.to_string(),
+        })?;
+        let session_ids = database
+            .prepare("SELECT id FROM sessions ORDER BY id")?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(Self {
+            detail,
+            session_ids,
+            acp_calls: mcp_calls(package_root)?,
+        })
+    }
+}
+
+/// Opens the real database owned by this E2E fixture without creating or modifying it.
+fn session_database(setup: &DesktopTestSetup) -> rusqlite::Result<Connection> {
+    Connection::open_with_flags(
+        setup.backend_paths().app_data_directory.join("ora.sqlite3"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+}
+
+/// Gives a leaked spawned dispatch time to reach Session/ACP, while checking the run and node
+/// rows throughout the observation window.
+async fn assert_dispatch_unchanged(
+    backend: &Backend,
+    database: &Connection,
+    package_root: &Path,
+    before: &DispatchSnapshot,
+) -> TestResult {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        assert_eq!(
+            &DispatchSnapshot::capture(backend, database, package_root, &before.detail.run.id)?,
+            before
+        );
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// Preflight still checks the bindings on a branch and in a loop skipped at execution time.
+#[test]
+fn bindings_inside_skipped_branches_and_loops_block_start() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let home = &setup.backend_paths().home_directory;
+        install_fake_opencode_plugin(home)?;
+        install_mcp_plugin(home, "first")?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let mut pending = vec![];
+
+        for (name, graph) in ["Conditional review", "Conditional loop"]
+            .into_iter()
+            .zip(graph_with_skipped_review())
+        {
+            let workflow_id = publish_graph(&backend, name, &graph)?;
+            let control = create_pending_run(&backend, &workspace_id, &workflow_id)?;
+            backend.workflow_runs().start(StartWorkflowRunRequest {
+                run_id: control.id.clone(),
+            })?;
+            let detail = terminal(&backend, &control.id).await?;
+            assert_eq!(
+                detail.run.status,
+                WorkflowRunStatus::Succeeded,
+                "{detail:?}"
+            );
+            assert_eq!(
+                detail.condition_decisions.get("gate").map(String::as_str),
+                Some("else")
+            );
+            assert!(
+                !detail
+                    .nodes
+                    .iter()
+                    .any(|node| node.node_id == "reviewer" || node.node_id == "loop"),
+                "the conditional fallback must bypass the review and any enclosing loop"
+            );
+            let run = create_pending_run(&backend, &workspace_id, &workflow_id)?;
+            assert_eq!(run.snapshot_id, control.snapshot_id);
+            pending.push((name, run));
+        }
+
+        uninstall_mcp(&backend, "official/first").await?;
+        for (name, run) in pending {
+            let error = backend
+                .workflow_runs()
+                .start(StartWorkflowRunRequest { run_id: run.id })
+                .err()
+                .ok_or_else(|| format!("{name} must preflight the skipped reviewer"))?;
+            assert_eq!(
+                error.public_error(),
+                &PublicError::WorkflowMcpNotFound(Box::new(WorkflowMcpNotFoundParams {
+                    node_id: "reviewer".into(),
+                    node_title: "First step".into(),
+                    mcp_id: "official/first".into(),
+                }))
+            );
+        }
+        Ok(())
+    })
+}
+
+/// The rejected start must not dispatch its unbound first agent.
+#[test]
+fn a_rejected_start_leaves_no_node_run_session_or_acp_call() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let home = &setup.backend_paths().home_directory;
+        let package_root = install_fake_opencode_plugin(home)?;
+        install_mcp_plugin(home, "first")?;
+        let backend = open_ready_backend(&setup)?;
+        let database = session_database(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let run = pending_run(&backend, &workspace_id, &graph_with_unbound_entry())?;
+        uninstall_mcp(&backend, "official/first").await?;
+        let before = DispatchSnapshot::capture(&backend, &database, &package_root, &run.id)?;
+        assert!(before.detail.nodes.is_empty());
+        assert!(before.session_ids.is_empty());
+        assert!(before.acp_calls.is_empty());
+
+        let result = backend
+            .workflow_runs()
+            .start(StartWorkflowRunRequest { run_id: run.id });
+        assert_dispatch_unchanged(&backend, &database, &package_root, &before).await?;
+        let error = result.err().ok_or("missing MCP must prevent start")?;
+        assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
+        Ok(())
+    })
+}
+
 /// A finished run whose MCP disappeared cannot restart, and the refusal dispatches nothing.
 #[test]
 fn a_succeeded_run_cannot_restart_after_its_mcp_plugin_is_gone() -> TestResult {
@@ -320,8 +562,9 @@ fn a_succeeded_run_cannot_restart_after_its_mcp_plugin_is_gone() -> TestResult {
         let package_root = install_fake_opencode_plugin(home)?;
         install_mcp_plugin(home, "first")?;
         let backend = open_ready_backend(&setup)?;
+        let database = session_database(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
-        let run = pending_run(&backend, &workspace_id, &single_agent_graph())?;
+        let run = pending_run(&backend, &workspace_id, &graph_with_unbound_entry())?;
         backend.workflow_runs().start(StartWorkflowRunRequest {
             run_id: run.id.clone(),
         })?;
@@ -339,45 +582,18 @@ fn a_succeeded_run_cannot_restart_after_its_mcp_plugin_is_gone() -> TestResult {
         );
 
         uninstall_mcp(&backend, "official/first").await?;
-        let journal_before = mcp_calls(&package_root)?.len();
-        let sessions_before = backend
-            .sessions()
-            .list(ListSessionsRequest {})?
-            .sessions
-            .len();
+        let before = DispatchSnapshot::capture(&backend, &database, &package_root, &run.id)?;
+        assert!(!before.session_ids.is_empty());
+        assert!(!before.acp_calls.is_empty());
 
-        let error = backend
+        let result = backend
             .workflow_runs()
-            .restart(RestartWorkflowRunRequest {
-                run_id: run.id.clone(),
-            })
+            .restart(RestartWorkflowRunRequest { run_id: run.id });
+        assert_dispatch_unchanged(&backend, &database, &package_root, &before).await?;
+        let error = result
             .err()
             .ok_or("a restart of a finished run must be refused")?;
         assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
-        assert_eq!(
-            backend
-                .workflow_runs()
-                .get(GetWorkflowRunRequest {
-                    run_id: run.id.clone(),
-                })?
-                .run,
-            succeeded.run,
-            "the refused restart must leave the finished run untouched"
-        );
-        assert_eq!(
-            backend
-                .sessions()
-                .list(ListSessionsRequest {})?
-                .sessions
-                .len(),
-            sessions_before,
-            "the refusal must not create a Session"
-        );
-        assert_eq!(
-            mcp_calls(&package_root)?.len(),
-            journal_before,
-            "the refusal must not open another ACP session"
-        );
         Ok(())
     })
 }
@@ -392,6 +608,7 @@ fn a_failed_run_cannot_resume_around_a_succeeded_nodes_mcp() -> TestResult {
         let package_root = install_fake_opencode_plugin(home)?;
         install_mcp_plugin(home, "first")?;
         let backend = open_ready_backend(&setup)?;
+        let database = session_database(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
         let run = pending_run(&backend, &workspace_id, &failing_chain())?;
         backend.workflow_runs().start(StartWorkflowRunRequest {
@@ -409,32 +626,22 @@ fn a_failed_run_cannot_resume_around_a_succeeded_nodes_mcp() -> TestResult {
         );
 
         uninstall_mcp(&backend, "official/first").await?;
-        let journal_before = mcp_calls(&package_root)?.len();
-        let error = backend
+        let before = DispatchSnapshot::capture(&backend, &database, &package_root, &run.id)?;
+        assert!(!before.session_ids.is_empty());
+        assert!(!before.acp_calls.is_empty());
+
+        let result = backend
             .workflow_runs()
             .resume_from_failure(ResumeWorkflowRunRequest {
-                run_id: run.id.clone(),
+                run_id: run.id,
                 rollback: None,
                 snapshot_id: None,
-            })
+            });
+        assert_dispatch_unchanged(&backend, &database, &package_root, &before).await?;
+        let error = result
             .err()
             .ok_or("a resume must not route around a removed MCP")?;
         assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
-        assert_eq!(
-            backend
-                .workflow_runs()
-                .get(GetWorkflowRunRequest {
-                    run_id: run.id.clone(),
-                })?
-                .run,
-            failed.run,
-            "the refused resume must leave the failed run untouched"
-        );
-        assert_eq!(
-            mcp_calls(&package_root)?.len(),
-            journal_before,
-            "the refusal must not open another ACP session"
-        );
         Ok(())
     })
 }
@@ -499,6 +706,8 @@ fn uninstalling_between_precheck_and_dispatch_fails_the_node_session() -> TestRe
             run_id: run.id.clone(),
         })?;
         assert_eq!(started.run.status, WorkflowRunStatus::Running);
+        // On this current-thread runtime, uninstall removes the package before its first yield
+        // lets the dispatch spawned by start resolve the MCP selection.
         uninstall_mcp(&backend, "official/first").await?;
 
         let failed = terminal(&backend, &run.id).await?;
@@ -513,7 +722,7 @@ fn uninstalling_between_precheck_and_dispatch_fails_the_node_session() -> TestRe
             .as_deref()
             .ok_or("the node did not report an error")?;
         assert!(
-            error.contains("is not installed"),
+            error.contains("selected MCP plugin `official/first` is not installed"),
             "the node must fail closed as its selected plugin disappeared: {error}"
         );
         assert!(node.session_id.is_none(), "no Session may be delivered");
