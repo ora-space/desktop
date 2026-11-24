@@ -147,3 +147,5 @@ their values. Repair the file and restart to restore editing.
 An explicit delete-data uninstall may remove only that plugin's key from a readable JSON object,
 preserving every other raw JSON value verbatim, including unsupported values. Invalid or unreadable
 files cannot be safely pruned; uninstall reports the repair path and rolls back staged removals.
+Before either edit, the host checks that the on-disk bytes still match its loaded snapshot. An
+external repair or deletion blocks the write until restart, preserving the newer disk contents.

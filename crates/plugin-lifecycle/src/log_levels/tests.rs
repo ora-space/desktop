@@ -96,10 +96,10 @@ fn a_failed_persist_changes_nothing() {
     let levels = PluginLogLevels::open(temp.path());
     levels.set(&id("a"), LogLevel::Warn).expect("initial set");
     let live = levels.subscribe(&id("a"));
-    // Occupying the parent path with a file makes the atomic replace fail.
+    // Occupying the settings path with a directory makes the filesystem operation fail.
     let plugins_dir = temp.path().join("plugins");
     std::fs::remove_dir_all(&plugins_dir).expect("remove plugins dir");
-    std::fs::write(&plugins_dir, "not a directory").expect("occupy path");
+    std::fs::create_dir_all(plugins_dir.join("log-levels.json")).expect("occupy path");
 
     let error = levels
         .set(&id("a"), LogLevel::Trace)
@@ -296,4 +296,43 @@ fn unsupported_level_logs_the_repair_path_and_identity() {
     assert!(output.contains(path.to_string_lossy().as_ref()));
     assert!(output.contains("official/unknown"));
     assert!(!output.contains("secret-future-value"));
+}
+
+/// A repair made after startup must survive both ordinary edits and delete-data uninstall.
+#[test]
+fn external_repairs_are_not_overwritten_by_stale_snapshots() {
+    ora_logging::with_trace_logging(|| {
+        for initially_protected in [false, true] {
+            for clear in [false, true] {
+                let temp = TempDir::new().unwrap();
+                let path = temp.path().join("plugins").join("log-levels.json");
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let original = if initially_protected {
+                    br#"{"official/a":"debug","official/b":"future"}"#.as_slice()
+                } else {
+                    br#"{"official/a":"debug","official/b":"info"}"#.as_slice()
+                };
+                std::fs::write(&path, original).unwrap();
+                let levels = PluginLogLevels::open(temp.path());
+                let live = levels.subscribe(&id("a"));
+                let repaired = br#"{"official/a":"debug","official/b":"trace"}"#;
+                std::fs::write(&path, repaired).unwrap();
+                let result = if clear {
+                    levels.clear(&id("a"))
+                } else {
+                    levels.set(&id("a"), LogLevel::Error).map(|_| ())
+                };
+                assert!(matches!(
+                    result,
+                    Err(super::PluginLogLevelPersistError::ReadOnly { .. })
+                ));
+                assert_eq!(std::fs::read(&path).unwrap(), repaired);
+                assert_eq!(*live.borrow(), LogLevel::Debug);
+                assert_eq!(levels.state(&id("a")).read_only_path, Some(path));
+                let reopened = PluginLogLevels::open(temp.path());
+                reopened.clear(&id("a")).unwrap();
+                assert_eq!(reopened.state(&id("b")).level, LogLevel::Trace);
+            }
+        }
+    });
 }

@@ -49,6 +49,7 @@ struct Inner {
     // Raw values keep even future JSON numbers/objects byte-for-byte when an explicit uninstall
     // removes one key. None means the file could not be parsed, so no destructive edit is safe.
     raw: Option<RawLevels>,
+    persisted: Option<Vec<u8>>,
     writable: bool,
     publishers: BTreeMap<PluginId, watch::Sender<LogLevel>>,
 }
@@ -81,14 +82,18 @@ impl PluginLogLevels {
     /// Missing is unset; unreadable or unsupported persisted data remains protected until repair.
     pub fn open(data_directory: &Path) -> Self {
         let path = data_directory.join("plugins").join("log-levels.json");
+        let mut persisted = None;
         let raw = match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<RawLevels>(&bytes) {
-                Ok(raw) => Some(raw),
-                Err(error) => {
-                    ora_warn!(path = %path.display(), %error, "plugin log levels file is invalid; settings are read-only");
-                    None
+            Ok(bytes) => {
+                persisted = Some(bytes.clone());
+                match serde_json::from_slice::<RawLevels>(&bytes) {
+                    Ok(raw) => Some(raw),
+                    Err(error) => {
+                        ora_warn!(path = %path.display(), %error, "plugin log levels file is invalid; settings are read-only");
+                        None
+                    }
                 }
-            },
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Some(BTreeMap::new()),
             Err(error) => {
                 ora_warn!(path = %path.display(), %error, "plugin log levels file could not be read; settings are read-only");
@@ -103,6 +108,7 @@ impl PluginLogLevels {
             inner: Arc::new(Mutex::new(Inner {
                 configured,
                 raw,
+                persisted,
                 writable,
                 publishers: BTreeMap::new(),
             })),
@@ -166,7 +172,7 @@ impl PluginLogLevels {
                 }
             })?,
         );
-        self.persist(&next)?;
+        self.persist(&mut inner, &next)?;
         inner.raw = Some(next);
         inner.configured.insert(plugin_id.clone(), level);
         if let Some(publisher) = inner.publishers.get(plugin_id) {
@@ -192,7 +198,7 @@ impl PluginLogLevels {
         if next.remove(&plugin_id.to_string()).is_none() {
             return Ok(());
         }
-        self.persist(&next)?;
+        self.persist(&mut inner, &next)?;
         let (configured, writable) = known_levels(&self.path, &next);
         inner.configured = configured;
         inner.writable = writable;
@@ -204,17 +210,34 @@ impl PluginLogLevels {
     }
 
     /// Atomically replaces the map while retaining unsupported JSON values verbatim.
-    fn persist(&self, raw: &RawLevels) -> Result<(), PluginLogLevelPersistError> {
+    fn persist(
+        &self,
+        inner: &mut Inner,
+        raw: &RawLevels,
+    ) -> Result<(), PluginLogLevelPersistError> {
         let write_error = |source| PluginLogLevelPersistError::Write {
             path: self.path.clone(),
             source,
         };
         let bytes =
             serde_json::to_vec_pretty(raw).map_err(|error| write_error(io::Error::other(error)))?;
+        let current = match std::fs::read(&self.path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(write_error(error)),
+        };
+        if current != inner.persisted {
+            inner.writable = false;
+            return Err(PluginLogLevelPersistError::ReadOnly {
+                path: self.path.clone(),
+            });
+        }
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(write_error)?;
         }
-        ora_utils::atomic::write(&self.path, &bytes).map_err(write_error)
+        ora_utils::atomic::write(&self.path, &bytes).map_err(write_error)?;
+        inner.persisted = Some(bytes);
+        Ok(())
     }
 }
 
