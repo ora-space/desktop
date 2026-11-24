@@ -46,8 +46,7 @@ const NOT_IN_REPOSITORY: &str = "not a git repository (or any";
 
 /// Maps the raw `rev-parse --is-inside-work-tree` outcome onto a probe answer.
 ///
-/// Git runs with `LANG=C`; a message localized by a caller-level `LC_ALL` does not match and
-/// falls back to an error, which is the safe direction.
+/// The runner pins `LANG` and `LC_ALL` to the automation locale, so Git's message is English.
 fn classify_work_tree_probe(
     outcome: Result<GitOutput, GitExecError>,
 ) -> Result<WorkTreeProbe, GitlancerError> {

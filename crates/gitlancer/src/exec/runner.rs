@@ -88,7 +88,10 @@ fn run_cli(
             "0"
         },
     );
+    // `LC_ALL` outranks `LANG`, so a caller-level `LC_ALL` (a Desktop launched from a localized
+    // shell) would otherwise translate the diagnostics callers classify by their English text.
     process.env("LANG", &command.env.lang);
+    process.env("LC_ALL", &command.env.lang);
     process.env("GIT_PAGER", &command.env.pager);
     process.envs(&command.env.variables);
 
@@ -312,9 +315,39 @@ impl GitRunner for RecordingGitRunner {
 
 #[cfg(test)]
 mod tests {
-    use super::read_bounded;
+    use super::{CliGitRunner, GitRunner, read_bounded};
+    use crate::exec::command::{GitCommand, GitIntent};
+    use crate::exec::env::GitEnv;
     use pretty_assertions::assert_eq;
     use std::sync::{Arc, atomic::AtomicBool};
+
+    /// Verifies every Git process gets the automation locale in `LC_ALL` too, whatever the
+    /// caller's environment says, so English diagnostics stay classifiable.
+    #[cfg(unix)]
+    #[test]
+    fn pins_the_message_locale_for_every_invocation() {
+        let output = CliGitRunner
+            .run(&GitCommand::new(
+                std::env::temp_dir(),
+                vec![
+                    "-c".to_string(),
+                    "alias.print-env=!env".to_string(),
+                    "print-env".to_string(),
+                ],
+                GitEnv::default(),
+                GitIntent::ReadOnly,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            output
+                .stdout
+                .lines()
+                .filter(|line| line.starts_with("LANG=") || line.starts_with("LC_ALL="))
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from(["LANG=C", "LC_ALL=C"])
+        );
+    }
 
     /// Verifies bounded readers drain input while retaining no bytes beyond the budget.
     #[test]

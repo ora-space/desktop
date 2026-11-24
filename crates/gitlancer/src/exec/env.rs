@@ -7,6 +7,8 @@ const GIT_CONFIG_COUNT: &str = "GIT_CONFIG_COUNT";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitEnv {
     pub terminal_prompt: bool,
+    /// Message locale exported as both `LANG` and `LC_ALL`, so callers can rely on Git's English
+    /// diagnostics regardless of the user's locale.
     pub lang: String,
     pub pager: String,
     pub variables: BTreeMap<String, String>,
