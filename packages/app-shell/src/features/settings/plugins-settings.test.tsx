@@ -32,6 +32,63 @@ import { createSkillMemory, skillHandlers } from "../../test/memory/skills";
 import { PluginOperationEventBridge } from "./plugin-operation-event-bridge";
 import { PluginsSettings } from "./plugins-settings";
 import { useUiStore } from "../../state/stores/ui-store";
+import { usePluginLogLevel } from "../../state/hooks/use-plugin-log-level";
+
+function OtherPluginLogProtection() {
+  const { state } = usePluginLogLevel("official/other");
+  return (
+    <output data-testid="other-log-protection">
+      {state ? (state.readOnlyPath ?? "writable") : "loading"}
+    </output>
+  );
+}
+
+it.each([false, true])(
+  "refreshes shared log protection after pack removal (partial failure: %s)",
+  async (partialFailure) => {
+    const { state, handlers, client } = clientWithPack();
+    seedInstalledPack(state, [
+      {
+        memberId: CORE_MEMBER_ID,
+        versionAtInstall: "1.0.0",
+        ownership: "managed_by_pack",
+        state: { state: "expected_and_present" },
+      },
+    ]);
+    let protectedFile = true;
+    handlers.getPluginLogLevel = async ({ pluginId }) => ({
+      pluginId,
+      level: "debug",
+      configured: true,
+      readOnlyPath: protectedFile ? "plugins/log-levels.json" : null,
+    });
+    const original = handlers.uninstallPlugin!;
+    handlers.uninstallPlugin = async (request, options) => {
+      protectedFile = false;
+      if (partialFailure) throw new Error("later member removal failed");
+      return original(request, options);
+    };
+    renderSettings(client, createStubPlatform(), <OtherPluginLogProtection />);
+    await waitFor(() =>
+      expect(screen.getByTestId("other-log-protection")).toHaveTextContent(
+        "plugins/log-levels.json",
+      ),
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: /卸载集合包|Uninstall pack/ }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(
+      await within(dialog).findByRole("button", { name: /确认卸载|Uninstall/ }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("other-log-protection")).toHaveTextContent(
+        "writable",
+      ),
+    );
+  },
+);
 
 /** Plugin-only state; tests opt into other domains when their behavior needs them. */
 function createFixtureState() {
@@ -266,6 +323,7 @@ afterEach(() => {
 function renderSettings(
   client: ContractsClient,
   platform: PlatformAdapter = createStubPlatform(),
+  extra?: React.ReactNode,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -277,6 +335,7 @@ function renderSettings(
           <AppI18nProvider>
             <PluginOperationEventBridge />
             <PluginsSettings />
+            {extra}
           </AppI18nProvider>
         </PlatformProvider>
       </ContractsClientContext.Provider>

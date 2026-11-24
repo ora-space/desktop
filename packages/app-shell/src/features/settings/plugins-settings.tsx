@@ -39,6 +39,7 @@ import { useContractsClient } from "../../contracts-client-context";
 import {
   invalidateInstalledPlugins,
   invalidatePackInstallations,
+  invalidatePluginLogLevels,
 } from "../../state/data/plugins";
 import { usePlatform } from "../../platform";
 import { useAvailablePlugins } from "../../state/hooks/use-available-plugins";
@@ -178,6 +179,7 @@ export function PluginsSettings({
     onSettled: async () => {
       await invalidatePackInstallations(queryClient);
       await invalidateInstalledPlugins(queryClient);
+      await invalidatePluginLogLevels(queryClient);
     },
   });
 

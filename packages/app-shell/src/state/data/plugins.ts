@@ -55,7 +55,14 @@ export async function forgetPluginLogLevel(
   pluginId: string,
 ): Promise<void> {
   queryClient.removeQueries({ queryKey: pluginKeys.pluginLogLevel(pluginId) });
-  await queryClient.invalidateQueries({ queryKey: pluginKeys.pluginLogLevels });
+  await invalidatePluginLogLevels(queryClient);
+}
+
+/** Refreshes shared file protection after a single-plugin or partially completed pack removal. */
+export function invalidatePluginLogLevels(queryClient: QueryClient) {
+  return queryClient.invalidateQueries({
+    queryKey: pluginKeys.pluginLogLevels,
+  });
 }
 
 /** Refreshes installed state after a scan without forcing a marketplace fetch. */
