@@ -103,6 +103,18 @@ impl GitCleanupHandle {
     pub(crate) fn try_shared_worktree_use(&self, workspace_id: &str) -> Option<SharedLeaseGuard> {
         self.worktree_use.try_acquire_shared(workspace_id)
     }
+
+    /// Takes the exclusive worktree-use lease the cleanup worker holds while removing a checkout.
+    ///
+    /// Test-only seam: the worker owns the exclusive side, and tests of readers need to stand in
+    /// for a removal in progress without running a real cleanup job.
+    #[cfg(test)]
+    pub(crate) fn exclusive_worktree_use(
+        &self,
+        workspace_id: &str,
+    ) -> keyed_locks::ExclusiveLeaseGuard {
+        self.worktree_use.acquire_exclusive(workspace_id)
+    }
 }
 
 /// Owns the durable Git cleanup execution for one backend instance.

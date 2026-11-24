@@ -65,7 +65,7 @@ pub struct GitCommand {
 
 `GitIntent` 只分类不强制；上层用它决定命令能否自动运行、是否需要确认、能否重试。`GitEnv::automation_defaults` 禁用终端提示，固定 `LANG=C` 并禁用分页，所以 Agent 驱动的命令不会卡在交互界面上。调用方设置的 `LC_ALL` 仍会覆盖 `LANG`；按文本分类 stderr 的命令（工作树探测、未跟踪文件的 diff）会加上 `GitEnv::with_english_messages`，只为该命令固定 `LC_ALL=C`。它不作为默认值，因为 `LC_ALL` 也会覆盖提交和推送时运行的 hook 的 `LC_CTYPE`。
 
-`CliGitRunner` 运行系统的 `git`，测量耗时，报告可选的遥测，返回 `GitOutput { code, stdout, stderr, duration_ms }`。`run_bounded` 并发地读取 stdout 和 stderr，任一流超出预算就杀掉 Git（`GitExecError::OutputTooLarge`，diff 中映射为 `GitlancerError::DiffTooLarge`）。非零退出会保留退出码、参数和输出供诊断。`RecordingGitRunner` 不执行任何东西，用于测试命令构造。遥测通过 `gitlancer::logging::register` 选择开启，见[日志](../core/logging.zh.md#git-命令日志)。
+`CliGitRunner` 运行系统的 `git`，测量耗时，报告可选的遥测，返回 `GitOutput { code, stdout, stderr, duration_ms }`。`run_bounded` 并发地读取 stdout 和 stderr，任一流超出预算就杀掉 Git（`GitExecError::OutputTooLarge`，diff 中映射为 `GitlancerError::DiffTooLarge`）。`run_within(command, limit)` 是按次选择开启的期限，目前只有工作树探测使用。`CliGitRunner` 在超过期限后杀掉 Git，返回带 `ErrorKind::TimedOut` 的 `OutputReadFailed`；期限也覆盖 Git 退出后孙进程仍占着输出管道时的等待，这样的孙进程会继续运行。它不限制回收操作系统暂时无法终止的已杀进程（不可中断的文件系统等待），也不限制调用方在命令前后做的事情，例如探测里对 `.git` 的 `stat` 检查。其他 runner 会把期限当作命令的 `time_limit` 收到，有执行预算的 runner 会遵守它。非零退出会保留退出码、参数和输出供诊断。`RecordingGitRunner` 不执行任何东西，用于测试命令构造。遥测通过 `gitlancer::logging::register` 选择开启，见[日志](../core/logging.zh.md#git-命令日志)。
 
 ## 解析
 

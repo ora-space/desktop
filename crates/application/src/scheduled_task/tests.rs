@@ -184,6 +184,44 @@ fn create_without_persisted_default_branch_rejects_when_probe_fails() {
     );
 }
 
+/// An older build stored tasks without a frozen base branch. Saving one, even disabled, resolves
+/// the branch from the project, so on a project whose folder is not a repository the save is
+/// refused with the typed Git requirement; the Desktop form blocks exactly this case.
+#[test]
+fn saving_a_disabled_task_without_a_frozen_branch_requires_a_git_project() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let mut request = create_request();
+    request.enabled = false;
+    let created = create_handler(repository.clone())
+        .handle(request)
+        .expect("create task")
+        .task;
+    repository
+        .tasks
+        .lock()
+        .expect("lock tasks")
+        .last_mut()
+        .expect("stored task")
+        .worktree_base_branch = None;
+    let handler = UpdateScheduledTaskHandler::new(
+        repository,
+        Arc::new(MemoryProjectRepository::with_projects(vec![Project {
+            default_branch: None,
+            ..git_project("project-1")
+        }])),
+        workspaces(),
+        RejectingTargetValidator,
+        FixedClock(NOW + 1_000),
+    );
+    let mut rename = keep_consent_request(&created);
+    rename.name = "Renamed report".to_string();
+
+    assert_eq!(
+        handler.handle(rename).map(|response| response.task.name),
+        Err(ApplicationError::ScheduledTaskRequiresGitProject)
+    );
+}
+
 #[test]
 fn prepared_definition_is_not_written_until_runtime_eligibility_can_be_checked() {
     let repository = Arc::new(MemoryScheduledTaskRepository::default());

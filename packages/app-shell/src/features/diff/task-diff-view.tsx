@@ -356,7 +356,7 @@ export function TaskDiffView({
   }
 
   useLayoutEffect(() => {
-    if (fileRequest === undefined || diffQuery.isLoading) return;
+    if (fileRequest === undefined || diffPending) return;
     if (fileRequest.requestId !== appliedFileRequestId) return;
     const matchingPath = filePaths.find((path) =>
       pathsMatchForWorkspace(fileRequest.path, path),
@@ -366,7 +366,7 @@ export function TaskDiffView({
     }
   }, [
     appliedFileRequestId,
-    diffQuery.isLoading,
+    diffPending,
     filePaths,
     fileRequest,
     notifyPreviewPath,
@@ -414,7 +414,7 @@ export function TaskDiffView({
 
   useLayoutEffect(() => {
     if (isFocusMode) return;
-    if (fileRequest === undefined || diffQuery.isLoading) return;
+    if (fileRequest === undefined || diffPending) return;
     if (fileRequest.requestId !== appliedFileRequestId) return;
     // One jump per request: the run itself owns retries, so selection changes
     // and refetch-driven list identity changes must not re-jump the viewport
@@ -430,7 +430,7 @@ export function TaskDiffView({
     startScrollRun(matchingPath);
   }, [
     appliedFileRequestId,
-    diffQuery.isLoading,
+    diffPending,
     filePaths,
     fileRequest,
     isFocusMode,
@@ -676,7 +676,7 @@ export function TaskDiffView({
     return <TaskDiffNotGitState toolbar={toolbar} />;
   }
 
-  if (gitAvailability === "checking" || diffQuery.isLoading) {
+  if (diffPending) {
     return <DiffLoadingState />;
   }
 

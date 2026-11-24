@@ -315,6 +315,57 @@ fn symlinked_folder_under_a_damaged_repository_reports_unknown() {
     );
 }
 
+/// Verifies listing never waits on a checkout cleanup: while the cleanup lease is held, the
+/// workspace reports `Unknown` without probing, and the real answer returns once it is released.
+#[test]
+fn listing_skips_the_probe_of_a_checkout_being_cleaned_up() {
+    let temporary = TempDir::new().expect("create temporary backend directory");
+    let scaffold = seeded_scaffold("backend-workspace-git-cleanup-lease");
+    let backend = open_backend(&temporary);
+    let project_id = create_project(&backend, scaffold.repo_path());
+    let workspace_id = main_workspace(&backend, &project_id).id;
+    let workspaces = backend.workspaces();
+    let cleanup = workspaces.git_cleanup.exclusive_worktree_use(&workspace_id);
+
+    let (listed_tx, listed_rx) = std::sync::mpsc::channel();
+    let listing = std::thread::spawn({
+        let backend = backend.workspaces();
+        let project_id = project_id.clone();
+        move || {
+            let directory = backend
+                .list(ListWorkspacesRequest {})
+                .expect("list workspaces")
+                .workspaces
+                .into_iter()
+                .find(|workspace| workspace.project_id == project_id)
+                .expect("project has a main workspace")
+                .directory;
+            listed_tx.send(directory).expect("report listing");
+        }
+    });
+    // A list that waited on the lease would only finish after the drop below.
+    let during_cleanup = listed_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("listing does not wait on cleanup");
+    drop(cleanup);
+    listing.join().expect("listing thread finished");
+
+    assert_eq!(
+        (
+            during_cleanup,
+            main_workspace(&backend, &project_id).directory
+        ),
+        (
+            WorkspaceDirectory::Present {
+                git: WorkspaceGit::Unknown,
+            },
+            WorkspaceDirectory::Present {
+                git: WorkspaceGit::Repository,
+            },
+        )
+    );
+}
+
 /// Verifies a missing folder reports `Missing` rather than any Git capability.
 #[test]
 fn missing_folder_reports_missing_without_git_capability() {

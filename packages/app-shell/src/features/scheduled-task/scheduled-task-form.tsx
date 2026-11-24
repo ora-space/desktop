@@ -84,22 +84,25 @@ export function ScheduledTaskForm({
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const pending = createTask.isPending || updateTask.isPending;
   // Runs provision a worktree, so the backend refuses a plain-folder project wherever it has to
-  // resolve or use the project's branch: creating a task, moving a task to another project, and
-  // enabling one. Editing an existing disabled task on the same project resolves nothing and
+  // resolve or use the project's branch: creating a task, moving a task to another project,
+  // saving a task an older build stored without a frozen base branch, and enabling one. Editing
+  // an existing disabled task with a frozen branch on the same project resolves nothing and
   // stays allowed. Saying which case applies beside the project choice beats a save that is
   // certain to fail.
   const projectNotGit =
     useWorkspaceGitAvailability({ projectId }) === "notRepository";
-  const projectGitRefusal: "create" | "switch" | "enable" | null =
+  const projectGitRefusal: "create" | "switch" | "unfrozen" | "enable" | null =
     !projectNotGit
       ? null
       : task === null
         ? "create"
         : projectId !== task.projectId
           ? "switch"
-          : enabled
-            ? "enable"
-            : null;
+          : task.worktreeBaseBranch === null
+            ? "unfrozen"
+            : enabled
+              ? "enable"
+              : null;
   const agentEntries = useMemo(
     () =>
       task !== null && !agents.some((agent) => agent.agentRef === task.agentRef)
