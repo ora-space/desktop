@@ -1,5 +1,11 @@
 import type { ReleaseNote } from "../../lib/release-note";
 
+/**
+ * The last stable version without release notes. The card only announces later ones, because notes up
+ * to it were written afterwards for the history and describe what its users already had.
+ */
+const LAST_VERSION_WITHOUT_NOTES = "0.6.0";
+
 /** Parses the stable part of a version, ignoring prerelease and build suffixes. */
 function parseStableVersion(version: string): number[] | null {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
@@ -46,8 +52,9 @@ export interface ReleaseNotesPrompt {
 /**
  * Decides whether this start has unseen notes.
  *
- * Returns null when nothing may be shown or remembered: the build has no notes of its own version, so
- * its version says nothing about releases, or the version was already prompted. An empty list means
+ * Returns null when nothing may be shown or remembered: the version predates release notes, the build
+ * has no notes of its own version, so its version says nothing about releases, or the version was
+ * already prompted. An empty list means
  * the version is remembered without prompting, which is how a fresh installation starts.
  */
 export function planReleaseNotesPrompt({
@@ -64,16 +71,24 @@ export function planReleaseNotesPrompt({
 }): ReleaseNotesPrompt | null {
   const version = stableVersionOf(appVersion);
   if (version === null) return null;
+  if (compareVersions(version, LAST_VERSION_WITHOUT_NOTES) <= 0) return null;
   const visible = visibleReleaseNotes(notes, appVersion);
   if (!visible.some((note) => note.version === version)) return null;
-  if (promptedVersion === null) {
-    return { version, notes: newInstallation ? [] : visible };
+  if (promptedVersion === null && newInstallation) {
+    return { version, notes: [] };
   }
-  if (compareVersions(version, promptedVersion) <= 0) return null;
+  if (
+    promptedVersion !== null &&
+    compareVersions(version, promptedVersion) <= 0
+  )
+    return null;
   return {
     version,
     notes: visible.filter(
-      (note) => compareVersions(note.version, promptedVersion) > 0,
+      (note) =>
+        compareVersions(note.version, LAST_VERSION_WITHOUT_NOTES) > 0 &&
+        (promptedVersion === null ||
+          compareVersions(note.version, promptedVersion) > 0),
     ),
   };
 }
