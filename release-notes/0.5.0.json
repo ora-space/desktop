@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "version": "0.5.0",
+  "date": "2026-10-26",
+  "entries": [
+    {
+      "category": "feature",
+      "zh-CN": "新增本地定时任务：按计划自动运行，可以查看历史和运行结论，保留产物，并在需要时通知你。",
+      "en-US": "Added local scheduled tasks: run on a schedule, review the history and outcome of each run, keep its artifacts, and get notified when needed."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "工作流的交互节点会等对话真正结束后再让你确认完成，也可以手动强制完成。",
+      "en-US": "Interactive workflow nodes wait for the conversation to settle before you confirm completion, and can be completed by force."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "可以在画布的连线上直接插入节点，拖动节点时显示对齐参考线。",
+      "en-US": "Insert a node directly on a canvas edge, and see alignment guides while dragging nodes."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "对话中可以查看 OpenCode 子会话的过程，以及运行诊断信息。",
+      "en-US": "Chats can show the progress of OpenCode child sessions and run diagnostics."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "Skill 插件可以配置密钥，并在启动智能体时传给它。",
+      "en-US": "Skill plugins can be given secrets, which are passed to agents when they start."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "选择基础分支时可以搜索，并显示完整的分支名。",
+      "en-US": "Base branches can be searched and show their full names."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "插件设置页滚动时标题保持可见。",
+      "en-US": "The plugin settings header stays visible while scrolling."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复插件更新或替换后，已有会话无法继续使用的问题。",
+      "en-US": "Fixed existing sessions no longer working after their plugin was updated or replaced."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复重新打开对话后，子会话的内容归属不正确的问题。",
+      "en-US": "Fixed child session content being attributed incorrectly after reopening a chat."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复编辑一个工作流节点时影响其他节点的问题。",
+      "en-US": "Fixed editing one workflow node affecting others."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "Skill 同步卡住时，可以在对话中恢复。",
+      "en-US": "A stuck Skill sync can be recovered from the chat."
+    }
+  ]
+}
