@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { Workspace } from "@ora/contracts";
 import { useWorkspaces } from "./use-workspaces";
 
@@ -50,4 +51,28 @@ export function useWorkspaceGitAvailability(
             candidate.kind === "main",
         );
   return workspaceGitAvailability(workspace);
+}
+
+/**
+ * Lists the projects whose main folder the backend last reported as `notRepository`.
+ *
+ * For lists that act on many projects at once (the scheduled-task switches), where calling the
+ * per-target hook per row is not possible. A list still loading or failed yields no project, so
+ * nothing is blocked on an inconclusive answer.
+ */
+export function useProjectsWithoutGit(): ReadonlySet<string> {
+  const { data: workspaces } = useWorkspaces();
+  return useMemo(
+    () =>
+      new Set(
+        (workspaces ?? [])
+          .filter(
+            (workspace) =>
+              workspace.kind === "main" &&
+              workspaceGitAvailability(workspace) === "notRepository",
+          )
+          .map((workspace) => workspace.projectId),
+      ),
+    [workspaces],
+  );
 }

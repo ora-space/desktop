@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   ScheduledTask,
   ScheduledTaskHistoryEntry,
@@ -314,5 +314,42 @@ describe("ScheduledTaskManager consent handling", () => {
       prompt: "Review the current changes",
       approvalChange: { kind: "keep" },
     });
+  });
+
+  it("the card enable toggle opens the form instead of enabling a task whose folder is not Git", async () => {
+    const user = userEvent.setup();
+    const tasks = [CONSENTED_DISABLED_TASK];
+    const updates: UpdateScheduledTaskRequest[] = [];
+    const listWorkspaces = vi.fn(async () => ({
+      workspaces: [
+        {
+          id: "workspace-project-1",
+          projectId: "project-1",
+          kind: "main" as const,
+          lifecycle: "active" as const,
+          directory: {
+            kind: "present" as const,
+            git: "notRepository" as const,
+          },
+        },
+      ],
+    }));
+    renderManager({
+      ...scheduledTaskHandlers(tasks, updates),
+      listWorkspaces,
+    });
+    await waitFor(() => expect(listWorkspaces).toHaveBeenCalled());
+
+    const card = (await screen.findByText("Weekly digest")).closest("article")!;
+    // Let the folder answer land before toggling; a missed gate then sends an update at once.
+    await act(async () => {
+      await listWorkspaces.mock.results[0]?.value;
+    });
+    await user.click(within(card).getByRole("switch"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "此项目目录未使用 Git，无法为它创建定时任务。",
+    );
+    expect(updates).toEqual([]);
   });
 });

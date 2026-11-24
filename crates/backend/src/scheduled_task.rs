@@ -386,7 +386,8 @@ mod tests {
     use crate::test_backend::backend_paths;
     use ora_contracts::{
         AgentModel, CreateProjectRequest, CreateScheduledTaskRequest, EmptyErrorParams,
-        PublicError, ScheduledTaskExecutionLocation, ScheduledTaskSchedule,
+        PublicError, ScheduledTaskApprovalChange, ScheduledTaskApprovalPolicy,
+        ScheduledTaskExecutionLocation, ScheduledTaskSchedule, UpdateScheduledTaskRequest,
     };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -435,6 +436,71 @@ mod tests {
             })
             .await
             .expect_err("a plain folder cannot host a scheduled task");
+
+        assert_eq!(
+            error.public_error().clone(),
+            PublicError::InvalidRequest(EmptyErrorParams {})
+        );
+    }
+
+    /// Verifies enabling an approved task whose project folder lost its repository (the list
+    /// switch path) is refused with the typed Git requirement before any runtime check.
+    #[tokio::test]
+    async fn rejects_enabling_a_task_whose_project_folder_is_no_longer_git() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let scaffold = ora_test_support::GitTestScaffold::new("backend-scheduled-enable-plain")
+            .expect("create Git test scaffold");
+        scaffold
+            .write_file(scaffold.repo_path(), "README.md", "seed\n")
+            .expect("write seed file");
+        scaffold
+            .stage_all_and_commit("initial")
+            .expect("create seed commit");
+        let backend =
+            Backend::open(backend_paths(temporary.path(), temporary.path())).expect("open backend");
+        let project_id = backend
+            .projects()
+            .create(CreateProjectRequest {
+                name: "Repository".to_string(),
+                main_workspace_path: scaffold.repo_path().to_string_lossy().into_owned(),
+            })
+            .expect("create Git project")
+            .project
+            .id;
+        let task = backend
+            .scheduled_tasks()
+            .create(CreateScheduledTaskRequest {
+                name: "Nightly notes".to_string(),
+                enabled: false,
+                schedule: ScheduledTaskSchedule::EveryHours { interval: 24 },
+                execution_location: ScheduledTaskExecutionLocation::Local,
+                project_id: project_id.clone(),
+                agent_ref: "ora/claude-code".to_string(),
+                model: None,
+                prompt: "Summarize the repository".to_string(),
+                approval_policy: Some(ScheduledTaskApprovalPolicy::FullAutoInWorktree),
+            })
+            .await
+            .expect("create approved disabled task")
+            .task;
+        std::fs::remove_dir_all(scaffold.repo_path().join(".git")).expect("remove repository");
+
+        let error = backend
+            .scheduled_tasks()
+            .update(UpdateScheduledTaskRequest {
+                task_id: task.id,
+                expected_updated_at: task.updated_at,
+                name: task.name,
+                enabled: true,
+                schedule: task.schedule,
+                project_id,
+                agent_ref: task.agent_ref,
+                model: task.model,
+                prompt: task.prompt,
+                approval_change: ScheduledTaskApprovalChange::Keep,
+            })
+            .await
+            .expect_err("a plain folder cannot run a scheduled task");
 
         assert_eq!(
             error.public_error().clone(),

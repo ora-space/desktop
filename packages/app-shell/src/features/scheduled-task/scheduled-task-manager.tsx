@@ -14,6 +14,7 @@ import {
 import { localizeContractError } from "../../i18n/contract-error";
 import { useAvailableAgents } from "../../state/hooks/use-available-agents";
 import { useProjects } from "../../state/hooks/use-projects";
+import { useProjectsWithoutGit } from "../../state/hooks/use-workspace-git";
 import {
   useDeleteScheduledTask,
   useRevokeScheduledTaskApproval,
@@ -41,6 +42,7 @@ export function ScheduledTaskManager() {
   const updateTask = useUpdateScheduledTask();
   const deleteTask = useDeleteScheduledTask();
   const revokeApproval = useRevokeScheduledTaskApproval();
+  const projectsWithoutGit = useProjectsWithoutGit();
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed);
   const historyRequest = useUiStore(
@@ -89,7 +91,12 @@ export function ScheduledTaskManager() {
     revokeApproval.error;
 
   const toggleEnabled = (task: ScheduledTask, enabled: boolean) => {
-    if (enabled && task.approval === null) {
+    // Turning a task on needs consent and a Git project; when either is missing, the form is
+    // the one surface that explains what is missing. Turning it off always stays available.
+    if (
+      enabled &&
+      (task.approval === null || projectsWithoutGit.has(task.projectId))
+    ) {
       setEditing(task);
       return;
     }
