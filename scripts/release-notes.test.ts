@@ -254,6 +254,44 @@ for (const flag of ["--assume-unchanged", "--skip-worktree"]) {
   );
 }
 
+Deno.test("packaging rejects an edit that only remains staged", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, { "0.7.0.json": releaseNote("0.7.0") });
+    await commitAll(root);
+    await writeNotes(root, {
+      "0.7.0.json": { ...releaseNote("0.7.0"), date: "2026-12-11" },
+    });
+    await git(root, ["add", "--all"]);
+    await writeNotes(root, { "0.7.0.json": releaseNote("0.7.0") });
+    await assert.rejects(
+      requireReleaseNotes(root, "0.7.0"),
+      /differs from the checked-out commit/,
+    );
+  }),
+);
+
+Deno.test("the packaging check leaves no trace in the checkout", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, { "0.7.0.json": releaseNote("0.7.0") });
+    await commitAll(root);
+    await git(root, ["config", "core.splitIndex", "true"]);
+    const hook = path.join(root, ".git", "hooks", "post-index-change");
+    await Deno.mkdir(path.dirname(hook), { recursive: true });
+    await Deno.writeTextFile(
+      hook,
+      '#!/bin/sh\ntouch "$(git rev-parse --show-toplevel)/.git/hook-ran"\n',
+      { mode: 0o755 },
+    );
+    const entries = () =>
+      [...Deno.readDirSync(path.join(root, ".git"))]
+        .map((entry) => entry.name)
+        .sort();
+    const before = entries();
+    await requireReleaseNotes(root, "0.7.0");
+    assert.deepEqual(entries(), before);
+  }),
+);
+
 Deno.test("a source copy inside another repository cannot be packaged", () =>
   withTempDirectory(async (root) => {
     const copy = path.join(root, "copy");

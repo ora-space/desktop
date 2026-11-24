@@ -203,35 +203,50 @@ export async function requireReleaseNotes(
 
 /** Rejects notes that differ from HEAD; other local edits stay allowed for patched distributions. */
 async function requireCommittedReleaseNotes(root: string): Promise<void> {
-  // A private index that holds only HEAD ignores flags such as assume-unchanged and skip-worktree,
-  // which make the checkout's own index hide edits.
   const temporary = await mkdtemp(path.join(tmpdir(), "ora-release-notes-"));
-  /** Runs Git against the packaged checkout and the private index. */
-  const git = async (args: string[]): Promise<string> => {
-    const { stdout } = await promisify(execFile)("git", ["-C", root, ...args], {
-      env: {
-        ...process.env,
-        GIT_INDEX_FILE: path.join(temporary, "index"),
+  // Keeps the private index out of the checkout's Git directory and runs none of its hooks.
+  const isolated = [
+    ["core.splitIndex", "false"],
+    ["core.fsmonitor", "false"],
+    ["core.hooksPath", temporary],
+  ].flatMap(([key, value]) => ["-c", `${key}=${value}`]);
+  /** Runs Git against the packaged checkout, optionally through another index. */
+  const git = async (args: string[], index?: string): Promise<string> => {
+    const { stdout } = await promisify(execFile)(
+      "git",
+      ["-C", root, ...isolated, ...args],
+      {
+        env:
+          index === undefined
+            ? process.env
+            : { ...process.env, GIT_INDEX_FILE: index },
       },
-    });
+    );
     return stdout;
   };
+  const status = [
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+    "--ignored=matching",
+    "--",
+    RELEASE_NOTES_DIRECTORY,
+  ];
   let changes: string;
   try {
     // A source copy nested in another repository must not be checked against that repository.
     if ((await git(["rev-parse", "--show-prefix"])).trimEnd() !== "") {
       throw new Error("the packaging root is not the Git checkout root");
     }
-    // Without a commit there is nothing the notes could match.
-    await git(["read-tree", "HEAD"]);
-    changes = await git([
-      "status",
-      "--porcelain",
-      "--untracked-files=all",
-      "--ignored=matching",
-      "--",
-      RELEASE_NOTES_DIRECTORY,
-    ]);
+    // The checkout's own index also reports edits that are only staged.
+    changes = await git(status);
+    if (changes === "") {
+      // A private index that holds only HEAD ignores flags such as assume-unchanged and
+      // skip-worktree, which make the checkout's own index hide edits.
+      const index = path.join(temporary, "index");
+      await git(["read-tree", "HEAD"], index);
+      changes = await git(status, index);
+    }
   } catch (error) {
     throw new Error(
       `Packaging with --tag requires a Git checkout to verify ${RELEASE_NOTES_DIRECTORY}`,
