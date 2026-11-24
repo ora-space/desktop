@@ -1,0 +1,984 @@
+[
+  {
+    "name": "a complete note",
+    "valid": true,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "every category",
+    "valid": true,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "important",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "feature",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "improvement",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "markup kept as text",
+    "valid": true,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "<b>a</b> [b](https://example.invalid)"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the longest text",
+    "valid": true,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the most entries",
+    "valid": true,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a leap day",
+    "valid": true,
+    "note": {
+      "version": "0.8.0",
+      "date": "2028-02-29",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a prerelease version",
+    "valid": false,
+    "note": {
+      "version": "0.8.0-rc.1",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a v prefix",
+    "valid": false,
+    "note": {
+      "version": "v0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a leading zero",
+    "valid": false,
+    "note": {
+      "version": "0.08.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "an impossible date",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-02-29",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a date with time",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10T00:00",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "no date",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "no entries",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": []
+    }
+  },
+  {
+    "name": "too many entries",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        },
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "an unknown category",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "other",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a missing translation",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a null translation",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": null,
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a blank translation",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": " \u3000",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "an over-long text",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+          "en-US": "Fixed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+0000",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u0000b"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+000A",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\nb"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+007F",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u007fb"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+0085",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u0085b"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+061C",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u061cb"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+200E",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u200eb"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+200F",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u200fb"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+2028",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u2028b"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+2029",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u2029b"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+202A",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u202ab"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+202E",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u202eb"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+2066",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u2066b"
+        }
+      ]
+    }
+  },
+  {
+    "name": "the character U+2069",
+    "valid": false,
+    "note": {
+      "version": "0.8.0",
+      "date": "2026-12-10",
+      "entries": [
+        {
+          "category": "fix",
+          "zh-CN": "\u4fee\u590d",
+          "en-US": "a\u2069b"
+        }
+      ]
+    }
+  }
+]

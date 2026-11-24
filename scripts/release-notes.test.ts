@@ -146,6 +146,28 @@ Deno.test("notes that are not UTF-8 are rejected", () =>
   }),
 );
 
+// The Desktop host applies the same rules to manifest notes and reads the same cases.
+const sharedCases: { name: string; valid: boolean; note: object }[] =
+  JSON.parse(
+    await Deno.readTextFile(
+      new URL("./release-note-fixtures.json", import.meta.url),
+    ),
+  );
+for (const { name, valid: accepted, note } of sharedCases) {
+  Deno.test(
+    `the shared case with ${name} is ${accepted ? "accepted" : "rejected"}`,
+    () => {
+      const parse = () =>
+        parseReleaseNote(
+          `${(note as { version: string }).version}.json`,
+          JSON.stringify({ schema: 1, ...note }),
+        );
+      if (accepted) parse();
+      else assert.throws(parse);
+    },
+  );
+}
+
 Deno.test("a build without a notes directory has no notes", () =>
   withTempDirectory(async (root) => {
     assert.deepEqual(await readReleaseNotes(root), []);
