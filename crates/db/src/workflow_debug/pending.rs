@@ -107,7 +107,19 @@ pub(super) fn resolve(
             .node(owner)
             .and_then(|n| n.iteration_config.as_ref())
             .ok_or(DebugRejection::InvalidTarget)?;
-        let source = payload
+        let frozen: Option<String> = db
+            .query_row(
+                "SELECT json_extract(entry_state,'$.runPayload') FROM workflow_debug_attempts
+             WHERE node_run_id=?1 AND snapshot_id=?2",
+                params![id, snapshot],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        let frozen: WorkflowRunPayload = serde_json::from_str(
+            &frozen.ok_or_else(|| missing("foreach container entrance has no frozen input"))?,
+        )?;
+        let source = frozen
             .variable_pool
             .resolve(&config.iterator_selector)
             .ok()

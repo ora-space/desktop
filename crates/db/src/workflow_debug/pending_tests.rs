@@ -182,3 +182,120 @@ fn first_scheduler_claim_invalidates_logical_preview() {
     ));
     assert!(store.history("other").unwrap().is_empty());
 }
+
+/// Uses a frozen container input even when its mutable root selector has moved on.
+#[test]
+fn pending_foreach_member_requires_owner_and_exact_bound_item() {
+    let (_temp, _, store) = fixture();
+    let graph = json!({"nodes":[
+        {"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
+        {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["agent","output"]}}},
+        {"id":"agent","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"old"}}}],
+        "edges":[{"source":"start","target":"iter"},{"source":"iter","target":"agent"}]});
+    let mut payload = ora_application::WorkflowRunPayload::default();
+    payload
+        .variable_pool
+        .declare("start.items", "array[string]", "start");
+    payload
+        .variable_pool
+        .set("start.items", "start", json!(["a", "b", "c"]))
+        .unwrap();
+    store
+        .pool
+        .with_connection(|db| {
+            bind_graph(db, graph)?;
+            db.execute(
+                "UPDATE workflow_runs SET payload=?1 WHERE id='other'",
+                [serde_json::to_string(&payload)?],
+            )?;
+            insert_attempt(db, "it", "iter", "iteration", None)?;
+            payload
+                .variable_pool
+                .declare("iter.index", "number", "iter");
+            payload.variable_pool.declare("iter.item", "string", "iter");
+            payload
+                .variable_pool
+                .set("iter.index", "iter", json!(2))
+                .unwrap();
+            payload
+                .variable_pool
+                .set("iter.item", "iter", json!("c"))
+                .unwrap();
+            payload
+                .variable_pool
+                .set("start.items", "start", json!(["x", "y", "z"]))
+                .unwrap();
+            db.execute(
+                "UPDATE workflow_runs SET payload=?1 WHERE id='other'",
+                [serde_json::to_string(&payload)?],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let request = |owner: Option<&str>, index: Option<u32>| {
+        let mut req = edit("{{#iter.item#}}", 0);
+        req.run_id = "other".into();
+        req.selection = WorkflowDebugSelection::PendingTarget(PendingWorkflowDebugTarget {
+            root_scope_id: "root:other".into(),
+            scope_id: "root:other".into(),
+            node_id: "agent".into(),
+            container_node_run_id: owner.map(String::from),
+            index,
+        });
+        req
+    };
+    assert!(
+        matches!(store.preview(&request(None,Some(2)),impact), Err(DatabaseError::WorkflowDebug(DebugRejection::MissingFact(reason))) if reason.contains("containerNodeRunId"))
+    );
+    assert!(
+        store
+            .preview(&request(Some("it"), Some(1)), impact)
+            .is_err()
+    );
+    let preview = store
+        .preview(&request(Some("it"), Some(2)), |input| {
+            assert_eq!(input.pool.values["iter.item"], "c");
+            impact(input)
+        })
+        .unwrap();
+    assert_eq!(preview.target.index, Some(2));
+    assert_eq!(preview.target.container_node_run_id.as_deref(), Some("it"));
+}
+
+/// A Loop member uses the actual round scope and carried value, never a future round.
+#[test]
+fn pending_loop_member_uses_its_live_round() {
+    let (_temp, _, store) = fixture();
+    let graph = json!({"schemaVersion":2,"nodes":[{"id":"start","data":{"kind":"start"}},{"id":"loop","data":{"kind":"loop","loopConfig":{
+        "maxIterations":5,"variables":[{"name":"draft","valueType":"string","initial":{"kind":"constant","value":""},"feedback":["writer","output"]}],
+        "until":{"logic":"and","conditions":[{"variableSelector":["writer","output"],"operator":"equals","value":"done"}]},
+        "outputs":[{"name":"result","variableSelector":["writer","output"]}]}}},
+        {"id":"entry","data":{"kind":"start","containerId":"loop"}},
+        {"id":"writer","data":{"kind":"agent","containerId":"loop","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"old"}}}],
+        "edges":[{"source":"start","target":"loop"},{"source":"entry","target":"writer"}]});
+    let mut pool = WorkflowVariablePool::default();
+    pool.declare("loop.draft", "string", "loop");
+    pool.set("loop.draft", "loop", json!("third")).unwrap();
+    store.pool.with_connection(|db|{
+        bind_graph(db,graph)?;
+        insert_attempt(db,"lp","loop","loop",None)?;
+        db.execute("INSERT INTO workflow_execution_scopes(id,run_id,parent_loop_node_run_id,round_index,status,state,created_at,updated_at)
+            VALUES('round3','other','lp',3,1,?1,1,1)",[json!({"variablePool":pool,"conditionDecisions":{}}).to_string()])?;
+        db.execute("INSERT INTO workflow_node_runs(id,run_id,scope_id,node_id,node_type,status,created_at,updated_at)
+            VALUES('entry3','other','round3','entry','start',2,1,1)",[])?;
+        Ok(())
+    }).unwrap();
+    let request = |scope: &str| {
+        serde_json::from_value(json!({"runId":"other","baseRevision":0,
+        "pendingTarget":{"rootScopeId":"root:other","scopeId":scope,"nodeId":"writer"},"patch":[{"op":"replace","path":"/agentConfig/prompt","value":"{{#loop.draft#}}"}]})).unwrap()
+    };
+    assert!(store.preview(&request("round4"), impact).is_err());
+    let preview = store
+        .preview(&request("round3"), |input| {
+            assert_eq!(input.pool.values["loop.draft"], "third");
+            impact(input)
+        })
+        .unwrap();
+    assert_eq!(preview.target.round, Some(3));
+    assert_eq!(preview.target.container_node_run_id.as_deref(), Some("lp"));
+}

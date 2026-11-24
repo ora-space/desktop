@@ -80,9 +80,12 @@ impl WorkflowDebugStore {
             let target_current: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM workflow_debug_previews p
                 JOIN workflow_runs r ON r.id=p.run_id JOIN workflow_run_root_scopes root ON root.run_id=r.id
                 WHERE p.id=?1 AND p.snapshot_id=r.snapshot_id AND p.root_scope=root.scope_id
+                AND EXISTS(SELECT 1 FROM workflow_execution_scopes s WHERE s.id=?3 AND s.run_id=r.id
+                    AND (s.id=root.scope_id OR s.parent_loop_node_run_id=?6))
+                AND (?6 IS NULL OR EXISTS(SELECT 1 FROM workflow_node_runs owner WHERE owner.id=?6 AND owner.run_id=r.id AND owner.scope_id=root.scope_id AND owner.is_deleted=0))
                 AND CASE WHEN ?2 IS NOT NULL THEN EXISTS(SELECT 1 FROM workflow_node_runs n WHERE n.id=?2 AND n.run_id=r.id AND n.is_deleted=0)
                 ELSE NOT EXISTS(SELECT 1 FROM workflow_node_runs n WHERE n.run_id=r.id AND n.scope_id=?3 AND n.node_id=?4 AND n.iteration IS ?5 AND n.is_deleted=0) END)",
-                params![entry.preview.preview_id,entry.preview.target.node_run_id,entry.preview.target.scope_id,entry.preview.target.node_id,entry.preview.target.index],|r|r.get(0))?;
+                params![entry.preview.preview_id,entry.preview.target.node_run_id,entry.preview.target.scope_id,entry.preview.target.node_id,entry.preview.target.index,entry.preview.target.container_node_run_id],|r|r.get(0))?;
             if !target_current { return Err(DebugRejection::StalePreview.into()); }
             let revision = revision.checked_add(1).ok_or(DebugRejection::StalePreview)?;
             // The strategy may create new attempts inside settle. They must see the new revision.
