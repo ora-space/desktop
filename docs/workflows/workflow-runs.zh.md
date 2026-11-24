@@ -36,7 +36,7 @@
 
 对每个使用 Skill 的节点，创建运行时向 `AgentSkillDeliveryProvider` 请求经过校验的、相对于 Workspace 的发现根目录，并冻结一份按节点的回执，内容是 Skill id、斜杠命令名和实际的包路径。本地 Skill 通过目录中的目录解析，插件 Skill 通过其行中记录的不可变包解析。provider 采用所选 Agent 插件声明的发现根目录，未声明时回落到 `.agents/skills`。执行只使用冻结的回执，所以之后的目录变化无法悄悄改写已有运行所指向的包。
 
-启动、重启或续跑在派发节点前，用当前角色与 Skill 目录、已安装的 MCP 包检查即将执行的整张图。创建运行时校验角色和 Skill；启用的 MCP 绑定在开始调度时需要有效的 MCP 包。Skill 或 MCP 不可用时，`workflow_skill_not_found` 或 `workflow_mcp_not_found` 指出节点及其缺失的依赖，恢复依赖后同一运行可继续。对运行中的工作流再次启动会返回当前运行，重启则返回 `workflow_run_not_restartable`。
+启动、重启或续跑在派发节点前，用当前角色与 Skill 目录、已安装的 MCP 包检查即将执行的整张图。创建运行时校验角色和 Skill；启用的 MCP 绑定在开始调度时需要有效的 MCP 包。Skill 或 MCP 不可用时，`workflow_skill_not_found` 或 `workflow_mcp_not_found` 指出节点及其缺失的依赖，恢复依赖后同一运行可继续。对运行中的工作流再次启动会返回当前运行，重启则返回 `workflow_run_not_restartable`。Agent 是否安装不属于这项预检：runtime 在节点打开会话时解析冻结的 Agent 身份，缺失时以 `agent_not_installed` 失败。
 
 续跑切换快照时，会在恢复检查点或改动工作树之前检查目标图，切换时冻结按 Agent 插件声明解析出的 Skill 路径。保留快照时继续使用已有的 Skill 回执。派发后，节点会话建立时处理此时已移除或配置不完整的 MCP 以及 Agent 能力不足等情况，拒绝交付不完整的选择。
 
