@@ -223,7 +223,7 @@ export const workspaceTranslations = {
     "update.checking": "Checking for updates…",
     "update.downloading": "Downloading Ora {{version}} ({{progress}})",
     "update.downloadingUnknownSize": "Downloading Ora {{version}}",
-    "update.ready": "Ora {{version}} is available. Click to review it",
+    "update.ready": "Ora {{version}} is available. Click to review it.",
     "update.installing": "Installing Ora {{version}}…",
     "update.failed": "Could not check for updates: {{message}}",
     "update.manual.system_package":

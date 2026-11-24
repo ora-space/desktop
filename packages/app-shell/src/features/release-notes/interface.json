@@ -3,7 +3,7 @@
   "modules": {
     "./release-note-list": {
       "exports": ["ReleaseNoteList"],
-      "purpose": "The update confirmation shows manifest notes with the same plain-text presentation."
+      "purpose": "The offered release shows manifest notes with the same plain-text presentation."
     },
     "./release-notes-card": {
       "exports": ["ReleaseNotesCard"],
