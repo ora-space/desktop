@@ -431,7 +431,7 @@ it("preserves the URL draft and saved target on write failure, then retries befo
     password: null,
   };
   const handlers = createFixtureHandlers(state);
-  const save = handlers.setProxyCheckUrl;
+  const save = handlers.setProxyCheckUrl!;
   let failed = true;
   handlers.setProxyCheckUrl = async (request) => {
     if (failed) throw new Error("disk unavailable");
