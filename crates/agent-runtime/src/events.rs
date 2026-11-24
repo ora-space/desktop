@@ -11,36 +11,49 @@ use agent_client_protocol_schema::v1::{
 use ora_contracts::PromptSessionEvent;
 use tokio::sync::mpsc;
 
-/// Drains an idle session's event FIFO while preserving title updates for the actor.
+/// Drains an idle session's event FIFO while preserving titles for the actor and the command
+/// catalog for the next prompt.
 ///
 /// Idle traffic must not leak into the next prompt, but dropping `SessionInfoUpdate` here would
-/// lose a push title that arrived after attach and before the first eligible prompt.
+/// lose a push title that arrived after attach and before the first eligible prompt, and dropping
+/// `AvailableCommandsUpdate` would lose the only report an Agent sends after answering setup.
 ///
 /// Returns whether any drained event was turn traffic, so an idle actor can report it.
 pub(super) async fn drain_idle_events(
-    client: &AgentAcpClient,
-    events: &mut mpsc::Receiver<SessionEvent>,
+    channel: &mut SessionChannel,
     title_updates: &mpsc::WeakUnboundedSender<RuntimeCommand>,
 ) -> bool {
+    let client = channel.connection.client.clone();
     let mut traffic = false;
     // Bound the synchronous snapshot so a noisy provider cannot keep an idle actor
     // from returning to its command loop forever.
-    let queued = events.len();
+    let queued = channel.events.len();
     for _ in 0..queued {
-        let Ok(event) = events.try_recv() else {
+        let Ok(event) = channel.events.try_recv() else {
             break;
         };
         traffic |= is_turn_traffic(&event);
-        if let SessionEvent::Update(update, _) = &event
-            && let Some(title_updates) = title_updates.upgrade()
-        {
-            let _ = title_updates.send(RuntimeCommand::TitleUpdate {
-                update: Box::new(update.update.clone()),
-            });
-        }
-        settle_idle_event(client, event).await;
+        preserve_idle_update(channel, &event, title_updates);
+        settle_idle_event(&client, event).await;
     }
     traffic
+}
+
+/// Keeps the parts of one idle event that outlive it, before the event itself is settled.
+pub(super) fn preserve_idle_update(
+    channel: &mut SessionChannel,
+    event: &SessionEvent,
+    title_updates: &mpsc::WeakUnboundedSender<RuntimeCommand>,
+) {
+    let SessionEvent::Update(update, _) = event else {
+        return;
+    };
+    channel.retain_commands(update);
+    if let Some(title_updates) = title_updates.upgrade() {
+        let _ = title_updates.send(RuntimeCommand::TitleUpdate {
+            update: Box::new(update.update.clone()),
+        });
+    }
 }
 
 /// Whether an event belongs to a turn rather than to the session.
@@ -100,6 +113,7 @@ where
         match channel.events.recv().await {
             Some(SessionEvent::Update(update, _)) => {
                 *saw_output |= produced_output(&update.update);
+                channel.observe_commands(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);
@@ -147,6 +161,7 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
         match event {
             SessionEvent::Update(update, _) => {
                 *saw_output |= produced_output(&update.update);
+                channel.observe_commands(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);

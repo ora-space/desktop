@@ -461,6 +461,7 @@ impl ConnectionSupervisor {
             connection,
             events,
             pending_updates: std::collections::VecDeque::new(),
+            available_commands: Vec::new(),
             controls,
             _trace_registration: trace_registration,
             _registration: registration,

@@ -132,11 +132,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         RuntimeCommand::TakeIdleTurnTraffic { response } => {
                             // A title poll only borrows the idle channel; hand it back and drain
                             // as an idle actor would, so the answer is not lost to the poll.
-                            if super::events::drain_idle_events(
-                                &channel.connection.client.clone(),
-                                &mut channel.events,
-                                &self.command_sender,
-                            )
+                            if super::events::drain_idle_events(&mut channel, &self.command_sender)
                             .await
                             {
                                 self.turn_cancel.note_idle_traffic();
@@ -236,6 +232,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 event = channel.events.recv() => {
                     match event {
                         Some(SessionEvent::Update(update, _)) => {
+                            channel.observe_commands(&update.update);
                             self.observe_session_update(&update.update);
                             channel.pending_updates.push_back(update);
                         }

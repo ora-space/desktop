@@ -245,7 +245,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 event = channel.events.recv() => match event {
                     Some(SessionEvent::Update(update, _)) => {
                         // The agent is reciting history Ora already owns. Draining it keeps the
-                        // queue clear and proves the provider is still working.
+                        // queue clear and proves the provider is still working. Its command catalog
+                        // is not history, so that one update is kept for the prompt being admitted.
+                        channel.retain_commands(&update);
                         self.observe_session_update(&update.update);
                         deadline.as_mut().reset(Instant::now() + window);
                     }

@@ -165,7 +165,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let client = channel.connection.client.clone();
         // Catch events that arrived after the previous operation ended but before this command
         // was accepted. Setup updates in `pending_updates` are intentional and stay separate.
-        drain_idle_events(&client, &mut channel.events, &self.command_sender).await;
+        drain_idle_events(&mut channel, &self.command_sender).await;
         if let Ok(control) = channel.controls.try_recv() {
             match control {
                 SessionControl::QueueOverflow => {
@@ -436,6 +436,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     saw_output |= produced_output(&update.update);
                     // Record before forwarding: a client that drops mid-turn must not also cost
                     // the durable record of what the provider produced.
+                    channel.observe_commands(&update.update);
                     self.observe_session_update(&update.update);
                     let update = update.update;
                     liveness.observe_at(

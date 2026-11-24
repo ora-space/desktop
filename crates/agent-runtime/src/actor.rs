@@ -49,13 +49,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     // Residual events belong to the previous provider turn. Consume the current
                     // queue snapshot before accepting a new command so they cannot cross turns.
                     // Turn traffic among them is remembered for a caller judging a stopped turn.
-                    if drain_idle_events(
-                        &channel.connection.client,
-                        &mut channel.events,
-                        &command_sender,
-                    )
-                    .await
-                    {
+                    if drain_idle_events(channel, &command_sender).await {
                         self.turn_cancel.note_idle_traffic();
                     }
                     if let Ok(control) = channel.controls.try_recv() {
@@ -69,13 +63,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             continue;
                         }
                         command = self.commands.recv() => {
-                            if drain_idle_events(
-                                &channel.connection.client,
-                                &mut channel.events,
-                                &command_sender,
-                            )
-                            .await
-                            {
+                            if drain_idle_events(channel, &command_sender).await {
                                 self.turn_cancel.note_idle_traffic();
                             }
                             command
@@ -88,13 +76,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             if super::events::is_turn_traffic(&event) {
                                 self.turn_cancel.note_idle_traffic();
                             }
-                            if let SessionEvent::Update(update, _) = &event
-                                && let Some(command_sender) = command_sender.upgrade()
-                            {
-                                let _ = command_sender.send(RuntimeCommand::TitleUpdate {
-                                    update: Box::new(update.update.clone()),
-                                });
-                            }
+                            super::events::preserve_idle_update(channel, &event, &command_sender);
                             super::events::settle_idle_event(&channel.connection.client, event).await;
                             continue;
                         }

@@ -1,6 +1,6 @@
 use super::connection::RuntimeConnection;
 use crate::RuntimeError;
-use agent_client_protocol_schema::v1::SessionNotification;
+use agent_client_protocol_schema::v1::{AvailableCommand, SessionNotification, SessionUpdate};
 use ora_acp::{PermissionRequest, SessionResponse, SessionTraceRegistration};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -44,9 +44,42 @@ pub(super) struct SessionChannel {
     pub connection: RuntimeConnection,
     pub events: mpsc::Receiver<SessionEvent>,
     pub pending_updates: VecDeque<SessionNotification>,
+    /// The slash-command catalog this provider session last reported; empty until it reports one.
+    ///
+    /// It lives with the channel because it describes exactly one attachment: dropping the channel
+    /// is what makes the catalog stop being true.
+    pub available_commands: Vec<AvailableCommand>,
     pub controls: mpsc::UnboundedReceiver<SessionControl>,
     pub(super) _trace_registration: SessionTraceRegistration,
     pub(super) _registration: RouteRegistration,
+}
+
+impl SessionChannel {
+    /// Keeps the channel's command catalog level with what the provider last reported.
+    pub(super) fn observe_commands(&mut self, update: &SessionUpdate) {
+        if let SessionUpdate::AvailableCommandsUpdate(update) = update {
+            // Each report replaces the full catalog, so an empty one is a real value.
+            self.available_commands = update.available_commands.clone();
+        }
+    }
+
+    /// Queues a command catalog that arrived with no prompt stream to carry it.
+    ///
+    /// Agents report their commands once, after answering setup, so a catalog dropped here is not
+    /// reported again. Only the newest is kept: it replaces every earlier one, and a chatty idle
+    /// provider must not grow the queue.
+    pub(super) fn retain_commands(&mut self, notification: &SessionNotification) {
+        if !matches!(
+            notification.update,
+            SessionUpdate::AvailableCommandsUpdate(_)
+        ) {
+            return;
+        }
+        self.observe_commands(&notification.update);
+        self.pending_updates
+            .retain(|pending| !matches!(pending.update, SessionUpdate::AvailableCommandsUpdate(_)));
+        self.pending_updates.push_back(notification.clone());
+    }
 }
 
 #[derive(Default)]
