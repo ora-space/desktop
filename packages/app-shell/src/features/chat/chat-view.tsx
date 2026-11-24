@@ -81,9 +81,9 @@ interface ChatViewProps {
   availableCommands?: acp.AvailableCommand[] | null;
 }
 
-/** How long the composer takes to travel between the landing and thread layouts. */
 /** Stable so an unreported catalog does not re-render the memoized message list. */
 const NO_COMMANDS: acp.AvailableCommand[] = [];
+/** How long the composer takes to travel between the landing and thread layouts. */
 const SLIDE_DURATION_MS = 420;
 /** Decelerating curve: quick departure, soft landing, no overshoot. */
 const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";

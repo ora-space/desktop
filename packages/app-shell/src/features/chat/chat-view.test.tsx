@@ -513,7 +513,7 @@ describe("Composer", () => {
     ).not.toBeInTheDocument();
   });
 
-  it.each(["/usr/bin/parser", "@parser"])(
+  it.each(["/usr/bin/parser", "/.env", "@parser"])(
     "does not explain the pending catalog while typing %s",
     async (text) => {
       const user = userEvent.setup();

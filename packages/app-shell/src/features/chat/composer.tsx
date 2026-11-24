@@ -499,10 +499,13 @@ export function Composer({
       t("chat.unsupportedCommand", { command: `/${commandName}` }),
     [t],
   );
-  // A second slash makes the token a path, which no command list would answer.
+  // A second slash or a leading dot makes the token a path, which no command list would answer.
   const commandsPendingNotice =
     availableCommands === null &&
-    (plusMenuOpen || (slashQuery !== null && !slashQuery.includes("/")))
+    (plusMenuOpen ||
+      (slashQuery !== null &&
+        !slashQuery.startsWith(".") &&
+        !slashQuery.includes("/")))
       ? t("chat.actionMenu.commandsPending")
       : undefined;
   const showActionMenu =
