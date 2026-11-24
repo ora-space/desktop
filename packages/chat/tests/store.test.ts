@@ -107,7 +107,7 @@ test("loads provider history and reconstructs turns from message boundaries", as
         createdAt: 42,
       },
     ],
-    availableCommands: [],
+    availableCommands: null,
     sessionTitle: null,
     sessionUpdatedAt: null,
     isLoaded: true,
@@ -1270,6 +1270,57 @@ test("loads commands, session metadata, and structured content without creating 
   });
 });
 
+for (const { stopReason, expected } of [
+  { stopReason: "end_turn" as const, expected: [] },
+  { stopReason: "cancelled" as const, expected: null },
+]) {
+  test(`a ${stopReason} turn without a command report leaves the catalog ${expected === null ? "unknown" : "empty"}`, async () => {
+    const client: ChatSessionClient = {
+      load: () => events<LoadSessionEvent>([{ type: "completed" }]),
+      prompt: () =>
+        events<PromptSessionEvent>([{ type: "completed", stopReason }]),
+      respondToPermission: async () => ({}),
+      setConfig: async () => ({ configOptions: [] }),
+    };
+    const store = createChatStore(client, { createId: () => "local" });
+    const catalog = () =>
+      store.getState().conversations["ora-1"]?.availableCommands;
+
+    await store.getState().loadSession("ora-1");
+    assert.equal(catalog(), null);
+
+    await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hi" });
+    assert.deepEqual(catalog(), expected);
+  });
+}
+
+test("a new session that collected no commands during setup stays unknown until its turn ends", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () =>
+      events<PromptSessionEvent>([
+        { type: "completed", stopReason: "end_turn" },
+      ]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, { createId: () => "local" });
+  const seen: unknown[] = [];
+  store.subscribe((state) => {
+    const conversation = state.conversations["ora-1"];
+    if (conversation?.isLoaded) seen.push(conversation.availableCommands);
+  });
+
+  await store.getState().sendMessage({
+    oraSessionId: "ora-1",
+    text: "hi",
+    prepare: async () => ({ availableCommands: [] }),
+  });
+
+  assert.equal(seen[0], null);
+  assert.deepEqual(seen.at(-1), []);
+});
+
 test("applies live command and partial session-info updates outside the response turn", async () => {
   const client: ChatSessionClient = {
     load: () => events<LoadSessionEvent>([]),
@@ -2156,7 +2207,7 @@ test("adopts the agent's answer to a model selection over the requested value", 
     modelChanges: [],
     historyNotices: [],
     turns: [],
-    availableCommands: [],
+    availableCommands: null,
     sessionTitle: null,
     sessionUpdatedAt: null,
     isLoaded: false,
@@ -2196,7 +2247,7 @@ test("reports an unreachable model selection instead of silently keeping the old
     modelChanges: [],
     historyNotices: [],
     turns: [],
-    availableCommands: [],
+    availableCommands: null,
     sessionTitle: null,
     sessionUpdatedAt: null,
     isLoaded: false,

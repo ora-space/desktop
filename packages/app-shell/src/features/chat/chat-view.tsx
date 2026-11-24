@@ -77,10 +77,13 @@ interface ChatViewProps {
   sendDisabledHint?: string;
   skills?: Skill[];
   roles?: Agent[];
-  availableCommands?: acp.AvailableCommand[];
+  /** `null` while the Agent has not reported its commands. */
+  availableCommands?: acp.AvailableCommand[] | null;
 }
 
 /** How long the composer takes to travel between the landing and thread layouts. */
+/** Stable so an unreported catalog does not re-render the memoized message list. */
+const NO_COMMANDS: acp.AvailableCommand[] = [];
 const SLIDE_DURATION_MS = 420;
 /** Decelerating curve: quick departure, soft landing, no overshoot. */
 const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
@@ -122,7 +125,7 @@ export function ChatView({
   sendDisabledHint,
   skills = [],
   roles = [],
-  availableCommands = [],
+  availableCommands = NO_COMMANDS,
 }: ChatViewProps) {
   const { t } = useTranslation();
   // A loading session takes the thread layout even before its turns arrive, so the
@@ -206,7 +209,7 @@ export function ChatView({
           taskId={taskId}
           projectId={projectId}
           workspaceId={workspaceId}
-          availableCommands={availableCommands}
+          availableCommands={availableCommands ?? NO_COMMANDS}
           conversationNavigation={conversationNavigation}
         />
       )}

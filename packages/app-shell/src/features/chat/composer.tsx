@@ -101,7 +101,8 @@ interface ComposerProps {
   autoFocus?: boolean;
   skills?: Skill[];
   roles?: Agent[];
-  availableCommands?: acp.AvailableCommand[];
+  /** `null` while the Agent has not reported its commands. */
+  availableCommands?: acp.AvailableCommand[] | null;
 }
 
 interface ImageAttachment {
@@ -450,7 +451,7 @@ export function Composer({
     () =>
       buildComposerActions({
         skills,
-        commands: availableCommands,
+        commands: availableCommands ?? [],
         roles,
         plugins: composerPlugins,
         translatePluginSummary: (summaryKey) => t(summaryKey),
@@ -486,7 +487,11 @@ export function Composer({
       ? undefined
       : t(fileMenuStatusMessageKey);
   const availableCommandNames = useMemo(
-    () => new Set(availableCommands.map(({ name }) => name)),
+    () =>
+      // Without a catalog nothing can be called unsupported.
+      availableCommands === null
+        ? undefined
+        : new Set(availableCommands.map(({ name }) => name)),
     [availableCommands],
   );
   const unsupportedCommandTitle = useCallback(
@@ -494,6 +499,12 @@ export function Composer({
       t("chat.unsupportedCommand", { command: `/${commandName}` }),
     [t],
   );
+  // A second slash makes the token a path, which no command list would answer.
+  const commandsPendingNotice =
+    availableCommands === null &&
+    (plusMenuOpen || (slashQuery !== null && !slashQuery.includes("/")))
+      ? t("chat.actionMenu.commandsPending")
+      : undefined;
   const showActionMenu =
     (plusMenuOpen ||
       (slashQuery !== null &&
@@ -502,7 +513,9 @@ export function Composer({
       (atQuery !== null && !menuDismissed && !suppressQueryMenuRef.current)) &&
     !disabled &&
     !isResponding &&
-    (visibleActions.length > 0 || fileMentionActive);
+    (visibleActions.length > 0 ||
+      fileMentionActive ||
+      commandsPendingNotice !== undefined);
 
   const hasText = !query.isBlank;
   // While a turn is live the button is the stop control, so a send hint must
@@ -913,6 +926,7 @@ export function Composer({
           optionRefs={actionOptionRefs}
           status={fileMentionActive ? fileMenuStatus : "ready"}
           statusMessage={fileMentionActive ? fileMenuStatusMessage : undefined}
+          notice={commandsPendingNotice}
           truncated={fileMentions.truncated}
           filesPalette={fileMentionActive}
           selectionLocked={fileMentionActive && fileMentions.selectionLocked}
@@ -1007,7 +1021,7 @@ export function Composer({
           ariaExpanded={showActionMenu}
           ariaControls={showActionMenu ? actionMenuId : undefined}
           ariaActivedescendant={
-            showActionMenu
+            showActionMenu && visibleActions.length > 0
               ? `${actionMenuId}-option-${selectedActionIndex}`
               : undefined
           }
