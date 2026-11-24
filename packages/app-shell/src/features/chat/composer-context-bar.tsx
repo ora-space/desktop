@@ -32,6 +32,7 @@ import {
 } from "@tabler/icons-react";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
+import { useWorkspaceGitAvailability } from "../../state/hooks/use-workspace-git";
 import { useUiStore } from "../../state/stores/ui-store";
 import { startSessionDraft } from "../../state/session-drafts";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
@@ -270,6 +271,10 @@ function BranchTab() {
   const setDialog = useUiStore((s) => s.setDialog);
 
   const projectId = selection.projectId;
+  // A worktree branches the project's folder with Git; a folder whose `.git` is gone since the
+  // task was created cannot offer a new one.
+  const offersNewWorktree =
+    useWorkspaceGitAvailability({ projectId }) !== "notRepository";
   const projectTasks = tasks.filter((task) => task.projectId === projectId);
   const selectedTask = tasks.find((task) => task.id === selection.taskId);
 
@@ -339,24 +344,28 @@ function BranchTab() {
                 </CommandItem>
               ))}
             </CommandGroup>
-            <CommandSeparator />
-            <CommandGroup className={MENU_GROUP_CLASS}>
-              {/* Same ui-store dialog the sidebar's "new worktree" action opens, so
-                  both paths share one form and one create mutation. */}
-              <CommandItem
-                value={t("chat.contextBar.createBranch")}
-                className={MENU_ITEM_CLASS}
-                disabled={projectId === null}
-                onSelect={() => {
-                  if (projectId === null) return;
-                  setOpen(false);
-                  setDialog({ kind: "task", projectId });
-                }}
-              >
-                <IconPlus className={MENU_ICON_CLASS} />
-                {t("chat.contextBar.createBranch")}
-              </CommandItem>
-            </CommandGroup>
+            {offersNewWorktree && (
+              <>
+                <CommandSeparator />
+                <CommandGroup className={MENU_GROUP_CLASS}>
+                  {/* Same ui-store dialog the sidebar's "new worktree" action opens, so
+                      both paths share one form and one create mutation. */}
+                  <CommandItem
+                    value={t("chat.contextBar.createBranch")}
+                    className={MENU_ITEM_CLASS}
+                    disabled={projectId === null}
+                    onSelect={() => {
+                      if (projectId === null) return;
+                      setOpen(false);
+                      setDialog({ kind: "task", projectId });
+                    }}
+                  >
+                    <IconPlus className={MENU_ICON_CLASS} />
+                    {t("chat.contextBar.createBranch")}
+                  </CommandItem>
+                </CommandGroup>
+              </>
+            )}
           </CommandList>
         </Command>
       </PopoverContent>

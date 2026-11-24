@@ -18,6 +18,8 @@ export const scheduledTaskTranslations = {
     "scheduledTask.searchProject": "搜索项目",
     "scheduledTask.searchAgent": "搜索 Agent",
     "scheduledTask.noMatchingProjects": "没有匹配的项目",
+    "scheduledTask.projectNotGit":
+      "此项目目录未使用 Git。定时任务在独立工作树中运行，只有 Git 仓库项目的任务才能启用。",
     "scheduledTask.noMatchingAgents": "没有匹配的 Agent",
     "scheduledTask.model": "模型（可选）",
     "scheduledTask.schedule": "计划",
@@ -136,6 +138,8 @@ export const scheduledTaskTranslations = {
     "scheduledTask.searchProject": "Search projects",
     "scheduledTask.searchAgent": "Search agents",
     "scheduledTask.noMatchingProjects": "No matching projects",
+    "scheduledTask.projectNotGit":
+      "This project folder isn't a Git repository. Scheduled tasks run in an isolated worktree, so only tasks for a Git repository project can be enabled.",
     "scheduledTask.noMatchingAgents": "No matching agents",
     "scheduledTask.model": "Model (optional)",
     "scheduledTask.schedule": "Schedule",

@@ -52,7 +52,25 @@ function mountReviews(
 ) {
   const mounted = render(
     <QueryClientProvider client={queryClient}>
-      <ContractsClientContext.Provider value={createTestClient(handlers)}>
+      <ContractsClientContext.Provider
+        value={createTestClient({
+          // The diff view waits for the workspace list to confirm Git before reading; an app
+          // query client retries a missing handler long enough to outlast these tests.
+          listWorkspaces: () => ({
+            workspaces: ["A", "B"].map((id) => ({
+              id,
+              projectId: "project",
+              kind: "isolated" as const,
+              lifecycle: "active" as const,
+              directory: {
+                kind: "present" as const,
+                git: "repository" as const,
+              },
+            })),
+          }),
+          ...handlers,
+        })}
+      >
         <AppI18nProvider>
           {["A", "B"].map((workspaceId) => (
             <div key={workspaceId} data-testid={workspaceId}>
