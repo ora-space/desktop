@@ -232,6 +232,19 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 return;
             }
         }
+        // A catalog the client already received is gone once its window reloads, and the provider
+        // does not report it again for a session it still holds.
+        if let Some(update) = self
+            .channel
+            .as_ref()
+            .and_then(SessionChannel::reported_commands)
+            && events
+                .send(Ok(LoadSessionEvent::session_update(update)))
+                .await
+                .is_err()
+        {
+            return;
+        }
         if let Replay::Delivered = self.replay_recorded_history(&events).await {
             let _ = events.send(Ok(LoadSessionEvent::Completed)).await;
         }

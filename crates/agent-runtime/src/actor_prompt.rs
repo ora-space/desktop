@@ -714,6 +714,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     let cutoff = self.recorder.durable_bytes();
                     let pending = self.recorder.pending_records();
                     if accepted.send(Ok(())).is_ok() {
+                        // The follower's queue is new and empty, so this precedes its replay.
+                        if let Some(update) = channel.reported_commands() {
+                            let _ = events.try_send(Ok(LoadSessionEvent::session_update(update)));
+                        }
                         followers.insert(
                             operation_id,
                             FollowerOutput {

@@ -113,7 +113,8 @@ turn locally until `startSession` returns.
 - **Load.** Loading reads Ora's own record and touches no agent: it creates no provider session and
   changes no lifecycle state, so a conversation opens even if its agent is gone. If an actor exists
   it answers its own load (replaying the record and then following a prompt in flight) without
-  taking ownership of that prompt.
+  taking ownership of that prompt. While it is attached, the command catalog its provider last
+  reported precedes the replay; the catalog is not recorded and ends with the attachment.
 - **Attach.** A prompt is what acquires a provider session. A session holding no channel registers a
   route on the current connection and calls `session/load` with its private provider id and the
   current MCP snapshot, discards whatever the agent recites, and marks the row `Running`. Options

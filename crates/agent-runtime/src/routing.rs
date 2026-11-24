@@ -1,6 +1,8 @@
 use super::connection::RuntimeConnection;
 use crate::RuntimeError;
-use agent_client_protocol_schema::v1::{AvailableCommand, SessionNotification, SessionUpdate};
+use agent_client_protocol_schema::v1::{
+    AvailableCommand, AvailableCommandsUpdate, SessionNotification, SessionUpdate,
+};
 use ora_acp::{PermissionRequest, SessionResponse, SessionTraceRegistration};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -79,6 +81,17 @@ impl SessionChannel {
         self.pending_updates
             .retain(|pending| !matches!(pending.update, SessionUpdate::AvailableCommandsUpdate(_)));
         self.pending_updates.push_back(notification.clone());
+    }
+
+    /// Renders the reported command catalog for a client loading the attached session.
+    ///
+    /// A loading client starts from an empty catalog, so there is nothing to say until one exists.
+    pub(super) fn reported_commands(&self) -> Option<SessionUpdate> {
+        (!self.available_commands.is_empty()).then(|| {
+            SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(
+                self.available_commands.clone(),
+            ))
+        })
     }
 }
 

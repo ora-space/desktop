@@ -7,7 +7,7 @@ use super::*;
 use agent_client_protocol_schema::v1::{
     AvailableCommand, AvailableCommandsUpdate, ContentChunk, Plan,
 };
-use ora_contracts::StartSessionRequest;
+use ora_contracts::{LoadSessionEvent, LoadSessionRequest, StartSessionRequest};
 use pretty_assertions::assert_eq;
 
 /// Where in the restore handshake the Agent reports its catalog.
@@ -156,6 +156,17 @@ impl CatalogFixture {
         }
         updates
     }
+
+    /// Opens a load of one session.
+    async fn load(&self, session_id: &str) -> SessionEventStream<LoadSessionEvent> {
+        self.runtime
+            .manager
+            .load_session(LoadSessionRequest {
+                session_id: session_id.into(),
+            })
+            .await
+            .unwrap()
+    }
 }
 
 /// Keeps only the catalogs among a turn's updates.
@@ -164,6 +175,22 @@ fn catalogs(updates: Vec<SessionUpdate>) -> Vec<SessionUpdate> {
         .into_iter()
         .filter(|update| matches!(update, SessionUpdate::AvailableCommandsUpdate(_)))
         .collect()
+}
+
+/// Reads the first event of a load, which is where session state precedes the transcript.
+async fn first_load_update(
+    stream: &mut SessionEventStream<LoadSessionEvent>,
+) -> Option<SessionUpdate> {
+    while let Some(event) = stream.recv().await {
+        match event.unwrap() {
+            LoadSessionEvent::SessionUpdate { update, .. } => match update {
+                SessionUpdate::ConfigOptionUpdate(_) => continue,
+                update => return Some(update),
+            },
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// A catalog reported after the setup window closed still reaches the first prompt, once.
@@ -239,4 +266,76 @@ fn a_catalog_reported_during_restore_reaches_the_admitted_prompt() {
             fixture.runtime.shutdown().await;
         });
     }
+}
+
+/// A reloaded window recovers the catalog from the attached session, idle or mid-turn.
+#[test]
+fn a_load_replays_the_catalog_of_an_attached_session() {
+    run_case(async {
+        let fixture = CatalogFixture::new(Report::BeforeLoadResponse).await;
+        fixture.runtime.add_session("restored");
+        let mut detached = fixture.load("restored").await;
+        assert_eq!(first_load_update(&mut detached).await, None);
+        drop(detached);
+        fixture.turn(prompt("restored")).await;
+
+        let mut idle = fixture.load("restored").await;
+        assert_eq!(
+            first_load_update(&mut idle).await,
+            Some(catalog("restored"))
+        );
+        drop(idle);
+
+        let mut owner = fixture
+            .runtime
+            .manager
+            .prompt_session(prompt("restored"))
+            .await
+            .unwrap();
+        // The turn itself replaces the catalog, so the follower must see the replacement.
+        fixture
+            .inject
+            .send(update_frame("restored", catalog("replaced")))
+            .unwrap();
+        assert!(matches!(
+            owner.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::SessionUpdate { update, .. } if update == catalog("replaced")
+        ));
+        let mut follower = fixture.load("restored").await;
+        assert_eq!(
+            first_load_update(&mut follower).await,
+            Some(catalog("replaced"))
+        );
+        fixture.finish.add_permits(1);
+        assert_eq!(completion(&mut owner).await, StopReason::EndTurn);
+        drop((owner, follower));
+        fixture.runtime.shutdown().await;
+    });
+}
+
+/// A catalog describes one attachment, so it is not replayed once the Agent process is replaced.
+#[test]
+fn a_detached_session_replays_no_catalog() {
+    run_case(async {
+        let fixture = CatalogFixture::new(Report::BeforeLoadResponse).await;
+        fixture.runtime.add_session("restored");
+        fixture.turn(prompt("restored")).await;
+        fixture
+            .runtime
+            .manager
+            .stop_session(ora_contracts::StopSessionRequest {
+                session_id: "restored".into(),
+            })
+            .await
+            .unwrap();
+
+        // The transcript's first user message is all a detached load has to say first.
+        let mut detached = fixture.load("restored").await;
+        assert!(matches!(
+            first_load_update(&mut detached).await,
+            Some(SessionUpdate::UserMessageChunk(_))
+        ));
+        drop(detached);
+        fixture.runtime.shutdown().await;
+    });
 }
