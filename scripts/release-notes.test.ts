@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  bundleReleaseNotes,
   MAX_RELEASE_NOTE_TEXT_LENGTH,
   parseReleaseNote,
   readReleaseNotes,
@@ -148,6 +149,29 @@ Deno.test("notes that are not UTF-8 are rejected", () =>
 Deno.test("a build without a notes directory has no notes", () =>
   withTempDirectory(async (root) => {
     assert.deepEqual(await readReleaseNotes(root), []);
+  }),
+);
+
+Deno.test("a frontend build bundles every version of its checkout", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, {
+      "0.7.0.json": releaseNote("0.7.0"),
+      "0.6.9.json": releaseNote("0.6.9"),
+    });
+    assert.deepEqual(await bundleReleaseNotes(root), [
+      releaseNote("0.6.9"),
+      releaseNote("0.7.0"),
+    ]);
+  }),
+);
+
+Deno.test("a frontend build hides unreadable notes instead of failing", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, {
+      "0.7.0.json": releaseNote("0.7.0"),
+      "0.6.9.json": "broken",
+    });
+    assert.deepEqual(await bundleReleaseNotes(root), []);
   }),
 );
 

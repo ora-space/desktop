@@ -184,6 +184,19 @@ export async function readReleaseNotes(root: string): Promise<ReleaseNote[]> {
 }
 
 /**
+ * Returns the notes that a frontend build injects. Untagged builds skip the packaging checks, so
+ * unreadable notes hide all of them instead of failing the build.
+ */
+export async function bundleReleaseNotes(root: string): Promise<ReleaseNote[]> {
+  try {
+    return await readReleaseNotes(root);
+  } catch (error) {
+    console.warn(`Building without release notes: ${(error as Error).message}`);
+    return [];
+  }
+}
+
+/**
  * Throws unless a versioned package may ship its notes: every file is valid, the version has one, and
  * the directory holds exactly what the checked-out commit holds.
  */
