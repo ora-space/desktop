@@ -248,3 +248,20 @@ it("preserves an absent legacy identity instead of adopting another agent", asyn
   await renderAdoption();
   await expectAdopted("missing.agent");
 });
+
+it("renders a malformed persisted agent preference without overwriting it", async () => {
+  for (const agentCli of [42, { broken: true }, ["ora-space.opencode"]]) {
+    localStorage.setItem(
+      "ora.settings.v1",
+      JSON.stringify({
+        version: 2,
+        state: { settings: { ...DEFAULT_SETTINGS, agentCli } },
+      }),
+    );
+    await act(async () => {
+      await useSettingsStore.persist.rehydrate();
+    });
+    await renderAdoption();
+    expect(useSettingsStore.getState().settings.agentCli).toEqual(agentCli);
+  }
+});

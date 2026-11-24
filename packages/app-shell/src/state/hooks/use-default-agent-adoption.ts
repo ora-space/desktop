@@ -34,7 +34,7 @@ export function useDefaultAgentAdoption(): void {
   // Older preferences stored a package name without its source namespace. Resolve only
   // an unambiguous installed identity; unavailable or ambiguous choices remain untouched.
   const legacyMatches =
-    agentCli !== null && !agentCli.includes("/")
+    typeof agentCli === "string" && !agentCli.includes("/")
       ? catalog.filter((entry) => entry.agentRef.split("/")[1] === agentCli)
       : [];
   const legacyReplacement =
