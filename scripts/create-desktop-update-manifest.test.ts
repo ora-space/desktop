@@ -181,3 +181,33 @@ for (const [label, files, expected] of [
     }),
   );
 }
+
+// The Desktop host parses this very file, so a change of the envelope cannot pass on one side only.
+Deno.test("updater manifest matches the fixture the Desktop host reads", () =>
+  withTempDirectory(async (root) => {
+    await signedAssets(path.join(root, "bundles"));
+    await writeNotes(
+      root,
+      Object.fromEntries(
+        Array.from({ length: 12 }, (_, minor) => `1.${minor}.0`).map(
+          (version) => [`${version}.json`, releaseNote(version)],
+        ),
+      ),
+    );
+    const manifest = await createUpdateManifest({
+      bundlesDirectory: path.join(root, "bundles"),
+      root,
+      releaseTag: "v1.10.0",
+      now: () => new Date("2026-12-10T00:00:00Z"),
+    });
+    const fixture = new URL("./update-manifest-fixture.json", import.meta.url);
+    // Rewrite it with UPDATE_FIXTURES=1 after a deliberate change, then run the Desktop tests.
+    if (Deno.env.get("UPDATE_FIXTURES") === "1") {
+      await Deno.writeTextFile(
+        fixture,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      );
+    }
+    assert.deepEqual(manifest, JSON.parse(await Deno.readTextFile(fixture)));
+  }),
+);
