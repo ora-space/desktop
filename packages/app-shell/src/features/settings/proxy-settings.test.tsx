@@ -93,37 +93,34 @@ it("restores every saved proxy field with a fresh query cache after remount", as
   expect(screen.getByLabelText(/密码|Password/)).toHaveValue("saved-secret");
 });
 
-// Characterization of the unsafe current behavior, not the desired fix contract.
-it("reproduces an unreadable saved proxy appearing empty and remaining overwritable", async () => {
+it("blocks editing on read failure and restores saved values after retry", async () => {
   const state = createFixtureState();
   state.proxySettings = {
     host: "saved.example",
     port: 3128,
-    username: null,
-    password: null,
+    username: "alice",
+    password: "secret",
   };
+  let failing = true;
   const handlers = createFixtureHandlers(state);
   handlers.getProxySettings = async () => {
-    throw new Error("simulated storage read failure");
+    if (failing) throw new Error("simulated storage read failure");
+    return { settings: state.proxySettings };
   };
-  const client = createTestClient(handlers);
   const user = userEvent.setup();
-  renderProxy(client);
-  const host = await screen.findByLabelText(/主机|Host/);
-  expect(host).toHaveValue("");
-  expect(screen.getByRole("alert")).toBeInTheDocument();
+  renderProxy(createTestClient(handlers));
+  await screen.findByRole("alert");
+  expect(screen.queryByLabelText(/主机|Host/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /保存|Save/ }),
+  ).not.toBeInTheDocument();
   expect(state.proxySettings?.host).toBe("saved.example");
-  await user.type(host, "replacement.example");
-  await user.type(screen.getByLabelText(/端口|Port/), "7890");
-  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
-  await waitFor(() =>
-    expect(state.proxySettings).toEqual({
-      host: "replacement.example",
-      port: 7890,
-      username: null,
-      password: null,
-    }),
+  failing = false;
+  await user.click(screen.getByRole("button", { name: /重试|Retry/ }));
+  expect(await screen.findByLabelText(/主机|Host/)).toHaveValue(
+    "saved.example",
   );
+  expect(screen.getByLabelText(/密码|Password/)).toHaveValue("secret");
 });
 
 it("clears saved proxy settings through the backend", async () => {

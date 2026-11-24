@@ -38,3 +38,7 @@ worktree 根目录在 设置 → 数据与隐私 中，必须是已存在目录�
 ## Marketplace 源
 
 Marketplace 源在 设置 → 插件 → 管理 marketplace 中管理。对话框行为和源的各个字段见 [Marketplace](../plugins/marketplace.zh.md#源)。
+
+## 升级与读取失败
+
+代理读取失败时设置页显示错误和重试，不提供空白编辑器，避免覆盖原值。旧默认 Agent 选择在偏好迁移时保留。删除全部 Marketplace 源后，该空列表会在后续启动中保留。

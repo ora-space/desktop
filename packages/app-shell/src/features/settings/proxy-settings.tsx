@@ -52,6 +52,15 @@ export function ProxySettings() {
         <span role="status" className="text-xs text-muted-foreground">
           {t("settings.proxy.loading")}
         </span>
+      ) : controller.loadError !== null ? (
+        <div className="space-y-3">
+          <p role="alert" className="text-sm text-destructive">
+            {t("settings.proxy.loadError")}
+          </p>
+          <Button variant="outline" onClick={() => void controller.retry()}>
+            {t("common.retry")}
+          </Button>
+        </div>
       ) : (
         <ProxySettingsEditor
           key={settingsKey}

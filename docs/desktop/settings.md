@@ -64,3 +64,7 @@ directory and defaults to `~/.ora/worktrees`. It is a creation target only, see
 
 Marketplace sources are managed in Settings → Plugins → Manage marketplace. The dialog's behavior
 and the source fields are described in [Marketplace](../plugins/marketplace.md#sources).
+
+## Upgrades and read failures
+
+When proxy settings cannot be loaded, Settings shows an error and retry action instead of an empty editor that could overwrite the saved value. Preference migration retains legacy agent selections. After removing every marketplace source, subsequent starts preserve the empty list.
