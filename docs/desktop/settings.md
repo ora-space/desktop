@@ -72,3 +72,12 @@ When the initial proxy read fails, Settings shows an error and retry action inst
 Preference migration retains legacy agent selections. A legacy package name is resolved to its full namespaced identity only when exactly one installed agent matches; ambiguous or absent selections remain unchanged.
 
 Only a newly created database requests default marketplace source seeding. Existing empty lists, including those created by older releases without a deletion marker, survive upgrades and restarts. First-install initialization also respects sources supplied by a distributor.
+
+Fresh-install provenance is committed with migration bookkeeping before schema steps. Interrupted
+migrations or distribution initialization resume their pending work on restart; source seeding
+does not depend on the distribution's optional first-install SQL.
+
+Connection checks default to `https://google.com`, with an editable URL. A failed check describes
+reachability of that URL, which can depend on the site or network; it does not invalidate or change
+saved proxy settings. Background read failures keep an open check dialog and its URL draft while
+blocking checks until recovery.

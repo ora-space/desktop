@@ -108,6 +108,7 @@ function ProxySettingsEditor({
   const [username, setUsername] = useState(initialSettings?.username ?? "");
   const [password, setPassword] = useState(initialSettings?.password ?? "");
   const [checkOpen, setCheckOpen] = useState(false);
+  const [checkUrl, setCheckUrl] = useState(DEFAULT_CHECK_URL);
 
   const parsed = parsedProxySettings(host, port, username, password);
   const hasFormValues =
@@ -251,9 +252,14 @@ function ProxySettingsEditor({
           </div>
         </div>
       </div>
-      {checkOpen && parsed !== null && !busy && (
+      {checkOpen && parsed !== null && (
         <CheckProxyDialog
           checking={controller.isChecking}
+          blocked={busy}
+          readFailed={controller.loadError !== null}
+          onRetry={() => void controller.retry()}
+          url={checkUrl}
+          onUrlChange={setCheckUrl}
           onOpenChange={setCheckOpen}
           onCheck={(url) => controller.check(url, parsed)}
         />
@@ -264,6 +270,11 @@ function ProxySettingsEditor({
 
 interface CheckProxyDialogProps {
   checking: boolean;
+  blocked: boolean;
+  readFailed: boolean;
+  onRetry: () => void;
+  url: string;
+  onUrlChange: (url: string) => void;
   onOpenChange: (open: boolean) => void;
   onCheck: (url: string) => Promise<CheckProxySettingsResponse>;
 }
@@ -271,13 +282,18 @@ interface CheckProxyDialogProps {
 /** Prompts for a URL and reports whether the current form proxy can reach it. */
 function CheckProxyDialog({
   checking,
+  blocked,
+  readFailed,
+  onRetry,
+  url,
+  onUrlChange,
   onOpenChange,
   onCheck,
 }: CheckProxyDialogProps) {
   const { t } = useTranslation();
-  const [url, setUrl] = useState(DEFAULT_CHECK_URL);
 
   const verify = async () => {
+    if (blocked || checking) return;
     const nextUrl = url.trim();
     if (nextUrl === "") {
       toast.error(t("settings.proxy.checkUrlRequired"));
@@ -319,7 +335,7 @@ function CheckProxyDialog({
           </span>
           <Input
             value={url}
-            onChange={(event) => setUrl(event.target.value)}
+            onChange={(event) => onUrlChange(event.target.value)}
             aria-label={t("settings.proxy.checkUrl")}
             autoComplete="off"
             onKeyDown={(event) => {
@@ -330,6 +346,14 @@ function CheckProxyDialog({
             }}
           />
         </label>
+        {readFailed && (
+          <div className="space-y-2">
+            <p role="alert">{t("settings.proxy.loadError")}</p>
+            <Button variant="outline" onClick={onRetry}>
+              {t("common.retry")}
+            </Button>
+          </div>
+        )}
         <DialogFooter>
           <Button
             variant="outline"
@@ -339,7 +363,7 @@ function CheckProxyDialog({
             {t("common.cancel")}
           </Button>
           <Button
-            disabled={checking || url.trim() === ""}
+            disabled={blocked || checking || url.trim() === ""}
             onClick={() => void verify()}
           >
             {checking

@@ -8,6 +8,7 @@ import {
 import { createAppQueryClient } from "../../state/query-client";
 import { expect, it, vi } from "vitest";
 import type { ContractsClient } from "@ora/contracts";
+import { toast } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { appI18n } from "../../i18n/i18n-instance";
 import { ContractsClientContext } from "../../contracts-client-context";
@@ -235,4 +236,101 @@ it("retains the draft and blocks actions during a production reconnect read fail
   expect(screen.getByLabelText(/密码|Password/)).toHaveValue("secret");
   await user.click(screen.getByRole("button", { name: /保存|Save/ }));
   await waitFor(() => expect(state.proxySettings?.host).toBe("draft.example"));
+});
+
+it("keeps an open probe URL draft and blocks checks while a background read recovers", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "original.example",
+    port: 3128,
+    username: null,
+    password: null,
+  };
+  let failing = false;
+  const handlers = createFixtureHandlers(state);
+  handlers.getProxySettings = async () => {
+    if (failing) throw new Error("read failed");
+    return { settings: state.proxySettings };
+  };
+  const client = createTestClient(handlers);
+  const check = vi.spyOn(client.proxy, "check");
+  renderProxy(client, createAppQueryClient());
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  const url = within(dialog).getByLabelText(/探测网址|URL to check/);
+  await user.clear(url);
+  await user.type(url, "https://custom.example/probe");
+  failing = true;
+  await act(async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+    try {
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  await within(dialog).findByRole("alert", {}, { timeout: 5000 });
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  expect(url).toHaveValue("https://custom.example/probe");
+  const probe = within(dialog).getByRole("button", { name: /^验证$|^Check$/ });
+  expect(probe).toBeDisabled();
+  await user.click(probe);
+  await user.click(url);
+  await user.keyboard("{Enter}");
+  expect(check).not.toHaveBeenCalled();
+  failing = false;
+  await user.click(within(dialog).getByRole("button", { name: /重试|Retry/ }));
+  await waitFor(() => expect(within(dialog).queryByRole("alert")).toBeNull());
+  expect(url).toHaveValue("https://custom.example/probe");
+  await user.click(probe);
+  await waitFor(() =>
+    expect(check).toHaveBeenCalledWith({
+      url: "https://custom.example/probe",
+      settings: state.proxySettings,
+    }),
+  );
+});
+
+it("reports an unreachable probe as connectivity without changing saved settings", async () => {
+  const state = createFixtureState();
+  const saved = {
+    host: "proxy.example",
+    port: 3128,
+    username: null,
+    password: null,
+  };
+  state.proxySettings = saved;
+  const handlers = createFixtureHandlers(state);
+  handlers.checkProxySettings = async () => ({
+    outcome: "unreachable",
+    message: "Target blocked by network policy",
+  });
+  const client = createTestClient(handlers);
+  const set = vi.spyOn(client.proxy, "set");
+  const clear = vi.spyOn(client.proxy, "clear");
+  const report = vi.spyOn(toast, "error");
+  renderProxy(client);
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() =>
+    expect(report).toHaveBeenCalledWith(
+      expect.stringMatching(/不代表代理配置有误|settings may still be valid/),
+      { description: "Target blocked by network policy" },
+    ),
+  );
+  expect(state.proxySettings).toEqual(saved);
+  expect(set).not.toHaveBeenCalled();
+  expect(clear).not.toHaveBeenCalled();
+  expect(dialog).toBeInTheDocument();
 });
