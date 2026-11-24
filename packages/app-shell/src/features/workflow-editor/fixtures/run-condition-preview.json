@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "id": "retained-if",
+      "conditions": [
+        { "variableSelector": ["start", "items"], "operator": "empty" }
+      ]
+    },
+    { "id": "retained-elif", "conditions": [] }
+  ],
+  "preview": {
+    "runId": "run-7",
+    "nodeRunId": "attempt-3",
+    "baseRevision": 2,
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/cases/0/conditions/0/operator",
+        "value": "not_empty"
+      }
+    ]
+  }
+}

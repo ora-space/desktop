@@ -11,6 +11,9 @@ import {
 } from "@tabler/icons-react";
 import {
   DEFAULT_ITERATION_MAX_ITERATIONS,
+  isIteratorSource,
+  isCollectOutput,
+  findVariable,
   resolveConditionCases,
   type WorkflowCapabilities,
   type WorkflowConditionCase,
@@ -1165,9 +1168,7 @@ function IterationNodeDetails({
   };
   // Iterator choices: every visible array-typed variable (start inputs, globals, and the
   // exposed arrays of upstream iterations).
-  const iteratorChoices = variableCatalog.filter((variable) =>
-    variable.valueType.startsWith("array"),
-  );
+  const iteratorChoices = variableCatalog.filter(isIteratorSource);
   // Collect choices are derived by the workflow-mock catalog owner, then restricted to direct
   // region members. This keeps output and structured-output declarations in one source of truth.
   const memberIds = new Set(
@@ -1184,10 +1185,7 @@ function IterationNodeDetails({
     )
       .filter(
         (variable) =>
-          memberIds.has(variable.sourceNodeId) &&
-          variable.selector.length === 2 &&
-          (variable.variableName === "output" ||
-            variable.variableName === "structured_output"),
+          memberIds.has(variable.sourceNodeId) && isCollectOutput(variable),
       )
       .map((variable) => ({
         ...variable,
@@ -1210,39 +1208,10 @@ function IterationNodeDetails({
         <IterationSelectorFields
           {...{ config, iteratorChoices, collectChoices, updateConfig }}
         />
-        <InspectorField
-          label={t("settings.workflow.field.iterationErrorStrategy")}
-          htmlFor="workflow-node-iteration-error-strategy"
-        >
-          <Select
-            value={config.errorStrategy}
-            onValueChange={(value) => {
-              if (value === "fail" || value === "continue") {
-                updateConfig({ errorStrategy: value });
-              }
-            }}
-          >
-            <SelectTrigger
-              className="h-8 w-full bg-background"
-              id="workflow-node-iteration-error-strategy"
-              aria-label={t("settings.workflow.field.iterationErrorStrategy")}
-            >
-              <SelectValue>
-                {config.errorStrategy === "continue"
-                  ? t("settings.workflow.iteration.continueStrategy")
-                  : t("settings.workflow.iteration.failStrategy")}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false} align="start">
-              <SelectItem value="fail">
-                {t("settings.workflow.iteration.failStrategy")}
-              </SelectItem>
-              <SelectItem value="continue">
-                {t("settings.workflow.iteration.continueStrategy")}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </InspectorField>
+        <IterationErrorStrategy
+          value={config.errorStrategy}
+          onChange={(errorStrategy) => updateConfig({ errorStrategy })}
+        />
         <InspectorField
           label={t("settings.workflow.field.maxIterations")}
           htmlFor="workflow-node-iteration-max"
@@ -1348,23 +1317,111 @@ export function IterationSelectorFields({
   ) => void;
 }) {
   const { t } = useTranslation();
-  const iteratorValue = config.iteratorSelector.join(".");
-  const collectValue = config.collectSelector.join(".");
-  const iteratorVariable = iteratorChoices.find(
-    (variable) => variable.selector.join(".") === iteratorValue,
+  return (
+    <>
+      <InspectorField
+        label={t("settings.workflow.field.iterationIterator")}
+        htmlFor="workflow-node-iteration-iterator"
+      >
+        <SelectorField
+          htmlId="workflow-node-iteration-iterator"
+          selector={config.iteratorSelector}
+          choices={iteratorChoices}
+          placeholder={t("settings.workflow.iteration.iteratorPlaceholder")}
+          label={t("settings.workflow.field.iterationIterator")}
+          onPick={(selector) => updateConfig({ iteratorSelector: selector })}
+        />
+        {config.iteratorSelector.length === 0 && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            {t("settings.workflow.iteration.iteratorEmpty")}
+          </p>
+        )}
+      </InspectorField>
+      <InspectorField
+        label={t("settings.workflow.field.iterationCollect")}
+        htmlFor="workflow-node-iteration-collect"
+      >
+        <SelectorField
+          htmlId="workflow-node-iteration-collect"
+          selector={config.collectSelector}
+          choices={collectChoices}
+          placeholder={t("settings.workflow.iteration.collectPlaceholder")}
+          label={t("settings.workflow.field.iterationCollect")}
+          onPick={(selector) => updateConfig({ collectSelector: selector })}
+        />
+        {config.collectSelector.length === 0 && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            {t("settings.workflow.iteration.collectEmpty")}
+          </p>
+        )}
+      </InspectorField>
+    </>
   );
-  const collectVariable = collectChoices.find(
-    (variable) => variable.selector.join(".") === collectValue,
+}
+
+export function IterationErrorStrategy({
+  value,
+  onChange,
+}: {
+  value: WorkflowIterationConfig["errorStrategy"];
+  onChange: (value: WorkflowIterationConfig["errorStrategy"]) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <InspectorField
+      label={t("settings.workflow.field.iterationErrorStrategy")}
+      htmlFor="workflow-node-iteration-error-strategy"
+    >
+      <Select
+        value={value}
+        onValueChange={(value) => {
+          if (value === "fail" || value === "continue") {
+            onChange(value);
+          }
+        }}
+      >
+        <SelectTrigger
+          className="h-8 w-full bg-background"
+          id="workflow-node-iteration-error-strategy"
+          aria-label={t("settings.workflow.field.iterationErrorStrategy")}
+        >
+          <SelectValue>
+            {value === "continue"
+              ? t("settings.workflow.iteration.continueStrategy")
+              : t("settings.workflow.iteration.failStrategy")}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent alignItemWithTrigger={false} align="start">
+          <SelectItem value="fail">
+            {t("settings.workflow.iteration.failStrategy")}
+          </SelectItem>
+          <SelectItem value="continue">
+            {t("settings.workflow.iteration.continueStrategy")}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </InspectorField>
   );
-  const selectorSelect = (
-    htmlId: string,
-    value: string,
-    placeholder: string,
-    choices: WorkflowVariableCatalogEntry[],
-    resolved: WorkflowVariableCatalogEntry | undefined,
-    onPick: (selector: string[]) => void,
-    ariaLabel: string,
-  ) => (
+}
+export function SelectorField({
+  htmlId,
+  selector,
+  placeholder,
+  choices,
+  label,
+  onPick,
+}: {
+  htmlId: string;
+  selector: string[];
+  placeholder: string;
+  choices: WorkflowVariableCatalogEntry[];
+  label: string;
+  onPick: (selector: string[]) => void;
+}) {
+  const { t } = useTranslation();
+  const resolved = findVariable(choices, selector);
+  const value = selectorToText(selector);
+  return (
     <Select
       value={value === "" ? null : value}
       onValueChange={(picked) => {
@@ -1379,7 +1436,8 @@ export function IterationSelectorFields({
       <SelectTrigger
         className="h-8 w-full bg-background"
         id={htmlId}
-        aria-label={ariaLabel}
+        aria-invalid={!resolved}
+        aria-label={label}
       >
         {resolved !== undefined ? (
           <SelectValue placeholder={placeholder}>
@@ -1405,48 +1463,5 @@ export function IterationSelectorFields({
         />
       </SelectContent>
     </Select>
-  );
-
-  return (
-    <>
-      <InspectorField
-        label={t("settings.workflow.field.iterationIterator")}
-        htmlFor="workflow-node-iteration-iterator"
-      >
-        {selectorSelect(
-          "workflow-node-iteration-iterator",
-          iteratorValue,
-          t("settings.workflow.iteration.iteratorPlaceholder"),
-          iteratorChoices,
-          iteratorVariable,
-          (selector) => updateConfig({ iteratorSelector: selector }),
-          t("settings.workflow.field.iterationIterator"),
-        )}
-        {config.iteratorSelector.length === 0 && (
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            {t("settings.workflow.iteration.iteratorEmpty")}
-          </p>
-        )}
-      </InspectorField>
-      <InspectorField
-        label={t("settings.workflow.field.iterationCollect")}
-        htmlFor="workflow-node-iteration-collect"
-      >
-        {selectorSelect(
-          "workflow-node-iteration-collect",
-          collectValue,
-          t("settings.workflow.iteration.collectPlaceholder"),
-          collectChoices,
-          collectVariable,
-          (selector) => updateConfig({ collectSelector: selector }),
-          t("settings.workflow.field.iterationCollect"),
-        )}
-        {config.collectSelector.length === 0 && (
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            {t("settings.workflow.iteration.collectEmpty")}
-          </p>
-        )}
-      </InspectorField>
-    </>
   );
 }

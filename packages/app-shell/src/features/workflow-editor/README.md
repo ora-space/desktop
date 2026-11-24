@@ -20,6 +20,13 @@ category.
 
 ## Public boundary
 
+- `RunNodeConfigForm` takes the physical node execution, base revision, effective config and
+  scoped variable/model catalogs. It owns a disposable draft. Cancel, a new selection or a new
+  effective config remounts the field editors. Submit returns data-relative replace operations to
+  the run view for preview. Only existing Condition rules and existing optional leaves can be
+  replaced. The run view owns selection and confirmation. Definition autosave and publishing
+  belong to the canvas editor.
+
 - `WorkflowEditor` fills the workspace main pane while `ui-store.workflowEditorOpen`.
 - `WorkflowEditorList` replaces the project tree in the app sidebar for that mode.
 - Selection and flush-before-switch actions live in `workflow-editor-store`.

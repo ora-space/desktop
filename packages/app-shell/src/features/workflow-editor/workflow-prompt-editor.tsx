@@ -15,7 +15,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@ora/ui";
-import type { WorkflowVariableCatalogEntry } from "@ora/workflow-mock";
+import {
+  validReferences,
+  type WorkflowVariableCatalogEntry,
+} from "@ora/workflow-mock";
 import {
   ComposerEditor,
   type ComposerEditorHandle,
@@ -212,6 +215,8 @@ export function WorkflowPromptEditor({
   const panel = (
     <div
       ref={panelRef}
+      role="group"
+      aria-invalid={!validReferences(value, variableCatalog)}
       className={
         compact
           ? "relative"

@@ -1,6 +1,7 @@
 // Pure translation data: safe to compose without importing feature implementation.
 export const workflowEditorTranslations = {
   "zh-CN": {
+    "settings.workflow.debug.feedback": "{{name}} 的反馈变量",
     "settings.workflow.debug.review": "预览改动",
     "settings.workflow.debug.invalid": "请检查{{field}}的值及其变量作用域。",
     "errors.workflow_name_conflict": "已存在同名工作流。",
@@ -599,6 +600,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.deleteNode": "删除节点",
   },
   "en-US": {
+    "settings.workflow.debug.feedback": "Feedback for {{name}}",
     "settings.workflow.debug.review": "Preview changes",
     "settings.workflow.debug.invalid":
       "Check the value and variable scope for {{field}}.",

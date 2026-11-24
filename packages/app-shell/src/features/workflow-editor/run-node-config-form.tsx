@@ -2,7 +2,12 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@ora/ui";
 import {
-  isWorkflowConditionComparisonComplete,
+  findVariable,
+  validReferences,
+  invalidComparisonField,
+  isIteratorSource,
+  isCollectOutput,
+  supportsFeedback,
   type WorkflowAgentConfig,
   type WorkflowCapabilities,
   type WorkflowConditionCase,
@@ -12,19 +17,25 @@ import {
   type WorkflowVariableCatalogEntry,
 } from "@ora/workflow-mock";
 import { AgentExecutionFields } from "./workflow-agent-execution-fields";
-import { operatorSupportsType } from "./workflow-condition-operator";
 import { WorkflowConditionRules } from "./workflow-condition-rules";
 import { WorkflowLoopLimitFields } from "./workflow-loop-limit-fields";
-import { IterationSelectorFields } from "./workflow-node-details";
+import {
+  IterationSelectorFields,
+  IterationErrorStrategy,
+  SelectorField,
+  InspectorField,
+} from "./workflow-node-details";
 
 interface EditableConfig {
   agent: Pick<WorkflowAgentConfig, "executor" | "prompt">;
   condition: { cases: WorkflowConditionCase[] };
-  loop: Pick<WorkflowLoopConfig, "until" | "maxIterations">;
+  loop: Pick<WorkflowLoopConfig, "until" | "maxIterations"> &
+    Partial<Pick<WorkflowLoopConfig, "variables">>;
   iteration: Pick<
     WorkflowIterationConfig,
     "iteratorSelector" | "collectSelector"
-  >;
+  > &
+    Partial<Pick<WorkflowIterationConfig, "errorStrategy">>;
 }
 export type RunNodeConfig = {
   [K in keyof EditableConfig]: { kind: K; config: EditableConfig[K] };
@@ -33,12 +44,13 @@ type PatchPath =
   | "/agentConfig/prompt"
   | "/agentConfig/executor/modelId"
   | `/cases/${number}/logic`
-  | `/cases/${number}/conditions`
-  | `/cases/${number}/conditions/${number}/value`
+  | `/cases/${number}/conditions/${number}/${"variableSelector" | "operator" | "value"}`
   | "/loopConfig/maxIterations"
+  | `/loopConfig/variables/${number}/feedback`
   | "/loopConfig/until"
   | "/iterationConfig/iteratorSelector"
-  | "/iterationConfig/collectSelector";
+  | "/iterationConfig/collectSelector"
+  | "/iterationConfig/errorStrategy";
 
 export interface RunNodeConfigEdit {
   runId: string;
@@ -65,80 +77,23 @@ export interface RunNodeConfigFormProps extends Pick<
 }
 
 export function RunNodeConfigForm(props: RunNodeConfigFormProps) {
+  const [generation, setGeneration] = useState(0);
   return (
     <Draft
       key={JSON.stringify([
         props.runId,
         props.nodeRunId,
         props.baseRevision,
-        props.effective.kind,
+        props.effective,
+        generation,
       ])}
       {...props}
+      onCancel={() => {
+        setGeneration((n) => n + 1);
+        props.onCancel();
+      }}
     />
   );
-}
-
-function findVariable(
-  catalog: WorkflowVariableCatalogEntry[],
-  selector: string[],
-) {
-  return catalog.find(
-    (entry) =>
-      entry.selector.length === selector.length &&
-      entry.selector.every((part, i) => part === selector[i]),
-  );
-}
-
-function validReferences(
-  value: unknown,
-  catalog: WorkflowVariableCatalogEntry[],
-) {
-  if (typeof value !== "string") return true;
-  return value
-    .split("{{#")
-    .slice(1)
-    .every((tail) => {
-      const end = tail.indexOf("#}}");
-      return (
-        end > 0 &&
-        findVariable(catalog, tail.slice(0, end).split(".")) !== undefined
-      );
-    });
-}
-
-/** A sole token keeps its declared type; surrounding text renders a string. */
-function validOperand(
-  rule: WorkflowConditionComparison,
-  source: WorkflowVariableCatalogEntry,
-  variables: WorkflowVariableCatalogEntry[],
-) {
-  if (!validReferences(rule.value, variables)) return false;
-  if (rule.value === undefined) return true;
-  const token =
-    typeof rule.value === "string" &&
-    /^\{\{#([^{}#]+)#\}\}$/.exec(rule.value.trim());
-  const type = token
-    ? findVariable(variables, token[1]!.split("."))?.valueType
-    : typeof rule.value;
-  if (type === "any") return true;
-  if (
-    [
-      "greater_than",
-      "greater_than_or_equal",
-      "less_than",
-      "less_than_or_equal",
-    ].includes(rule.operator)
-  ) {
-    return type === "number" || type === "integer";
-  }
-  if (
-    ["starts_with", "ends_with"].includes(rule.operator) ||
-    (["contains", "not_contains"].includes(rule.operator) &&
-      ["string", "secret"].includes(source.valueType))
-  ) {
-    return type === "string" || type === "secret";
-  }
-  return true;
 }
 
 function Draft({
@@ -155,38 +110,17 @@ function Draft({
   const { t } = useTranslation();
   const [draft, setDraft] = useState(effective);
   const [attempted, setAttempted] = useState(false);
-  const iteratorChoices = variables.filter((v) =>
-    v.valueType.startsWith("array"),
-  );
-  const collectChoices = memberOutputs.filter(
-    (v) =>
-      v.selector.length === 2 &&
-      ["output", "structured_output"].includes(v.selector[1]!),
-  );
+  const iteratorChoices = variables.filter(isIteratorSource);
+  const collectChoices = memberOutputs.filter(isCollectOutput);
   function invalidRuleField(rules: WorkflowConditionComparison[]) {
     for (const [offset, rule] of rules.entries()) {
-      const index = offset + 1;
-      const variable = findVariable(variables, rule.variableSelector);
-      if (!variable) return t("settings.workflow.field.variable", { index });
-      const offered = capabilities.conditionOperators.some(
-        (op) => op.value === rule.operator,
+      const field = invalidComparisonField(
+        rule,
+        variables,
+        capabilities.conditionOperators,
       );
-      if (
-        (!offered &&
-          rule.operator !== "is" &&
-          rule.operator !== "is_not" &&
-          rule.operator !== "exists" &&
-          rule.operator !== "not_exists") ||
-        !operatorSupportsType(rule.operator, variable.valueType)
-      ) {
-        return t("settings.workflow.field.operator", { index });
-      }
-      if (
-        !isWorkflowConditionComparisonComplete(rule) ||
-        !validOperand(rule, variable, variables)
-      ) {
-        return t("settings.workflow.field.value", { index });
-      }
+      if (field)
+        return t(`settings.workflow.field.${field}`, { index: offset + 1 });
     }
   }
   let fields;
@@ -226,10 +160,15 @@ function Draft({
           index: index + 1,
         });
         const invalid = invalidRuleField(item.conditions);
-        if (invalid) invalidField ??= [label, invalid].join(" · ");
+        if (invalid) invalidField ??= [item.id, invalid].join(" · ");
         return (
           <WorkflowConditionRules
             key={item.id}
+            fixedRules={
+              effective.kind === "condition"
+                ? effective.config.cases[index]
+                : undefined
+            }
             branchLabel={index === 0 ? "IF" : "ELIF"}
             logicLabel={label}
             conditions={item.conditions}
@@ -278,6 +217,42 @@ function Draft({
               }
             />
           </section>
+          {config.variables?.map((variable, i) => {
+            const label = t("settings.workflow.debug.feedback", {
+              name: variable.name,
+            });
+            const choices = variables.filter((entry) =>
+              supportsFeedback(variable.valueType, entry.valueType),
+            );
+            if (!findVariable(choices, variable.feedback))
+              invalidField ??= label;
+            return (
+              <InspectorField
+                key={variable.name}
+                label={label}
+                htmlFor={`run-loop-feedback-${i}`}
+              >
+                <SelectorField
+                  htmlId={`run-loop-feedback-${i}`}
+                  selector={variable.feedback}
+                  choices={choices}
+                  label={label}
+                  placeholder={label}
+                  onPick={(feedback) =>
+                    setDraft({
+                      ...draft,
+                      config: {
+                        ...config,
+                        variables: config.variables!.map((item, index) =>
+                          index === i ? { ...item, feedback } : item,
+                        ),
+                      },
+                    })
+                  }
+                />
+              </InspectorField>
+            );
+          })}
           <WorkflowLoopLimitFields
             config={config}
             showExhaustionPolicy={false}
@@ -294,14 +269,24 @@ function Draft({
       else if (!findVariable(collectChoices, config.collectSelector))
         invalidField = t("settings.workflow.field.iterationCollect");
       fields = (
-        <IterationSelectorFields
-          config={config}
-          iteratorChoices={iteratorChoices}
-          collectChoices={collectChoices}
-          updateConfig={(patch) =>
-            setDraft({ ...draft, config: { ...config, ...patch } })
-          }
-        />
+        <>
+          <IterationSelectorFields
+            config={config}
+            iteratorChoices={iteratorChoices}
+            collectChoices={collectChoices}
+            updateConfig={(patch) =>
+              setDraft({ ...draft, config: { ...config, ...patch } })
+            }
+          />
+          {config.errorStrategy !== undefined && (
+            <IterationErrorStrategy
+              value={config.errorStrategy}
+              onChange={(errorStrategy) =>
+                setDraft({ ...draft, config: { ...config, errorStrategy } })
+              }
+            />
+          )}
+        </>
       );
       break;
     }
@@ -323,15 +308,7 @@ function Draft({
           {t("settings.workflow.debug.invalid", { field: invalidField })}
         </p>
       )}
-      <Button
-        type="button"
-        variant="outline"
-        onClick={() => {
-          setDraft(effective);
-          setAttempted(false);
-          onCancel();
-        }}
-      >
+      <Button type="button" variant="outline" onClick={onCancel}>
         {t("common.cancel")}
       </Button>
       <Button type="submit" disabled={!patch.length}>
@@ -359,6 +336,13 @@ function configPatch(
       draft.config.executor.modelId,
     );
   } else if (base.kind === "loop" && draft.kind === "loop") {
+    draft.config.variables?.forEach((variable, i) =>
+      replace(
+        `/loopConfig/variables/${i}/feedback`,
+        base.config.variables?.[i]?.feedback,
+        variable.feedback,
+      ),
+    );
     replace("/loopConfig/until", base.config.until, draft.config.until);
     replace(
       "/loopConfig/maxIterations",
@@ -366,6 +350,11 @@ function configPatch(
       draft.config.maxIterations,
     );
   } else if (base.kind === "iteration" && draft.kind === "iteration") {
+    replace(
+      "/iterationConfig/errorStrategy",
+      base.config.errorStrategy,
+      draft.config.errorStrategy,
+    );
     replace(
       "/iterationConfig/iteratorSelector",
       base.config.iteratorSelector,
@@ -384,27 +373,21 @@ function configPatch(
         previous.logic ?? "and",
         entry.logic ?? "and",
       );
-      const conditions = entry.conditions;
-      const valuesOnly =
-        previous.conditions.length === conditions.length &&
-        conditions.every((rule, j) => {
-          const before = previous.conditions[j]!;
-          return (
-            before.operator === rule.operator &&
-            JSON.stringify(before.variableSelector) ===
-              JSON.stringify(rule.variableSelector) &&
-            (before.value === undefined) === (rule.value === undefined)
-          );
-        });
-      if (valuesOnly)
-        conditions.forEach((rule, j) =>
+      entry.conditions.forEach((rule, j) => {
+        const before = previous.conditions[j]!;
+        for (const field of [
+          "variableSelector",
+          "operator",
+          "value",
+        ] as const) {
+          if (field === "value" && before.value === undefined) continue;
           replace(
-            `/cases/${i}/conditions/${j}/value`,
-            previous.conditions[j]!.value,
-            rule.value,
-          ),
-        );
-      else replace(`/cases/${i}/conditions`, previous.conditions, conditions);
+            `/cases/${i}/conditions/${j}/${field}`,
+            before[field],
+            rule[field] ?? null,
+          );
+        }
+      });
     });
   }
   return patch;
