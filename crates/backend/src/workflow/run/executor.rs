@@ -391,6 +391,14 @@ async fn drive_agent_node(
     variable_pool: &ora_application::WorkflowVariablePool,
     #[cfg(feature = "test-support")] owner_stream_drop: &OwnerStreamDropControl,
 ) -> Result<AgentNodeOutcome, NodeExecutionError> {
+    let debug_store = ora_db::workflow_debug::WorkflowDebugStore::new(pool.clone());
+    let revised = debug_store
+        .revised_graph(context.run.id.as_ref(), node_run_id.as_ref())
+        .map_err(RepositoryError::new)?;
+    let node = revised
+        .as_ref()
+        .and_then(|g| g.execution_node(&node.id))
+        .unwrap_or(node);
     let config =
         node.agent_config
             .as_ref()
@@ -515,6 +523,16 @@ async fn drive_agent_node(
             locale: run_payload.locale,
             previous_failure: previous_failure.as_ref(),
         });
+        // Bind historical input to what this driver actually observed. Scope and root pools can
+        // advance independently between row admission and this asynchronous prompt handoff.
+        let dispatch_input = serde_json::json!({
+            "variablePool": variable_pool,
+            "prompt": &prompt,
+            "visibleAttempts": node_runs.iter().map(|row| (&row.id, row.status)).collect::<Vec<_>>(),
+        });
+        debug_store
+            .record_agent_dispatch(context.run.id.as_ref(), node_run_id.as_ref(), &dispatch_input)
+            .map_err(RepositoryError::new)?;
         let completion_attempt = (config.interactive
             && config.completion_signal == ora_application::AgentCompletionSignal::Agent)
             .then(|| uuid::Uuid::new_v4().to_string());

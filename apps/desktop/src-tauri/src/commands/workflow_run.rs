@@ -1,6 +1,20 @@
 //! Desktop workflow run operations.
 
 use ora_contracts::*;
+backend_command!(
+    get_workflow_debug_attempt,
+    GetWorkflowDebugAttemptRequest,
+    GetWorkflowDebugAttemptResponse,
+    workflow_runs.debug_attempt,
+    "Reads one physical attempt and its bound configuration."
+);
+backend_command!(
+    get_workflow_debug_history,
+    GetWorkflowDebugHistoryRequest,
+    GetWorkflowDebugHistoryResponse,
+    workflow_runs.debug_history,
+    "Reads durable workflow debug confirmations in order."
+);
 
 backend_command!(
     create_workflow_run,

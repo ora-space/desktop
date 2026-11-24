@@ -66,6 +66,8 @@ commands.allow = [
     "get_task",
     "get_task_workspace",
     "get_workflow",
+    "get_workflow_debug_attempt",
+    "get_workflow_debug_history",
     "get_workflow_draft",
     "get_workflow_run",
     "get_workflow_snapshot",

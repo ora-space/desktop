@@ -310,6 +310,12 @@ A node replaced by automatic retries rolls back as one unit with every attempt o
 (`payload.retry_chain`). On-demand AI diagnosis writes `payload.ai_diagnosis`, labelled as a guess and
 never read by scheduling, resume, rollback or snapshot switching.
 
+## Querying run-local debug history
+
+`workflowRun.debugHistory({ runId })` returns confirmations in acceptance order with the request key, preview, patch and phase. An applied edit identifies its parent and resulting revisions. A failed stop retains its reason. After reconnecting, the request key identifies the same operation.
+
+`workflowRun.debugAttempt({ runId, nodeRunId })` also reads superseded attempts. It returns the round or item, configuration revision, outcome and availability of recorded input. The third foreach item has `index=2`, and the third while round has `round=3`. Pre-upgrade attempts without a recorded association return null configuration and revision.
+
 ## Recovery after restart
 
 Desktop runs the boot sweep only after it holds the application instance lock (see
