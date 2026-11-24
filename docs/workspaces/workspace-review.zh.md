@@ -6,15 +6,34 @@ Changes 面板评审任意 Workspace checkout（任务 worktree 或项目的 mai
 
 ## 操作
 
-| 操作 | 用途 |
-|---|---|
-| `getWorkspaceDiff` | 某个范围的有上限的 unified patch |
-| `getWorkspaceStatus` | 按文件的暂存状态 |
+| 操作                                               | 用途                                   |
+| -------------------------------------------------- | -------------------------------------- |
+| `getWorkspaceDiff`                                 | 某个范围的有上限的 unified patch       |
+| `getWorkspaceStatus`                               | 按文件的暂存状态                       |
 | `stageWorkspaceChanges`、`unstageWorkspaceChanges` | 暂存或取消暂存路径；空列表表示全部改动 |
-| `commitWorkspaceChanges` | 精确地提交已暂存的改动 |
-| `pushWorkspaceBranch` | 把当前分支推送到 `origin` |
+| `commitWorkspaceChanges`                           | 精确地提交已暂存的改动                 |
+| `pushWorkspaceBranch`                              | 把当前分支推送到 `origin`              |
 
 请求携带 `WorkspaceId`；backend 解析当前的 checkout，从不接受前端给的路径或 `TaskId`。
+
+## 没有 Git 的目录
+
+项目可以是任意目录；这时 Agent 直接写入该目录，没有可评审的改动。`listWorkspaces` 把存在的目录报告为
+`{ kind: "present", git }`。`git` 来自对每个目录执行一次 `git rev-parse --is-inside-work-tree`，每次列出都重新执行，从不存储：
+
+| `git`           | 含义                                             | 客户端行为                                                                                                       |
+| --------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `repository`    | 该目录位于某个工作树内                           | 不变                                                                                                             |
+| `notRepository` | Git 明确表示该目录不在任何仓库中                 | Changes 显示说明，不发起 diff 或状态查询；隐藏所有新建 worktree 的入口；定时任务表单说明为何该项目的任务不能启用 |
+| `unknown`       | Git 无法回答（未安装、所有者不受信任、仓库损坏） | 不变，让操作自身的错误照常显示                                                                                   |
+
+Git 会向上查找仓库，所以嵌套在另一个 checkout 里的普通目录算作 `repository`，评审操作作用于外层 checkout。运行
+`git init`（或删除 `.git`）后，客户端在下一次重新拉取 workspace 列表时看到变化：窗口重新获得焦点且缓存的列表已超过 30 秒的过期时间、Changes
+面板里的“重新检查”按钮，或者一次 `workspace_not_git_repository` 拒绝（Changes 面板会因此立即重新探测）。在这种目录里，
+本应打开 diff 的聊天链接改为在 Files 中打开该文件。
+
+上表中的每个操作都会先用同样的方式探测解析出的 checkout；目录不在任何仓库中时，在基线检查之前、在运行操作自身的
+Git 命令之前返回 `workspace_not_git_repository`。
 
 ## 范围与基线
 
