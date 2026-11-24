@@ -393,6 +393,47 @@ describe("deriveWorkflowVariableCatalog loop scope rules", () => {
     expect(aggregate("output")).toBe("string");
   });
 
+  // Importing a draft keeps `loopConfig` as written, and the editor derives the catalog with
+  // and without a selected node before the author can repair it.
+  it.each([
+    ["an object for a list", {}],
+    ["a string for a list", "result"],
+    ["null for a list", null],
+    ["no list", undefined],
+    ["a null entry", [null]],
+    ["an entry without a name", [{}]],
+    ["an entry whose name is not text", [{ name: 1 }]],
+    ["an entry with a blank name", [{ name: " " }]],
+  ])("skips what an incomplete Loop does not declare: %s", (_, list) => {
+    const config = loop.data.loopConfig!;
+    const usable = (entries: unknown, kept: unknown): unknown =>
+      Array.isArray(entries) ? [...entries, kept] : entries;
+    const incomplete = node(loop.id, {
+      ...loop.data,
+      loopConfig: {
+        ...config,
+        outputs: usable(list, config.outputs[0]),
+        variables: usable(list, config.variables[0]),
+      } as unknown as typeof config,
+    });
+    const own = (consumer: string | undefined): string[] =>
+      deriveWorkflowVariableCatalog(
+        nodes.map((candidate) =>
+          candidate.id === loop.id ? incomplete : candidate,
+        ),
+        edges,
+        consumer,
+        [],
+      )
+        .filter((entry) => entry.sourceNodeId === loop.id)
+        .map((entry) => entry.variableName);
+    const kept = (name: string): string[] =>
+      Array.isArray(list) ? [name] : [];
+    expect(own("after")).toEqual(kept("result"));
+    expect(own(undefined)).toEqual(kept("result"));
+    expect(own(loopAgent.id)).toEqual(kept("value"));
+  });
+
   it("offers body members the loop variables and the Loop's upstream", () => {
     const visible = selectors(loopAgent.id);
     expect(visible).toEqual(

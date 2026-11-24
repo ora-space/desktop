@@ -238,7 +238,7 @@ function appendLoopVariables(
 ): void {
   const config = node.data.loopConfig;
   if (consumerLoopId === node.id) {
-    for (const variable of config?.variables ?? []) {
+    for (const variable of namedEntries(config?.variables)) {
       entries.push(nodeVariable(node, variable.name, variable.valueType));
     }
     return;
@@ -246,13 +246,25 @@ function appendLoopVariables(
   if (!visibleProducerIds.has(node.id) || node.id === consumerNodeId) {
     return;
   }
-  for (const output of config?.outputs ?? []) {
-    if (output.name.trim() !== "") {
-      entries.push(
-        nodeVariable(node, output.name, loopOutputType(output.name)),
-      );
-    }
+  for (const output of namedEntries(config?.outputs)) {
+    entries.push(nodeVariable(node, output.name, loopOutputType(output.name)));
   }
+}
+
+/**
+ * The entries that declare a variable. An imported draft keeps `loopConfig` as it was written,
+ * and the editor derives the catalog before anyone can repair it, so an incomplete list must
+ * not throw.
+ */
+function namedEntries<T extends { name: string }>(
+  list: readonly T[] | undefined,
+): T[] {
+  return Array.isArray(list)
+    ? list.filter(
+        (entry: T | null | undefined) =>
+          typeof entry?.name === "string" && entry.name.trim() !== "",
+      )
+    : [];
 }
 
 /**
