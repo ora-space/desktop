@@ -63,7 +63,7 @@ Deno.test("a generic Agent must apply the exact model context before start succe
         }
       },
       stop: () => {},
-      listModels: () => [],
+      discover: () => ({ models: [] }),
       onAcp: () => {},
     });
     const harness = createTransportHarness();
@@ -144,9 +144,13 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
       send = sender;
     },
     stop: () => {},
-    listModels: (context) => {
+    discover: (context) => {
       discoveryContexts.push(context);
-      return [{ id: "opus", displayName: "Opus" }];
+      return {
+        models: [{ id: "opus", displayName: "Opus" }],
+        // Returned even when not wanted, which must not put it on the wire.
+        commands: [{ name: "review", description: "Review changes" }],
+      };
     },
     onAcp: (frame) => {
       received.push(frame);
@@ -181,6 +185,7 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
       methods: [
         "agent/start",
         "agent/stop",
+        "agent/discover",
         "agent/list_models",
         "effect/coordinate",
         "effect/reactivate",
@@ -223,9 +228,35 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     id: 2,
     result: { models: [{ id: "opus", displayName: "Opus", default: false }] },
   });
+  const discoverMessage = (id: number, includeCommands: boolean) => ({
+    jsonrpc: "2.0" as const,
+    id,
+    method: "agent/discover",
+    params: { cwd: "/home/user/project", includeCommands },
+  });
+  const models = [{ id: "opus", displayName: "Opus", default: false }];
+  await harness.send(discoverMessage(20, true));
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    id: 20,
+    result: {
+      models,
+      commands: [{ name: "review", description: "Review changes" }],
+    },
+  });
+  await harness.send(discoverMessage(21, false));
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    id: 21,
+    result: { models },
+  });
   // Discovery happens outside any session, so the directory the host resolved is the only thing
-  // telling a plugin which project it is answering for.
-  assertEquals(discoveryContexts, [{ cwd: "/home/user/project" }]);
+  // telling a plugin which project it is answering for. The old name never asks for commands.
+  assertEquals(discoveryContexts, [
+    { cwd: "/home/user/project", includeCommands: false },
+    { cwd: "/home/user/project", includeCommands: true },
+    { cwd: "/home/user/project", includeCommands: false },
+  ]);
   assertEquals(received, [{ jsonrpc: "2.0", id: 7, method: "initialize" }]);
 
   const coordination = {
@@ -304,7 +335,7 @@ Deno.test("reports a missing agent with the code Ora retries quietly", async () 
       );
     },
     stop: () => {},
-    listModels: () => [],
+    discover: () => ({ models: [] }),
     onAcp: () => {},
   });
   const harness = createTransportHarness();
@@ -328,4 +359,33 @@ Deno.test("reports a missing agent with the code Ora retries quietly", async () 
   });
   await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
   await run;
+});
+
+Deno.test("keeps unknown commands apart from an empty report", async () => {
+  for (const commands of [undefined, []]) {
+    const plugin = defineAgent({
+      start: () => {},
+      stop: () => {},
+      discover: () => ({ models: [], commands }),
+      onAcp: () => {},
+    });
+    const harness = createTransportHarness();
+    const run = plugin.run(harness.transport);
+    await harness.responses.next();
+    await harness.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "agent/discover",
+      params: { cwd: "/home/user/project", includeCommands: true },
+    });
+    assertEquals((await harness.responses.next()).value, {
+      jsonrpc: "2.0",
+      id: 1,
+      result: commands === undefined
+        ? { models: [] }
+        : { models: [], commands },
+    });
+    await harness.send({ jsonrpc: "2.0", method: "ora/shutdown", params: {} });
+    await run;
+  }
 });

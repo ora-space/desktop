@@ -184,10 +184,10 @@ current process. `ui.plugin` exposes the underlying `Plugin`.
 ## Agent plugins
 
 `defineAgent` builds a plugin that serves Ora's agent contract — `agent/start`,
-`agent/stop`, `agent/list_models`, and the `agent/acp` notification in both
-directions. Ora validates that whole contract when the handshake completes and
-refuses a plugin whose declaration is incomplete, so the helper registers all of
-it up front.
+`agent/stop`, `agent/discover` (also under its old name `agent/list_models`),
+and the `agent/acp` notification in both directions. Ora validates that whole
+contract when the handshake completes and refuses a plugin whose declaration is
+incomplete, so the helper registers all of it up front.
 
 ```ts
 import {
@@ -203,7 +203,9 @@ const plugin = defineAgent({
     send = sender; // spawn the agent CLI here and own its lifetime
   },
   stop: () => {/* terminate the CLI this plugin spawned */},
-  listModels: ({ cwd }) => [{ id: "opus", displayName: "Opus", default: true }],
+  discover: ({ cwd, includeCommands }) => ({
+    models: [{ id: "opus", displayName: "Opus", default: true }],
+  }),
   onAcp: (frame) => {/* forward the frame to the CLI */},
   effects: {
     resources: [{
@@ -241,37 +243,55 @@ retries quietly instead of reporting a fault. Throw `AGENT_UNUSABLE` instead
 when the CLI this package ships cannot run at all: that failure repeats on every
 attempt, so Ora reports it once and stops retrying that agent.
 
-### Model discovery
+### Discovery
 
-`listModels` is called on demand — when a user opens a chat surface or a
-workflow inspector — never as part of bringing the agent up, and it receives the
-Workspace directory the models are being listed for. Ora keeps no copy of the
-answer: the plugin owns the catalog and decides when its own cache is stale.
-Returning an empty list is a valid answer for an agent that has no models to
+`discover` is called on demand — when a user opens a chat surface or a workflow
+inspector — never as part of bringing the agent up, and it receives the
+Workspace directory it answers for. Ora keeps no copy of the answer: the plugin
+owns it and decides when its own cache is stale. A plugin that caches must key
+the cache by the whole context, keep it in memory only, and never cache a
+failure. Returning no models is a valid answer for an agent that has none to
 offer before a session exists; its models then arrive with the session's ACP
 `config_options` instead.
 
-Most agents only expose their models through ACP session configuration, which
-means discovery has to run one. Do that on a **separate, one-shot agent
-process**, and ask the host to start it:
+`includeCommands` says whether the caller wants the agent's commands. When it
+does not, do not wait for them. `defineAgent` also answers `agent/list_models`
+for versions of Ora that know only that name, always without commands.
+
+Most agents only expose their models through ACP session configuration, and
+report commands in a notification after that session exists, which means
+discovery has to run one. Do that on a **separate, one-shot agent process**, and
+ask the host to start it:
 
 ```ts
-listModels: (async ({ cwd }) => {
+discover: (async ({ cwd, includeCommands }) => {
   const probe = await spawnAgentProcess(processes, {
     packageCommand: "bin/opencode",
     command: "opencode",
   }, { args: ["acp", "--cwd", cwd], cwd });
-  // initialize → session/new(cwd) → read config_options → end the process
+  // initialize → session/new(cwd, no MCP servers) → read config_options
+  const commands = includeCommands
+    ? await waitForAgentCommands(firstCommandReport, { deadline })
+    : undefined;
+  // session/delete if the agent supports it → end the process
+  return { models, commands };
 });
 ```
 
+`waitForAgentCommands` takes a promise for the first `available_commands_update`
+of the probe session, and stops at Ora's cap or where the cleanup reserve before
+`deadline` begins. It resolves to `undefined` when nothing arrives, and then
+`commands` stays out of the answer: an absent list means nobody knows, an empty
+one means the agent said it has none. Relay the commands in the agent's order
+and wording; Ora decides what to show.
+
 Two constraints, both load-bearing:
 
-- **Not the connection you gave Ora.** `listModels` runs before Ora's own ACP
+- **Not the connection you gave Ora.** `discover` runs before Ora's own ACP
   `initialize`, Ora's `initialize` is what declares the client capability that
   decides whether the agent reports a model selector at all, and any request you
   inject returns down the same pipe Ora is reading. A second process avoids all
-  three, and its probe session disappears with it — no `session/delete` needed.
+  three.
 - **Not a process you spawn yourself.** Every plugin child process goes through
   `ora/childprocess/spawn` (`createHostProcesses`), because the host owns the OS
   handles, terminates process trees, and reclaims everything a plugin generation

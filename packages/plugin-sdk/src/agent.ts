@@ -8,6 +8,9 @@ import {
   AGENT_METHODS,
   AGENT_NOT_INSTALLED,
   AGENT_UNUSABLE,
+  type AgentCommand,
+  type AgentDiscoverParams,
+  type AgentDiscoverResult,
   type AgentEffectCoordinationContext,
   type AgentEffectReadinessContext,
   type AgentListModelsParams,
@@ -24,6 +27,7 @@ import {
 import { parseModelContext, verifyModelApplied } from "./model_context.ts";
 
 export type {
+  AgentCommand,
   AgentEffectCoordinationContext,
   AgentEffectReadinessContext,
   AgentStartContext,
@@ -51,6 +55,24 @@ export { AGENT_UNUSABLE };
 export type AgentModel = Omit<WireAgentModel, "default"> & {
   default?: boolean;
 };
+
+/** Says what one discovery is for. */
+export interface AgentDiscoveryContext {
+  /** The Workspace directory the agent is being asked about. */
+  cwd: string;
+  /** Whether the caller wants commands. When it does not, do not wait for them. */
+  includeCommands: boolean;
+}
+
+/** What the agent offers before any session exists. */
+export interface AgentDiscovery {
+  models: AgentModel[];
+  /**
+   * The commands the agent reported, in its order. Leave it out when no report arrived: an empty
+   * list means the agent said it has none.
+   */
+  commands?: AgentCommand[];
+}
 
 /** Sends one ACP frame from the agent back to the host. */
 export type AcpSender = (frame: JsonValue) => Promise<void>;
@@ -84,8 +106,10 @@ export interface AgentDefinition {
   ): void | AgentModelApplied | Promise<void | AgentModelApplied>;
   /** Terminates the agent while leaving this plugin process alive. */
   stop(): void | Promise<void>;
-  /** Lists selectable models outside any session. */
-  listModels(context: { cwd: string }): AgentModel[] | Promise<AgentModel[]>;
+  /** Reports the agent's models, and its commands when wanted, outside any session. */
+  discover(
+    context: AgentDiscoveryContext,
+  ): AgentDiscovery | Promise<AgentDiscovery>;
   /** Receives one ACP frame the host is forwarding to the agent. */
   onAcp(frame: JsonValue): void | Promise<void>;
   /** Declares Resources this Agent consumes and the adapter proving safe convergence. */
@@ -95,9 +119,10 @@ export interface AgentDefinition {
 /**
  * Builds a plugin that serves Ora's agent contract.
  *
- * The whole contract is registered up front — the three control methods plus the `agent/acp`
+ * The whole contract is registered up front — the control methods plus the `agent/acp`
  * notification in both directions — because Ora validates it the moment the handshake completes
- * and refuses to use a plugin whose declaration is incomplete.
+ * and refuses to use a plugin whose declaration is incomplete. Discovery is registered under both
+ * its names, so versions of Ora that only know `agent/list_models` still get models.
  */
 export function defineAgent(definition: AgentDefinition): Plugin {
   const plugin = createPlugin();
@@ -121,16 +146,25 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     await definition.stop();
     return {};
   });
-  plugin.registerMethod(AGENT_METHODS.listModels, async (params) =>
-    ({
-      models: (
-        await definition.listModels(params as AgentListModelsParams)
-      ).map((model) => ({
-        id: model.id,
-        displayName: model.displayName,
-        default: model.default ?? false,
-      })),
-    }) satisfies AgentListModelsResult);
+  plugin.registerMethod(AGENT_METHODS.discover, async (params) => {
+    const { cwd, includeCommands } = params as AgentDiscoverParams;
+    const { models, commands } = await definition.discover({
+      cwd,
+      includeCommands,
+    });
+    return {
+      models: models.map(wireModel),
+      ...(includeCommands && commands !== undefined ? { commands } : {}),
+    } satisfies AgentDiscoverResult;
+  });
+  plugin.registerMethod(AGENT_METHODS.listModels, async (params) => {
+    const { cwd } = params as AgentListModelsParams;
+    const { models } = await definition.discover({
+      cwd,
+      includeCommands: false,
+    });
+    return { models: models.map(wireModel) } satisfies AgentListModelsResult;
+  });
   plugin.onNotification(
     AGENT_METHODS.acp,
     (params) => definition.onAcp(params),
@@ -155,6 +189,15 @@ export function defineAgent(definition: AgentDefinition): Plugin {
   }
 
   return plugin;
+}
+
+/** Spells out the default flag the host requires. */
+function wireModel(model: AgentModel): WireAgentModel {
+  return {
+    id: model.id,
+    displayName: model.displayName,
+    default: model.default ?? false,
+  };
 }
 
 /** Validates the exact generic identities used by Consumer coordination. */
