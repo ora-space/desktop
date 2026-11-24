@@ -1,4 +1,5 @@
 DROP TRIGGER workflow_debug_admit;
+DROP TABLE workflow_debug_retired_attempts;
 DROP TABLE workflow_debug_operations;
 DROP TABLE workflow_debug_previews;
 DROP TABLE workflow_debug_attempts;

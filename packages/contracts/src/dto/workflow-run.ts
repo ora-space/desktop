@@ -119,6 +119,7 @@ export type GetWorkflowDebugAttemptResponse = {
   configuration: unknown | null;
   status: WorkflowNodeStatus;
   superseded: boolean;
+  retiredByOperationId: string | null;
   inputRecorded: boolean;
   selectedBranch: string | null;
   output: string | null;

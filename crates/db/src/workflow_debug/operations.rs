@@ -95,7 +95,19 @@ impl WorkflowDebugStore {
             // The strategy may create new attempts inside settle. They must see the new revision.
             tx.execute("UPDATE workflow_debug_operations SET state='applied',revision=?3
                 WHERE run_id=?1 AND request_id=?2",params![run,request,revision])?;
-            settle(&tx,&entry.preview)?;
+            let live_before: String = tx.query_row(
+                "SELECT json_group_array(id) FROM workflow_node_runs WHERE run_id=?1 AND is_deleted=0",
+                [run], |row| row.get(0),
+            )?;
+            settle(&tx, &entry.preview)?;
+            // An invalidated fact can represent zero or several physical attempts. Record the
+            // rows the strategy actually retired, including successful siblings on an old path.
+            tx.execute(
+                "INSERT INTO workflow_debug_retired_attempts(node_run_id, operation_id)
+                 SELECT n.id, ?2 FROM json_each(?1) live JOIN workflow_node_runs n ON n.id=live.value
+                 WHERE n.is_deleted=1",
+                params![live_before, entry.operation.operation_id],
+            )?;
             tx.commit()?;
             Ok(WorkflowDebugOperation { phase:WorkflowDebugPhase::Applied {revision}, ..entry.operation })
         })

@@ -9,7 +9,7 @@ pub(super) fn prepare(
     let (target, snapshot, entry, dispatch, kind, graph_json) = db.query_row(
         "SELECT n.node_id,n.scope_id,n.iteration,s.round_index,e.container_attempt,
                 e.snapshot_id,e.entry_state,CASE WHEN n.node_type='condition' AND json_valid(n.payload)
-                    THEN json_extract(n.payload,'$.debugCondition') ELSE e.dispatch_input END,n.node_type,snap.graph
+                    THEN json_extract(n.payload,'$.debugCondition') ELSE e.dispatch_input END AS observed_input,n.node_type,snap.graph,n.id
          FROM workflow_node_runs n JOIN workflow_runs r ON r.id=n.run_id
          JOIN workflow_run_root_scopes root ON root.run_id=r.id
          JOIN workflow_execution_scopes s ON s.id=n.scope_id
@@ -19,11 +19,15 @@ pub(super) fn prepare(
          WHERE n.run_id=?1 AND n.id=?2 AND n.is_deleted=0
            AND (n.scope_id=root.scope_id OR (parent.scope_id=root.scope_id AND parent.is_deleted=0))
            AND (e.snapshot_id IS NULL OR e.snapshot_id=r.snapshot_id)",
-        params![request.run_id,request.node_run_id], |r| Ok((
-            WorkflowDebugTarget {node_run_id:request.node_run_id.clone(),node_id:r.get(0)?,scope_id:r.get(1)?,
-                index:r.get(2)?,round:r.get(3)?,container_node_run_id:r.get(4)?},
-            r.get::<_,Option<String>>(5)?,r.get::<_,Option<String>>(6)?,r.get::<_,Option<String>>(7)?,
-            r.get::<_,String>(8)?,r.get::<_,String>(9)?)),
+        params![request.run_id, request.node_run_id],
+        |row| Ok((
+            super::attempts::read_target(row)?,
+            row.get::<_, Option<String>>("snapshot_id")?,
+            row.get::<_, Option<String>>("entry_state")?,
+            row.get::<_, Option<String>>("observed_input")?,
+            row.get::<_, String>("node_type")?,
+            row.get::<_, String>("graph")?,
+        )),
     ).optional()?.ok_or(DebugRejection::InvalidTarget)?;
     let snapshot = snapshot.ok_or(DebugRejection::MissingInputEvidence)?;
     let entry: Value = serde_json::from_str(&entry.ok_or(DebugRejection::MissingInputEvidence)?)?;

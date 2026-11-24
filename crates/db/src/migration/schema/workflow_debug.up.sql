@@ -50,6 +50,11 @@ CREATE TABLE workflow_debug_operations (
 CREATE UNIQUE INDEX workflow_debug_one_stopping ON workflow_debug_operations(run_id)
     WHERE state = 'stopping' OR (state = 'stop_failed' AND released = 0);
 
+CREATE TABLE workflow_debug_retired_attempts (
+    node_run_id TEXT PRIMARY KEY REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
+    operation_id INTEGER NOT NULL REFERENCES workflow_debug_operations(id) ON DELETE CASCADE
+);
+
 -- Record only new attempts. A retry waiting for its backoff has no dispatch evidence yet.
 CREATE TRIGGER workflow_debug_admit AFTER INSERT ON workflow_node_runs
 WHEN NEW.node_type IN ('agent','condition','loop','iteration')

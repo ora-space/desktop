@@ -137,6 +137,7 @@ pub struct GetWorkflowDebugAttemptResponse {
     pub configuration: Option<serde_json::Value>,
     pub status: crate::WorkflowNodeStatus,
     pub superseded: bool,
+    pub retired_by_operation_id: Option<String>,
     pub input_recorded: bool,
     pub selected_branch: Option<String>,
     pub output: Option<String>,

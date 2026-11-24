@@ -288,6 +288,15 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
     };
     let old = attempt("f2");
     assert_eq!(
+        old.retired_by_operation_id,
+        Some(
+            store.history("other").unwrap()[0]
+                .operation
+                .operation_id
+                .clone()
+        )
+    );
+    assert_eq!(
         (
             old.superseded,
             old.revision,
