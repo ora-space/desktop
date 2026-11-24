@@ -134,6 +134,7 @@ impl Backend {
         let default_worktree_root = paths.home_directory.join("worktrees");
         ensure_directory(&paths.app_data_directory)?;
         ensure_directory(&scheduled_artifacts_root)?;
+        crate::legacy_skill_cleanup::cleanup_legacy_managed_skills(&database_path);
         let catalog = default_migration_catalog().map_err(BackendBootstrapError::Database)?;
         let BootstrappedDatabase {
             pool,

@@ -1,5 +1,6 @@
 mod bootstrap;
 mod error;
+mod legacy_effect_cleanup;
 mod location;
 mod migration;
 mod repository;
@@ -22,6 +23,7 @@ mod tests;
 
 pub use bootstrap::{BootstrappedDatabase, DatabaseBootstrapper, reconcile_migration_history};
 pub use error::{DatabaseError, MigrationDirection};
+pub use legacy_effect_cleanup::{LegacyManagedSkillRow, read_legacy_managed_skills};
 pub use location::DatabaseLocation;
 pub use migration::{
     AppliedMigration, DatabaseOrigin, Migration, MigrationCatalog, default_migration_catalog,
