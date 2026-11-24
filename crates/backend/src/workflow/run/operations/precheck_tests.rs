@@ -10,7 +10,7 @@ use super::WorkflowRuns;
 use crate::Backend;
 use crate::test_backend::backend_paths;
 use crate::workflow::run::test_fixture::{SeededWorkflow, seeded_workflow};
-use ora_application::{WorkflowRepository, WorkflowRunRepository};
+use ora_application::{WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunRepository};
 use ora_contracts::{
     CancelWorkflowRunRequest, CreateWorkflowRunRequest, ImportPluginRequest, PluginDataDisposition,
     PublicError, RestartWorkflowRunRequest, ResumeWorkflowRunRequest, StartWorkflowRunRequest,
@@ -675,4 +675,126 @@ async fn invalid_mcp_package_blocks_pending_start() {
         .unwrap_err();
     assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
     assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
+}
+
+/// A blank title cannot identify the node, so the diagnostic carries the node id instead and
+/// nothing but the three identity fields reaches the client.
+#[tokio::test]
+async fn a_blank_node_title_falls_back_to_the_node_id() {
+    let graph = MCP_GRAPH.replace(r#""title":"Code review""#, r#""title":"   ""#);
+    let fixture = Fixture::open(&graph);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    fixture.uninstall_plugin("local/github").await;
+
+    let error = fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.public_error(),
+        &PublicError::WorkflowMcpNotFound(Box::new(WorkflowMcpNotFoundParams {
+            node_id: "reviewer".to_string(),
+            node_title: "reviewer".to_string(),
+            mcp_id: "local/github".to_string(),
+        }))
+    );
+    // Configuration values, transport arguments, and environment are not part of the diagnostic.
+    assert_eq!(
+        serde_json::to_value(error.public_error()).unwrap(),
+        serde_json::json!({
+            "code": "workflow_mcp_not_found",
+            "params": {
+                "nodeId": "reviewer",
+                "nodeTitle": "reviewer",
+                "mcpId": "local/github",
+            },
+        })
+    );
+    assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
+}
+
+/// A run that cannot be resumed keeps its original rejection even when a dependency is also
+/// missing, so the user is not sent to reinstall a plugin that would not make it resumable.
+#[tokio::test]
+async fn a_run_that_cannot_resume_reports_that_before_a_missing_dependency() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    fixture.uninstall_plugin("local/github").await;
+
+    let error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: run_id.clone(),
+            rollback: None,
+            snapshot_id: None,
+        })
+        .unwrap_err();
+    assert_eq!(error.public_error().code(), "workflow_run_not_resumable");
+    assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
+}
+
+/// Only the old graph is missing the binding, so selecting the fixed target snapshot must switch
+/// instead of failing on the snapshot the run is leaving behind.
+#[tokio::test]
+async fn a_target_snapshot_without_the_missing_binding_still_switches() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    fixture.start_and_settle(&run_id).await;
+    fixture.uninstall_plugin("local/github").await;
+
+    // The target graph drops the binding entirely, which repairs the dependency of the switch.
+    fixture.publish_target(
+        &MCP_GRAPH.replace(r#","mcps":[{"mcpId":"local/github","enabled":true}]"#, ""),
+    );
+    let resumed = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: run_id.clone(),
+            rollback: None,
+            snapshot_id: Some("snapshot-2".to_owned()),
+        })
+        .expect("a target snapshot without the removed binding must be usable");
+    assert_eq!(resumed.run.snapshot_id, "snapshot-2");
+    assert_eq!(resumed.run.status, WorkflowRunStatus::Running);
+    fixture
+        .runs
+        .cancel(CancelWorkflowRunRequest { run_id })
+        .await
+        .expect("cancel the switched run so the fixture cannot outlive its runtime");
+}
+
+/// Checks persisted node runs at the backend boundary. The desktop E2E observes sessions and ACP
+/// with an installed agent.
+#[tokio::test]
+async fn a_rejected_start_creates_no_node_run() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    fixture.uninstall_plugin("local/github").await;
+
+    fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .unwrap_err();
+
+    let detail = fixture.get(&run_id);
+    assert_eq!(detail.run.status, WorkflowRunStatus::Pending);
+    assert!(
+        detail.nodes.is_empty(),
+        "a rejected start must not create node-run rows"
+    );
+    assert!(
+        ora_db::SqliteWorkflowRunEngineRepository::new(fixture.runs.pool.clone())
+            .list_node_runs(&ora_domain::WorkflowRunId::new(&run_id))
+            .unwrap()
+            .is_empty(),
+        "a rejected start must not create node-run rows"
+    );
 }
