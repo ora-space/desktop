@@ -33,14 +33,21 @@ export function invalidateAgentAvailability(queryClient: QueryClient) {
   });
 }
 
-/** Refreshes everything discovered from one agent in any workspace, leaving other agents untouched. */
+/**
+ * Refreshes everything discovered from one agent in any workspace, leaving other agents untouched.
+ *
+ * Requests already running are abandoned first. Invalidating alone leaves a first one running, and
+ * its answer, made before the change, would then count as fresh.
+ */
 export function invalidateAgentModels(
   queryClient: QueryClient,
   agentRef: string,
 ) {
-  return queryClient.invalidateQueries({
+  const filters = {
     queryKey: agentRuntimeKeys.agentDiscoveryForAgent(agentRef),
-  });
+  };
+  void queryClient.cancelQueries(filters);
+  return queryClient.invalidateQueries(filters);
 }
 
 /** Only a starting agent can answer discovery; stop/removal must not restart model probes. */

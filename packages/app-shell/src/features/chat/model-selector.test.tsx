@@ -1,4 +1,11 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@ora/ui";
 import { PlatformProvider } from "../../platform";
@@ -83,7 +90,10 @@ function reportOpenCode(status: AgentStatus) {
   };
 }
 
-function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
+function renderModelSelector(
+  seed: (state: FixtureState) => void = () => {},
+  sessionId?: string,
+) {
   const state = createFixtureState();
   state.tasks = [
     {
@@ -119,7 +129,7 @@ function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
       <AppI18nProvider>
         <PlatformProvider adapter={createStubPlatform()}>
           <TooltipProvider>
-            <ModelSelector />
+            <ModelSelector sessionId={sessionId} />
           </TooltipProvider>
         </PlatformProvider>
       </AppI18nProvider>
@@ -181,6 +191,22 @@ async function openDetachedConversation(
 }
 
 describe("ModelSelector for a session that has not attached", () => {
+  it("asks for commands only where a surface shows them", async () => {
+    const asked = async (sessionId?: string) => {
+      const { discover, chatStore } = renderModelSelector((state) => {
+        selectPersistedSession(state);
+      }, sessionId);
+      await act(() => chatStore.getState().loadSession("s1"));
+      await waitFor(() => expect(discover).toHaveBeenCalledOnce());
+      cleanup();
+      return discover.mock.calls[0]?.[0].includeCommands;
+    };
+
+    expect(await asked()).toBe(true);
+    // A workflow node's conversation names its session and shows no discovered commands.
+    expect(await asked("s1")).toBe(false);
+  });
+
   /**
    * Reading a conversation never reaches its agent, so a persisted session can be open with no
    * provider and nothing to configure. The picker is then in exactly the position of a chat that

@@ -199,6 +199,8 @@ export function ModelSelector({
   const discovered = useAgentDiscovery(
     usesSessionOptions || directoryMissing ? null : agentCli,
     usesSessionOptions || directoryMissing ? null : workspaceId,
+    // A workflow node's conversation shows no discovered commands, so nothing waits for them.
+    sessionId === undefined ? "modelsAndCommands" : "models",
   );
   const activeSessionId = usesSessionOptions ? optionsSessionId : null;
   // A session can retain the last options reported before its plugin stopped.

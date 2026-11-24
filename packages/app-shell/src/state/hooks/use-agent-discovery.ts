@@ -1,18 +1,23 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RemoteContractError } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { agentRuntimeKeys } from "../data/agent-runtime";
+import {
+  type AgentDiscoveryScope,
+  agentRuntimeKeys,
+} from "../data/agent-runtime";
 import { refreshWorkspaceDirectories } from "../data/workspace";
 import { useAgentRuntimeStatus } from "./use-agent-runtime-status";
 
 /**
  * Discovers what one agent offers a chat without creating an Ora provider session.
  *
- * The model picker and the slash menu both read this, so a chat surface starts one discovery.
+ * The model picker and the slash menu of a chat both read the default scope, so a chat surface
+ * starts one discovery. A surface that shows no discovered commands asks for models alone.
  */
 export function useAgentDiscovery(
   agentRef: string | null,
   workspaceId: string | null,
+  scope: AgentDiscoveryScope = "modelsAndCommands",
 ) {
   const client = useContractsClient();
   const queryClient = useQueryClient();
@@ -22,17 +27,13 @@ export function useAgentDiscovery(
   )?.status;
   const ready = runtimeStatus === "ready";
   const query = useQuery({
-    queryKey: agentRuntimeKeys.agentDiscovery(
-      agentRef,
-      workspaceId,
-      "modelsAndCommands",
-    ),
+    queryKey: agentRuntimeKeys.agentDiscovery(agentRef, workspaceId, scope),
     queryFn: () =>
       client.agentRuntime
         .discover({
           agentRef: agentRef!,
           workspaceId: workspaceId!,
-          includeCommands: true,
+          includeCommands: scope === "modelsAndCommands",
         })
         .catch((error: unknown) => {
           // Discovery resolves the workspace folder before asking the plugin. A refusal here

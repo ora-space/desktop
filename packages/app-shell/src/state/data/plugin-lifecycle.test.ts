@@ -1,6 +1,10 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { agentRuntimeKeys, refreshAgent } from "./agent-runtime";
+import {
+  agentRuntimeKeys,
+  invalidateAgentModels,
+  refreshAgent,
+} from "./agent-runtime";
 import { invalidatePluginState } from "./plugin-lifecycle";
 import { invalidatePluginQueries, pluginKeys } from "./plugins";
 import { skillKeys } from "./skills";
@@ -57,6 +61,43 @@ describe("plugin lifecycle cache ownership", () => {
     });
     client.clear();
   });
+
+  it.each([
+    ["a surface is showing it", true],
+    ["no surface is showing it any more", false],
+  ])(
+    "drops a first discovery that answers after the agent changed while %s",
+    async (_case, isShown) => {
+      const client = new QueryClient();
+      const answers: ((answer: string) => void)[] = [];
+      const queryKey = agentRuntimeKeys.agentDiscovery(
+        "agent-a",
+        "workspace-1",
+        "modelsAndCommands",
+      );
+      const observer = new QueryObserver(client, {
+        queryKey,
+        queryFn: () =>
+          new Promise<string>((resolve) => {
+            answers.push(resolve);
+          }),
+        staleTime: 5 * 60 * 1000,
+      });
+      const leave = observer.subscribe(() => {});
+      if (!isShown) leave();
+
+      const refreshed = invalidateAgentModels(client, "agent-a");
+      answers[0]?.("before");
+      await Promise.resolve();
+      answers[1]?.("after");
+      await refreshed;
+
+      expect(answers).toHaveLength(isShown ? 2 : 1);
+      expect(client.getQueryData(queryKey)).toBe(isShown ? "after" : undefined);
+      leave();
+      client.clear();
+    },
+  );
 
   it("does not probe model discovery when an agent stops or is removed", async () => {
     const { client, invalidated } = caches();

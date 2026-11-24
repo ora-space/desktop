@@ -1,3 +1,4 @@
+import { SHOWN_AGENT_COMMAND_LIMIT } from "@ora/contracts";
 import { describe, expect, it } from "vitest";
 import { discoveredCommand, presentableCommands } from "./agent-commands";
 
@@ -12,12 +13,15 @@ function bytes(text: string) {
 }
 
 describe("presentable commands", () => {
-  it("keeps the agent's order and stops after 500", () => {
-    const names = Array.from({ length: 501 }, (_, index) => `c${index}`);
+  it("keeps the agent's order and stops at the limit", () => {
+    const names = Array.from(
+      { length: SHOWN_AGENT_COMMAND_LIMIT + 1 },
+      (_, index) => `c${index}`,
+    );
 
     expect(
       presentableCommands(names.map(named)).map(({ name }) => name),
-    ).toEqual(names.slice(0, 500));
+    ).toEqual(names.slice(0, -1));
   });
 
   it("drops an unusable name alone", () => {
@@ -34,12 +38,14 @@ describe("presentable commands", () => {
       "line\nname",
       "bell\u0007",
       "c1\u0085",
+      "spoof\u202egnp",
+      "zero\u200bwidth",
       "x".repeat(129),
       "字".repeat(43),
     ];
     const mixed = kept.flatMap((name, index) => [
       name,
-      ...dropped.slice(index * 2, index * 2 + 2),
+      ...dropped.slice(index * 3, index * 3 + 3),
     ]);
 
     expect(
@@ -59,7 +65,7 @@ describe("presentable commands", () => {
 
     expect(command).toEqual({
       name: "long",
-      description: `${"字".repeat(1365)}…`,
+      description: `${"字".repeat(1364)}…`,
       input: { hint: "字".repeat(85) },
     });
   });
@@ -76,7 +82,7 @@ describe("presentable commands", () => {
     expect(
       presentableCommands([{ ...command, description: "😀".repeat(1025) }])[0]
         ?.description,
-    ).toBe(`${"😀".repeat(1024)}…`);
+    ).toBe(`${"😀".repeat(1023)}…`);
   });
 });
 

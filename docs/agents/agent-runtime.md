@@ -156,18 +156,18 @@ it needs ACP it launches a separate one-shot process through the host's child-pr
 using Ora's shared connection. A failure affects only that request; empty lists are valid.
 
 A caller says whether it wants commands. The plugin then waits for the agent's first command report,
-at most two seconds after `session/new` answered, and answers without commands when none arrived.
-Callers that only need models (the workflow editor, scheduled-task validation) do not ask, so they
-never wait. The workflow editor therefore has its own frontend cache entry: an answer without commands
-must not hide them from the chat composer.
+at most two seconds after `session/new` answered and never into the time it keeps for cleanup, and
+answers without commands when none arrived. Callers that only need models (the workflow editor, a
+workflow node's model picker, scheduled-task validation) do not ask, so they never wait. They have
+their own frontend cache entry: an answer without commands must not hide them from the chat composer.
 
 The composer shows the commands the session reported; before any report, and while a move onto another
 agent is pending, it shows the discovered commands of the agent the next message goes to. Only a
 session's own report decides whether a typed command is unsupported, because discovery runs without MCP
 servers. Commands are untrusted text: the composer shows them as plain text, at most 500, drops names
-that are empty, over 128 bytes or contain whitespace or control characters, and cuts descriptions at
-4096 bytes and hints at 256. Delivery is never cut, and a report over 500 commands leaves one warning
-in Desktop's log.
+that are empty, over 128 bytes or contain whitespace, control or format characters, and cuts
+descriptions at 4096 bytes and hints at 256. Delivery is never cut, and a session that goes over 500
+commands leaves one warning in Desktop's log.
 
 ### Permissions
 
