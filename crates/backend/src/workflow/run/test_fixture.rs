@@ -203,7 +203,7 @@ pub(crate) fn seeded_workflow(
 ) -> SeededWorkflow {
     let workspace_path = temp.path().join("fixture-project");
     std::fs::create_dir_all(&workspace_path).unwrap();
-    let project = SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
+    let project = SqliteProjectRepository::new(pool.clone());
     project
         .create_project(
             Project::new(

@@ -3755,8 +3755,6 @@ dependencies = [
  "ora-contracts",
  "ora-db",
  "ora-domain",
- "ora-effect",
- "ora-effect-skill",
  "ora-fs",
  "ora-history",
  "ora-logging",
@@ -3960,38 +3958,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "ora-effect"
-version = "0.0.0"
-dependencies = [
- "ora-domain",
- "ora-utils",
- "pretty_assertions",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
- "uuid",
-]
-
-[[package]]
-name = "ora-effect-skill"
-version = "0.0.0"
-dependencies = [
- "ora-domain",
- "ora-effect",
- "ora-logging",
- "ora-skill-package",
- "ora-utils",
- "pretty_assertions",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

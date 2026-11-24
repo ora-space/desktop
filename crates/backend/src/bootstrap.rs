@@ -2,7 +2,6 @@ use crate::agent::AgentApi;
 use crate::agent_runtime::{AgentRuntime, AgentRuntimeSetup, open_agent_runtime};
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
-use crate::effects::Effects;
 use crate::error::BackendError;
 use crate::plugin::{PluginApi, Plugins};
 use crate::project::ProjectApi;
@@ -83,7 +82,6 @@ pub enum BackendBootstrapError {
 /// Owns the concrete persisted use-case composition used by the Desktop adapter.
 #[derive(Clone)]
 pub struct Backend {
-    effect: Effects,
     project: Arc<ProjectApi>,
     scheduled_task: Arc<ScheduledTaskApi>,
     task: Arc<TaskApi>,
@@ -159,7 +157,7 @@ impl Backend {
                 default_worktree_root
             }
         };
-        crate::skill_reconciliation::reconcile_skill_storage(&pool, &skills_root, &SystemClock)
+        crate::skill_reconciliation::reconcile_skill_storage(&pool, &skills_root)
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         crate::skill_reconciliation::cleanup_import_temp_sessions()
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
@@ -249,20 +247,6 @@ impl Backend {
         let repository_gates = git_cleanup_worker.repository_gates();
         let git_cleanup = git_cleanup_worker.spawn();
 
-        // Durable Effect reconciliation: the first pass replays every surface a previous process
-        // left short of its Desired generation, including the retirement cleanup an uninstall
-        // started but could not finish.
-        let effect_worker = crate::effect_worker::EffectWorker::new(
-            pool.clone(),
-            plugin.clone(),
-            agent_runtime.clone(),
-        );
-        effect_worker.recover();
-        // Creating a Workspace is not something a consumer declaration can observe, so both create
-        // paths wake the worker to converge it promptly instead of at the next scan.
-        let effect_reconcile = effect_worker.spawn();
-        plugin.set_effect_reconcile(effect_reconcile.clone());
-
         let workflow_run = Arc::new(WorkflowRuns::new(WorkflowRunSetup {
             pool: pool.clone(),
             skills_root: skills_root.clone(),
@@ -294,7 +278,6 @@ impl Backend {
             sessions_root: sessions_root.clone(),
             repository_gates,
             clock,
-            effect_reconcile: effect_reconcile.clone(),
             git_cleanup: git_cleanup.clone(),
         }));
         let scheduled_task = Arc::new(ScheduledTaskApi::new(ScheduledTaskSetup {
@@ -315,7 +298,6 @@ impl Backend {
                 sessions_root,
                 relative_path_base.clone(),
                 clock,
-                effect_reconcile.clone(),
                 git_cleanup.clone(),
             )),
             task,
@@ -338,25 +320,14 @@ impl Backend {
                 )),
             ),
             agent_runtime: AgentRuntime::new(agent_runtime),
-            skill: Arc::new(SkillApi::new(
-                pool.clone(),
-                skills_root,
-                clock,
-                effect_reconcile.clone(),
-            )),
+            skill: Arc::new(SkillApi::new(pool.clone(), skills_root, clock)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
             workflow_run,
             app_events,
             database_origin,
             _completion_server: completion_server,
-            effect: Effects::new(pool, effect_reconcile),
         })
-    }
-
-    /// Shares persisted Effect status without exposing convergence workers.
-    pub fn effects(&self) -> Effects {
-        self.effect.clone()
     }
 
     /// Shares run use cases, including scheduling serialization and terminal session cleanup.

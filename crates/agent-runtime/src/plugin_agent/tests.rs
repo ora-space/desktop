@@ -2,9 +2,7 @@ use std::collections::HashSet;
 
 use ora_domain::PluginId;
 use ora_plugin_lifecycle::{InboundNotification, PluginGenerationKey};
-use ora_plugin_runtime::{
-    PluginEffectCoordination, PluginEffectResource, PluginRegistration, PluginRuntimeError,
-};
+use ora_plugin_runtime::{PluginRegistration, PluginRuntimeError};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -31,7 +29,6 @@ fn complete_registration() -> PluginRegistration {
             "agent/list_models".to_string(),
         ]),
         emits: HashSet::from(["agent/acp".to_string()]),
-        effect_resources: Vec::new(),
     }
 }
 
@@ -59,16 +56,16 @@ fn accepts_either_discovery_method() {
     }
 }
 
-/// Legacy agent plugins that still declare `effectResources` remain usable without `effect/*`
-/// methods because the host ignores `effectResources` (ADR D1 / session-setup-and-hosts.md).
+/// Legacy agent plugins whose wire registration carried `effectResources` (now ignored during
+/// `ora/register` parsing) and `effect/*` methods remain usable (ADR D1 / session-setup-and-hosts.md).
 #[test]
-fn accepts_legacy_registration_with_effect_resources_and_ignores_it() {
+fn accepts_legacy_registration_with_effect_methods_without_effect_resources() {
     let mut registration = complete_registration();
-    registration.effect_resources = vec![PluginEffectResource {
-        workspace_relative_path: ".claude/skills".to_string(),
-        materialization_format: "ora/skill-directory.v1".to_string(),
-        coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-    }];
+    registration.methods.insert("effect/coordinate".to_string());
+    registration.methods.insert("effect/reactivate".to_string());
+    registration
+        .methods
+        .insert("effect/verify_ready".to_string());
 
     assert_eq!(verify_agent_contract(&registration), Ok(()));
 }

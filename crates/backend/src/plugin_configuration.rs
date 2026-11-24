@@ -88,7 +88,6 @@ impl PluginApi {
             )
             .map_err(configuration_error)?;
         self.notify_mcp_desired_changed();
-        self.notify_effect_reconcile();
         let redacted = mcp_bound_settings(&request.plugin_id, &package_root, details.revision)?;
         Ok(SavePluginConfigurationResponse {
             configuration: configuration_details(
@@ -136,7 +135,6 @@ impl PluginApi {
         }
         .map_err(configuration_error)?;
         self.notify_mcp_desired_changed();
-        self.notify_effect_reconcile();
         let redacted = mcp_bound_settings(&request.plugin_id, &package_root, details.revision)?;
         Ok(ResetPluginConfigurationResponse {
             configuration: configuration_details(

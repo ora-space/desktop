@@ -35,16 +35,12 @@ use ora_domain::{
     AgentRef, HistoryState, PluginId, Session, SessionId, SessionMcpSelection, SessionStatus,
     SessionTitle, WorkspaceId,
 };
-use ora_effect::ConsumerDeclaration;
 use ora_history::HistoryLine;
 use ora_plugin_lifecycle::{ConnectionError, PluginLifecycleError};
 use ora_scheduler::Scheduler;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-pub(crate) use ora_agent_runtime::ReplacedAgentSessions;
-pub(crate) use ora_agent_runtime::plugin_effect;
 
 /// The runtime as Desktop composes it.
 pub(crate) type AgentRuntimeManager = ora_agent_runtime::AgentRuntimeManager<DesktopRuntimeHost>;
@@ -57,7 +53,7 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
-    /// Captures the same manager used by sessions, plugins, workflow execution, and Effect.
+    /// Captures the same manager used by sessions, plugins, and workflow execution.
     pub(crate) fn new(manager: Arc<AgentRuntimeManager>) -> Self {
         Self {
             inner: ora_agent_runtime::AgentRuntime::new(manager),
@@ -262,15 +258,6 @@ impl AgentAttach for PluginApi {
         })
         .await
         .map(|_stopped| ())
-    }
-
-    fn replace_agent_effect_declaration(
-        &self,
-        plugin_id: PluginId,
-        declaration: Option<ConsumerDeclaration>,
-    ) -> Result<(), RuntimeError> {
-        PluginApi::replace_agent_effect_declaration(self, plugin_id, declaration)
-            .map_err(RuntimeError::from)
     }
 }
 

@@ -321,8 +321,6 @@ pub enum PublicError {
     PluginLogLevelsReadOnly(PluginLogLevelsFileParams),
     PluginLogLevelsWriteFailed(PluginLogLevelsFileParams),
     PluginHostIncompatible(EmptyErrorParams),
-    EffectTargetNotFound(EmptyErrorParams),
-    EffectTargetNotRecoverable(EmptyErrorParams),
     PluginPackageInvalid(PluginPackageInvalidParams),
     PackMemberDuplicate(PackMemberParams),
     PackSelfReference(PackMemberParams),
@@ -487,8 +485,6 @@ impl PublicError {
             }
             Self::ProjectNotFound(_) => "project_not_found",
             Self::ProjectWorkspaceNotDirectory(_) => "project_workspace_not_directory",
-            Self::EffectTargetNotFound(_) => "effect_target_not_found",
-            Self::EffectTargetNotRecoverable(_) => "effect_target_not_recoverable",
             Self::TaskNotFound(_) => "task_not_found",
             Self::ScheduledTaskNotFound(_) => "scheduled_task_not_found",
             Self::ScheduledTaskConflict(_) => "scheduled_task_conflict",
@@ -634,11 +630,10 @@ mod tests {
         PluginConfigurationValidationParams, PluginLogLevelsFileParams, PluginPackageInvalidParams,
         PublicError, RequestId, SessionMcpSetupFailedParams, SkillFolderConflictParams,
         TaskBaseBranchNotFoundParams, WorkflowMcpNotFoundParams, WorkflowNodeCompletionBlocker,
-        WorkflowNodeCompletionBlockerKind, WorkflowNodeCompletionBlockerParams,
-        WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams,
-        WorkflowNodeSignalChangedParams, WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
-        WorkflowRunInputInvalidParams, WorkflowSkillNotFoundParams,
-        WorkflowSnapshotIncompatibleWithResumeParams,
+        WorkflowNodeCompletionBlockerKind, WorkflowNodeIncompleteParams,
+        WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
+        WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey, WorkflowRunInputInvalidParams,
+        WorkflowSkillNotFoundParams, WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -723,8 +718,6 @@ mod tests {
                 field_errors: Vec::new(),
             }),
             PublicError::PluginConfigurationRecoveryNotRequired(empty),
-            PublicError::EffectTargetNotFound(empty),
-            PublicError::EffectTargetNotRecoverable(empty),
             PublicError::ProjectNotFound(empty),
             PublicError::ProjectWorkspaceNotDirectory(empty),
             PublicError::TaskNotFound(empty),
@@ -904,8 +897,6 @@ mod tests {
                 | PublicError::ConfigurationLoadFailed(_)
                 | PublicError::PluginConfigurationValidation(_)
                 | PublicError::PluginConfigurationRecoveryNotRequired(_)
-                | PublicError::EffectTargetNotFound(_)
-                | PublicError::EffectTargetNotRecoverable(_)
                 | PublicError::ProjectNotFound(_)
                 | PublicError::ProjectWorkspaceNotDirectory(_)
                 | PublicError::TaskNotFound(_)
@@ -1018,7 +1009,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 129);
+        assert_eq!(samples.len(), 127);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

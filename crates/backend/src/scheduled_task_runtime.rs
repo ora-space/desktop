@@ -1017,19 +1017,18 @@ mod tests {
 
             let project_root = temporary.path().join("project");
             std::fs::create_dir_all(&project_root).expect("create project root");
-            let project =
-                SqliteProjectRepository::with_clock(pool.clone(), crate::clock::SystemClock)
-                    .create_project(
-                        Project::new(
-                            ora_domain::ProjectId::new("project-1"),
-                            "Settle fixture",
-                            AuditFields::new(10, 10, /*is_deleted*/ false),
-                        ),
-                        WorkspaceLocation::local_filesystem(
-                            project_root.to_string_lossy().into_owned(),
-                        ),
-                    )
-                    .expect("create project");
+            let project = SqliteProjectRepository::new(pool.clone())
+                .create_project(
+                    Project::new(
+                        ora_domain::ProjectId::new("project-1"),
+                        "Settle fixture",
+                        AuditFields::new(10, 10, /*is_deleted*/ false),
+                    ),
+                    WorkspaceLocation::local_filesystem(
+                        project_root.to_string_lossy().into_owned(),
+                    ),
+                )
+                .expect("create project");
 
             let task = ScheduledTask::new(
                 ScheduledTaskId::new("scheduled-task-settle"),
