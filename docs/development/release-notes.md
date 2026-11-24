@@ -46,3 +46,20 @@ The tooling tests validate every notes file in the repository, including in pull
   the sources are a Git checkout. Edits elsewhere do not matter.
 
 Packaging without `--tag` skips these checks.
+
+## Display
+
+The Desktop frontend build injects every notes file of its checkout; the app reads no files and no
+network to show them. An untagged build with invalid notes hides all of them instead of failing. Texts
+are always rendered as plain text, in the interface language, newest version first, and never for a
+version newer than the running stable version (`0.7.0-rc.1` shows up to `0.7.0`).
+
+- **Settings → Release notes** lists the history.
+- **A dismissible card** appears once after an update. It lists every version above the highest one
+  already prompted on this machine, then remembers the running version. A downgrade, a build without
+  notes of its own version, and a fresh installation show no card; only the fresh installation
+  remembers the version.
+
+Without a record, `is_new_installation` separates a fresh installation from an upgrade: it is true when
+this process opened a database that had no applied migration. An upgrade without a record lists every
+applicable version.
