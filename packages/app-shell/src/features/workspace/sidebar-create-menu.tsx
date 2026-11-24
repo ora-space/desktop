@@ -17,6 +17,7 @@ import {
 } from "@tabler/icons-react";
 import { useWorkflowLibrary } from "../../state/data/workflows";
 import { useUninstalledWorkflowSources } from "../../state/hooks/use-uninstalled-workflow-sources";
+import { useWorkspaceGitAvailability } from "../../state/hooks/use-workspace-git";
 import { useUiStore } from "../../state/stores/ui-store";
 
 interface SidebarCreateMenuProps {
@@ -35,6 +36,7 @@ const ITEM_CLASS =
 
 /**
  * Compact plus on a Workspace row: ordinary task, optional worktree task, or workflow run.
+ * The worktree task is left out for a project whose folder is not a Git repository.
  *
  * The first panel is a Popover. Workflow templates open as a second floating
  * panel to the right and list only workflows that already have a published
@@ -50,6 +52,10 @@ export function SidebarCreateMenu({
   const { t } = useTranslation();
   const setDialog = useUiStore((s) => s.setDialog);
   const libraryQuery = useWorkflowLibrary();
+  // A worktree task branches the project's folder with Git, so a plain folder cannot offer it.
+  const gitAvailability = useWorkspaceGitAvailability({ workspaceId });
+  const offersWorktreeTask =
+    scope === "project" && gitAvailability !== "notRepository";
   const uninstalledSources = useUninstalledWorkflowSources(libraryQuery.data);
   // Runs bind to the published snapshot. Drafts are authoring-only and would
   // fail create, so this picker never offers them.
@@ -151,7 +157,7 @@ export function SidebarCreateMenu({
           <IconMessageCircle className="size-4" />
           {t("sidebar.newDirectChat")}
         </button>
-        {scope === "project" && (
+        {offersWorktreeTask && (
           <button
             type="button"
             className={ITEM_CLASS}

@@ -20,6 +20,8 @@ ownership, and `CreateTaskRequest.baseBranch` is required.
 reaches a contract and a unit test can substitute a fake provisioner:
 
 1. Check that the project root is a Git repository; worktree mode fails explicitly when it is not.
+   Desktop hides the new-worktree entries for such a project up front, using the `git` capability
+   that `listWorkspaces` reports, see [Workspace review](workspace-review.md#folders-without-git).
 2. Resolve the selected local base ref to an immutable commit id. A ref that no longer exists
    returns `base_branch_not_found` before anything is created.
 3. Reserve Task and Workspace ids whose short branch prefix does not collide (below).

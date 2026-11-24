@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@ora/ui";
 import { PlatformProvider } from "../../platform";
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import {
   createHookWrapper,
@@ -409,6 +409,52 @@ describe("WorkspaceDialogs task creation", () => {
       /该目录不是 Git 仓库。请在 Git 仓库下创建 worktree 模式任务。|This directory is not a Git repository/,
     );
     expect(state.tasks).toEqual([]);
+  });
+});
+
+describe("WorkspaceDialogs worktree task for a plain folder", () => {
+  it("explains the folder is not Git and offers no submit or branch lookup", async () => {
+    const state = createFixtureState();
+    state.projects.push({ id: "p1", name: "Plain" });
+    state.workspaces.push({
+      id: "workspace-p1",
+      projectId: "p1",
+      kind: "main",
+      lifecycle: "active",
+      directory: { kind: "present", git: "notRepository" },
+    });
+    const listProjectBranches = vi.fn(async () => ({ branches: [] }));
+    const client = createTestClient({
+      ...createFixtureHandlers(state),
+      listProjectBranches,
+    });
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useUiStore.getState().setDialog({ kind: "task", projectId: "p1" });
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceDialogs />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    expect(
+      await screen.findByText(
+        "该目录不是 Git 仓库。请在 Git 仓库下创建 worktree 模式任务。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建任务" })).toBeDisabled();
+    expect(screen.queryByLabelText("基础分支")).toBeNull();
+    expect(listProjectBranches).not.toHaveBeenCalled();
   });
 });
 

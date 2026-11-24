@@ -95,6 +95,14 @@ impl GitCleanupHandle {
     pub(crate) fn shared_worktree_use(&self, workspace_id: &str) -> SharedLeaseGuard {
         self.worktree_use.acquire_shared(workspace_id)
     }
+
+    /// Acquires the shared worktree-use lease only when no cleanup holds or awaits it.
+    ///
+    /// For reads that are optional, such as the Git probe behind listing, which must never make
+    /// a list wait on a removal; `None` means the checkout is being cleaned up.
+    pub(crate) fn try_shared_worktree_use(&self, workspace_id: &str) -> Option<SharedLeaseGuard> {
+        self.worktree_use.try_acquire_shared(workspace_id)
+    }
 }
 
 /// Owns the durable Git cleanup execution for one backend instance.

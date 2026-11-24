@@ -28,10 +28,20 @@ export type Workspace = {
  * time without telling Ora, and every session start, model discovery, and file operation then
  * fails. Probing on list lets clients explain that state instead of showing empty results.
  */
-export type WorkspaceDirectory = { "kind": "present" } | {
+export type WorkspaceDirectory = { "kind": "present"; git: WorkspaceGit } | {
   "kind": "missing";
   path: string;
 } | { "kind": "remote" };
+
+/**
+ * Reports whether Git operations can act on a workspace directory that exists.
+ *
+ * Projects may be plain folders. Ora asks Git about the directory each time it is listed, so
+ * clients can hide Git-only features instead of surfacing their failures. A folder nested inside
+ * another repository's checkout counts as `Repository`, because Git commands run from it act on
+ * that enclosing checkout.
+ */
+export type WorkspaceGit = "repository" | "notRepository" | "unknown";
 
 /**
  * Identifies the canonical project checkout or an isolated execution environment.

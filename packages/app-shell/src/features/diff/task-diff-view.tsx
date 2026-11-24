@@ -12,7 +12,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FileData } from "react-diff-view";
 import "react-diff-view/style/index.css";
 import "./task-diff-view.css";
-import type { WorkspaceDiffScope } from "@ora/contracts";
+import { RemoteContractError, type WorkspaceDiffScope } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,8 +42,11 @@ import { useTranslation } from "react-i18next";
 import { useContractsClient } from "../../contracts-client-context";
 import { localizeContractError } from "../../i18n/contract-error";
 import { refreshWorkspaceReview } from "../../state/data/workspace-review";
+import { refreshWorkspaceDirectories } from "../../state/data/workspace";
 import { useWorkspaceDiff } from "../../state/hooks/use-workspace-diff";
 import { useWorkspaceStatus } from "../../state/hooks/use-workspace-status";
+import { useWorkspaceGitAvailability } from "../../state/hooks/use-workspace-git";
+import { TaskDiffNotGitState } from "./task-diff-not-git";
 import {
   countChanges,
   DEFER_PARSE_PATCH_CHARS,
@@ -159,8 +162,14 @@ export function TaskDiffView({
   const [commitMessage, setCommitMessage] = useState("");
   const [pushOpen, setPushOpen] = useState(false);
   const [gitNotice, setGitNotice] = useState<string | null>(null);
-  const diffQuery = useWorkspaceDiff(workspaceId, scope);
-  const statusQuery = useWorkspaceStatus(workspaceId);
+  // Diff and status are Git reads; a plain folder (or a list still loading) must not issue them.
+  const gitAvailability = useWorkspaceGitAvailability({ workspaceId });
+  const gitReadsEnabled = gitAvailability === "available";
+  const diffQuery = useWorkspaceDiff(workspaceId, scope, gitReadsEnabled);
+  const statusQuery = useWorkspaceStatus(workspaceId, gitReadsEnabled);
+  // A disabled diff query never reports loading, so a list still being checked must count too,
+  // or a chat jump would resolve against an empty patch and bounce to Files.
+  const diffPending = diffQuery.isLoading || gitAvailability === "checking";
   const stagedByPath = useMemo(() => {
     const staged = new Set<string>();
     for (const entry of statusQuery.data?.entries ?? []) {
@@ -333,7 +342,7 @@ export function TaskDiffView({
   // layout into the Files panel. Once the parse lands the block re-runs.
   if (
     fileRequest !== undefined &&
-    !diffQuery.isLoading &&
+    !diffPending &&
     !parseDeferred &&
     fileRequest.requestId !== appliedFileRequestId
   ) {
@@ -429,8 +438,9 @@ export function TaskDiffView({
     startScrollRun,
   ]);
 
+  // A plain folder has no diff, so every chat jump resolves here to the Files panel.
   useEffect(() => {
-    if (fileRequest === undefined || diffQuery.isLoading || parseDeferred) {
+    if (fileRequest === undefined || diffPending || parseDeferred) {
       return;
     }
     if (fileRequest.requestId !== appliedFileRequestId) return;
@@ -451,7 +461,7 @@ export function TaskDiffView({
     fileRequest,
     appliedFileRequestId,
     filePaths,
-    diffQuery.isLoading,
+    diffPending,
     onFileNotFound,
     parseDeferred,
   ]);
@@ -597,6 +607,28 @@ export function TaskDiffView({
     },
   });
   const diff = diffQuery.data;
+  // The list probes the folder only when it is fetched, so a `.git` removed while this panel is
+  // open first shows up as a refusal here. Re-probing lets the panel switch to its explanation
+  // instead of offering a retry that can only fail again.
+  const notGitRefusal = [
+    diffQuery.error,
+    statusQuery.error,
+    commitChanges.error,
+    pushBranch.error,
+    stageOne.error,
+    unstageOne.error,
+    stageAll.error,
+    unstageAll.error,
+  ].find(
+    (error) =>
+      error instanceof RemoteContractError &&
+      error.code === "workspace_not_git_repository",
+  );
+  useEffect(() => {
+    if (notGitRefusal !== undefined) {
+      void refreshWorkspaceDirectories(queryClient);
+    }
+  }, [notGitRefusal, queryClient]);
 
   const gitActions = (
     <TaskGitActions
@@ -640,7 +672,11 @@ export function TaskDiffView({
     await refreshWorkspaceReview(queryClient, workspaceId);
   };
 
-  if (diffQuery.isLoading) {
+  if (gitAvailability === "notRepository") {
+    return <TaskDiffNotGitState toolbar={toolbar} />;
+  }
+
+  if (gitAvailability === "checking" || diffQuery.isLoading) {
     return <DiffLoadingState />;
   }
 

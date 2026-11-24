@@ -22,6 +22,27 @@ pub enum WorkspaceLifecycle {
     Deleted,
 }
 
+/// Reports whether Git operations can act on a workspace directory that exists.
+///
+/// Projects may be plain folders. Ora asks Git about the directory each time it is listed, so
+/// clients can hide Git-only features instead of surfacing their failures. A folder nested inside
+/// another repository's checkout counts as `Repository`, because Git commands run from it act on
+/// that enclosing checkout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workspace.ts")]
+pub enum WorkspaceGit {
+    /// Git resolves the directory to a checkout or linked worktree.
+    Repository,
+    /// Git explicitly reports that the directory is not inside any repository, and no `.git`
+    /// entry exists in it or above it.
+    NotRepository,
+    /// Git could not answer (for example it is not installed, distrusts the owner, the `.git` is
+    /// damaged or unreadable, it did not answer in time, or the checkout is being cleaned up), so
+    /// clients keep their usual behavior.
+    Unknown,
+}
+
 /// Reports whether the directory behind a workspace exists at the moment it was listed.
 ///
 /// Lifecycle admission does not cover this: a user can delete or move a project folder at any
@@ -31,8 +52,8 @@ pub enum WorkspaceLifecycle {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export_to = "workspace.ts")]
 pub enum WorkspaceDirectory {
-    /// The local checkout exists as a directory.
-    Present,
+    /// The local checkout exists as a directory; `git` says whether Git operations apply to it.
+    Present { git: WorkspaceGit },
     /// The recorded local checkout is not a directory; `path` is the resolved location.
     Missing { path: String },
     /// The workspace is not a local checkout, so Desktop cannot probe it.
@@ -69,6 +90,7 @@ pub struct ListWorkspacesResponse {
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkspaceKind::export(config)?;
     WorkspaceLifecycle::export(config)?;
+    WorkspaceGit::export(config)?;
     WorkspaceDirectory::export(config)?;
     Workspace::export(config)?;
     ListWorkspacesRequest::export(config)?;
@@ -79,7 +101,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ListWorkspacesRequest, ListWorkspacesResponse, Workspace, WorkspaceDirectory,
+        ListWorkspacesRequest, ListWorkspacesResponse, Workspace, WorkspaceDirectory, WorkspaceGit,
         WorkspaceKind, WorkspaceLifecycle,
     };
     use pretty_assertions::assert_eq;
@@ -123,6 +145,29 @@ mod tests {
                     "directory": { "kind": "missing", "path": "/gone/ora" },
                 }],
             }),
+        );
+    }
+
+    /// Verifies a present directory carries its Git capability in the frontend wire shape.
+    #[test]
+    fn serializes_present_directory_git_capability() {
+        assert_serialized_json(
+            &WorkspaceDirectory::Present {
+                git: WorkspaceGit::NotRepository,
+            },
+            json!({ "kind": "present", "git": "notRepository" }),
+        );
+        assert_serialized_json(
+            &WorkspaceDirectory::Present {
+                git: WorkspaceGit::Repository,
+            },
+            json!({ "kind": "present", "git": "repository" }),
+        );
+        assert_serialized_json(
+            &WorkspaceDirectory::Present {
+                git: WorkspaceGit::Unknown,
+            },
+            json!({ "kind": "present", "git": "unknown" }),
         );
     }
 

@@ -17,15 +17,19 @@ use ora_contracts::{
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_contracts::{
     ListWorkspacesRequest, ListWorkspacesResponse, Workspace as ContractWorkspace,
-    WorkspaceDirectory, WorkspaceKind, WorkspaceLifecycle,
+    WorkspaceDirectory, WorkspaceGit, WorkspaceKind, WorkspaceLifecycle,
 };
 use ora_db::{RepositoryPool, SqliteWorkspaceRepository, SqliteWorktreeRepository};
 use ora_domain::{Workspace, WorkspaceId, WorkspaceLocation};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+mod git_capability;
+#[cfg(test)]
+mod git_capability_tests;
 mod local_directory;
 
+use git_capability::{probe_workspace_git, require_workspace_git};
 pub(crate) use local_directory::{LocalDirectory, probe_local_directory};
 
 /// Owns workspace queries, live checkout resolution, root configuration, and Git review.
@@ -125,10 +129,13 @@ impl WorkspaceApi {
         let workspaces = ora_db::SqliteWorkspaceRepository::new(self.pool.clone())
             .list_all_workspaces()
             .map_err(|error| BackendError::internal("failed to list workspaces", error))?;
+        let directories =
+            probe_directories(&workspaces, &self.relative_path_base, &self.git_cleanup);
         Ok(ListWorkspacesResponse {
             workspaces: workspaces
                 .into_iter()
-                .map(|workspace| ContractWorkspace {
+                .zip(directories)
+                .map(|(workspace, directory)| ContractWorkspace {
                     id: workspace.id.to_string(),
                     project_id: workspace.project_id.to_string(),
                     kind: match workspace.kind {
@@ -146,7 +153,7 @@ impl WorkspaceApi {
                         ora_domain::WorkspaceLifecycle::Retiring => WorkspaceLifecycle::Retiring,
                         ora_domain::WorkspaceLifecycle::Deleted => WorkspaceLifecycle::Deleted,
                     },
-                    directory: probe_directory(&workspace.location, &self.relative_path_base),
+                    directory,
                 })
                 .collect(),
         })
@@ -179,8 +186,9 @@ impl WorkspaceApi {
         // Shared use lease: physical cleanup of this Workspace's checkout waits
         // for this read instead of removing the directory underneath it.
         let _worktree_use = self.git_cleanup.shared_worktree_use(workspace_id.as_ref());
-        let repository_root = self.load_repository_root(&workspace)?;
-        let cwd = resolve_workspace_cwd(&self.pool, &workspace_id, &self.relative_path_base)?;
+        // Before the baseline check, so a plain folder explains itself even for scopes that
+        // would otherwise report a missing baseline.
+        let (repository_root, cwd) = self.worktree_context(&workspace, &workspace_id)?;
 
         let base_commit_id = self.recorded_baseline(&workspace_id)?;
         let scope = map_diff_scope(request.scope);
@@ -339,7 +347,9 @@ impl WorkspaceApi {
         crate::task::absolute_project_root(PathBuf::from(path), &self.relative_path_base)
     }
 
-    /// Resolves the repository and checkout directory required by write operations.
+    /// Resolves the repository and checkout directory every Git review operation needs, refusing
+    /// a checkout directory that Git does not manage. The one place that enforces "Git review
+    /// needs a work tree".
     fn worktree_context(
         &self,
         workspace: &Workspace,
@@ -347,6 +357,7 @@ impl WorkspaceApi {
     ) -> Result<(PathBuf, PathBuf), BackendError> {
         let repository_root = self.load_repository_root(workspace)?;
         let cwd = resolve_workspace_cwd(&self.pool, workspace_id, &self.relative_path_base)?;
+        require_workspace_git(&cwd)?;
         Ok((repository_root, cwd))
     }
 
@@ -362,16 +373,72 @@ impl WorkspaceApi {
     }
 }
 
-/// Probes the directory behind one Workspace location at list time.
+/// Probes every listed Workspace's directory, a bounded number at a time.
+///
+/// Each probe of a present local directory starts one Git process. A project with many task
+/// worktrees would otherwise pay for them one after another on every list, which is noticeable
+/// where process start-up is slow (Windows).
+fn probe_directories(
+    workspaces: &[Workspace],
+    relative_path_base: &Path,
+    git_cleanup: &crate::git_cleanup::GitCleanupHandle,
+) -> Vec<WorkspaceDirectory> {
+    const PARALLEL_PROBES: usize = 8;
+    workspaces
+        .chunks(PARALLEL_PROBES)
+        .flat_map(|chunk| {
+            // A lone probe needs no fan-out; running it inline also keeps thread-scoped tracing
+            // subscribers attached in tests, as `git_cleanup` does for a single repository group.
+            if let [workspace] = chunk {
+                return vec![probe_directory(workspace, relative_path_base, git_cleanup)];
+            }
+            std::thread::scope(|scope| {
+                // Collecting first starts every probe in the chunk before the first join; a lazy
+                // chain would start and join them one at a time.
+                #[allow(clippy::needless_collect)]
+                let probes: Vec<_> = chunk
+                    .iter()
+                    .map(|workspace| {
+                        scope.spawn(|| probe_directory(workspace, relative_path_base, git_cleanup))
+                    })
+                    .collect();
+                probes
+                    .into_iter()
+                    .map(|probe| {
+                        probe
+                            .join()
+                            .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect()
+}
+
+/// Probes the directory behind one Workspace at list time.
 ///
 /// Shares the probe cwd resolution uses, so a workspace reported `Present` is exactly one that
 /// session start and model discovery can resolve, and a `Missing` path is the one they would
-/// refuse.
-fn probe_directory(location: &WorkspaceLocation, relative_path_base: &Path) -> WorkspaceDirectory {
-    match location {
+/// refuse. A present directory also carries the Git capability the review operations check.
+///
+/// The Git probe starts a process inside the checkout, which on Windows can keep cleanup from
+/// removing the directory, so it holds the shared worktree-use lease like every other checkout
+/// reader. It only tries the lease: a list must never wait on a removal, and a checkout being
+/// cleaned up has no capability worth reporting, so it is `Unknown` instead.
+fn probe_directory(
+    workspace: &Workspace,
+    relative_path_base: &Path,
+    git_cleanup: &crate::git_cleanup::GitCleanupHandle,
+) -> WorkspaceDirectory {
+    match &workspace.location {
         WorkspaceLocation::LocalFilesystem { path } => {
             match probe_local_directory(PathBuf::from(path), relative_path_base) {
-                LocalDirectory::Present(_) => WorkspaceDirectory::Present,
+                LocalDirectory::Present(directory) => WorkspaceDirectory::Present {
+                    git: match git_cleanup.try_shared_worktree_use(workspace.id.as_ref()) {
+                        Some(_worktree_use) => probe_workspace_git(&directory),
+                        None => WorkspaceGit::Unknown,
+                    },
+                },
                 LocalDirectory::Missing(resolved) => WorkspaceDirectory::Missing {
                     path: resolved.to_string_lossy().into_owned(),
                 },
@@ -436,7 +503,8 @@ mod tests {
         CommitWorkspaceChangesRequest, CreateProjectRequest, CreateTaskRequest, EmptyErrorParams,
         GetWorkspaceDiffRequest, GetWorkspaceStatusRequest, ListWorkspacesRequest, PublicError,
         PushWorkspaceBranchRequest, StageWorkspaceChangesRequest, UnstageWorkspaceChangesRequest,
-        Workspace, WorkspaceDiffScope, WorkspaceDirectory, WorkspaceKind, WorkspaceLifecycle,
+        Workspace, WorkspaceDiffScope, WorkspaceDirectory, WorkspaceGit, WorkspaceKind,
+        WorkspaceLifecycle,
     };
     use ora_test_support::GitTestScaffold;
     use pretty_assertions::assert_eq;
@@ -714,7 +782,9 @@ mod tests {
                 project_id: project_id.clone(),
                 kind: WorkspaceKind::Main,
                 lifecycle: WorkspaceLifecycle::Active,
-                directory: WorkspaceDirectory::Present,
+                directory: WorkspaceDirectory::Present {
+                    git: WorkspaceGit::NotRepository,
+                },
             }
         );
 

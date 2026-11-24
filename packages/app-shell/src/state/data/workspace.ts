@@ -169,10 +169,12 @@ export function cacheDeletedTask(
 }
 
 /**
- * Re-probes every workspace folder after a request was refused as `workspace_unavailable`.
+ * Re-probes every workspace folder after a request was refused as `workspace_unavailable` or
+ * `workspace_not_git_repository`.
  *
- * The list only probes when it is fetched, so a folder deleted while Ora stays focused is
- * still reported present; a refusal is the earliest evidence that the cached probe is stale.
+ * The list only probes when it is fetched, so a folder deleted (or a `.git` removed) while Ora
+ * stays focused is still reported as before; a refusal is the earliest evidence that the cached
+ * probe is stale.
  */
 export function refreshWorkspaceDirectories(
   queryClient: QueryClient,
