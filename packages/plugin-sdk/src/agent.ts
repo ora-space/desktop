@@ -5,6 +5,7 @@ import {
   PluginMethodError,
 } from "./plugin.ts";
 import {
+  AGENT_DISCOVERY_BUDGET_MS,
   AGENT_METHODS,
   AGENT_NOT_INSTALLED,
   AGENT_UNUSABLE,
@@ -62,6 +63,12 @@ export interface AgentDiscoveryContext {
   cwd: string;
   /** Whether the caller wants commands. When it does not, do not wait for them. */
   includeCommands: boolean;
+  /**
+   * When Ora stops waiting for the answer, in `Date.now()` time.
+   *
+   * Cleanup has to fit before it too; {@link waitForAgentCommands} leaves room for that.
+   */
+  deadline: number;
 }
 
 /** What the agent offers before any session exists. */
@@ -151,6 +158,7 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     const { models, commands } = await definition.discover({
       cwd,
       includeCommands,
+      deadline: discoveryDeadline(),
     });
     return {
       models: models.map(wireModel),
@@ -162,6 +170,7 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     const { models } = await definition.discover({
       cwd,
       includeCommands: false,
+      deadline: discoveryDeadline(),
     });
     return { models: models.map(wireModel) } satisfies AgentListModelsResult;
   });
@@ -189,6 +198,11 @@ export function defineAgent(definition: AgentDefinition): Plugin {
   }
 
   return plugin;
+}
+
+/** Reads when the host gives up on the discovery it just asked for. */
+function discoveryDeadline(): number {
+  return Date.now() + AGENT_DISCOVERY_BUDGET_MS;
 }
 
 /** Spells out the default flag the host requires. */

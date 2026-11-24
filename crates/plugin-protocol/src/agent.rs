@@ -17,6 +17,10 @@ pub const AGENT_ACP_METHOD: &str = "agent/acp";
 pub const AGENT_NOT_INSTALLED_CODE: i64 = -32001;
 /// Error returned when the executable bundled by an agent package cannot run.
 pub const AGENT_UNUSABLE_CODE: i64 = -32002;
+/// How long the host waits for one discovery, from sending it to reading its answer.
+///
+/// Published so a plugin can keep part of it for cleanup rather than waiting it out.
+pub const AGENT_DISCOVERY_BUDGET_MS: u64 = 60_000;
 /// Longest a plugin may wait for an agent's first command report, from its `session/new` response.
 ///
 /// Every plugin may lower it and none may raise it, so one slow agent cannot hold up the pickers.
@@ -124,19 +128,21 @@ pub struct AgentDiscoverResult {
 
 /// Reads the reported commands, dropping each entry that is not one.
 ///
-/// Commands are agent text a plugin relays, so one malformed entry must not cost the models that
-/// travel with it.
+/// Commands are agent text a plugin relays, so a malformed entry must not cost the models that
+/// travel with it. Anything that is not a list at all leaves the commands unknown.
 fn well_formed_commands<'de, D>(deserializer: D) -> Result<Option<Vec<AgentCommand>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let entries = Option::<Vec<serde_json::Value>>::deserialize(deserializer)?;
-    Ok(entries.map(|entries| {
+    let serde_json::Value::Array(entries) = serde_json::Value::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    Ok(Some(
         entries
             .into_iter()
             .filter_map(|entry| serde_json::from_value(entry).ok())
-            .collect()
-    }))
+            .collect(),
+    ))
 }
 
 /// Supplies the workspace context required by the models-only discovery method.
@@ -215,6 +221,9 @@ mod tests {
             (json!({ "models": [] }), None),
             (json!({ "models": [], "commands": null }), None),
             (json!({ "models": [], "commands": [] }), Some(Vec::new())),
+            // Not a list at all says nothing about the commands, and costs no models.
+            (json!({ "models": [], "commands": "review" }), None),
+            (json!({ "models": [], "commands": {} }), None),
         ] {
             let result: AgentDiscoverResult = serde_json::from_value(wire).expect("deserialize");
             assert_eq!(result.commands, commands);

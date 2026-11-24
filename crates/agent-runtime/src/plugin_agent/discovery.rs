@@ -5,8 +5,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use ora_plugin_protocol::{
-    AGENT_DISCOVER_METHOD, AGENT_LIST_MODELS_METHOD, AgentDiscoverParams, AgentDiscoverResult,
-    AgentListModelsParams, AgentListModelsResult,
+    AGENT_DISCOVER_METHOD, AGENT_DISCOVERY_BUDGET_MS, AGENT_LIST_MODELS_METHOD,
+    AgentDiscoverParams, AgentDiscoverResult, AgentListModelsParams, AgentListModelsResult,
 };
 use ora_plugin_runtime::PluginRuntime;
 use serde::Serialize;
@@ -15,7 +15,7 @@ use serde::de::DeserializeOwned;
 use super::control::PluginAgentError;
 
 /// Discovery may start a one-shot agent process and therefore needs a dedicated budget.
-const AGENT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60);
+const AGENT_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(AGENT_DISCOVERY_BUDGET_MS);
 
 /// Which facts a discovery is made for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

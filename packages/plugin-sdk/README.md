@@ -264,23 +264,26 @@ discovery has to run one. Do that on a **separate, one-shot agent process**, and
 ask the host to start it:
 
 ```ts
-discover: (async ({ cwd, includeCommands }) => {
+discover: (async (context) => {
+  const { cwd, includeCommands } = context;
   const probe = await spawnAgentProcess(processes, {
     packageCommand: "bin/opencode",
     command: "opencode",
   }, { args: ["acp", "--cwd", cwd], cwd });
   // initialize → session/new(cwd, no MCP servers) → read config_options
   const commands = includeCommands
-    ? await waitForAgentCommands(firstCommandReport, { deadline })
+    ? await waitForAgentCommands(context, firstCommandReport)
     : undefined;
   // session/delete if the agent supports it → end the process
   return { models, commands };
 });
 ```
 
+`deadline` in the context is when Ora stops waiting for the answer.
 `waitForAgentCommands` takes a promise for the first `available_commands_update`
 of the probe session, and stops at Ora's cap or where the cleanup reserve before
-`deadline` begins. It resolves to `undefined` when nothing arrives, and then
+that deadline begins. A plugin with an earlier deadline of its own passes it as
+`{ deadline }`. It resolves to `undefined` when nothing arrives, and then
 `commands` stays out of the answer: an absent list means nobody knows, an empty
 one means the agent said it has none. Relay the commands in the agent's order
 and wording; Ora decides what to show.

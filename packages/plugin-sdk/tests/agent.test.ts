@@ -1,10 +1,13 @@
 import {
   type AcpSender,
+  AGENT_DISCOVERY_CLEANUP_RESERVE_MS,
   AGENT_NOT_INSTALLED,
   defineAgent,
   PluginMethodError,
+  waitForAgentCommands,
 } from "../src/mod.ts";
 import {
+  AGENT_DISCOVERY_BUDGET_MS,
   decodeFrames,
   encodeFrame,
   type JsonValue,
@@ -144,7 +147,7 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
       send = sender;
     },
     stop: () => {},
-    discover: (context) => {
+    discover: ({ deadline: _, ...context }) => {
       discoveryContexts.push(context);
       return {
         models: [{ id: "opus", displayName: "Opus" }],
@@ -385,6 +388,55 @@ Deno.test("keeps unknown commands apart from an empty report", async () => {
         ? { models: [] }
         : { models: [], commands },
     });
+    await harness.send({ jsonrpc: "2.0", method: "ora/shutdown", params: {} });
+    await run;
+  }
+});
+
+Deno.test("gives discover the host's deadline, before which cleanup keeps its time", async () => {
+  const { now } = Date;
+  const { setTimeout: schedule } = globalThis;
+  const asked = 1_000_000;
+  const requests: { method: string; params: JsonValue }[] = [
+    {
+      method: "agent/discover",
+      params: { cwd: "/p", includeCommands: true },
+    },
+    { method: "agent/list_models", params: { cwd: "/p" } },
+  ];
+  for (const request of requests) {
+    let deadline: number | undefined;
+    let waited: number | undefined;
+    const plugin = defineAgent({
+      start: () => {},
+      stop: () => {},
+      discover: async (context) => {
+        deadline = context.deadline;
+        // `session/new` answers a tenth of a second before the reserve begins.
+        Date.now = () =>
+          asked + AGENT_DISCOVERY_BUDGET_MS -
+          AGENT_DISCOVERY_CLEANUP_RESERVE_MS - 100;
+        globalThis.setTimeout = ((fire: () => void, delay: number) => {
+          waited = delay;
+          return schedule(fire, 0);
+        }) as typeof setTimeout;
+        await waitForAgentCommands(context, new Promise(() => {}));
+        return { models: [] };
+      },
+      onAcp: () => {},
+    });
+    const harness = createTransportHarness();
+    const run = plugin.run(harness.transport);
+    await harness.responses.next();
+    try {
+      Date.now = () => asked;
+      await harness.send({ jsonrpc: "2.0", id: 1, ...request });
+      await harness.responses.next();
+    } finally {
+      Date.now = now;
+      globalThis.setTimeout = schedule;
+    }
+    assertEquals([deadline, waited], [asked + AGENT_DISCOVERY_BUDGET_MS, 100]);
     await harness.send({ jsonrpc: "2.0", method: "ora/shutdown", params: {} });
     await run;
   }
