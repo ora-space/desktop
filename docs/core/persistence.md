@@ -64,9 +64,15 @@ application in reverse order using the `down_sql` that newer version stored. It 
 SQL of shared versions, so a packaged build cannot rebuild user data because an old migration
 definition changed.
 
-When the database had no migration rows and at least one migration was applied, the first-install
-SQL runs afterwards in its own transaction and is not recorded in `migrations`. Existing databases
-never receive it. If it fails, bootstrap fails while the committed migrations stay applied.
+Before schema steps, the bootstrapper atomically creates migration bookkeeping and a separate
+`bootstrap_state` journal. Only a completely new database records fresh-install provenance and
+pending distribution initialization. Existing databases receive no fresh-install marker.
+
+After migrations, pending first-install SQL runs in a transaction with completion of its journal
+entry. If a migration or initialization fails, committed schema steps remain applied and the
+pending work is retried on restart. The Marketplace consumes its own initialization entry from
+the same durable provenance, independently of the optional distribution SQL. An existing empty
+source list therefore stays empty, while an interrupted new install still receives its defaults.
 
 ## Development reconciliation
 

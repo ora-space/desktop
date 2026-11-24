@@ -25,12 +25,9 @@ mod schema_v0022;
 mod schema_v0023;
 mod schema_v0024;
 
-/// Initialization applied only to a brand-new database.
-///
-/// Existing databases never receive this pending seed marker: an empty source list in an old
-/// installation is a user choice. Internal distributions may replace this initialization.
-pub(super) const FIRST_INSTALL_SQL: &[&str] =
-    &["INSERT INTO user_config (key, value) VALUES ('marketplace_sources_seed_pending', 'true');"];
+/// Distribution-specific data initialization, separate from durable bootstrap bookkeeping.
+/// Public builds ship no distribution data. Replacing this list cannot disable source seeding.
+pub(super) const FIRST_INSTALL_SQL: &[&str] = &[];
 
 /// Returns the ordered schema migrations shipped with the database crate.
 pub(super) fn migrations() -> Vec<Migration> {

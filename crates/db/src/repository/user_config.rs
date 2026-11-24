@@ -91,11 +91,9 @@ mod tests {
 
         let connection = Connection::open(temporary.path().join("ora.sqlite3")).unwrap();
         let row_count = connection
-            .query_row(
-                "SELECT COUNT(*) FROM user_config WHERE key = 'missing'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row("SELECT COUNT(*) FROM user_config", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap();
         assert_eq!(row_count, 0);
     }

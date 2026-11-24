@@ -848,3 +848,42 @@ fn assert_migration_step_failed(
         Some((expected_version, expected_direction))
     );
 }
+
+/// Distribution data remains pending across a failure and is applied exactly once on recovery.
+#[test]
+fn failed_first_install_data_retries_after_schema_has_committed() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("retry-first-install.sqlite3");
+    let catalog = MigrationCatalog::new(vec![table_migration("0001", "alpha")])
+        .unwrap()
+        .with_first_install_sql(&[
+            "INSERT INTO alpha (id) VALUES (7); INSERT INTO recovery_gate (id) VALUES (1);",
+        ]);
+    assert!(bootstrap_file_database(&path, &catalog, 100).is_err());
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM alpha", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    connection
+        .execute_batch("CREATE TABLE recovery_gate (id INTEGER PRIMARY KEY);")
+        .unwrap();
+    drop(connection);
+    bootstrap_file_database(&path, &catalog, 200).unwrap();
+    bootstrap_file_database(&path, &catalog, 300).unwrap();
+    let connection = Connection::open(path).unwrap();
+    assert_eq!(
+        (
+            connection
+                .query_row("SELECT id FROM alpha", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            connection
+                .query_row("SELECT id FROM recovery_gate", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap()
+        ),
+        (7, 1)
+    );
+}

@@ -16,6 +16,9 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   visible identity. Soft-deleted rows do not reserve that identity, and local resources use the
   `local` namespace.
 - Applied rows record `version`, `up_sql`, `down_sql`, and an injected `executed_at` timestamp.
+- `bootstrap_state` records fresh-install provenance atomically with creation of migration
+  bookkeeping, before schema steps can commit. Pending first-install data survives failures and
+  its completion commits with that data. Marketplace initialization is independent of distributor SQL.
 - The default catalog carries a separate first-install SQL statement list. Public builds keep the
   list empty; distribution patches may populate it without changing any versioned migration
   snapshot. Its contents are omitted from `MigrationCatalog` debug output.

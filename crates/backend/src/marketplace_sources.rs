@@ -301,13 +301,15 @@ mod tests {
     use tempfile::TempDir;
 
     fn open_pool(temp: &TempDir) -> RepositoryPool {
-        let database_path = temp.path().join("ora.sqlite3");
-        DatabaseBootstrapper::new(crate::test_clock::TestClock)
-            .bootstrap_repository_pool(
-                &DatabaseLocation::path(&database_path),
-                &default_migration_catalog().expect("build migration catalog"),
-            )
-            .expect("open repository pool")
+        ora_logging::with_trace_logging(|| {
+            let database_path = temp.path().join("ora.sqlite3");
+            DatabaseBootstrapper::new(crate::test_clock::TestClock)
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("build migration catalog"),
+                )
+                .expect("open repository pool")
+        })
     }
 
     fn store_with_pool(temp: &TempDir, pool: RepositoryPool) -> MarketplaceSourceStore {
@@ -400,6 +402,11 @@ mod tests {
                 )
                 .unwrap();
             repository.delete_source(DEFAULT_MARKETPLACE_URL).unwrap();
+            // Released databases had no bootstrap provenance table.
+            rusqlite::Connection::open(temp.path().join("ora.sqlite3"))
+                .unwrap()
+                .execute_batch("DROP TABLE bootstrap_state")
+                .unwrap();
             // No new-version store or seeding API has run before this upgrade boundary.
             drop(repository);
             drop(pool);
@@ -433,13 +440,102 @@ mod tests {
             .unwrap();
         let store = store_with_pool(&temp, pool.clone());
         let sources = store.list().unwrap();
-        assert_eq!(sources.len(), 1);
-        assert_eq!(sources[0].branch, "private");
-        assert!(sources[0].use_proxy);
-        assert!(!sources[0].enabled);
+        assert_eq!(
+            sources,
+            vec![MarketplaceSource {
+                url: "https://example.com/private".to_owned(),
+                branch: "private".to_owned(),
+                use_proxy: true,
+                enabled: false,
+                artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
+            }]
+        );
         store.delete("https://example.com/private").unwrap();
         drop(store);
         assert!(store_with_pool(&temp, pool).list().unwrap().is_empty());
+    }
+
+    /// Replacing distribution defaults cannot disable the Marketplace's initialization policy.
+    #[test]
+    fn distributor_sql_without_sources_still_seeds_the_public_default() {
+        ora_logging::with_trace_logging(|| {
+            let temp = TempDir::new().unwrap();
+            let catalog = default_migration_catalog()
+                .unwrap()
+                .with_first_install_sql(&[
+                    "INSERT INTO user_config (key, value) VALUES ('developer_mode', 'true');",
+                ]);
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(temp.path().join("ora.sqlite3")),
+                    &catalog,
+                )
+                .unwrap();
+            assert_eq!(
+                store_with_pool(&temp, pool).list().unwrap(),
+                vec![third_party(DEFAULT_MARKETPLACE_URL)]
+            );
+        });
+    }
+
+    /// Fresh provenance survives failures before/after schema commits and in distributor data.
+    #[test]
+    fn interrupted_first_install_resumes_default_source_initialization() {
+        ora_logging::with_trace_logging(|| {
+            let latest = default_migration_catalog().unwrap();
+            let count = latest.target_versions().len();
+            for failure_at in [0, 1, count] {
+                let temp = TempDir::new().unwrap();
+                let location = DatabaseLocation::path(temp.path().join("ora.sqlite3"));
+                let mut migrations: Vec<_> = latest
+                    .target_versions()
+                    .iter()
+                    .map(|version| latest.migration(version).unwrap().clone())
+                    .collect();
+                if failure_at < count {
+                    migrations[failure_at] = ora_db::Migration::new(
+                        latest.target_versions()[failure_at],
+                        &["SELECT * FROM injected_first_install_failure;"],
+                        &[],
+                    );
+                }
+                let mut failing = ora_db::MigrationCatalog::new(migrations).unwrap();
+                if failure_at == count {
+                    failing = failing
+                        .with_first_install_sql(&["SELECT * FROM injected_first_install_failure;"]);
+                }
+                assert!(
+                    DatabaseBootstrapper::system()
+                        .bootstrap_repository_pool(&location, &failing)
+                        .is_err()
+                );
+                let partial = RepositoryPool::new(&location).unwrap();
+                let committed = rusqlite::Connection::open(temp.path().join("ora.sqlite3"))
+                    .unwrap()
+                    .query_row("SELECT COUNT(*) FROM migrations", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap();
+                assert_eq!(committed, failure_at as i64);
+                assert!(
+                    SqlitePluginMarketplaceSourceRepository::new(partial.clone())
+                        .needs_initial_source()
+                        .unwrap()
+                );
+                drop(partial);
+                let recovered = DatabaseBootstrapper::system()
+                    .bootstrap_repository_pool(&location, &latest)
+                    .unwrap();
+                let store = store_with_pool(&temp, recovered.clone());
+                assert_eq!(
+                    store.list().unwrap(),
+                    vec![third_party(DEFAULT_MARKETPLACE_URL)]
+                );
+                store.delete(DEFAULT_MARKETPLACE_URL).unwrap();
+                drop(store);
+                assert_eq!(store_with_pool(&temp, recovered).list().unwrap(), vec![]);
+            }
+        });
     }
 
     #[test]
