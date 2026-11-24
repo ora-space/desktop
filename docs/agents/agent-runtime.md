@@ -106,10 +106,11 @@ turn locally until `startSession` returns.
 
 - **Start.** `startSession` is the only creation path. It calls `session/new` with the current
   Session MCP snapshot, applies the caller's optional model intent against the options that
-  handshake reported, persists the Session, opens its history and installs its actor. Until the
-  actor owns it, a guard releases the unexposed provider session (`session/delete` when supported,
-  otherwise `session/close`) on any error or cancellation, and failed persistence removes the
-  history file and soft-deletes any inserted row.
+  handshake reported (an applied intent outdates options the agent pushed before it), persists the
+  Session, opens its history and installs its actor. Until the actor owns it, a guard releases the
+  unexposed provider session (`session/delete` when supported, otherwise `session/close`) on any
+  error or cancellation, and failed persistence removes the history file and soft-deletes any
+  inserted row.
 - **Load.** Loading reads Ora's own record and touches no agent: it creates no provider session and
   changes no lifecycle state, so a conversation opens even if its agent is gone. If an actor exists
   it answers its own load (replaying the record and then following a prompt in flight) without

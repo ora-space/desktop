@@ -2296,6 +2296,7 @@ mod restored_sessions {
     mod command_limit_tests;
     mod follower_retry_tests;
     mod follower_setup_tests;
+    mod setup_options_tests;
     use super::*;
     use pretty_assertions::assert_eq;
     /// Holds two or more sessions on one real routed ACP peer with a controllable provider.
@@ -2449,6 +2450,25 @@ mod restored_sessions {
             }
         }
 
+        /// Persists a session bound to this agent, with no actor serving it.
+        fn seed_session_on(&self, id: &str, agent_ref: &str) -> Session {
+            self.manager
+                .inner
+                .store
+                .create_session(Session::new(
+                    SessionId::new(id),
+                    WorkspaceId::new("workspace"),
+                    AgentRef::parse(agent_ref).unwrap(),
+                    id,
+                    SessionStatus::Running,
+                    SessionMcpSelection::Automatic,
+                    AuditFields::new(
+                        /*created_at*/ 0, /*updated_at*/ 0, /*is_deleted*/ false,
+                    ),
+                ))
+                .unwrap()
+        }
+
         /// Seeds an already attached session so the test measures prompt policy rather than setup.
         fn add_session(&self, id: &str) {
             self.add_session_with_title_acquisition(id, crate::TitleAcquisition::disabled());
@@ -2489,22 +2509,7 @@ mod restored_sessions {
             channel: Option<crate::routing::SessionChannel>,
             live_mcp: LiveMcpState,
         ) {
-            let session = self
-                .manager
-                .inner
-                .store
-                .create_session(Session::new(
-                    SessionId::new(id),
-                    WorkspaceId::new("workspace"),
-                    AgentRef::parse("official/test.agent").unwrap(),
-                    id,
-                    SessionStatus::Running,
-                    SessionMcpSelection::Automatic,
-                    AuditFields::new(
-                        /*created_at*/ 0, /*updated_at*/ 0, /*is_deleted*/ false,
-                    ),
-                ))
-                .unwrap();
+            let session = self.seed_session_on(id, "official/test.agent");
             let recorder = self.manager.open_recorder(&session).unwrap().recorder;
             self.manager
                 .insert_actor(

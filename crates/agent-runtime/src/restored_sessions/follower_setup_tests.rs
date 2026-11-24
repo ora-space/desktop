@@ -18,22 +18,28 @@ enum Report {
     /// After it, while Ora applies the model the conversation was on.
     AfterSetup,
     Never,
-    /// Only an option change, pushed within the setup window.
+    /// Never, after a stale session that had reported none either.
+    NeverAny,
+    /// Never, and neither session offers options.
+    Nothing,
+    /// Only the agent's own options, pushed before Ora applies the conversation's model.
     OptionsInSetup,
+    /// The same, and then it refuses that model.
+    OptionsKept,
     /// Neither commands nor options: the replacement offers no options at all.
     NoOptions,
 }
 
 /// The session state a client shows, as the updates that carry it.
-#[derive(Debug, PartialEq)]
-enum State {
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum State {
     Commands(Vec<String>),
     Model(String),
     NoOptions,
 }
 
 /// Reads one update's session state, if it carries any.
-fn state(update: SessionUpdate) -> Option<State> {
+pub(super) fn state(update: SessionUpdate) -> Option<State> {
     match update {
         SessionUpdate::AvailableCommandsUpdate(update) => Some(State::Commands(
             update
@@ -53,7 +59,7 @@ fn state(update: SessionUpdate) -> Option<State> {
 }
 
 /// Builds the model selector as one provider session reports it.
-fn model(current: &str) -> Value {
+pub(super) fn model(current: &str) -> Value {
     json!([{"id":"model", "name":"Model", "category":"model", "type":"select",
         "currentValue":current, "options":[{"value":"a","name":"A"},{"value":"b","name":"B"}]}])
 }
@@ -66,7 +72,7 @@ fn commands(session_id: &str, name: &str) -> Value {
 }
 
 /// Frames an option change the provider pushed on its own.
-fn options(session_id: &str, current: &str) -> Value {
+pub(super) fn options(session_id: &str, current: &str) -> Value {
     let update = ConfigOptionUpdate::new(serde_json::from_value(model(current)).unwrap());
     json!({"jsonrpc":"2.0", "method":"session/update", "params": SessionNotification::new(
         session_id.to_string(), SessionUpdate::ConfigOptionUpdate(update))})
@@ -93,10 +99,17 @@ async fn replacing_agent(
         let id = &frame["id"];
         let answer = |result: Value| json!({"jsonrpc":"2.0", "id":id, "result":result});
         let replies = match frame["method"].as_str() {
-            Some("session/load") => vec![
-                commands("restored", "stale"),
-                answer(json!({"configOptions":model("a")})),
-            ],
+            Some("session/load") => {
+                let offered = match report {
+                    Report::Nothing => json!([]),
+                    _ => model("a"),
+                };
+                let restored = answer(json!({"configOptions":offered}));
+                match report {
+                    Report::NeverAny | Report::Nothing => vec![restored],
+                    _ => vec![commands("restored", "stale"), restored],
+                }
+            }
             Some("session/prompt") if frame["params"]["sessionId"] == "restored" => {
                 fail.notified().await;
                 vec![json!({"jsonrpc":"2.0", "id":id,
@@ -104,22 +117,34 @@ async fn replacing_agent(
             }
             Some("session/new") => {
                 let offered = match report {
-                    Report::NoOptions => json!([]),
+                    Report::NoOptions | Report::Nothing => json!([]),
                     _ => model("b"),
                 };
                 let created = answer(json!({"sessionId":"replacement", "configOptions":offered}));
                 match report {
                     Report::InSetup => vec![created, commands("replacement", "fresh")],
-                    Report::OptionsInSetup => vec![created, options("replacement", "a")],
-                    Report::AfterSetup | Report::Never | Report::NoOptions => vec![created],
+                    Report::OptionsInSetup | Report::OptionsKept => {
+                        vec![created, options("replacement", "b")]
+                    }
+                    Report::AfterSetup
+                    | Report::Never
+                    | Report::NeverAny
+                    | Report::Nothing
+                    | Report::NoOptions => {
+                        vec![created]
+                    }
                 }
             }
             Some("session/set_config_option") => {
                 let applied = answer(json!({"configOptions":model("a")}));
                 match report {
+                    Report::OptionsKept => vec![json!({"jsonrpc":"2.0", "id":id,
+                        "error":{"code":-32000, "message":"refused"}})],
                     Report::AfterSetup => vec![commands("replacement", "fresh"), applied],
                     Report::InSetup
                     | Report::Never
+                    | Report::NeverAny
+                    | Report::Nothing
                     | Report::OptionsInSetup
                     | Report::NoOptions => vec![applied],
                 }
@@ -191,7 +216,8 @@ fn a_follower_sees_the_state_of_the_session_that_replaced_a_stale_one() {
         (Report::InSetup, vec![on("a"), fresh()]),
         (Report::AfterSetup, vec![on("a"), none(), fresh()]),
         (Report::Never, vec![on("a"), none()]),
-        (Report::OptionsInSetup, vec![on("a"), none(), on("a")]),
+        (Report::OptionsInSetup, vec![on("a"), none()]),
+        (Report::OptionsKept, vec![on("b"), none(), on("b")]),
         (Report::NoOptions, vec![State::NoOptions, none()]),
     ] {
         run_case(async move {

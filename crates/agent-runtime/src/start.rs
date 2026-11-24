@@ -362,15 +362,20 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     let available_commands = collect_setup_commands(&mut channel).await;
     crate::discovery::warn_when_commands_exceed_limit(agent_ref, available_commands.len());
     let mut config_options = response.config_options.unwrap_or_default();
-    if let Some(model) = model {
-        config_options = apply_model_intent(
+    if let Some(model) = model
+        && let Some(applied) = apply_model_intent(
             connections,
             agent_ref,
             &agent_session_id,
             model,
-            config_options,
+            &config_options,
         )
-        .await;
+        .await
+    {
+        // This answer is the whole configuration after the change. A snapshot collected before the
+        // request is older, and delivering it with the first prompt would show the model undone.
+        channel.discard_pending_options();
+        config_options = applied;
     }
     Ok(PendingProviderSession {
         release,
@@ -500,16 +505,16 @@ pub fn record_session_mcp_boundary(
 }
 
 /// Applies a model only when the session authoritatively offers that value.
+///
+/// Returns the configuration the provider answered with, or nothing when none was applied.
 pub(super) async fn apply_model_intent<H: AgentRuntimeHost>(
     connections: &ConnectionSupervisors<H>,
     agent_ref: &AgentRef,
     agent_session_id: &str,
     model: &str,
-    config_options: Vec<SessionConfigOption>,
-) -> Vec<SessionConfigOption> {
-    let Some(config_id) = model_config_id(&config_options, model) else {
-        return config_options;
-    };
+    config_options: &[SessionConfigOption],
+) -> Option<Vec<SessionConfigOption>> {
+    let config_id = model_config_id(config_options, model)?;
     match request_config_option(
         connections,
         agent_ref,
@@ -519,7 +524,7 @@ pub(super) async fn apply_model_intent<H: AgentRuntimeHost>(
     )
     .await
     {
-        Ok(updated) => updated,
+        Ok(updated) => Some(updated),
         Err(error) => {
             ora_warn!(
                 agent = %agent_ref,
@@ -527,7 +532,7 @@ pub(super) async fn apply_model_intent<H: AgentRuntimeHost>(
                 error = %error,
                 "provider rejected pre-session model intent",
             );
-            config_options
+            None
         }
     }
 }
