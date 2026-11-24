@@ -172,7 +172,7 @@ const EMPTY_CONVERSATION: SessionConversation = {
   modelChanges: [],
   historyNotices: [],
   turns: [],
-  availableCommands: [],
+  availableCommands: null,
   sessionTitle: null,
   sessionUpdatedAt: null,
   isLoaded: false,
@@ -655,7 +655,12 @@ export function createChatStore(
         // to the landing layout and replay the slide-down animation.
         updateConversation(set, key, (conversation) => ({
           ...conversation,
-          availableCommands: prepared.availableCommands,
+          // Agents usually report after answering setup, so a setup that collected none has
+          // not said there are none.
+          availableCommands:
+            prepared.availableCommands.length > 0
+              ? prepared.availableCommands
+              : null,
           isLoaded: true,
         }));
       }
@@ -792,6 +797,11 @@ export function createChatStore(
             );
             updateConversation(set, key, (conversation) => ({
               ...conversation,
+              // A turn the Agent finished is its chance to report; a cancelled one may never
+              // have reached it.
+              availableCommands:
+                conversation.availableCommands ??
+                (event.stopReason === "cancelled" ? null : []),
               usage: completeUsageTurn(
                 conversation.usage,
                 event.tokenUsage,
@@ -955,7 +965,7 @@ class HistoryBuilder {
   /** Session-scoped options seen during replay; `null` when the agent reported none. */
   configOptions: acp.SessionConfigOption[] | null = null;
   private readonly turns: ChatTurn[] = [];
-  private availableCommands: acp.AvailableCommand[] = [];
+  private availableCommands: acp.AvailableCommand[] | null = null;
   private sessionTitle: string | null = null;
   private sessionUpdatedAt: string | null = null;
   /**

@@ -2069,6 +2069,83 @@ describe("WorkspaceView", () => {
     expect(state.sessions[0]?.agentRef).toBe(AGENT_REF.opencode);
   });
 
+  it("explains a reopened session's unreported commands until its first turn brings them", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        workspaceId: "workspace-t1",
+        title: "Reopened",
+      },
+    ];
+    state.sessions = [
+      {
+        id: "s1",
+        workspaceId: "workspace-t1",
+        agentRef: AGENT_REF.opencode,
+        status: "stopped",
+        title: null,
+        historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
+      },
+    ];
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    clientHandlers.promptSession = async function* () {
+      yield {
+        type: "session_update" as const,
+        update: {
+          sessionUpdate: "available_commands_update" as const,
+          availableCommands: [{ name: "review", description: "Review" }],
+        },
+      };
+      yield { type: "completed" as const, stopReason: "end_turn" as const };
+    };
+    const client = createTestClient(clientHandlers);
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+    await waitFor(() =>
+      expect(chatStore.getState().conversations.s1?.isLoaded).toBe(true),
+    );
+    const pending = appI18n.t("chat.actionMenu.commandsPending");
+    const textarea = await screen.findByRole("textbox");
+
+    await user.type(textarea, "/review");
+    expect(await screen.findByText(pending)).toBeVisible();
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
+
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(chatStore.getState().conversations.s1).toMatchObject({
+        isResponding: false,
+        availableCommands: [{ name: "review" }],
+      }),
+    );
+
+    await user.type(textarea, "/");
+    expect(await screen.findByRole("option", { name: /review/ })).toBeVisible();
+    expect(screen.queryByText(pending)).not.toBeInTheDocument();
+  });
+
   it("resumes a session whose history stopped recording", async () => {
     const user = userEvent.setup();
     const state = createFixtureState();
