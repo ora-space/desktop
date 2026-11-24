@@ -1,3 +1,4 @@
+import { operatorSupportsType } from "./workflow-condition-operator";
 import { selectorToText, textToSelector } from "./workflow-selector-text";
 import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
@@ -7,7 +8,6 @@ import type {
   WorkflowConditionComparison,
   WorkflowConditionLogic,
   WorkflowVariableCatalogEntry,
-  WorkflowVariableValueType,
 } from "@ora/workflow-mock";
 import {
   Button,
@@ -419,31 +419,4 @@ function comparisonValueToText(value: unknown): string {
     return "";
   }
   return typeof value === "string" ? value : JSON.stringify(value);
-}
-
-/** Offers comparisons appropriate for the selected value, preserving unknown-type editing. */
-function operatorSupportsType(
-  operator: string,
-  valueType: WorkflowVariableValueType | undefined,
-): boolean {
-  if (valueType === undefined || valueType === "any") return true;
-  switch (operator) {
-    case "greater_than":
-    case "greater_than_or_equal":
-    case "less_than":
-    case "less_than_or_equal":
-      return valueType === "number" || valueType === "integer";
-    case "contains":
-    case "not_contains":
-      return (
-        valueType === "string" ||
-        valueType === "secret" ||
-        valueType.startsWith("array")
-      );
-    case "starts_with":
-    case "ends_with":
-      return valueType === "string" || valueType === "secret";
-    default:
-      return true;
-  }
 }

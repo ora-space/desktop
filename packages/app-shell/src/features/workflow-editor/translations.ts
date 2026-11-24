@@ -1,6 +1,8 @@
 // Pure translation data: safe to compose without importing feature implementation.
 export const workflowEditorTranslations = {
   "zh-CN": {
+    "settings.workflow.debug.review": "预览改动",
+    "settings.workflow.debug.invalid": "请检查{{field}}的值及其变量作用域。",
     "errors.workflow_name_conflict": "已存在同名工作流。",
     "errors.workflow_name_blank": "工作流名称不能为空。",
     "errors.workflow_not_found": "未找到该工作流。",
@@ -597,6 +599,9 @@ export const workflowEditorTranslations = {
     "settings.workflow.deleteNode": "删除节点",
   },
   "en-US": {
+    "settings.workflow.debug.review": "Preview changes",
+    "settings.workflow.debug.invalid":
+      "Check the value and variable scope for {{field}}.",
     "errors.workflow_name_conflict":
       "A workflow with this name already exists.",
     "errors.workflow_name_blank": "Workflow name cannot be blank.",

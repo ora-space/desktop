@@ -1195,67 +1195,6 @@ function IterationNodeDetails({
           graphNodes.find((candidate) => candidate.id === variable.sourceNodeId)
             ?.data.title ?? variable.sourceNodeTitle,
       }));
-  const iteratorValue = config.iteratorSelector.join(".");
-  const collectValue = config.collectSelector.join(".");
-  const iteratorVariable = iteratorChoices.find(
-    (variable) => variable.selector.join(".") === iteratorValue,
-  );
-  const collectVariable = collectChoices.find(
-    (variable) => variable.selector.join(".") === collectValue,
-  );
-  const selectorSelect = (
-    htmlId: string,
-    value: string,
-    placeholder: string,
-    choices: WorkflowVariableCatalogEntry[],
-    resolved: WorkflowVariableCatalogEntry | undefined,
-    onPick: (selector: string[]) => void,
-    ariaLabel: string,
-  ) => (
-    <Select
-      value={value === "" ? null : value}
-      onValueChange={(picked) => {
-        if (picked !== null) {
-          onPick(
-            picked
-              .split(".")
-              .map((part) => part.trim())
-              .filter((part) => part !== ""),
-          );
-        }
-      }}
-    >
-      <SelectTrigger
-        className="h-8 w-full bg-background"
-        id={htmlId}
-        aria-label={ariaLabel}
-      >
-        {resolved !== undefined ? (
-          <SelectValue placeholder={placeholder}>
-            <WorkflowVariableDisplay
-              variable={resolved}
-              nodeName={resolved.sourceNodeTitle ?? resolved.sourceNodeId}
-            />
-          </SelectValue>
-        ) : value === "" ? (
-          <SelectValue placeholder={placeholder} />
-        ) : (
-          <SelectValue placeholder={placeholder}>{value}</SelectValue>
-        )}
-      </SelectTrigger>
-      <SelectContent
-        alignItemWithTrigger={false}
-        align="start"
-        className="w-70 min-w-70 max-w-70"
-      >
-        <WorkflowVariableSelectGroups
-          variables={choices}
-          globalVariablesLabel={t("settings.workflow.globalVariables")}
-        />
-      </SelectContent>
-    </Select>
-  );
-
   return (
     <>
       <WorkflowNodeDetailsHeader
@@ -1268,44 +1207,9 @@ function IterationNodeDetails({
         <p className="text-xs leading-relaxed text-muted-foreground">
           {t("settings.workflow.iteration.hint")}
         </p>
-        <InspectorField
-          label={t("settings.workflow.field.iterationIterator")}
-          htmlFor="workflow-node-iteration-iterator"
-        >
-          {selectorSelect(
-            "workflow-node-iteration-iterator",
-            iteratorValue,
-            t("settings.workflow.iteration.iteratorPlaceholder"),
-            iteratorChoices,
-            iteratorVariable,
-            (selector) => updateConfig({ iteratorSelector: selector }),
-            t("settings.workflow.field.iterationIterator"),
-          )}
-          {config.iteratorSelector.length === 0 && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              {t("settings.workflow.iteration.iteratorEmpty")}
-            </p>
-          )}
-        </InspectorField>
-        <InspectorField
-          label={t("settings.workflow.field.iterationCollect")}
-          htmlFor="workflow-node-iteration-collect"
-        >
-          {selectorSelect(
-            "workflow-node-iteration-collect",
-            collectValue,
-            t("settings.workflow.iteration.collectPlaceholder"),
-            collectChoices,
-            collectVariable,
-            (selector) => updateConfig({ collectSelector: selector }),
-            t("settings.workflow.field.iterationCollect"),
-          )}
-          {config.collectSelector.length === 0 && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              {t("settings.workflow.iteration.collectEmpty")}
-            </p>
-          )}
-        </InspectorField>
+        <IterationSelectorFields
+          {...{ config, iteratorChoices, collectChoices, updateConfig }}
+        />
         <InspectorField
           label={t("settings.workflow.field.iterationErrorStrategy")}
           htmlFor="workflow-node-iteration-error-strategy"
@@ -1425,5 +1329,124 @@ export function InspectorField({
       </Label>
       {children}
     </div>
+  );
+}
+
+export function IterationSelectorFields({
+  config,
+  iteratorChoices,
+  collectChoices,
+  updateConfig,
+}: {
+  config: Pick<WorkflowIterationConfig, "iteratorSelector" | "collectSelector">;
+  iteratorChoices: WorkflowVariableCatalogEntry[];
+  collectChoices: WorkflowVariableCatalogEntry[];
+  updateConfig: (
+    patch: Partial<
+      Pick<WorkflowIterationConfig, "iteratorSelector" | "collectSelector">
+    >,
+  ) => void;
+}) {
+  const { t } = useTranslation();
+  const iteratorValue = config.iteratorSelector.join(".");
+  const collectValue = config.collectSelector.join(".");
+  const iteratorVariable = iteratorChoices.find(
+    (variable) => variable.selector.join(".") === iteratorValue,
+  );
+  const collectVariable = collectChoices.find(
+    (variable) => variable.selector.join(".") === collectValue,
+  );
+  const selectorSelect = (
+    htmlId: string,
+    value: string,
+    placeholder: string,
+    choices: WorkflowVariableCatalogEntry[],
+    resolved: WorkflowVariableCatalogEntry | undefined,
+    onPick: (selector: string[]) => void,
+    ariaLabel: string,
+  ) => (
+    <Select
+      value={value === "" ? null : value}
+      onValueChange={(picked) => {
+        if (picked !== null) {
+          const choice = choices.find(
+            (entry) => entry.selector.join(".") === picked,
+          );
+          if (choice) onPick(choice.selector);
+        }
+      }}
+    >
+      <SelectTrigger
+        className="h-8 w-full bg-background"
+        id={htmlId}
+        aria-label={ariaLabel}
+      >
+        {resolved !== undefined ? (
+          <SelectValue placeholder={placeholder}>
+            <WorkflowVariableDisplay
+              variable={resolved}
+              nodeName={resolved.sourceNodeTitle ?? resolved.sourceNodeId}
+            />
+          </SelectValue>
+        ) : value === "" ? (
+          <SelectValue placeholder={placeholder} />
+        ) : (
+          <SelectValue placeholder={placeholder}>{value}</SelectValue>
+        )}
+      </SelectTrigger>
+      <SelectContent
+        alignItemWithTrigger={false}
+        align="start"
+        className="w-70 min-w-70 max-w-70"
+      >
+        <WorkflowVariableSelectGroups
+          variables={choices}
+          globalVariablesLabel={t("settings.workflow.globalVariables")}
+        />
+      </SelectContent>
+    </Select>
+  );
+
+  return (
+    <>
+      <InspectorField
+        label={t("settings.workflow.field.iterationIterator")}
+        htmlFor="workflow-node-iteration-iterator"
+      >
+        {selectorSelect(
+          "workflow-node-iteration-iterator",
+          iteratorValue,
+          t("settings.workflow.iteration.iteratorPlaceholder"),
+          iteratorChoices,
+          iteratorVariable,
+          (selector) => updateConfig({ iteratorSelector: selector }),
+          t("settings.workflow.field.iterationIterator"),
+        )}
+        {config.iteratorSelector.length === 0 && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            {t("settings.workflow.iteration.iteratorEmpty")}
+          </p>
+        )}
+      </InspectorField>
+      <InspectorField
+        label={t("settings.workflow.field.iterationCollect")}
+        htmlFor="workflow-node-iteration-collect"
+      >
+        {selectorSelect(
+          "workflow-node-iteration-collect",
+          collectValue,
+          t("settings.workflow.iteration.collectPlaceholder"),
+          collectChoices,
+          collectVariable,
+          (selector) => updateConfig({ collectSelector: selector }),
+          t("settings.workflow.field.iterationCollect"),
+        )}
+        {config.collectSelector.length === 0 && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            {t("settings.workflow.iteration.collectEmpty")}
+          </p>
+        )}
+      </InspectorField>
+    </>
   );
 }
