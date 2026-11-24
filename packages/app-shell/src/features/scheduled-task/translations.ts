@@ -18,8 +18,14 @@ export const scheduledTaskTranslations = {
     "scheduledTask.searchProject": "搜索项目",
     "scheduledTask.searchAgent": "搜索 Agent",
     "scheduledTask.noMatchingProjects": "没有匹配的项目",
-    "scheduledTask.projectNotGit":
+    "scheduledTask.projectNotGit.create":
       "此项目目录未使用 Git，无法为它创建定时任务。定时任务在独立工作树中运行，只能用于 Git 仓库项目。",
+    "scheduledTask.projectNotGit.switch":
+      "此项目目录未使用 Git，不能把任务改到这个项目。定时任务在独立工作树中运行，只能用于 Git 仓库项目。",
+    "scheduledTask.projectNotGit.enable":
+      "此项目目录未使用 Git，任务无法启用。关闭“创建后立即启用”后仍可保存其他修改。",
+    "scheduledTask.projectNotGit.disabled":
+      "此项目目录未使用 Git，任务只能保持停用；其他修改仍可保存。",
     "scheduledTask.noMatchingAgents": "没有匹配的 Agent",
     "scheduledTask.model": "模型（可选）",
     "scheduledTask.schedule": "计划",
@@ -138,8 +144,14 @@ export const scheduledTaskTranslations = {
     "scheduledTask.searchProject": "Search projects",
     "scheduledTask.searchAgent": "Search agents",
     "scheduledTask.noMatchingProjects": "No matching projects",
-    "scheduledTask.projectNotGit":
+    "scheduledTask.projectNotGit.create":
       "This project folder isn't a Git repository, so a scheduled task can't be created for it. Scheduled tasks run in an isolated worktree and need a Git repository project.",
+    "scheduledTask.projectNotGit.switch":
+      "This project folder isn't a Git repository, so the task can't be moved to it. Scheduled tasks run in an isolated worktree and need a Git repository project.",
+    "scheduledTask.projectNotGit.enable":
+      "This project folder isn't a Git repository, so the task can't be enabled. Turn off \"Enable immediately\" to save your other changes.",
+    "scheduledTask.projectNotGit.disabled":
+      "This project folder isn't a Git repository, so the task must stay disabled; other changes can still be saved.",
     "scheduledTask.noMatchingAgents": "No matching agents",
     "scheduledTask.model": "Model (optional)",
     "scheduledTask.schedule": "Schedule",

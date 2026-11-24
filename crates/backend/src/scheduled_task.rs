@@ -443,10 +443,11 @@ mod tests {
         );
     }
 
-    /// Verifies enabling an approved task whose project folder lost its repository (the list
-    /// switch path) is refused with the typed Git requirement before any runtime check.
+    /// Verifies a task whose project folder lost its repository can still be edited while
+    /// disabled, but enabling it (the list switch path) is refused with the typed Git requirement
+    /// before any runtime check.
     #[tokio::test]
-    async fn rejects_enabling_a_task_whose_project_folder_is_no_longer_git() {
+    async fn edits_but_refuses_enabling_a_task_whose_project_folder_is_no_longer_git() {
         let temporary = TempDir::new().expect("create temporary backend directory");
         let scaffold = ora_test_support::GitTestScaffold::new("backend-scheduled-enable-plain")
             .expect("create Git test scaffold");
@@ -484,6 +485,24 @@ mod tests {
             .expect("create approved disabled task")
             .task;
         std::fs::remove_dir_all(scaffold.repo_path().join(".git")).expect("remove repository");
+        // The frozen branch keeps a disabled task editable; the form relies on this.
+        let task = backend
+            .scheduled_tasks()
+            .update(UpdateScheduledTaskRequest {
+                task_id: task.id,
+                expected_updated_at: task.updated_at,
+                name: "Renamed notes".to_string(),
+                enabled: false,
+                schedule: task.schedule,
+                project_id: project_id.clone(),
+                agent_ref: task.agent_ref,
+                model: task.model,
+                prompt: task.prompt,
+                approval_change: ScheduledTaskApprovalChange::Keep,
+            })
+            .await
+            .expect("a disabled task stays editable")
+            .task;
 
         let error = backend
             .scheduled_tasks()

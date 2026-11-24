@@ -347,9 +347,12 @@ describe("ScheduledTaskManager consent handling", () => {
     });
     await user.click(within(card).getByRole("switch"));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "此项目目录未使用 Git，无法为它创建定时任务。",
-    );
+    // The form opens with the task still disabled and explains it cannot be enabled.
+    expect(
+      await screen.findByText(
+        "此项目目录未使用 Git，任务只能保持停用；其他修改仍可保存。",
+      ),
+    ).toBeInTheDocument();
     expect(updates).toEqual([]);
   });
 });

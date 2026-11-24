@@ -41,10 +41,12 @@ an agent (`AgentRef`) with an optional model, a prompt, a revision and an option
   the old one.
 - **Target.** An enabled task's project needs an admissible local Main Workspace that is a Git
   repository, checked with the same probe interactive task creation uses. Validation failures are
-  invalid requests, and a concurrent modification returns `scheduled_task_conflict`. Creation also
-  freezes the worktree base branch; a project without a persisted default branch (every project
-  added as a folder) resolves it from the main workspace's HEAD, so even a disabled task for a
-  folder that is not a Git repository is rejected as an invalid request.
+  invalid requests, and a concurrent modification returns `scheduled_task_conflict`. Creating a task
+  (or moving it to another project) also freezes the worktree base branch; a project without a
+  persisted default branch (every project added as a folder) resolves it from the main
+  workspace's HEAD, so creating even a disabled task for a folder that is not a Git repository,
+  or moving a task to one, is rejected as an invalid request. An existing disabled task keeps
+  its frozen branch and can still be edited after its folder stops being a repository.
 - **Approval.** Unattended local execution requires explicit consent to the only supported policy,
   `full_auto_in_worktree`, recorded with its consent time. A task can be enabled only with that
   consent; revoking it disables the task.
