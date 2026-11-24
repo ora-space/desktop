@@ -159,9 +159,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 RuntimeCommand::McpDesiredMaybeChanged => {
                     self.on_idle_mcp_desired_changed().await;
                 }
-                RuntimeCommand::AgentProcessReplaced { agent } => {
-                    self.detach_replaced_agent(&agent);
-                }
                 RuntimeCommand::RespondToPermission { response, .. } => {
                     let _ = response.send(Err(permission_not_pending()));
                 }
@@ -292,24 +289,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.mark_stopped();
     }
 
-    /// Drops the live registration when this session's agent process was replaced under it.
+    /// Drops in-memory tracking of skills already announced to the provider session.
     ///
-    /// The provider session died with the process, so the channel is dropped without `session/close`
-    /// — that call would only ask a fresh agent to close an id it has never heard of. Detaching is
-    /// enough to repair the session rather than end it: the next prompt attaches, which restores
-    /// the session on the fresh process or rebuilds it when that fails. Without this the actor
-    /// would keep a channel it believes is live and prompt against a session id the new process
-    /// cannot resolve.
-    fn detach_replaced_agent(&mut self, agent: &ora_domain::AgentRef) {
-        if self.session.agent_ref != *agent || self.channel.is_none() {
-            return;
-        }
-        ora_debug!(
-            session_id = %self.session.id,
-            agent = %agent,
-            "detaching session after its agent process was replaced",
-        );
-        self.mark_stopped();
+    /// Called whenever the provider session context resets or detaches so the next user prompt
+    /// injects the complete catalog again; a future compaction notification can call this too.
+    pub(crate) fn forget_announced_skills(&mut self) {
+        self.announced_skills = None;
     }
 
     /// Names the provider session this actor is talking to right now.
@@ -328,6 +313,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Persists a stopped state after the provider session is detached or becomes unusable.
     fn mark_stopped(&mut self) {
         self.channel = None;
+        self.forget_announced_skills();
         self.reported_config_options.clear();
         self.title_acquisition.close();
         if self.session_mcp.preserve_provider_identity() {
@@ -390,7 +376,7 @@ mod tests {
     use crate::session_setup::AgentSessionBarriers;
     use crate::test_host::{InstalledAgents, RecordedEvents, TestHost};
     use crate::title_acquisition::TitleAcquisition;
-    use crate::{MemorySessionStore, NoSessionMcp};
+    use crate::{MemorySessionStore, NoSessionMcp, NoSkillCatalog};
     use ora_domain::{
         AgentRef, AuditFields, PluginId, SessionId, SessionStatus, SessionTitle, WorkspaceId,
     };
@@ -484,6 +470,8 @@ mod tests {
             title_acquisition: TitleAcquisition::disabled(),
             command_sender,
             session_mcp: NoSessionMcp::default(),
+            skill_catalog: NoSkillCatalog,
+            announced_skills: None,
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
             turn_cancel: Default::default(),
@@ -567,6 +555,8 @@ mod tests {
             title_acquisition: TitleAcquisition::awaiting_first_prompt(true),
             command_sender,
             session_mcp: NoSessionMcp::default(),
+            skill_catalog: NoSkillCatalog,
+            announced_skills: None,
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
             turn_cancel: Default::default(),

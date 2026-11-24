@@ -10,6 +10,8 @@ use super::{AgentRuntimeManager, SESSION_SETUP_TIMEOUT, session_setup_window};
 use crate::AgentRuntimeHost;
 use crate::host::SessionSetup;
 use crate::host::SessionStore;
+use crate::host::SkillCatalogEntry;
+use crate::host::SkillCatalogSource;
 use crate::host::WorkspaceDirectory;
 use crate::model_config::model_config_id;
 use crate::session_setup::{
@@ -163,6 +165,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         } = self
             .create_provider_session(
                 &session_id,
+                &workspace_id,
                 &agent_ref,
                 &cwd,
                 request.model.as_deref(),
@@ -256,6 +259,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     pub(super) async fn create_provider_session(
         &self,
         ora_session_id: &SessionId,
+        workspace_id: &WorkspaceId,
         agent_ref: &AgentRef,
         cwd: &Path,
         model: Option<&str>,
@@ -264,7 +268,9 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         create_provider_session(
             &self.inner.connections,
             session_mcp,
+            &self.inner.skill_catalog,
             ora_session_id,
+            workspace_id,
             agent_ref,
             cwd,
             model,
@@ -274,10 +280,13 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
 }
 
 /// Performs one authoritative provider handshake and applies a pre-session model intent.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     connections: &ConnectionSupervisors<H>,
     session_mcp: &H::Setup,
+    skill_catalog: &H::Skills,
     ora_session_id: &SessionId,
+    workspace_id: &WorkspaceId,
     agent_ref: &AgentRef,
     cwd: &Path,
     model: Option<&str>,
@@ -333,10 +342,19 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     let setup_registration = supervisor.begin_session_setup();
     let mut servers = mcp.into_servers();
     servers.extend(session_mcp.host_mcp_servers());
+    let skill_entries = skill_catalog.skill_catalog(workspace_id);
+    let extra_read_roots = if connection.additional_directories_supported {
+        skill_catalog.extra_read_roots()
+    } else {
+        Vec::new()
+    };
     let response = await_session_new(
         &connection.client,
         cwd,
         servers,
+        connection.additional_directories_supported,
+        extra_read_roots,
+        &skill_entries,
         setup_registration.activity(),
         setup_window,
     )
@@ -396,14 +414,23 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
 /// alive and rearm the window, while an agent that stays silent past the window fails with
 /// `agent_timed_out` instead of holding the create forever. A request that delivers servers gets
 /// a wider window, because connecting them is exactly the slow part of a conforming setup.
+#[allow(clippy::too_many_arguments)]
 async fn await_session_new<T: AcpTransport>(
     client: &AcpClient<T>,
     cwd: &Path,
     servers: Vec<McpServer>,
+    additional_directories_supported: bool,
+    extra_read_roots: Vec<PathBuf>,
+    skill_entries: &[SkillCatalogEntry],
     activity: &SetupActivity,
     window: Duration,
 ) -> Result<NewSessionResponse, RuntimeError> {
-    let params = NewSessionRequest::new(cwd).mcp_servers(servers);
+    let params = crate::skill_catalog::apply_skill_setup_to_new_session(
+        NewSessionRequest::new(cwd).mcp_servers(servers),
+        additional_directories_supported,
+        extra_read_roots,
+        skill_entries,
+    );
     let request = client.request::<_, NewSessionResponse>(AGENT_METHOD_NAMES.session_new, &params);
     tokio::pin!(request);
     let inactivity = tokio::time::sleep_until(tokio::time::Instant::now() + window);
@@ -714,6 +741,9 @@ mod tests {
             &client,
             Path::new("C:\\work"),
             Vec::new(),
+            /*additional_directories_supported*/ false,
+            Vec::new(),
+            &[],
             registration.activity(),
             Duration::from_millis(200),
         );
@@ -752,6 +782,9 @@ mod tests {
             &client,
             Path::new("C:\\work"),
             Vec::new(),
+            /*additional_directories_supported*/ false,
+            Vec::new(),
+            &[],
             registration.activity(),
             Duration::from_millis(200),
         );

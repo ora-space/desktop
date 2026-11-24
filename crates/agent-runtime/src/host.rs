@@ -13,7 +13,6 @@ use ora_domain::{
     AgentRef, HistoryState, PluginId, Session, SessionHostCapabilities, SessionId,
     SessionMcpSelection, SessionStatus, SessionTitle, WorkspaceId,
 };
-use ora_effect::ConsumerDeclaration;
 use ora_history::HistoryLine;
 use ora_plugin_lifecycle::{ConnectionError, InboundNotification};
 use ora_plugin_runtime::PluginRuntime;
@@ -30,6 +29,7 @@ pub trait AgentRuntimeHost: Send + Sync + 'static {
     type Store: SessionStore;
     type Attach: AgentAttach;
     type Setup: SessionSetup;
+    type Skills: SkillCatalogSource;
     type Events: RuntimeEvents;
     type Directory: WorkspaceDirectory;
 }
@@ -136,16 +136,6 @@ pub trait AgentAttach: Send + Sync + 'static {
         &self,
         plugin_id: &PluginId,
     ) -> impl Future<Output = Result<(), Self::StopError>> + Send;
-
-    /// Records the Effect consumer declaration an agent plugin registered, or clears it.
-    ///
-    /// A failure is terminal for the connection: the plugin registered something the host cannot
-    /// honour, and retrying would register the same thing again.
-    fn replace_agent_effect_declaration(
-        &self,
-        plugin_id: PluginId,
-        declaration: Option<ConsumerDeclaration>,
-    ) -> Result<(), RuntimeError>;
 }
 
 /// Resolves the MCP servers every ACP `session/new` and `session/load` sends.
@@ -274,4 +264,30 @@ pub trait RuntimeEvents: Clone + Send + Sync + 'static {
 pub trait WorkspaceDirectory: Send + Sync + 'static {
     /// Resolves the absolute `cwd` for sessions of one Workspace.
     fn workspace_cwd(&self, workspace_id: &WorkspaceId) -> Result<PathBuf, RuntimeError>;
+}
+
+/// One available Skill delivered to an Agent session by prompt catalog and setup metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SkillCatalogEntry {
+    /// Display or invocation name of the Skill.
+    pub name: String,
+    /// Human-readable description telling the Agent when to read the Skill.
+    pub description: String,
+    /// Native absolute path to the Skill's `SKILL.md` file.
+    pub skill_md_path: PathBuf,
+    /// Native absolute path to the Skill package directory containing `SKILL.md`.
+    pub package_dir: PathBuf,
+}
+
+/// Supplies available Skills and readable Skill storage roots for Agent sessions.
+///
+/// Desktop reads currently available local and plugin Skills from its catalog and exposes the two
+/// stable Skill storage roots; `ora-node` returns empty vectors so Node sessions receive no prompt
+/// injection, no `additionalDirectories`, and no Skill setup metadata.
+pub trait SkillCatalogSource: Clone + Send + Sync + 'static {
+    /// Lists the currently available Skills visible for sessions in `workspace_id`.
+    fn skill_catalog(&self, workspace_id: &WorkspaceId) -> Vec<SkillCatalogEntry>;
+
+    /// Lists stable parent directories under which Skill packages reside.
+    fn extra_read_roots(&self) -> Vec<PathBuf>;
 }

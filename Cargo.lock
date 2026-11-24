@@ -3688,7 +3688,6 @@ dependencies = [
  "ora-acp",
  "ora-contracts",
  "ora-domain",
- "ora-effect",
  "ora-history",
  "ora-logging",
  "ora-plugin-config",

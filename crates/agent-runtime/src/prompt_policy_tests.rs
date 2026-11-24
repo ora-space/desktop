@@ -6,6 +6,8 @@ mod discovery_tests;
 mod plugin_replacement_tests;
 #[path = "prompt_policy_tests/restore_replay.rs"]
 mod restore_replay;
+#[path = "skill_catalog_runtime_tests.rs"]
+mod skill_catalog_runtime_tests;
 #[path = "turn_cancel_tests.rs"]
 mod turn_cancel_tests;
 
@@ -226,6 +228,7 @@ impl Fixture {
             list_session_supported: false,
             close_session_supported: false,
             delete_session_supported: false,
+            additional_directories_supported: false,
         };
         let (state, receiver) = watch::channel(ConnectionState::Ready(connection));
         let (shutdown, mut shutdown_receiver) = mpsc::unbounded_channel();
@@ -270,6 +273,7 @@ impl Fixture {
                 list_session_supported: false,
                 close_session_supported: false,
                 delete_session_supported: false,
+                additional_directories_supported: false,
             };
             run_process_generation(&mut process, &routes, &mut shutdown_receiver).await;
             active_generation.store(0, Ordering::Release);
@@ -2389,6 +2393,7 @@ mod restored_sessions {
                 list_session_supported: false,
                 close_session_supported: false,
                 delete_session_supported: false,
+                additional_directories_supported: false,
             };
             let (state, receiver) = watch::channel(ConnectionState::Ready(connection));
             let (shutdown, mut shutdown_receiver) = mpsc::unbounded_channel();
@@ -2433,6 +2438,7 @@ mod restored_sessions {
                     list_session_supported: false,
                     close_session_supported: false,
                     delete_session_supported: false,
+                    additional_directories_supported: false,
                 };
                 run_process_generation(&mut process, &routes, &mut shutdown_receiver).await;
                 active_generation.store(0, Ordering::Release);

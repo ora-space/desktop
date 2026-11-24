@@ -5,13 +5,13 @@
 //! own explicit setup. The runtime tests reuse both adapters.
 
 use crate::RuntimeError;
-use crate::host::{SessionSetup, SessionStore};
+use crate::host::{SessionSetup, SessionStore, SkillCatalogEntry, SkillCatalogSource};
 use crate::session_setup::{AgentSessionMcpCapabilities, SessionMcpRevision, SessionMcpSnapshot};
 use ora_domain::{
     AgentRef, HistoryState, PluginId, Session, SessionId, SessionMcpSelection, SessionStatus,
-    SessionTitle,
+    SessionTitle, WorkspaceId,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use thiserror::Error;
 
@@ -177,5 +177,19 @@ impl SessionSetup for NoSessionMcp {
 
     fn plugin_id_for_agent(&self, agent_ref: &AgentRef) -> Option<PluginId> {
         PluginId::parse(agent_ref.as_str()).ok()
+    }
+}
+
+/// Resolves every workspace to an empty Skill catalog and no additional readable roots.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoSkillCatalog;
+
+impl SkillCatalogSource for NoSkillCatalog {
+    fn skill_catalog(&self, _workspace_id: &WorkspaceId) -> Vec<SkillCatalogEntry> {
+        Vec::new()
+    }
+
+    fn extra_read_roots(&self) -> Vec<PathBuf> {
+        Vec::new()
     }
 }

@@ -111,15 +111,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             let _ = response.send(Err(permission_not_pending()));
                             return;
                         }
-                        RuntimeCommand::AgentProcessReplaced { agent } => {
-                            // The channel goes back first: the detach decision is about the live
-                            // registration this poll borrowed, and it cannot see one that is still
-                            // moved out. Ending the attempt either way costs at most a title.
-                            self.channel = Some(channel);
-                            self.title_acquisition.preempt_attempt(attempt);
-                            self.detach_replaced_agent(&agent);
-                            return;
-                        }
                         RuntimeCommand::McpDesiredMaybeChanged => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);

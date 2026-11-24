@@ -14,6 +14,7 @@ use super::{RuntimeActor, permission_not_pending, session_busy, session_setup_wi
 use crate::AgentRuntimeHost;
 use crate::RuntimeError;
 use crate::host::SessionSetup;
+use crate::host::SkillCatalogSource;
 use crate::session_setup::{
     AgentSessionMcpCapabilities, BarrierGuard, BarrierReason, LiveMcpEvent, LiveMcpPromptAdmission,
     SessionMcpSnapshot,
@@ -289,9 +290,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let window = session_setup_window(&snapshot);
         let mut servers = snapshot.servers().to_vec();
         servers.extend(self.session_mcp.host_mcp_servers());
-        let request =
+        let skill_entries = self.skill_catalog.skill_catalog(&self.session.workspace_id);
+        let request = crate::skill_catalog::apply_skill_setup_to_load_session(
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
-                .mcp_servers(servers);
+                .mcp_servers(servers),
+            channel.connection.additional_directories_supported,
+            self.skill_catalog.extra_read_roots(),
+            &skill_entries,
+        );
         record_session_mcp_boundary(
             &self.session_mcp,
             &self.session.id,
@@ -393,11 +399,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     let _ = response.send(Ok(StopSessionResponse {
                         session: contract_session(self.session.clone()),
                     }));
-                    return Err(session_stopped());
-                }
-                ActiveInput::Command(RuntimeCommand::AgentProcessReplaced { agent }) => {
-                    self.channel = Some(channel);
-                    self.detach_replaced_agent(&agent);
                     return Err(session_stopped());
                 }
                 ActiveInput::Command(RuntimeCommand::RespondToPermission { response, .. }) => {

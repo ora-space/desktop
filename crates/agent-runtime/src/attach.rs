@@ -17,6 +17,7 @@ use crate::AgentRuntimeHost;
 use crate::RuntimeError;
 use crate::host::SessionSetup;
 use crate::host::SessionStore;
+use crate::host::SkillCatalogSource;
 use crate::session_setup::{LiveMcpState, SessionMcpRevision, SessionMcpSnapshot};
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AvailableCommand, AvailableCommandsUpdate, ConfigOptionUpdate,
@@ -211,9 +212,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let agent_session_id = self.provider_session_id().to_string();
         let mut servers = snapshot.servers().to_vec();
         servers.extend(self.session_mcp.host_mcp_servers());
-        let request =
+        let skill_entries = self.skill_catalog.skill_catalog(&self.session.workspace_id);
+        let request = crate::skill_catalog::apply_skill_setup_to_load_session(
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
-                .mcp_servers(servers);
+                .mcp_servers(servers),
+            channel.connection.additional_directories_supported,
+            self.skill_catalog.extra_read_roots(),
+            &skill_entries,
+        );
         record_session_mcp_boundary(
             &self.session_mcp,
             &self.session.id,
@@ -268,6 +274,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         }
                         let response = pending.finish(response).map_err(map_acp_error)?;
                         ora_debug!(session_id = %self.session.id, "session/load completed");
+                        self.forget_announced_skills();
                         self.channel = Some(channel);
                         return Ok(response.config_options.unwrap_or_default());
                     }
@@ -308,7 +315,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         } = create_provider_session(
             &self.connections,
             &self.session_mcp,
+            &self.skill_catalog,
             &self.session.id,
+            &self.session.workspace_id,
             &self.session.agent_ref,
             &self.cwd,
             model,
@@ -319,6 +328,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             agent_session_id,
             "provider session rebuilt under the same agent",
         );
+        self.forget_announced_skills();
         self.rebuilt_binding = Some(RebuiltBinding {
             agent_session_id,
             release,
