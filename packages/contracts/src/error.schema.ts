@@ -162,12 +162,6 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("plugin_host_incompatible"),
         "params": emptyErrorParamsSchema
     }), z.object({
-        "code": z.literal("effect_target_not_found"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
-        "code": z.literal("effect_target_not_recoverable"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
         "code": z.literal("plugin_package_invalid"),
         "params": pluginPackageInvalidParamsSchema
     }), z.object({
@@ -569,12 +563,6 @@ export const contractErrorSchema = z.object({
         "params": pluginLogLevelsFileParamsSchema
     }), z.object({
         "code": z.literal("plugin_host_incompatible"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
-        "code": z.literal("effect_target_not_found"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
-        "code": z.literal("effect_target_not_recoverable"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("plugin_package_invalid"),

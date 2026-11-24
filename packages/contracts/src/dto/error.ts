@@ -28,8 +28,6 @@ export type ContractError =
       "params": PluginLogLevelsFileParams;
     }
     | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
-    | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
-    | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
     | { "code": "plugin_package_invalid"; "params": PluginPackageInvalidParams }
     | { "code": "pack_member_duplicate"; "params": PackMemberParams }
     | { "code": "pack_self_reference"; "params": PackMemberParams }
@@ -301,8 +299,6 @@ export type PublicError =
     "params": PluginLogLevelsFileParams;
   }
   | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
-  | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
-  | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
   | { "code": "plugin_package_invalid"; "params": PluginPackageInvalidParams }
   | { "code": "pack_member_duplicate"; "params": PackMemberParams }
   | { "code": "pack_self_reference"; "params": PackMemberParams }

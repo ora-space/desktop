@@ -34,11 +34,6 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       get: (request, options) => executeOperation("getDeveloperMode", request, transport, options),
       set: (request, options) => executeOperation("setDeveloperMode", request, transport, options),
     },
-    effect: {
-      getTargetStatus: (request, options) => executeOperation("getEffectTargetStatus", request, transport, options),
-      recoverTarget: (request, options) => executeOperation("recoverEffectTarget", request, transport, options),
-      retryTarget: (request, options) => executeOperation("retryEffectTarget", request, transport, options),
-    },
     fileSystem: {
       copyProjectEntry: (request, options) => executeOperation("copyProjectEntry", request, transport, options),
       copyWorkspaceEntry: (request, options) => executeOperation("copyWorkspaceEntry", request, transport, options),

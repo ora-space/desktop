@@ -471,7 +471,7 @@ export const workflowRunTranslations = {
       "智能体的回复不符合输出结构；可直接续跑让它按原提示词重试，或调整提示词/输出结构后发布新版本",
     "workflowRun.errorKind.missing_skill_materialization": "技能未就绪",
     "workflowRun.errorHint.missing_skill_materialization":
-      "重新发布工作流以重新生成技能文件",
+      "确认该技能包仍存在于目录中且包含有效的 SKILL.md 后再续跑",
     "workflowRun.errorKind.session_ended_without_stop_reason": "会话异常结束",
     "workflowRun.errorHint.session_ended_without_stop_reason":
       "通常是临时故障，可直接续跑",
@@ -1058,10 +1058,9 @@ export const workflowRunTranslations = {
       "The agent's reply did not match the output schema; resume to let it retry with the failure context, or adjust the prompt/schema and publish a new version",
     "workflowRun.errorHintWithoutInjection.structured_output":
       "The agent's reply did not match the output schema; resume to let it retry with the same prompt, or adjust the prompt/schema and publish a new version",
-    "workflowRun.errorKind.missing_skill_materialization":
-      "Skill not materialized",
+    "workflowRun.errorKind.missing_skill_materialization": "Skill unavailable",
     "workflowRun.errorHint.missing_skill_materialization":
-      "Republish the workflow to regenerate the skill files",
+      "Ensure the skill package still exists in the catalog with a valid SKILL.md, then resume",
     "workflowRun.errorKind.session_ended_without_stop_reason":
       "Session ended unexpectedly",
     "workflowRun.errorHint.session_ended_without_stop_reason":
