@@ -4,11 +4,11 @@ use ora_application::{
     WorkflowValidationError,
 };
 use ora_contracts::{
-    ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
-    WorkflowMcpNotFoundParams, WorkflowRunInputInvalidParams, WorkflowSkillNotFoundParams,
-    WorkflowSnapshotIncompatibleWithResumeParams,
+    ContractError, EmptyErrorParams, PluginLogLevelsFileParams, PublicError, RequestId,
+    SkillFolderConflictParams, WorkflowMcpNotFoundParams, WorkflowRunInputInvalidParams,
+    WorkflowSkillNotFoundParams, WorkflowSnapshotIncompatibleWithResumeParams,
 };
-use ora_plugin_lifecycle::PluginLifecycleError;
+use ora_plugin_lifecycle::{PluginLifecycleError, PluginLogLevelPersistError};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -208,10 +208,25 @@ impl From<PluginLifecycleError> for BackendError {
                 PublicError::InvalidRequest(EmptyErrorParams {}),
                 "plugin kind has no process to activate",
             ),
+            PluginLifecycleError::LogLevelPersistence { source, .. } => match source {
+                PluginLogLevelPersistError::ReadOnly { path } => (
+                    ErrorClassification::Conflict,
+                    PublicError::PluginLogLevelsReadOnly(PluginLogLevelsFileParams {
+                        path: path.to_string_lossy().into_owned(),
+                    }),
+                    "plugin log level settings require repair",
+                ),
+                PluginLogLevelPersistError::Write { path, .. } => (
+                    ErrorClassification::HostUnavailable,
+                    PublicError::PluginLogLevelsWriteFailed(PluginLogLevelsFileParams {
+                        path: path.to_string_lossy().into_owned(),
+                    }),
+                    "plugin log level settings could not be persisted",
+                ),
+            },
             PluginLifecycleError::RuntimeStop { .. }
             | PluginLifecycleError::PackageRemoval { .. }
             | PluginLifecycleError::UninstallStaging { .. }
-            | PluginLifecycleError::LogLevelPersistence { .. }
             | PluginLifecycleError::LogWriterActive { .. } => (
                 ErrorClassification::Internal,
                 PublicError::InternalError(EmptyErrorParams {}),
@@ -1161,6 +1176,41 @@ mod tests {
                 "database connection closed",
             ]
         );
+    }
+
+    /// File protection and write failures carry dedicated errors with the repair path.
+    #[test]
+    fn plugin_log_level_failures_expose_actionable_paths() {
+        let path = std::path::PathBuf::from("plugins").join("log-levels.json");
+        let params = ora_contracts::PluginLogLevelsFileParams {
+            path: path.to_string_lossy().into_owned(),
+        };
+        for (source, classification, public) in [
+            (
+                ora_plugin_lifecycle::PluginLogLevelPersistError::ReadOnly { path: path.clone() },
+                ErrorClassification::Conflict,
+                PublicError::PluginLogLevelsReadOnly(params.clone()),
+            ),
+            (
+                ora_plugin_lifecycle::PluginLogLevelPersistError::Write {
+                    path: path.clone(),
+                    source: std::io::Error::other("disk full"),
+                },
+                ErrorClassification::HostUnavailable,
+                PublicError::PluginLogLevelsWriteFailed(params),
+            ),
+        ] {
+            let error = BackendError::from(
+                ora_plugin_lifecycle::PluginLifecycleError::LogLevelPersistence {
+                    plugin_id: "official/example".to_owned(),
+                    source,
+                },
+            );
+            assert_eq!(
+                (error.classification(), error.public_error()),
+                (classification, &public)
+            );
+        }
     }
 
     /// Verifies missing base branches remain actionable and retain their selected ref name.

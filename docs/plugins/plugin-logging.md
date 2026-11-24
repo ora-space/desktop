@@ -138,4 +138,12 @@ the plugin installed. A retain-data uninstall leaves the log tree and level alon
 Output of host-managed child processes (`ora/childprocess/*`) goes to the plugin and is never
 persisted automatically; the plugin forwards what it wants through its logger.
 
-If the level file cannot be read, writes are blocked and the original file is preserved for repair. Unknown levels do not disable other readable entries. Repair the file and restart before editing, so changing one plugin cannot overwrite the other saved preferences.
+If the level file cannot be read or contains unsupported identities/levels, ordinary edits are
+blocked and the original file is preserved. Readable entries remain effective. The log-level menu
+shows the protected file path and disables editing; dedicated errors distinguish read-only
+protection from a filesystem write failure. Warnings identify unsupported entries without logging
+their values. Repair the file and restart to restore editing.
+
+An explicit delete-data uninstall may remove only that plugin's key from a readable JSON object,
+preserving every other raw JSON value verbatim, including unsupported values. Invalid or unreadable
+files cannot be safely pruned; uninstall reports the repair path and rolls back staged removals.

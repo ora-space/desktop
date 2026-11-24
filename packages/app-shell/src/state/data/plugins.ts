@@ -4,6 +4,8 @@ import type {
 } from "@ora/contracts";
 import type { QueryClient } from "@tanstack/react-query";
 
+const PLUGIN_LOG_LEVEL_KEY = ["plugin-log-level"] as const;
+
 /**
  * Refreshes the installed and available plugin surfaces after any lifecycle change.
  * Shared by the import hook and per-plugin mutations so their invalidation cannot drift.
@@ -29,7 +31,9 @@ export const pluginKeys = {
   hookLifecycleReports: ["hook-lifecycle-reports"] as const,
   pluginConfiguration: (pluginId: string) =>
     ["plugin-configuration", pluginId] as const,
-  pluginLogLevel: (pluginId: string) => ["plugin-log-level", pluginId] as const,
+  pluginLogLevels: PLUGIN_LOG_LEVEL_KEY,
+  pluginLogLevel: (pluginId: string) =>
+    [...PLUGIN_LOG_LEVEL_KEY, pluginId] as const,
 };
 
 /**
@@ -45,12 +49,13 @@ export function invalidateHookLifecycleReports(queryClient: QueryClient) {
   });
 }
 
-/** Drops one plugin's cached log level once its identity has been uninstalled. */
-export function forgetPluginLogLevel(
+/** Removes one identity and refreshes shared write protection after an explicit deletion. */
+export async function forgetPluginLogLevel(
   queryClient: QueryClient,
   pluginId: string,
-): void {
+): Promise<void> {
   queryClient.removeQueries({ queryKey: pluginKeys.pluginLogLevel(pluginId) });
+  await queryClient.invalidateQueries({ queryKey: pluginKeys.pluginLogLevels });
 }
 
 /** Refreshes installed state after a scan without forcing a marketplace fetch. */
