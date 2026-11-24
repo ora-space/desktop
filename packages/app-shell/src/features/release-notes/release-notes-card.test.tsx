@@ -8,6 +8,7 @@ import { createStubPlatform } from "../../test/stub-platform";
 import type { ReleaseNote } from "./bundled-release-notes";
 import { ReleaseNotesCard } from "./release-notes-card";
 import { ReleaseNotesHistory } from "./release-notes-history";
+import { useReleaseNotesStore } from "./release-notes-store";
 
 const RECORD_KEY = "ora.releaseNotes.promptedVersion";
 const MARKUP = '<img src="x"> **bold** [link](https://example.invalid)';
@@ -51,6 +52,7 @@ function renderCard(
 
 beforeEach(async () => {
   window.localStorage.clear();
+  useReleaseNotesStore.getState().dismiss();
   await appI18n.changeLanguage("zh-CN");
 });
 
@@ -76,6 +78,25 @@ describe("ReleaseNotesCard", () => {
     const second = renderCard("0.8.0");
     await waitFor(() => expect(second.answer).toHaveBeenCalled());
     await second.answer.mock.results[0].value;
+    expect(screen.queryByRole("complementary")).toBeNull();
+  });
+
+  it("keeps an undismissed card across a remount of the shell", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(RECORD_KEY, "0.6.0");
+    const first = renderCard("0.8.0");
+    await screen.findByRole("complementary");
+    // The application event gate unmounts the shell while its stream reconnects.
+    first.unmount();
+
+    const second = renderCard("0.8.0");
+    expect(await screen.findByRole("complementary")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "关闭更新日志" }));
+    second.unmount();
+
+    const third = renderCard("0.8.0");
+    await waitFor(() => expect(third.answer).toHaveBeenCalled());
+    await third.answer.mock.results[0].value;
     expect(screen.queryByRole("complementary")).toBeNull();
   });
 

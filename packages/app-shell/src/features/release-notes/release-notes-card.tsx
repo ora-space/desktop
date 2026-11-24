@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, cn } from "@ora/ui";
 import { IconX } from "@tabler/icons-react";
@@ -8,10 +8,8 @@ import { useOptionalPlatform } from "../../platform/use-platform";
 import { bundledReleaseNotes, type ReleaseNote } from "./bundled-release-notes";
 import { readPromptedVersion, writePromptedVersion } from "./prompted-version";
 import { ReleaseNoteList } from "./release-note-list";
-import {
-  planReleaseNotesPrompt,
-  type ReleaseNotesPrompt,
-} from "./release-notes-model";
+import { planReleaseNotesPrompt } from "./release-notes-model";
+import { useReleaseNotesStore } from "./release-notes-store";
 
 /** Shows the notes of every version installed since the last prompt, once, until dismissed. */
 export function ReleaseNotesCard({
@@ -26,7 +24,9 @@ export function ReleaseNotesCard({
 }) {
   const { t } = useTranslation();
   const installation = useOptionalPlatform()?.installation;
-  const [prompt, setPrompt] = useState<ReleaseNotesPrompt | null>(null);
+  const prompt = useReleaseNotesStore((s) => s.prompt);
+  const open = useReleaseNotesStore((s) => s.open);
+  const dismiss = useReleaseNotesStore((s) => s.dismiss);
 
   useEffect(() => {
     // Hosts without a local installation have no release to announce.
@@ -43,7 +43,7 @@ export function ReleaseNotesCard({
         });
         if (planned === null) return;
         writePromptedVersion(planned.version);
-        if (planned.notes.length > 0) setPrompt(planned);
+        if (planned.notes.length > 0) open(planned);
       },
       () => {
         // Without the answer a fresh installation could be prompted, so the next start decides.
@@ -52,7 +52,7 @@ export function ReleaseNotesCard({
     return () => {
       active = false;
     };
-  }, [installation, notes, version]);
+  }, [installation, notes, open, version]);
 
   if (prompt === null) return null;
   const title = t("releaseNotes.updated", { version: prompt.version });
@@ -80,7 +80,7 @@ export function ReleaseNotesCard({
           className="-mr-2 size-7 shrink-0 self-start text-muted-foreground"
           aria-label={t("releaseNotes.dismiss")}
           title={t("releaseNotes.dismiss")}
-          onClick={() => setPrompt(null)}
+          onClick={dismiss}
         >
           <IconX className="size-4" />
         </Button>
