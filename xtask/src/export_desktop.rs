@@ -1,5 +1,6 @@
 //! Joins public operations with Desktop-owned handlers and explicit command grants.
 
+mod cloud_connection;
 mod marketplace_sync;
 
 use crate::desktop_bindings::{Binding, Permission, bindings};
@@ -22,6 +23,7 @@ pub(crate) fn export(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let catalog = validate(endpoints, &bindings())?;
     marketplace_sync::export(staging)?;
+    cloud_connection::export(staging)?;
     let desktop = staging.join("apps").join("desktop");
     let tauri = desktop.join("src-tauri");
     write_generated_file(

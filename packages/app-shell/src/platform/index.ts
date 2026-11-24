@@ -2,6 +2,7 @@ export { PlatformProvider } from "./platform-context";
 export { usePlatform, useOptionalPlatform } from "./use-platform";
 export {
   PathSelectionInProgressError,
+  type CloudConnectionCapability,
   type DesktopNotificationOptions,
   type DesktopNotificationsCapability,
   type LocationActionsCapability,

@@ -48,6 +48,12 @@ absolute HTTP(S) URL through the supplied settings, independent of what is saved
 including 4xx and 5xx, means the proxy reached a host, while timeouts, refused connections and
 invalid URLs report `unreachable` rather than failing the command.
 
+## Cloud connection
+
+The server address (a normalized origin) is stored as `user_config.cloud_server`; the sign-in token is
+not here but in the operating system's secure store. Address rules, sign-in and the token are
+described in [Desktop host](desktop-host.md#cloud-connection).
+
 ## Worktree root
 
 The worktree root lives in Settings → Data & privacy. It must be an absolute path to an existing

@@ -83,6 +83,16 @@ worktree 根目录是非敏感配置，在 设置 → 数据与隐私 中选择�
 
 状态变化以 `desktop-update-status-changed` 发出。生命周期、缓存布局和不变量见 [`src/update/README.md`](../../apps/desktop/src-tauri/src/update/README.md)。
 
+## Cloud 连接
+
+Desktop 可以登录一个自建的 Cloud 服务器，以企业账号身份调用它的 API；没有连接、未登录或服务器连不上时，本地的会话、Agent 和工作区照常可用。整件事由宿主里的一个协调器（`src/cloud_connection/`）拥有：服务器地址、登录事务、令牌和状态都在这里，主 webview 只能经五个命令（`cloudConnection.get` / `setServer` / `startLogin` / `cancelLogin` / `logout`）和 `cloud-connection-changed` 事件看到服务器地址、账号显示名和状态，插件 webview 两者都拿不到。
+
+- **地址**：在 设置 → Cloud 连接 中填写，规范化为一个 origin（`https://host[:port]`，主机小写、去掉默认端口；只填主机名时补 `https://`）。带用户名、路径、查询串或 fragment 的拒绝；只有本机地址（`127.0.0.0/8`、`::1`、`localhost`）可以用 http。地址不是秘密，存在 `user_config.cloud_server`。改地址或清空会取消进行中的登录，删除旧令牌并请旧服务器吊销它；`setServer` 的回答说明旧服务器是否确认，没确认时面板和退出登录一样提示“服务器没有确认吊销”。
+- **登录**（RFC 8252）：宿主在 `127.0.0.1` 的系统分配端口上监听 `/callback`，生成 `state` 和 PKCE verifier，用系统浏览器打开 `<服务器>/desktop/authorize`，带上回环回调地址、`state` 和 S256 challenge。服务器页面要求已有网页会话、由人点「允许」后，浏览器带着一次性授权码回到回环地址，回环页只写“已收到授权，请回到 Ora。”（这时还没换令牌）。在确认页点「取消」会带着 `error=access_denied` 回到回环地址，登录以“已取消”结束。路径或 `state` 不对的请求返回 404，不结束事务。宿主用授权码、verifier 和同一个回调地址调 `POST /auth/desktop/token` 换到令牌。事务 5 分钟超时，可以取消，同时只有一个；成功、失败、取消、超时和退出都会关闭监听。
+- **令牌**：只在宿主内存和操作系统的安全存储里，不进 SQLite、webview、日志或 URL。条目属于“操作系统用户 + 服务器 origin”：Linux 上是 Secret Service 条目（服务名 `space.ora.desktop.cloud`，账号是 origin）；Windows 上是凭据管理器的普通凭据，名为 `<origin>.space.ora.desktop.cloud`，以 `CRED_PERSIST_LOCAL_MACHINE` 写入，只留在这台电脑，不随漫游配置文件同步。条目只按“操作系统用户 + origin”区分，所以开发版（`task run:desktop` 设了自己的 `ORA_DATA_DIR`，本地配置与正式包各自独立）和正式包共用它：在开发版里对同一 origin 登录或退出，会覆盖或删除正式包的条目。按应用标识判断的单实例插件阻止两者同时运行。安全存储不可用时状态为 `storageUnavailable` 并说明原因，Cloud 功能关闭，不降级为明文；刚换到的令牌写不进安全存储时，尽力请服务器吊销它。
+- **请求与失效**：带令牌的请求只发往保存的 origin，不跟随任何重定向，证书用平台校验器验证，代理按环境变量（`NO_PROXY` 与本机地址直连，并关闭 reqwest 自己读取代理环境变量），不用只作用于 marketplace 源的代理设置。只有 `401` 表示会话结束：状态改为 `needsSignIn` 并删除令牌，但只在这次回答结束的正是它所问的会话时才删，迟到的旧令牌 `401` 不会删掉新登录写入的条目；网络错误、超时、重定向和 5xx 只标为 `unreachable`，保留令牌。启动时和主窗口重新获得焦点时（至少间隔 60 秒）调一次 `GET /api/v1/me` 检查。
+- **登出**：先删除本机令牌，再调 `POST /auth/desktop/logout`；服务器连不上时仍然在本机退出，并提示服务器没有确认吊销。安全存储删不掉条目时仍然请服务器吊销，状态显示为 `storageUnavailable` 而不是未登录。
+
 ## 内置 sidecar
 
 发布构建在可执行文件旁边打包 ripgrep 和 Deno，并在启动时解析它们；缺少其中一个时，Desktop 会在创建应用状态之前停止。debug 构建从 `PATH` 解析 `rg` 和 `deno`。sidecar 的下载和校验见 [Sidecar](../operations/sidecars.zh.md)。

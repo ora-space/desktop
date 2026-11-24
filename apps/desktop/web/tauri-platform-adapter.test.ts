@@ -1,3 +1,4 @@
+import { cloudConnectionWire } from "./cloud-connection-fixtures.generated";
 import { marketplaceAutoSyncWire } from "./marketplace-sync-fixtures.generated";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -176,6 +177,29 @@ describe("TauriPlatformAdapter", () => {
       [{ kind: "started" }],
       [{ kind: "finished" }],
     ]);
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("consumes Rust-serialized Cloud connection changes and releases the native listener", async () => {
+    const stop = vi.fn();
+    const listener = vi.fn();
+    let forward: ((event: { payload: unknown }) => void) | undefined;
+    listenMock.mockImplementation(async (_event, handler) => {
+      forward = handler as (event: { payload: unknown }) => void;
+      return stop;
+    });
+    const adapter = createTauriPlatformAdapter();
+    const unsubscribe = await adapter.cloudConnection.onChanged(listener);
+    for (const payload of cloudConnectionWire.payloads) forward?.({ payload });
+    unsubscribe();
+
+    expect(listenMock).toHaveBeenCalledWith(
+      cloudConnectionWire.route,
+      expect.any(Function),
+    );
+    expect(listener.mock.calls).toEqual(
+      cloudConnectionWire.payloads.map((payload) => [payload]),
+    );
     expect(stop).toHaveBeenCalledOnce();
   });
 

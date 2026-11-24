@@ -2,6 +2,7 @@ pub mod app_event;
 
 pub mod agent;
 pub mod agent_import;
+pub mod cloud_connection;
 pub mod developer_mode;
 pub mod effect;
 pub mod error;
@@ -24,6 +25,7 @@ pub mod workspace;
 pub mod workspace_diff;
 pub use agent_import::*;
 pub use app_event::*;
+pub use cloud_connection::*;
 
 pub use agent::*;
 pub use developer_mode::*;
@@ -61,6 +63,7 @@ pub fn export_typescript_bindings_to(
 
     app_event::export(&config)?;
     agent::export(&config)?;
+    cloud_connection::export(&config)?;
     developer_mode::export(&config)?;
     effect::export(&config)?;
     error::export(&config)?;

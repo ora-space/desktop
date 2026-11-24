@@ -11,6 +11,8 @@ mod agent_import;
 mod agent_runtime;
 #[path = "bindings/app_events.rs"]
 mod app_events;
+#[path = "bindings/cloud_connection.rs"]
+mod cloud_connection;
 #[path = "bindings/developer_mode.rs"]
 mod developer_mode;
 #[path = "bindings/effect.rs"]
@@ -64,6 +66,7 @@ pub(crate) fn bindings() -> Vec<Binding> {
         agent_import::BINDINGS,
         plugin::BINDINGS,
         proxy::BINDINGS,
+        cloud_connection::BINDINGS,
         file_system::BINDINGS,
         git_identity::BINDINGS,
         workflow::BINDINGS,

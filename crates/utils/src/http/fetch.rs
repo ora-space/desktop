@@ -15,9 +15,10 @@ use std::time::Duration;
 use thiserror::Error;
 use url::Url;
 
+use super::client::{CredentialClientError, credential_client};
 use super::proxy::ProxyConfig;
 use super::reqwest::flatten_reqwest_error;
-use super::upload::{SignedClientError, signed_client, signed_headers};
+use super::upload::signed_headers;
 
 /// Bounds for one download request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,15 +94,15 @@ impl ReqwestFetcher {
             return Err(FetchError::InvalidRequest("url scheme"));
         }
         let headers = signed_headers(fetch.headers).map_err(FetchError::InvalidRequest)?;
-        let client = signed_client(
+        let client = credential_client(
             &self.proxy_config,
             &url,
             options.connect_timeout,
             options.total_timeout,
         )
         .map_err(|error| match error {
-            SignedClientError::Proxy => FetchError::InvalidRequest("proxy"),
-            SignedClientError::Build(message) => FetchError::Network(message),
+            CredentialClientError::Proxy => FetchError::InvalidRequest("proxy"),
+            CredentialClientError::Build(message) => FetchError::Network(message),
         })?;
         let transfer = async {
             let mut response = client

@@ -2,6 +2,7 @@
 export * from "./dto/agent-import.ts";
 export * from "./dto/agent.ts";
 export * from "./dto/app-event.ts";
+export * from "./dto/cloud-connection.ts";
 export * from "./dto/developer-mode.ts";
 export * from "./dto/effect.ts";
 export * from "./dto/error.ts";

@@ -1,4 +1,4 @@
-import type { MarketplaceAutoSyncEvent } from "@ora/contracts";
+import type { CloudConnection, MarketplaceAutoSyncEvent } from "@ora/contracts";
 export type { MarketplaceAutoSyncEvent } from "@ora/contracts";
 
 export type PathSelectionKind = "file" | "directory";
@@ -107,6 +107,13 @@ export interface PluginInstallProgress {
   pluginId: string;
   downloaded: number;
   total: number | null;
+}
+
+/** Announces Cloud connection changes the host makes on its own, such as a finished sign-in. */
+export interface CloudConnectionCapability {
+  onChanged(
+    listener: (connection: CloudConnection) => void,
+  ): Promise<() => void>;
 }
 
 /** Exposes native marketplace transfer events without coupling shared UI to Tauri. */
@@ -283,6 +290,7 @@ export interface PlatformAdapter {
   readonly surfaces: SurfaceCapability;
   readonly updates?: DesktopUpdateCapability;
   readonly pluginMarketplace?: PluginMarketplaceCapability;
+  readonly cloudConnection?: CloudConnectionCapability;
   readonly diagnosticLogs?: DiagnosticLogsCapability;
   readonly scheduledArtifacts?: ScheduledArtifactsCapability;
   readonly desktopNotifications?: DesktopNotificationsCapability;

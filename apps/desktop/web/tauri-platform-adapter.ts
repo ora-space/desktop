@@ -1,3 +1,4 @@
+import { onCloudConnectionChanged } from "./cloud-connection.generated";
 import { onMarketplaceAutoSyncChanged } from "./marketplace-sync.generated";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -10,6 +11,7 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import {
+  type CloudConnectionCapability,
   type DesktopNotificationOptions,
   type DesktopNotificationsCapability,
   type DesktopUpdateCapability,
@@ -202,6 +204,10 @@ export class TauriPlatformAdapter implements PlatformAdapter {
 
   readonly pluginMarketplace: PluginMarketplaceCapability =
     createTauriPluginMarketplace();
+
+  readonly cloudConnection: CloudConnectionCapability = {
+    onChanged: onCloudConnectionChanged,
+  };
 
   readonly desktopNotifications: DesktopNotificationsCapability =
     createTauriDesktopNotifications();

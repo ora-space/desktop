@@ -129,6 +129,8 @@ fn platform_binary_name(name: &str) -> String {
 pub struct DesktopState {
     pub backend: Backend,
     pub update: crate::update::UpdateService,
+    /// The Cloud connection: server, sign-in and the token kept in the OS secure store.
+    pub(crate) cloud_connection: crate::cloud_connection::DesktopCloudConnection,
     pub runtime_log_level: DesktopRuntimeLogLevelManager,
     pub workspace_files: Arc<WorkspaceFileApi>,
     pub binary_paths: BundledBinaryPaths,

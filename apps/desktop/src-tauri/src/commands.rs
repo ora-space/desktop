@@ -157,6 +157,7 @@ macro_rules! async_backend_command {
 pub(crate) mod agent;
 pub(crate) mod agent_runtime;
 pub(crate) mod app_events;
+pub(crate) mod cloud_connection;
 pub(crate) mod effect;
 pub(crate) mod files;
 pub(crate) mod git_identity;

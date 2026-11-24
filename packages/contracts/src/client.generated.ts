@@ -23,6 +23,13 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
     appEvents: {
       watch: (request, options) => executeStreamOperation("watchAppEvents", request, transport, options),
     },
+    cloudConnection: {
+      cancelLogin: (request, options) => executeOperation("cancelCloudLogin", request, transport, options),
+      get: (request, options) => executeOperation("getCloudConnection", request, transport, options),
+      logout: (request, options) => executeOperation("logoutCloud", request, transport, options),
+      setServer: (request, options) => executeOperation("setCloudServer", request, transport, options),
+      startLogin: (request, options) => executeOperation("startCloudLogin", request, transport, options),
+    },
     developerMode: {
       get: (request, options) => executeOperation("getDeveloperMode", request, transport, options),
       set: (request, options) => executeOperation("setDeveloperMode", request, transport, options),

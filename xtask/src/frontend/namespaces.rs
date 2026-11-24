@@ -4,6 +4,7 @@ mod agent;
 mod agent_import;
 mod agent_runtime;
 mod app_events;
+mod cloud_connection;
 mod developer_mode;
 mod effect;
 mod file_system;
@@ -44,6 +45,7 @@ pub(super) fn frontend_endpoints() -> Vec<FrontendEndpoint> {
         agent_import::ENDPOINTS,
         plugin::ENDPOINTS,
         proxy::ENDPOINTS,
+        cloud_connection::ENDPOINTS,
         file_system::ENDPOINTS,
         git::ENDPOINTS,
         workflow::ENDPOINTS,
