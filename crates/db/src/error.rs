@@ -64,6 +64,8 @@ pub enum DatabaseError {
     CorruptWorkflowDocumentSourceState(String),
     #[error("Effect state is corrupt: {0}")]
     CorruptEffectState(String),
+    #[error(transparent)]
+    WorkflowDebug(#[from] crate::workflow_debug::DebugRejection),
     #[error("workflow run execution context is incomplete")]
     IncompleteWorkflowRunContext,
     #[error("workflow scope has invalid round index: {0}")]

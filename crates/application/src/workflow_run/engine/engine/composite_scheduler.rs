@@ -32,6 +32,15 @@ where
             let Some(node) = graph.node(&node_run.node_id) else {
                 continue;
             };
+            if !matches!(
+                self.runtimes.runtime(node.node_type),
+                Some(RegisteredNodeRuntime::ScopedLoop | RegisteredNodeRuntime::Composite(_))
+            ) {
+                continue;
+            }
+            let revised = self.repository.revised_graph(run_id, &node_run.id)?;
+            let graph = revised.as_ref().unwrap_or(graph);
+            let node = graph.node(&node_run.node_id).unwrap_or(node);
             if matches!(
                 self.runtimes.runtime(node.node_type),
                 Some(RegisteredNodeRuntime::ScopedLoop)

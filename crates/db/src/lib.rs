@@ -4,6 +4,7 @@ mod location;
 mod migration;
 mod repository;
 mod time;
+pub mod workflow_debug;
 
 #[cfg(test)]
 mod durability_tests;

@@ -52,6 +52,15 @@ pub trait NodeRuntime: Send + Sync {
 /// `node_runtime_module_performs_no_io_or_waiting` (see `engine/tests.rs`) rejects IO and
 /// waiting primitives anywhere in the runtime module.
 pub trait SwiftNodeRuntime: NodeRuntime {
+    /// Captures the inputs a strategy needs to explain its result across later revisions.
+    fn completion_evidence(
+        &self,
+        _pool: &WorkflowVariablePool,
+        _result: &str,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
     /// Requests a durable break of the enclosing Loop instead of ordinary completion.
     fn requests_loop_exit(&self) -> bool {
         false

@@ -105,6 +105,7 @@ fn runtime_tables_use_direct_workspace_ownership() {
             "created_at",
             "updated_at",
             "is_deleted",
+            "debug_epoch",
         ],
     );
     assert_eq!(

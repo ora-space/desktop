@@ -397,6 +397,11 @@ where
                 else {
                     continue;
                 };
+                let revised = self.repository.revised_graph(run_id, &node_run.id)?;
+                let node = revised
+                    .as_ref()
+                    .and_then(|g| g.execution_node(&node.id))
+                    .unwrap_or(node);
                 let completion = SwiftCompletion {
                     node_run,
                     run_input: context.run.input.as_deref(),
@@ -405,13 +410,14 @@ where
                 };
                 match runtime.complete_running(node, &completion) {
                     Ok(output) => {
+                        let evidence = runtime.completion_evidence(&pool, &output);
                         let advanced = self.repository.complete_node(
                             &node_run.id,
                             Some(output),
                             None,
                             None,
                             Vec::new(),
-                            None,
+                            evidence.as_ref(),
                             now,
                         )?;
                         if matches!(advanced, AdvanceWorkflowRunResult::Advanced) {
