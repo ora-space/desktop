@@ -20,7 +20,7 @@ import {
 } from "../../state/hooks/use-proxy-settings";
 import { SettingsHeading } from "./settings-heading";
 
-const DEFAULT_CHECK_URL = "https://example.com/";
+const DEFAULT_CHECK_URL = "https://google.com";
 
 interface ProxySettingsEditorProps {
   initialSettings: ProxySettings | null;

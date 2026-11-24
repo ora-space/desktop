@@ -166,7 +166,7 @@ it("checks the current form proxy against a URL", async () => {
 
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByLabelText(/探测网址|URL to check/)).toHaveValue(
-    "https://example.com/",
+    "https://google.com",
   );
   await user.click(
     within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
@@ -174,7 +174,7 @@ it("checks the current form proxy against a URL", async () => {
 
   await waitFor(() =>
     expect(check).toHaveBeenCalledWith({
-      url: "https://example.com/",
+      url: "https://google.com",
       settings: {
         host: "127.0.0.1",
         port: 7890,
