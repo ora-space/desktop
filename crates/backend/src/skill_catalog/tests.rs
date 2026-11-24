@@ -135,3 +135,54 @@ fn resolves_usable_local_and_plugin_skill_paths_and_excludes_broken_packages() {
         assert_eq!(catalog.skill_catalog(&WorkspaceId::new("ws-1")), vec![]);
     });
 }
+
+#[cfg(windows)]
+#[test]
+fn strips_windows_verbatim_prefix_from_persisted_plugin_package_roots() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let app_data = temp.path().join("app-data");
+        let home_dir = temp.path().join("home");
+        let skills_root = app_data.join("atoms").join("skills");
+        let plugins_installed = ora_plugin_manager::installed_root(&home_dir);
+
+        let plugin_dir = plugins_installed.join("official/review/1.0.0/assets/audit");
+        fs::create_dir_all(&plugin_dir).expect("create plugin dir");
+        fs::write(
+            plugin_dir.join("SKILL.md"),
+            "---\nname: audit\ndescription: Audits changes\n---\nPlugin instructions",
+        )
+        .expect("write plugin SKILL.md");
+
+        let canonical_verbatim =
+            std::fs::canonicalize(&plugin_dir).expect("canonicalize plugin dir");
+        let expected_plain = ora_utils::path::strip_verbatim_prefix(&canonical_verbatim);
+        fs::create_dir_all(&app_data).expect("create app data dir");
+        let pool = test_pool(&app_data);
+        let repo = SqliteSkillRepository::new(pool.clone());
+        let plugin_id = PluginId::new("official", "review").expect("plugin id");
+        repo.replace_plugin_skills(
+            &plugin_id,
+            "1.0.0",
+            &[PluginSkillProjection {
+                name: "audit".to_string(),
+                description: "Audits changes".to_string(),
+                package_root: canonical_verbatim,
+            }],
+            1,
+        )
+        .expect("insert plugin skill");
+
+        let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir);
+        let entries = catalog.skill_catalog(&WorkspaceId::new("ws-1"));
+        assert_eq!(
+            entries,
+            vec![SkillCatalogEntry {
+                name: "audit".to_string(),
+                description: "Audits changes".to_string(),
+                skill_md_path: expected_plain.join("SKILL.md"),
+                package_dir: expected_plain,
+            }]
+        );
+    });
+}

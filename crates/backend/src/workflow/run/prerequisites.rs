@@ -202,8 +202,12 @@ fn usable_entry(
 
 fn storage_package_dir(skills_root: &Path, skill: &Skill) -> PathBuf {
     match &skill.origin {
-        SkillOrigin::Local => skills_root.join(&skill.name),
-        SkillOrigin::Plugin { package_root, .. } => package_root.clone(),
+        SkillOrigin::Local => {
+            ora_utils::path::strip_verbatim_prefix(&skills_root.join(&skill.name))
+        }
+        SkillOrigin::Plugin { package_root, .. } => {
+            ora_utils::path::strip_verbatim_prefix(package_root)
+        }
     }
 }
 

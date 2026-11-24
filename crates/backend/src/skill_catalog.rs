@@ -6,6 +6,7 @@ use ora_application::{FilesystemSkillStorage, SkillRepository as _, skill_packag
 use ora_db::{RepositoryPool, SqliteSkillRepository};
 use ora_domain::{SkillOrigin, WorkspaceId};
 use ora_logging::ora_warn;
+use ora_utils::path::strip_verbatim_prefix;
 use std::path::{Path, PathBuf};
 
 /// Resolves live Skill catalog entries and host read roots directly from Ora's formal storage.
@@ -24,8 +25,10 @@ impl DesktopSkillCatalog {
     pub(crate) fn new(pool: RepositoryPool, skills_root: PathBuf, home_directory: &Path) -> Self {
         Self {
             skill_repository: SqliteSkillRepository::new(pool),
-            skills_root,
-            plugins_installed_root: ora_plugin_manager::installed_root(home_directory),
+            skills_root: strip_verbatim_prefix(&skills_root),
+            plugins_installed_root: strip_verbatim_prefix(&ora_plugin_manager::installed_root(
+                home_directory,
+            )),
         }
     }
 }
@@ -61,7 +64,7 @@ impl SkillCatalogSource for DesktopSkillCatalog {
                 }
                 let package_dir = match &skill.origin {
                     SkillOrigin::Local => self.skills_root.join(&skill.name),
-                    SkillOrigin::Plugin { package_root, .. } => package_root.clone(),
+                    SkillOrigin::Plugin { package_root, .. } => strip_verbatim_prefix(package_root),
                 };
                 Some(SkillCatalogEntry {
                     name: skill.name,
