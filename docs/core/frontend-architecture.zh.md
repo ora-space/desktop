@@ -16,14 +16,14 @@ App Shell（`packages/app-shell`）按功能组织。本文说明横跨各功能
 
 `state/data/` 负责缓存标识和共享数据规则。没有全局的 key 注册表或 barrel，使用方直接导入需要的 owner。
 
-| Owner | 负责 |
-|---|---|
-| `workspace.ts`、`sessions.ts` | 共享列表、采纳权威响应、聚合删除后的清理、会话树中的位置 |
-| `workflows.ts`、`workflow-analysis.ts`、`workflow-runs.ts`、`workflow-run-retry.ts` | 定义、草稿、版本和执行分析查询；持久化运行的查询、变更、投影和重试展示 |
-| `mock-workflows.ts`、`mock-workflow-runs.ts`、`mock-workflow-mounts.ts` | 内存运行时的标识和订阅，与持久化运行缓存隔离 |
-| `files.ts`、`file-watch.ts`、`diff.ts`、`workspace-status.ts`、`workspace-review.ts` | 有作用域的文件访问、watcher 驱动的失效、Workspace diff、状态和评审刷新 |
-| `plugins.ts`、`agent-runtime.ts`、`plugin-lifecycle.ts`、`mcp-health.ts` | 目录和配置缓存、按 Agent 划分的模型前缀、跨领域的生命周期协调、MCP 健康 |
-| `agents.ts`、`skills.ts`、`settings.ts`、`identity.ts`、`effects.ts` | 定义、偏好、身份和 Effect 缓存 |
+| Owner                                                                                | 负责                                                                    |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `workspace.ts`、`sessions.ts`                                                        | 共享列表、采纳权威响应、聚合删除后的清理、会话树中的位置                |
+| `workflows.ts`、`workflow-analysis.ts`、`workflow-runs.ts`、`workflow-run-retry.ts`  | 定义、草稿、版本和执行分析查询；持久化运行的查询、变更、投影和重试展示  |
+| `mock-workflows.ts`、`mock-workflow-runs.ts`、`mock-workflow-mounts.ts`              | 内存运行时的标识和订阅，与持久化运行缓存隔离                            |
+| `files.ts`、`file-watch.ts`、`diff.ts`、`workspace-status.ts`、`workspace-review.ts` | 有作用域的文件访问、watcher 驱动的失效、Workspace diff、状态和评审刷新  |
+| `plugins.ts`、`agent-runtime.ts`、`plugin-lifecycle.ts`、`mcp-health.ts`             | 目录和配置缓存、按 Agent 划分的模型前缀、跨领域的生命周期协调、MCP 健康 |
+| `agents.ts`、`skills.ts`、`settings.ts`、`identity.ts`                               | 定义、偏好和身份缓存                                                    |
 
 UI hook 负责选中状态、草稿和输入框清理、变更进行中状态以及视图相关的操作；它们先通过数据 owner 采纳权威结果，再协调 UI 状态。值得记住的规则：
 

@@ -30,14 +30,14 @@ behavior. Features never register resources when they mount. Any test that rende
 `state/data/` owns cache identity and shared data rules. There is no global key registry or barrel:
 consumers import the owner they need.
 
-| Owner | Responsibility |
-|---|---|
-| `workspace.ts`, `sessions.ts` | Shared lists, adopting authoritative responses, scrubbing after aggregate deletion, session tree placement |
-| `workflows.ts`, `workflow-analysis.ts`, `workflow-runs.ts`, `workflow-run-retry.ts` | Definition, draft, version and execution-analysis queries; persisted run queries, mutations, projections and retry presentation |
-| `mock-workflows.ts`, `mock-workflow-runs.ts`, `mock-workflow-mounts.ts` | Memory-runtime identities and subscriptions, kept apart from persisted run caches |
-| `files.ts`, `file-watch.ts`, `diff.ts`, `workspace-status.ts`, `workspace-review.ts` | Scoped file access, watcher-driven invalidation, workspace diff, status and review refresh |
-| `plugins.ts`, `agent-runtime.ts`, `plugin-lifecycle.ts`, `mcp-health.ts` | Catalog and configuration caches, per-agent model prefixes, cross-domain lifecycle coordination, MCP health |
-| `agents.ts`, `skills.ts`, `settings.ts`, `identity.ts`, `effects.ts` | Definition, preference, identity and Effect caches |
+| Owner                                                                                | Responsibility                                                                                                                  |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `workspace.ts`, `sessions.ts`                                                        | Shared lists, adopting authoritative responses, scrubbing after aggregate deletion, session tree placement                      |
+| `workflows.ts`, `workflow-analysis.ts`, `workflow-runs.ts`, `workflow-run-retry.ts`  | Definition, draft, version and execution-analysis queries; persisted run queries, mutations, projections and retry presentation |
+| `mock-workflows.ts`, `mock-workflow-runs.ts`, `mock-workflow-mounts.ts`              | Memory-runtime identities and subscriptions, kept apart from persisted run caches                                               |
+| `files.ts`, `file-watch.ts`, `diff.ts`, `workspace-status.ts`, `workspace-review.ts` | Scoped file access, watcher-driven invalidation, workspace diff, status and review refresh                                      |
+| `plugins.ts`, `agent-runtime.ts`, `plugin-lifecycle.ts`, `mcp-health.ts`             | Catalog and configuration caches, per-agent model prefixes, cross-domain lifecycle coordination, MCP health                     |
+| `agents.ts`, `skills.ts`, `settings.ts`, `identity.ts`                               | Definition, preference and identity caches                                                                                      |
 
 UI hooks own selection, draft and composer cleanup, mutation activity and view-specific actions;
 they apply authoritative results through the data owner before coordinating UI state. Rules worth

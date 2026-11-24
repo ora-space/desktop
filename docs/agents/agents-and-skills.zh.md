@@ -2,7 +2,7 @@
 
 [English](agents-and-skills.md) | 中文
 
-除了插件提供的 Agent 运行时，Desktop 还维护两个用户目录：**Agent 定义**（工作流节点或聊天可以采用的可配置角色）和 **Skill**（物化到每个 Workspace 的可复用指令包）。两者都以 `(namespace, name)` 区分，可见名称不区分大小写；本地条目使用 `local` 命名空间，软删除的行不占用名称。
+除了插件提供的 Agent 运行时，Desktop 还维护两个用户目录：**Agent 定义**（工作流节点或聊天可以采用的可配置角色）和 **Skill**（按存储路径交付给会话的可复用指令包）。两者都以 `(namespace, name)` 区分，可见名称不区分大小写；本地条目使用 `local` 命名空间，软删除的行不占用名称。
 
 ## Agent 定义
 
@@ -40,4 +40,9 @@ Skill 导入是一个两阶段会话，来源是一个文件夹树或一个归�
 
 ## Skill 如何到达 Agent
 
-已安装的 Skill 由 Effect 系统物化到每个符合条件的 Workspace，见 [Effect](effects.zh.md)。工作流 Agent 节点的 Skill 绑定表示在该节点的 prompt 里"必须调用"；它们不是节点级的允许列表，也不会隐藏其他已物化的 Skill。
+Ora 直接从存储位置把已安装的 Available Skill 交付给会话，不在任何 Workspace 中写入文件：
+
+- 本地 Skill 位于 `<数据根目录>/atoms/skills/<name>/SKILL.md`，插件 Skill 位于 `<Ora 主目录>/plugins/installed/<namespace>/<name>/<version>/assets/<skill>/SKILL.md`。同名 Available Skill 按各自的 `SKILL.md` 路径区分并并列呈现。
+- `ora-agent-runtime` 会在活跃会话的第一条用户 prompt 中注入全量 `<available_skills>`（名称、描述和平台原生 `SKILL.md` 绝对路径，若有前导 `/命令` 文本块则放在其后），并在冷启动 `session/load`、重新打开已停止会话或 Agent 报告压缩后重发全量；会话中途安装、升级、改名或卸载 Skill 时，下一条 prompt 只附按路径比较的 `<skills_updated>` 增量，不打断进行中的回合，也不重启 Agent。
+- 当 Agent 声明 `sessionCapabilities.additionalDirectories` 时，`session/new` 与 `session/load` 还会传入这两个稳定的可读存储根目录以及 `_meta["ora/skillDirectories"]`。
+- 工作流 Agent 节点的 Skill 绑定只冻结 `{ node_id, skill_id, invocation_name }`，并在节点派发时实时解析正式存储中的 `SKILL.md` 路径作为"必须调用"，不是节点级允许列表。

@@ -15,7 +15,7 @@
 
 目录只是生成用的元数据，不包含传输路由、查询或序列化细节；前端类型从不来自领域实体或适配层自己的结构体。
 
-当前的命名空间：`project`、`task`、`workspace`、`session`、`appEvents`、`agentRuntime`、`agent`、`agentImport`、`skill`、`skillImport`、`fileSystem`、`gitIdentity`、`workflow`、`workflowRun`、`scheduledTask`、`plugin`、`effect`、`developerMode`、`runtimeLogLevel` 和 `proxy`。
+当前的命名空间：`project`、`task`、`workspace`、`session`、`appEvents`、`agentRuntime`、`agent`、`agentImport`、`skill`、`skillImport`、`fileSystem`、`gitIdentity`、`workflow`、`workflowRun`、`scheduledTask`、`plugin`、`developerMode`、`runtimeLogLevel` 和 `proxy`。
 
 ## 生成
 

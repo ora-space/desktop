@@ -107,13 +107,14 @@ under `plugins/` in the Node home (see [Node plugins](plugins.md)) and histories
 "only the named plugin" and "the identity reaches only this execution's processes" hold by
 construction.
 
-| Runtime interface | Node implementation |
-|---|---|
-| `SessionStore` | `MemorySessionStore`: a Node never resumes a session after restarting |
-| `AgentAttach` | The execution's own one-plugin lifecycle; no Effect consumer (Nodes project no Skills) |
-| `SessionSetup` | `NodeSessionMcp`: explicit versioned bindings and opt-in generation updates; [lifecycle](session-stop.md) |
-| `RuntimeEvents` | Every history line becomes a Thread event; title and model-catalog events are dropped |
-| `WorkspaceDirectory` | The checkout |
+| Runtime interface    | Node implementation                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| `SessionStore`       | `MemorySessionStore`: a Node never resumes a session after restarting                                     |
+| `AgentAttach`        | The execution's own one-plugin lifecycle                                                                  |
+| `SessionSetup`       | `NodeSessionMcp`: explicit versioned bindings and opt-in generation updates; [lifecycle](session-stop.md) |
+| `Skills`             | `NoSkillCatalog`: empty Skill catalog and readable roots (Node sessions receive no prompt catalog)        |
+| `RuntimeEvents`      | Every history line becomes a Thread event; title and model-catalog events are dropped                     |
+| `WorkspaceDirectory` | The checkout                                                                                              |
 
 A host with no person present uses runtime entry points in place of user actions: `wait_for_agent`
 waits, unbounded unless the caller bounds it, until the agent connection is `Ready` or its supervisor
