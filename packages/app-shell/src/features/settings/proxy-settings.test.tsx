@@ -334,3 +334,34 @@ it("reports an unreachable probe as connectivity without changing saved settings
   expect(clear).not.toHaveBeenCalled();
   expect(dialog).toBeInTheDocument();
 });
+
+it("resets a cancelled empty probe URL before opening a new check", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "proxy.example",
+    port: 3128,
+    username: null,
+    password: null,
+  };
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  const open = await screen.findByRole("button", {
+    name: /验证代理|Check connection/,
+  });
+  await user.click(open);
+  const dialog = await screen.findByRole("dialog");
+  await user.clear(within(dialog).getByLabelText(/探测网址|URL to check/));
+  expect(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  ).toBeDisabled();
+  await user.click(within(dialog).getByRole("button", { name: /取消|Cancel/ }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await user.click(open);
+  const reopened = await screen.findByRole("dialog");
+  expect(within(reopened).getByLabelText(/探测网址|URL to check/)).toHaveValue(
+    "https://google.com",
+  );
+  expect(
+    within(reopened).getByRole("button", { name: /^验证$|^Check$/ }),
+  ).toBeEnabled();
+});

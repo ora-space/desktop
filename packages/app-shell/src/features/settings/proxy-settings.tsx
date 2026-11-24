@@ -260,7 +260,10 @@ function ProxySettingsEditor({
           onRetry={() => void controller.retry()}
           url={checkUrl}
           onUrlChange={setCheckUrl}
-          onOpenChange={setCheckOpen}
+          onOpenChange={(open) => {
+            setCheckOpen(open);
+            if (!open) setCheckUrl(DEFAULT_CHECK_URL);
+          }}
           onCheck={(url) => controller.check(url, parsed)}
         />
       )}
