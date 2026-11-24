@@ -49,7 +49,7 @@ impl ConfiguredMarketplaceSource {
 }
 
 impl MarketplaceSourceStore {
-    /// Loads existing sources or seeds the default source when the table is empty.
+    /// Seeds only a brand-new installation; an existing empty list is authoritative.
     pub(crate) fn open(
         repository: SqlitePluginMarketplaceSourceRepository,
         namespaces: SqlitePluginSourceNamespaceRepository,
@@ -62,22 +62,24 @@ impl MarketplaceSourceStore {
             namespaces,
             sources_root,
         };
-        if store.repository.list_sources()?.is_empty()
-            && !store.repository.has_source_deletions()?
-        {
-            let default_source = MarketplaceSource {
-                url: DEFAULT_MARKETPLACE_URL.to_owned(),
-                branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
-                use_proxy: false,
-                enabled: true,
-                artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
-            };
-            store.insert(
-                default_source,
-                StoredArtifactRetrieval::DirectHttps,
-                /*position*/ 0,
-                now_ms,
-            )?;
+        if store.repository.needs_initial_source()? {
+            if store.repository.list_sources()?.is_empty() {
+                let default_source = MarketplaceSource {
+                    url: DEFAULT_MARKETPLACE_URL.to_owned(),
+                    branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
+                    use_proxy: false,
+                    enabled: true,
+                    artifact_retrieval: MarketplaceArtifactRetrieval::DirectHttps,
+                };
+                store.insert(
+                    default_source,
+                    StoredArtifactRetrieval::DirectHttps,
+                    /*position*/ 0,
+                    now_ms,
+                )?;
+            }
+            // If startup stops after insertion, retry sees the row and only consumes the marker.
+            store.repository.finish_source_initialization()?;
         }
         Ok(store)
     }
@@ -363,6 +365,81 @@ mod tests {
             let (_, reopened) = store_with_repository(&temp);
             assert_eq!(reopened.list().unwrap(), vec![]);
         });
+    }
+
+    /// Reproduces the old release: deleting the last source wrote no user_config marker.
+    #[test]
+    fn legacy_empty_sources_survive_upgrade_without_a_deletion_marker() {
+        ora_logging::with_trace_logging(|| {
+            let temp = TempDir::new().unwrap();
+            let latest = default_migration_catalog().unwrap();
+            let versions = latest.target_versions()[..21].to_vec();
+            let migrations = latest
+                .target_versions()
+                .iter()
+                .map(|version| latest.migration(version).unwrap().clone())
+                .collect();
+            let old_catalog =
+                ora_db::MigrationCatalog::with_target_versions(migrations, versions).unwrap();
+            let location = DatabaseLocation::path(temp.path().join("ora.sqlite3"));
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(&location, &old_catalog)
+                .unwrap();
+            let repository = SqlitePluginMarketplaceSourceRepository::new(pool.clone());
+            repository
+                .insert_source(
+                    &PluginMarketplaceSourceRecord {
+                        url: DEFAULT_MARKETPLACE_URL.to_owned(),
+                        branch: "main".to_owned(),
+                        use_proxy: false,
+                        enabled: true,
+                        artifact_retrieval: r#"{"type":"direct_https"}"#.to_owned(),
+                        position: 0,
+                    },
+                    1,
+                )
+                .unwrap();
+            repository.delete_source(DEFAULT_MARKETPLACE_URL).unwrap();
+            // No new-version store or seeding API has run before this upgrade boundary.
+            drop(repository);
+            drop(pool);
+            for _ in 0..2 {
+                let upgraded = DatabaseBootstrapper::system()
+                    .bootstrap_repository_pool(&location, &latest)
+                    .unwrap();
+                let store = store_with_pool(&temp, upgraded);
+                assert!(store.list().unwrap().is_empty());
+            }
+        });
+    }
+
+    #[test]
+    fn first_install_with_distributor_sources_does_not_add_or_restore_public_source() {
+        let temp = TempDir::new().unwrap();
+        let pool = open_pool(&temp);
+        let repository = SqlitePluginMarketplaceSourceRepository::new(pool.clone());
+        repository
+            .insert_source(
+                &PluginMarketplaceSourceRecord {
+                    url: "https://example.com/private".to_owned(),
+                    branch: "private".to_owned(),
+                    use_proxy: true,
+                    enabled: false,
+                    artifact_retrieval: r#"{"type":"direct_https"}"#.to_owned(),
+                    position: 0,
+                },
+                1,
+            )
+            .unwrap();
+        let store = store_with_pool(&temp, pool.clone());
+        let sources = store.list().unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].branch, "private");
+        assert!(sources[0].use_proxy);
+        assert!(!sources[0].enabled);
+        store.delete("https://example.com/private").unwrap();
+        drop(store);
+        assert!(store_with_pool(&temp, pool).list().unwrap().is_empty());
     }
 
     #[test]

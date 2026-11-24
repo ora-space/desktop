@@ -67,4 +67,8 @@ and the source fields are described in [Marketplace](../plugins/marketplace.md#s
 
 ## Upgrades and read failures
 
-When proxy settings cannot be loaded, Settings shows an error and retry action instead of an empty editor that could overwrite the saved value. Preference migration retains legacy agent selections. After removing every marketplace source, subsequent starts preserve the empty list.
+When the initial proxy read fails, Settings shows an error and retry action instead of an empty editor that could overwrite the saved value. A background read failure keeps the current draft visible and disables save, clear and connection checks until retry succeeds.
+
+Preference migration retains legacy agent selections. A legacy package name is resolved to its full namespaced identity only when exactly one installed agent matches; ambiguous or absent selections remain unchanged.
+
+Only a newly created database requests default marketplace source seeding. Existing empty lists, including those created by older releases without a deletion marker, survive upgrades and restarts. First-install initialization also respects sources supplied by a distributor.
