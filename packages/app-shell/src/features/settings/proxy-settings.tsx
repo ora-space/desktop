@@ -48,11 +48,11 @@ export function ProxySettings() {
         description={t("settings.proxy.description")}
       />
 
-      {controller.isLoading ? (
+      {!controller.hasLoaded && controller.isLoading ? (
         <span role="status" className="text-xs text-muted-foreground">
           {t("settings.proxy.loading")}
         </span>
-      ) : controller.loadError !== null ? (
+      ) : !controller.hasLoaded && controller.loadError !== null ? (
         <div className="space-y-3">
           <p role="alert" className="text-sm text-destructive">
             {t("settings.proxy.loadError")}
@@ -115,7 +115,10 @@ function ProxySettingsEditor({
     port.trim() !== "" ||
     username.trim() !== "" ||
     password !== "";
-  const busy = controller.isLoading || controller.isSaving;
+  const busy =
+    controller.isLoading ||
+    controller.isSaving ||
+    controller.loadError !== null;
 
   const save = async () => {
     if (parsed === null) {
@@ -228,9 +231,17 @@ function ProxySettingsEditor({
               {t("settings.proxy.check")}
             </Button>
             {controller.loadError !== null && (
-              <span role="alert" className="text-xs text-destructive">
-                {t("settings.proxy.loadError")}
-              </span>
+              <>
+                <span role="alert" className="text-xs text-destructive">
+                  {t("settings.proxy.loadError")}
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={() => void controller.retry()}
+                >
+                  {t("common.retry")}
+                </Button>
+              </>
             )}
             {controller.updateError !== null && (
               <span role="alert" className="text-xs text-destructive">
@@ -240,7 +251,7 @@ function ProxySettingsEditor({
           </div>
         </div>
       </div>
-      {checkOpen && parsed !== null && (
+      {checkOpen && parsed !== null && !busy && (
         <CheckProxyDialog
           checking={controller.isChecking}
           onOpenChange={setCheckOpen}

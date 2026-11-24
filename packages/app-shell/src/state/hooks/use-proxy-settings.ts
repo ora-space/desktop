@@ -62,6 +62,7 @@ export function useProxySettings() {
 
   return {
     settings: query.data?.settings ?? null,
+    hasLoaded: query.data !== undefined,
     isLoading: query.isPending,
     loadError: query.error,
     isSaving: mutation.isPending || clearMutation.isPending,

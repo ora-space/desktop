@@ -1,6 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  onlineManager,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+import { createAppQueryClient } from "../../state/query-client";
 import { expect, it, vi } from "vitest";
 import type { ContractsClient } from "@ora/contracts";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -33,10 +38,12 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
 void appI18n;
 
 /** Renders the proxy editor with an isolated query client and contracts client. */
-function renderProxy(client: ContractsClient) {
-  const queryClient = new QueryClient({
+function renderProxy(
+  client: ContractsClient,
+  queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
-  });
+  }),
+) {
   return render(
     <QueryClientProvider client={queryClient}>
       <ContractsClientContext.Provider value={client}>
@@ -176,4 +183,56 @@ it("checks the current form proxy against a URL", async () => {
       },
     }),
   );
+});
+it("retains the draft and blocks actions during a production reconnect read failure", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "original.example",
+    port: 3128,
+    username: "alice",
+    password: "secret",
+  };
+  let failing = false;
+  const handlers = createFixtureHandlers(state);
+  handlers.getProxySettings = async () => {
+    if (failing) throw new Error("read failed");
+    return { settings: state.proxySettings };
+  };
+  const client = createTestClient(handlers);
+  const save = vi.spyOn(client.proxy, "set");
+  const clear = vi.spyOn(client.proxy, "clear");
+  const check = vi.spyOn(client.proxy, "check");
+  renderProxy(client, createAppQueryClient());
+  const user = userEvent.setup();
+  const host = await screen.findByLabelText(/主机|Host/);
+  await user.clear(host);
+  await user.type(host, "draft.example");
+  failing = true;
+  await act(async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+    try {
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  await screen.findByRole("alert", {}, { timeout: 5000 });
+  expect(screen.getByLabelText(/主机|Host/)).toHaveValue("draft.example");
+  for (const name of [/保存|Save/, /清空|Clear/, /验证代理|Check connection/]) {
+    const button = screen.getByRole("button", { name });
+    expect(button).toBeDisabled();
+    await user.click(button);
+  }
+  expect(save).not.toHaveBeenCalled();
+  expect(clear).not.toHaveBeenCalled();
+  expect(check).not.toHaveBeenCalled();
+  failing = false;
+  await user.click(screen.getByRole("button", { name: /重试|Retry/ }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(screen.getByLabelText(/主机|Host/)).toHaveValue("draft.example");
+  expect(screen.getByLabelText(/密码|Password/)).toHaveValue("secret");
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() => expect(state.proxySettings?.host).toBe("draft.example"));
 });
