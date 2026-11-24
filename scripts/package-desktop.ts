@@ -19,12 +19,24 @@ import path from "node:path";
 import process from "node:process";
 import { replaceCargoPackageVersion } from "./package-desktop-version.ts";
 import { checkToolchain } from "./check-toolchain.ts";
+import { requireReleaseNotes } from "./release-notes.ts";
 
 export interface PackageOptions {
   root?: string;
   args?: string[];
   environment?: NodeJS.ProcessEnv;
   runBuild?: (environment: NodeJS.ProcessEnv) => Promise<void>;
+}
+
+/** Normalizes a release tag to the app version, or throws when it does not name one. */
+function parseVersionTag(versionTag: string): string {
+  const version = versionTag.replace(/^refs\/tags\//, "").replace(/^v/, "");
+  if (
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)
+  ) {
+    throw new Error(`Invalid --tag version: ${versionTag}`);
+  }
+  return version;
 }
 
 /** Packages a checkout as a reversible transaction, including failed build and setup paths. */
@@ -78,6 +90,7 @@ export async function packageDesktop(
         "  --tag <v0.1.0>                 Set the app version for this build\n" +
         "                                 (tauri.conf.json, Cargo.toml, package.json).\n" +
         "                                 Defaults to the checked-in version.\n" +
+        "                                 Requires committed release-notes/0.1.0.json.\n" +
         "  --signing-key <path-or-key>    Private key for signed updater artifacts.\n" +
         "                                 Accepts a path to a .key file or the key's\n" +
         "                                 raw contents. Must match the pubkey baked\n" +
@@ -105,6 +118,9 @@ export async function packageDesktop(
   if (signingKeyPasswordIndex !== -1 && !signingKeyPassword) {
     throw new Error("--signing-key-password requires a value");
   }
+  const version = tag === undefined ? undefined : parseVersionTag(tag);
+  // Checked before any file is touched, so a version without notes cannot leave a package behind.
+  if (version !== undefined) await requireReleaseNotes(repositoryRoot, version);
   if (signingKey) environment.TAURI_SIGNING_PRIVATE_KEY = signingKey;
   if (signingKeyPassword)
     environment.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = signingKeyPassword;
@@ -194,14 +210,7 @@ export async function packageDesktop(
   // Sets the desktop app version across tauri.conf.json, Cargo.toml, and
   // package.json, run in-process so we can snapshot the files it edits before
   // touching them.
-  async function applyVersionTag(versionTag: string): Promise<void> {
-    const version = versionTag.replace(/^refs\/tags\//, "").replace(/^v/, "");
-    if (
-      !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)
-    ) {
-      throw new Error(`Invalid --tag version: ${versionTag}`);
-    }
-
+  async function applyVersion(version: string): Promise<void> {
     const tauriConfig = JSON.parse(originalFiles.get(tauriConfigPath)!);
     tauriConfig.version = version;
     await writeFile(
@@ -223,7 +232,7 @@ export async function packageDesktop(
       `${JSON.stringify(desktopPackage, null, 2)}\n`,
     );
 
-    console.log(`Set desktop version to ${version} from ${versionTag}.`);
+    console.log(`Set desktop version to ${version} from ${tag}.`);
   }
 
   // Mirrors the "Configure Tauri sidecars" and "Configure Tauri updater
@@ -257,7 +266,7 @@ export async function packageDesktop(
     await snapshot(cargoLockPath);
 
     throwIfInterrupted();
-    if (tag) await applyVersionTag(tag);
+    if (version) await applyVersion(version);
     await configureBundle();
 
     throwIfInterrupted();

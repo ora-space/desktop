@@ -56,6 +56,25 @@ export async function initFormatterRepository(root: string): Promise<void> {
   );
 }
 
+/** Commits everything in a fixture without depending on the developer's Git configuration. */
+export async function commitAll(root: string): Promise<void> {
+  await git(root, ["init", "--quiet"]);
+  await git(root, ["add", "--all"]);
+  await git(root, [
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.invalid",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "--quiet",
+    "--no-verify",
+    "-m",
+    "fixture",
+  ]);
+}
+
 /** Fails fixture setup immediately if Git cannot create the intended index state. */
 export async function git(root: string, args: string[]): Promise<void> {
   const result = await new Deno.Command("git", {

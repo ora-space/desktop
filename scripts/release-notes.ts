@@ -1,7 +1,9 @@
 // Release notes are handwritten per stable version in release-notes/<version>.json. This module owns
-// their format.
+// their format, and the checks that decide whether a versioned package may ship them.
+import { execFile } from "node:child_process";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 
 export const RELEASE_NOTES_DIRECTORY = "release-notes";
 export const RELEASE_NOTE_CATEGORIES = [
@@ -28,6 +30,11 @@ export interface ReleaseNote {
 const stableVersionPattern = /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){2}$/;
 // Bidirectional embeddings, overrides, and isolates can make text read differently from its content.
 const forbiddenTextPattern = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/u;
+
+/** Returns the stable version whose notes a build ships, so prereleases and build suffixes share them. */
+export function stableVersionOf(version: string): string {
+  return version.replace(/[-+].*$/, "");
+}
 
 /** Parses one notes file, or throws an error that names the file and the first violated rule. */
 export function parseReleaseNote(fileName: string, text: string): ReleaseNote {
@@ -163,4 +170,54 @@ export async function readReleaseNotes(root: string): Promise<ReleaseNote[]> {
     );
   }
   return notes;
+}
+
+/**
+ * Throws unless a versioned package may ship its notes: every file is valid, the version has one, and
+ * the directory holds exactly what the checked-out commit holds.
+ */
+export async function requireReleaseNotes(
+  root: string,
+  version: string,
+): Promise<void> {
+  const stableVersion = stableVersionOf(version);
+  const notes = await readReleaseNotes(root);
+  if (!notes.some((note) => note.version === stableVersion)) {
+    throw new Error(
+      `Packaging ${version} requires ${RELEASE_NOTES_DIRECTORY}/${stableVersion}.json`,
+    );
+  }
+  await requireCommittedReleaseNotes(root);
+}
+
+/** Rejects notes that differ from HEAD; other local edits stay allowed for patched distributions. */
+async function requireCommittedReleaseNotes(root: string): Promise<void> {
+  /** Runs Git against the packaged checkout, preserving its diagnostic on failure. */
+  const git = async (args: string[]): Promise<string> => {
+    const { stdout } = await promisify(execFile)("git", ["-C", root, ...args]);
+    return stdout;
+  };
+  let changes: string;
+  try {
+    // Without a commit there is nothing the notes could match.
+    await git(["rev-parse", "--verify", "--quiet", "HEAD"]);
+    changes = await git([
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+      "--ignored=matching",
+      "--",
+      RELEASE_NOTES_DIRECTORY,
+    ]);
+  } catch (error) {
+    throw new Error(
+      `Packaging with --tag requires a Git checkout to verify ${RELEASE_NOTES_DIRECTORY}`,
+      { cause: error },
+    );
+  }
+  if (changes !== "") {
+    throw new Error(
+      `${RELEASE_NOTES_DIRECTORY} differs from the checked-out commit:\n${changes.trimEnd()}`,
+    );
+  }
 }

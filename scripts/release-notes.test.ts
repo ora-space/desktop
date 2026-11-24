@@ -1,11 +1,33 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   MAX_RELEASE_NOTE_TEXT_LENGTH,
   parseReleaseNote,
   readReleaseNotes,
+  requireReleaseNotes,
 } from "./release-notes.ts";
-import { releaseNote, withTempDirectory } from "./test-support.ts";
+import {
+  commitAll,
+  git,
+  releaseNote,
+  withTempDirectory,
+} from "./test-support.ts";
+
+/** Writes notes files below a disposable checkout. */
+async function writeNotes(
+  root: string,
+  files: Record<string, unknown>,
+): Promise<void> {
+  const directory = path.join(root, "release-notes");
+  await Deno.mkdir(directory, { recursive: true });
+  for (const [name, content] of Object.entries(files)) {
+    await Deno.writeTextFile(
+      path.join(directory, name),
+      typeof content === "string" ? content : JSON.stringify(content),
+    );
+  }
+}
 
 // Runs in the existing tooling tests, so a pull request that only edits notes is validated too.
 Deno.test("the repository's release notes are valid", async () => {
@@ -98,3 +120,120 @@ Deno.test("a build without a notes directory has no notes", () =>
     assert.deepEqual(await readReleaseNotes(root), []);
   }),
 );
+
+for (const version of ["0.7.0", "0.7.0-rc.1", "0.7.0+yellow", "0.7.0-rc.1+x"]) {
+  Deno.test(`packaging ${version} requires the notes of 0.7.0`, () =>
+    withTempDirectory(async (root) => {
+      await writeNotes(root, { "0.6.9.json": releaseNote("0.6.9") });
+      await commitAll(root);
+      await assert.rejects(
+        requireReleaseNotes(root, version),
+        /requires release-notes\/0\.7\.0\.json/,
+      );
+      await writeNotes(root, { "0.7.0.json": releaseNote("0.7.0") });
+      await commitAll(root);
+      await requireReleaseNotes(root, version);
+    }),
+  );
+}
+
+Deno.test("one invalid historical file blocks every versioned package", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, {
+      "0.7.0.json": releaseNote("0.7.0"),
+      "0.6.9.json": "{}",
+    });
+    await commitAll(root);
+    await assert.rejects(
+      requireReleaseNotes(root, "0.7.0"),
+      /release-notes\/0\.6\.9\.json: the document is missing/,
+    );
+  }),
+);
+
+const uncommittedChanges: [string, (root: string) => Promise<void>][] = [
+  [
+    "a modified file",
+    (root) =>
+      writeNotes(root, {
+        "0.7.0.json": { ...releaseNote("0.7.0"), date: "2026-12-11" },
+      }),
+  ],
+  [
+    "a staged file",
+    async (root) => {
+      await writeNotes(root, { "0.8.0.json": releaseNote("0.8.0") });
+      await git(root, ["add", "--all"]);
+    },
+  ],
+  [
+    "a deleted file",
+    (root) => Deno.remove(path.join(root, "release-notes", "0.6.9.json")),
+  ],
+  [
+    "an untracked file",
+    (root) => writeNotes(root, { "0.8.0.json": releaseNote("0.8.0") }),
+  ],
+  [
+    "an ignored file",
+    (root) => writeNotes(root, { "0.9.0.json": releaseNote("0.9.0") }),
+  ],
+];
+for (const [label, change] of uncommittedChanges) {
+  Deno.test(`packaging rejects ${label} under release-notes`, () =>
+    withTempDirectory(async (root) => {
+      await Deno.writeTextFile(path.join(root, ".gitignore"), "0.9.0.json\n");
+      await writeNotes(root, {
+        "0.6.9.json": releaseNote("0.6.9"),
+        "0.7.0.json": releaseNote("0.7.0"),
+      });
+      await commitAll(root);
+      await change(root);
+      await assert.rejects(
+        requireReleaseNotes(root, "0.7.0"),
+        /differs from the checked-out commit/,
+      );
+    }),
+  );
+}
+
+Deno.test("edits outside release-notes do not block a patched package", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, { "0.7.0.json": releaseNote("0.7.0") });
+    await Deno.writeTextFile(path.join(root, "seed.sql"), "");
+    await commitAll(root);
+    await Deno.writeTextFile(path.join(root, "seed.sql"), "patched");
+    await requireReleaseNotes(root, "0.7.0");
+  }),
+);
+
+Deno.test("notes outside a Git checkout cannot be packaged", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, { "0.7.0.json": releaseNote("0.7.0") });
+    await assert.rejects(
+      requireReleaseNotes(root, "0.7.0"),
+      /requires a Git checkout/,
+    );
+  }),
+);
+
+Deno.test({
+  name: "linked notes are rejected because Git does not track their content",
+  // Creating links needs extra privileges on Windows.
+  ignore: Deno.build.os === "windows",
+  fn: () =>
+    withTempDirectory(async (root) => {
+      await writeNotes(root, {});
+      const outside = path.join(root, "outside.json");
+      await Deno.writeTextFile(outside, JSON.stringify(releaseNote("0.7.0")));
+      await Deno.symlink(
+        outside,
+        path.join(root, "release-notes", "0.7.0.json"),
+      );
+      await commitAll(root);
+      await assert.rejects(
+        requireReleaseNotes(root, "0.7.0"),
+        /must be a regular file/,
+      );
+    }),
+});
