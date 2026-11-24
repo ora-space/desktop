@@ -18,17 +18,24 @@ export function useDesktopUpdate(): {
   useEffect(() => {
     if (updates === undefined) return;
     let active = true;
-    void updates.getStatus().then((next) => {
-      if (active) setStatus(next);
-    });
+    let observed = false;
     let unsubscribe: (() => void) | undefined;
     void updates
       .onStatus((next) => {
+        observed = true;
         if (active) setStatus(next);
       })
       .then((stop) => {
         unsubscribe = stop;
         if (!active) stop();
+      })
+      // Read after subscribing, so no change is missed in between; any event is newer than a snapshot
+      // that answers after it.
+      .finally(() => {
+        if (!active) return;
+        return updates.getStatus().then((next) => {
+          if (active && !observed) setStatus(next);
+        });
       });
     return () => {
       active = false;
