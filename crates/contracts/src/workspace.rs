@@ -34,10 +34,12 @@ pub enum WorkspaceLifecycle {
 pub enum WorkspaceGit {
     /// Git resolves the directory to a checkout or linked worktree.
     Repository,
-    /// Git explicitly reports that the directory is not inside any repository.
+    /// Git explicitly reports that the directory is not inside any repository, and no `.git`
+    /// entry exists in it or above it.
     NotRepository,
-    /// Git could not answer (for example it is not installed, distrusts the owner, or the
-    /// repository is damaged), so clients keep their usual behavior.
+    /// Git could not answer (for example it is not installed, distrusts the owner, the `.git` is
+    /// damaged or unreadable, it did not answer in time, or the checkout is being cleaned up), so
+    /// clients keep their usual behavior.
     Unknown,
 }
 

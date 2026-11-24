@@ -17,7 +17,7 @@ use ora_contracts::{
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_contracts::{
     ListWorkspacesRequest, ListWorkspacesResponse, Workspace as ContractWorkspace,
-    WorkspaceDirectory, WorkspaceKind, WorkspaceLifecycle,
+    WorkspaceDirectory, WorkspaceGit, WorkspaceKind, WorkspaceLifecycle,
 };
 use ora_db::{RepositoryPool, SqliteWorkspaceRepository, SqliteWorktreeRepository};
 use ora_domain::{Workspace, WorkspaceId, WorkspaceLocation};
@@ -129,7 +129,8 @@ impl WorkspaceApi {
         let workspaces = ora_db::SqliteWorkspaceRepository::new(self.pool.clone())
             .list_all_workspaces()
             .map_err(|error| BackendError::internal("failed to list workspaces", error))?;
-        let directories = probe_directories(&workspaces, &self.relative_path_base);
+        let directories =
+            probe_directories(&workspaces, &self.relative_path_base, &self.git_cleanup);
         Ok(ListWorkspacesResponse {
             workspaces: workspaces
                 .into_iter()
@@ -380,6 +381,7 @@ impl WorkspaceApi {
 fn probe_directories(
     workspaces: &[Workspace],
     relative_path_base: &Path,
+    git_cleanup: &crate::git_cleanup::GitCleanupHandle,
 ) -> Vec<WorkspaceDirectory> {
     const PARALLEL_PROBES: usize = 8;
     workspaces
@@ -388,7 +390,7 @@ fn probe_directories(
             // A lone probe needs no fan-out; running it inline also keeps thread-scoped tracing
             // subscribers attached in tests, as `git_cleanup` does for a single repository group.
             if let [workspace] = chunk {
-                return vec![probe_directory(&workspace.location, relative_path_base)];
+                return vec![probe_directory(workspace, relative_path_base, git_cleanup)];
             }
             std::thread::scope(|scope| {
                 // Collecting first starts every probe in the chunk before the first join; a lazy
@@ -397,7 +399,7 @@ fn probe_directories(
                 let probes: Vec<_> = chunk
                     .iter()
                     .map(|workspace| {
-                        scope.spawn(|| probe_directory(&workspace.location, relative_path_base))
+                        scope.spawn(|| probe_directory(workspace, relative_path_base, git_cleanup))
                     })
                     .collect();
                 probes
@@ -413,17 +415,29 @@ fn probe_directories(
         .collect()
 }
 
-/// Probes the directory behind one Workspace location at list time.
+/// Probes the directory behind one Workspace at list time.
 ///
 /// Shares the probe cwd resolution uses, so a workspace reported `Present` is exactly one that
 /// session start and model discovery can resolve, and a `Missing` path is the one they would
 /// refuse. A present directory also carries the Git capability the review operations check.
-fn probe_directory(location: &WorkspaceLocation, relative_path_base: &Path) -> WorkspaceDirectory {
-    match location {
+///
+/// The Git probe starts a process inside the checkout, which on Windows can keep cleanup from
+/// removing the directory, so it holds the shared worktree-use lease like every other checkout
+/// reader. It only tries the lease: a list must never wait on a removal, and a checkout being
+/// cleaned up has no capability worth reporting, so it is `Unknown` instead.
+fn probe_directory(
+    workspace: &Workspace,
+    relative_path_base: &Path,
+    git_cleanup: &crate::git_cleanup::GitCleanupHandle,
+) -> WorkspaceDirectory {
+    match &workspace.location {
         WorkspaceLocation::LocalFilesystem { path } => {
             match probe_local_directory(PathBuf::from(path), relative_path_base) {
                 LocalDirectory::Present(directory) => WorkspaceDirectory::Present {
-                    git: probe_workspace_git(&directory),
+                    git: match git_cleanup.try_shared_worktree_use(workspace.id.as_ref()) {
+                        Some(_worktree_use) => probe_workspace_git(&directory),
+                        None => WorkspaceGit::Unknown,
+                    },
                 },
                 LocalDirectory::Missing(resolved) => WorkspaceDirectory::Missing {
                     path: resolved.to_string_lossy().into_owned(),

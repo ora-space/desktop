@@ -69,6 +69,27 @@ impl KeyedResourceLocks {
         }
     }
 
+    /// Acquires the key for shared use only if no writer holds or waits for it.
+    ///
+    /// For best-effort readers that must never wait on cleanup; `None` means a cleanup is
+    /// removing (or about to remove) the resource.
+    pub fn try_acquire_shared(
+        self: &Arc<Self>,
+        key: impl Into<String>,
+    ) -> Option<SharedLeaseGuard> {
+        let key = key.into();
+        let mut states = self.lock_states();
+        let state = states.entry(key.clone()).or_default();
+        if state.writer || state.waiting_writers > 0 {
+            return None;
+        }
+        state.readers += 1;
+        Some(SharedLeaseGuard {
+            locks: Arc::clone(self),
+            key,
+        })
+    }
+
     /// Acquires the key exclusively, waiting for every current holder to finish.
     pub fn acquire_exclusive(self: &Arc<Self>, key: impl Into<String>) -> ExclusiveLeaseGuard {
         let key = key.into();
@@ -166,6 +187,27 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("exclusive granted after shared release");
         worker.join().expect("worker finished");
+    }
+
+    /// Verifies a best-effort reader gets a lease beside other readers but never while a cleanup
+    /// holds or waits for the key, and that the refusal leaves no entry behind.
+    #[test]
+    fn try_shared_yields_to_writers_without_waiting() {
+        let locks = KeyedResourceLocks::new();
+        let reader = locks.acquire_shared("task-1");
+        assert!(locks.try_acquire_shared("task-1").is_some());
+        drop(reader);
+
+        let writer = locks.acquire_exclusive("task-1");
+        assert!(locks.try_acquire_shared("task-1").is_none());
+        drop(writer);
+
+        assert!(locks.try_acquire_shared("task-1").is_some());
+        assert_eq!(
+            locks.states.lock().expect("state lock").len(),
+            0,
+            "released and refused leases leave no entry"
+        );
     }
 
     /// Verifies unrelated keys do not contend and idle entries are collected.
