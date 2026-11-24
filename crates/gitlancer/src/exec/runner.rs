@@ -4,7 +4,7 @@ use std::sync::{
     Arc, Condvar, Mutex,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::error::GitExecError;
 use crate::exec::command::GitCommand;
@@ -38,6 +38,15 @@ pub trait GitRunner {
         }
         Ok(output)
     }
+
+    /// Runs a command that must finish within `limit`.
+    ///
+    /// Opt-in per call so existing operations keep their execution semantics. The default hands
+    /// the limit to the runner as the command's `time_limit`, which budget-enforcing runners
+    /// honor and others ignore; [`CliGitRunner`] kills the process when the limit passes.
+    fn run_within(&self, command: &GitCommand, limit: Duration) -> Result<GitOutput, GitExecError> {
+        self.run(&command.clone().with_time_limit(limit))
+    }
 }
 
 /// Executes Git commands through the system `git` binary.
@@ -47,7 +56,12 @@ pub struct CliGitRunner;
 impl GitRunner for CliGitRunner {
     /// Spawns the Git CLI with stable automation defaults so upper layers can trust execution semantics.
     fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
-        run_cli(command, /*limits*/ None)
+        run_cli(command, /*limits*/ None, /*deadline*/ None)
+    }
+
+    /// Kills Git once `limit` passes and reports `TimedOut`, the kind budget-enforcing runners use.
+    fn run_within(&self, command: &GitCommand, limit: Duration) -> Result<GitOutput, GitExecError> {
+        run_cli(command, /*limits*/ None, Some(limit))
     }
 
     /// Captures Git output concurrently so neither pipe can deadlock or grow without a bound.
@@ -57,14 +71,19 @@ impl GitRunner for CliGitRunner {
         max_stdout_bytes: usize,
         max_stderr_bytes: usize,
     ) -> Result<GitOutput, GitExecError> {
-        run_cli(command, Some((max_stdout_bytes, max_stderr_bytes)))
+        run_cli(
+            command,
+            Some((max_stdout_bytes, max_stderr_bytes)),
+            /*deadline*/ None,
+        )
     }
 }
 
-/// Executes one CLI command with optional per-stream capture limits.
+/// Executes one CLI command with optional per-stream capture limits and an optional deadline.
 fn run_cli(
     command: &GitCommand,
     limits: Option<(usize, usize)>,
+    deadline: Option<Duration>,
 ) -> Result<GitOutput, GitExecError> {
     let logger = logging::get();
     let started_at = Instant::now();
@@ -174,8 +193,32 @@ fn run_cli(
                     source,
                 });
         }
-        let _state = state_changed
-            .wait(state)
+        let Some(limit) = deadline else {
+            let _state = state_changed
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            continue;
+        };
+        let remaining = limit.saturating_sub(started_at.elapsed());
+        if remaining.is_zero() {
+            drop(state);
+            let _termination_result = child.kill();
+            let _reap_result = child.wait();
+            if let Some(ref l) = logger {
+                l.log_result(started_at.elapsed().as_millis() as u64, false, None);
+            }
+            // The readers are left to finish on their own: a grandchild Git started can still
+            // hold the pipes open, and waiting for it would defeat the deadline.
+            return Err(GitExecError::OutputReadFailed {
+                stream: "process status",
+                source: std::io::Error::new(
+                    ErrorKind::TimedOut,
+                    format!("git exceeded its {}ms time limit", limit.as_millis()),
+                ),
+            });
+        }
+        let _wait = state_changed
+            .wait_timeout(state, remaining)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
     };
     let stdout_result = join_bounded_reader(stdout_reader, "stdout", stdout_limit);
@@ -320,6 +363,37 @@ mod tests {
     use crate::exec::env::GitEnv;
     use pretty_assertions::assert_eq;
     use std::sync::{Arc, atomic::AtomicBool};
+
+    /// Verifies a command that outlives its deadline is killed and reported as timed out promptly,
+    /// even when a child it started keeps the output pipes open.
+    #[cfg(unix)]
+    #[test]
+    fn kills_a_command_that_outlives_its_deadline() {
+        let started = std::time::Instant::now();
+        let result = CliGitRunner.run_within(
+            &GitCommand::new(
+                std::env::temp_dir(),
+                vec![
+                    "-c".to_string(),
+                    "alias.stall=!sleep 10".to_string(),
+                    "stall".to_string(),
+                ],
+                GitEnv::default(),
+                GitIntent::ReadOnly,
+            ),
+            std::time::Duration::from_millis(200),
+        );
+
+        assert!(
+            matches!(
+                &result,
+                Err(crate::error::GitExecError::OutputReadFailed { source, .. })
+                    if source.kind() == std::io::ErrorKind::TimedOut
+            ),
+            "{result:?}"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
 
     /// Verifies every Git process gets the automation locale in `LC_ALL` too, whatever the
     /// caller's environment says, so English diagnostics stay classifiable.

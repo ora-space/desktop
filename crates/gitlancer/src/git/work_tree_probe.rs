@@ -1,11 +1,12 @@
 //! Asks Git, cheaply, whether one directory lies inside a work tree.
-use crate::error::{GitExecError, GitlancerError, ParseError};
+use crate::error::{DomainError, GitExecError, GitlancerError, ParseError};
 use crate::exec::command::{GitCommand, GitIntent};
 use crate::exec::env::GitEnv;
 use crate::exec::output::GitOutput;
 use crate::exec::runner::GitRunner;
 use crate::git::Git;
 use std::path::Path;
+use std::time::Duration;
 
 /// What Git reports about one directory's place in a repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,28 +16,59 @@ pub enum WorkTreeProbe {
     /// Git discovered a repository but the directory is not in its work tree, such as a bare
     /// repository or a metadata directory.
     OutsideWorkTree,
-    /// Git explicitly said the directory is not inside any repository.
+    /// Git explicitly said the directory is not inside any repository, and no `.git` entry exists
+    /// in it or any ancestor.
     NotInRepository,
 }
 
 impl<R: GitRunner> Git<R> {
-    /// Probes `directory` with `git rev-parse --is-inside-work-tree`.
+    /// Probes `directory` with `git rev-parse --is-inside-work-tree`, bounded by `limit`.
     ///
     /// One cheap command that discovers upward exactly like every other Git command run from the
-    /// directory. Only Git's explicit "not a git repository" answer becomes `NotInRepository`;
-    /// any other failure (an untrusted owner, a broken `.git` link, Git missing) stays an error so
-    /// callers never mistake a broken repository for a plain folder.
+    /// directory. `NotInRepository` needs both Git's explicit "not a git repository" answer and
+    /// no `.git` entry in the directory or any ancestor: Git prints that same answer when it skips
+    /// a damaged or unreadable `.git` directory (missing `HEAD`, no objects, no permission). Any
+    /// other failure (an untrusted owner, a broken `.git` link, Git missing, the limit passing)
+    /// stays an error so callers never mistake a broken repository for a plain folder. The limit
+    /// keeps a Git stuck on a stalled mount from holding the caller.
     ///
     /// `Git::discover_repository` treats any non-zero exit as "not a repository" because it only
     /// decides whether to attempt an operation; the difference is intentional.
-    pub fn probe_work_tree(&self, directory: &Path) -> Result<WorkTreeProbe, GitlancerError> {
-        classify_work_tree_probe(self.runner().run(&GitCommand::new(
-            directory.to_path_buf(),
-            vec!["rev-parse".to_string(), "--is-inside-work-tree".to_string()],
-            GitEnv::default(),
-            GitIntent::ReadOnly,
-        )))
+    pub fn probe_work_tree(
+        &self,
+        directory: &Path,
+        limit: Duration,
+    ) -> Result<WorkTreeProbe, GitlancerError> {
+        let answer = classify_work_tree_probe(self.runner().run_within(
+            &GitCommand::new(
+                directory.to_path_buf(),
+                vec!["rev-parse".to_string(), "--is-inside-work-tree".to_string()],
+                GitEnv::default(),
+                GitIntent::ReadOnly,
+            ),
+            limit,
+        ))?;
+        if answer == WorkTreeProbe::NotInRepository {
+            require_no_git_entry(directory)?;
+        }
+        Ok(answer)
     }
+}
+
+/// Fails when the directory or any ancestor holds a `.git` entry of any kind.
+///
+/// `symlink_metadata` so a dangling `.git` symlink still counts as present. Any error other than
+/// "not found" (for example no permission to look) is inconclusive and propagates.
+fn require_no_git_entry(directory: &Path) -> Result<(), GitlancerError> {
+    for ancestor in directory.ancestors() {
+        let candidate = ancestor.join(".git");
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) => return Err(DomainError::UnrecognizedGitEntry(candidate).into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 /// The discovery failure Git prints after walking up from a directory without finding any

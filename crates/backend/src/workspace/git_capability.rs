@@ -4,18 +4,25 @@ use gitlancer::{CliGitRunner, Git};
 use ora_contracts::{EmptyErrorParams, PublicError, WorkspaceGit};
 use ora_logging::{ErrorReport, ora_warn};
 use std::path::Path;
+use std::time::Duration;
+
+/// How long one probe may take before its answer counts as `Unknown`.
+///
+/// `rev-parse` normally answers in milliseconds; only a Git stuck on something like a stalled
+/// network mount gets near this, and it must not hold a whole workspace list with it.
+const PROBE_TIME_LIMIT: Duration = Duration::from_secs(5);
 
 /// Asks Git, at this moment, whether commands run from `directory` act on a work tree.
 ///
 /// One `git rev-parse --is-inside-work-tree`, which discovers upward like every other Git
 /// command, so a plain folder nested inside another checkout reports `Repository`: the diff
-/// reader and writers also operate on that enclosing checkout from there. Only Git's explicit
-/// "not a git repository" answer becomes `NotRepository`; any other failure (an untrusted owner,
-/// a corrupt repository, Git missing) is `Unknown`, so clients never tell the user to
-/// `git init` a broken repository. Nothing is cached because a user can `git init` (or delete
-/// `.git`) at any time without telling Ora.
+/// reader and writers also operate on that enclosing checkout from there. `NotRepository` needs
+/// Git's explicit "not a git repository" answer and no `.git` entry in the folder or above it;
+/// any other outcome (an untrusted owner, a damaged repository, Git missing, the time limit) is
+/// `Unknown`, so clients never tell the user to `git init` a broken repository. Nothing is cached
+/// because a user can `git init` (or delete `.git`) at any time without telling Ora.
 pub(crate) fn probe_workspace_git(directory: &Path) -> WorkspaceGit {
-    match Git::new(CliGitRunner).probe_work_tree(directory) {
+    match Git::new(CliGitRunner).probe_work_tree(directory, PROBE_TIME_LIMIT) {
         Ok(WorkTreeProbe::InsideWorkTree) => WorkspaceGit::Repository,
         Ok(WorkTreeProbe::NotInRepository) => WorkspaceGit::NotRepository,
         // A bare repository or metadata directory: not a plain folder, yet nothing to review.

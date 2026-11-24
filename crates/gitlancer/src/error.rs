@@ -63,6 +63,11 @@ pub enum DomainError {
     #[error("path {path:?} is outside worktree {worktree:?}")]
     PathOutsideWorktree { path: PathBuf, worktree: PathBuf },
 
+    /// Returned when Git found no repository although a `.git` entry exists at the given path,
+    /// meaning the repository there is damaged or unreadable rather than absent.
+    #[error("a .git entry exists but Git does not recognize it as a repository: {0:?}")]
+    UnrecognizedGitEntry(PathBuf),
+
     /// Returned when a worktree does not belong to the repository a caller supplied.
     #[error("worktree {worktree:?} does not belong to repository {repo:?}")]
     WorktreeMismatch { worktree: PathBuf, repo: PathBuf },

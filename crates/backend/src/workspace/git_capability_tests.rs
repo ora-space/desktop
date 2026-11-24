@@ -225,6 +225,73 @@ fn damaged_repository_reports_unknown_rather_than_plain() {
     );
 }
 
+/// Verifies `.git` directories Git skips as invalid report `Unknown`, not `NotRepository`: Git
+/// prints the plain-folder message for them, yet telling the user to `git init` would be wrong.
+/// Covers a corrupt `HEAD`, an empty `.git`, and a damaged `.git` above a nested project folder.
+#[test]
+fn damaged_git_directories_report_unknown_rather_than_plain() {
+    let temporary = TempDir::new().expect("create temporary backend directory");
+    let corrupt = seeded_scaffold("backend-workspace-git-corrupt-head");
+    fs::write(corrupt.repo_path().join(".git").join("HEAD"), "garbage\n").expect("corrupt HEAD");
+    let empty = temporary.path().join("empty-git");
+    fs::create_dir_all(empty.join(".git")).expect("create empty .git directory");
+    let damaged_parent = temporary.path().join("damaged-parent");
+    let nested = damaged_parent.join("nested");
+    fs::create_dir_all(damaged_parent.join(".git")).expect("create damaged parent .git");
+    fs::create_dir_all(&nested).expect("create nested folder");
+    let backend = open_backend(&temporary);
+    let projects = [
+        create_project(&backend, corrupt.repo_path()),
+        create_project(&backend, &empty),
+        create_project(&backend, &nested),
+    ];
+
+    let unknown = WorkspaceDirectory::Present {
+        git: WorkspaceGit::Unknown,
+    };
+    assert_eq!(
+        projects
+            .iter()
+            .map(|project_id| main_workspace(&backend, project_id).directory)
+            .collect::<Vec<_>>(),
+        vec![unknown.clone(), unknown.clone(), unknown]
+    );
+}
+
+/// Verifies a `.git` directory the user cannot read reports `Unknown`. Skipped when the test runs
+/// with privileges that ignore file modes, since the folder is then readable after all.
+#[cfg(unix)]
+#[test]
+fn unreadable_git_directory_reports_unknown() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temporary = TempDir::new().expect("create temporary backend directory");
+    let scaffold = seeded_scaffold("backend-workspace-git-unreadable");
+    let git_directory = scaffold.repo_path().join(".git");
+    fs::set_permissions(&git_directory, fs::Permissions::from_mode(0o000))
+        .expect("make .git unreadable");
+    let readable_anyway = fs::read_dir(&git_directory).is_ok();
+    let directory = if readable_anyway {
+        None
+    } else {
+        let backend = open_backend(&temporary);
+        let project_id = create_project(&backend, scaffold.repo_path());
+        Some(main_workspace(&backend, &project_id).directory)
+    };
+    // Restore before asserting so the fixture can always be removed.
+    fs::set_permissions(&git_directory, fs::Permissions::from_mode(0o755))
+        .expect("restore .git permissions");
+
+    if let Some(directory) = directory {
+        assert_eq!(
+            directory,
+            WorkspaceDirectory::Present {
+                git: WorkspaceGit::Unknown,
+            }
+        );
+    }
+}
+
 /// Verifies a missing folder reports `Missing` rather than any Git capability.
 #[test]
 fn missing_folder_reports_missing_without_git_capability() {
