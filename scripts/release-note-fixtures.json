@@ -980,5 +980,20 @@
         }
       ]
     }
+  },
+  {
+    "name": "a lone leading surrogate",
+    "valid": false,
+    "text": "{\"version\":\"0.8.0\",\"date\":\"2026-12-10\",\"entries\":[{\"category\":\"fix\",\"zh-CN\":\"a\\ud800b\",\"en-US\":\"Fixed\"}]}"
+  },
+  {
+    "name": "a lone trailing surrogate",
+    "valid": false,
+    "text": "{\"version\":\"0.8.0\",\"date\":\"2026-12-10\",\"entries\":[{\"category\":\"fix\",\"zh-CN\":\"a\\udc00b\",\"en-US\":\"Fixed\"}]}"
+  },
+  {
+    "name": "a surrogate pair",
+    "valid": true,
+    "text": "{\"version\":\"0.8.0\",\"date\":\"2026-12-10\",\"entries\":[{\"category\":\"fix\",\"zh-CN\":\"a\\ud83d\\ude00b\",\"en-US\":\"Fixed\"}]}"
   }
 ]

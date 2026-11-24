@@ -148,6 +148,17 @@ for (const [label, files, expected] of [
     /requires release-notes\/1\.1\.0\.json/,
   ],
   [
+    // serde_json refuses a lone surrogate anywhere, so clients would lose the whole manifest.
+    "a text holds a lone surrogate",
+    {
+      "1.1.0.json": {
+        ...releaseNote("1.1.0"),
+        entries: [{ category: "fix", "zh-CN": "a\ud800b", "en-US": "Fixed" }],
+      },
+    },
+    /1\.1\.0\.json: entries\[0\]\.zh-CN/,
+  ],
+  [
     "a historical file is invalid",
     { "1.0.0.json": "broken", "1.1.0.json": releaseNote("1.1.0") },
     /1\.0\.0\.json: invalid JSON/,

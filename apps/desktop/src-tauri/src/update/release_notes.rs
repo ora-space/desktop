@@ -229,8 +229,13 @@ mod tests {
         ))
         .expect("shared fixtures parse");
         for case in cases {
+            // A case that carries text may not even parse, which hides the notes as well.
+            let note = match case["text"].as_str() {
+                Some(text) => serde_json::from_str(text).unwrap_or(Value::Null),
+                None => case["note"].clone(),
+            };
             assert_eq!(
-                (&case["name"], read_note(&case["note"]).is_some()),
+                (&case["name"], read_note(&note).is_some()),
                 (&case["name"], case["valid"].as_bool().expect("valid flag")),
             );
         }

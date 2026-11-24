@@ -34,7 +34,8 @@ export interface ReleaseNote {
 const stableVersionPattern = /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){2}$/;
 // Texts stay on one line, and bidirectional controls cannot make them read differently from their
 // content.
-const forbiddenTextPattern = /[\p{Cc}\p{Bidi_Control}\u2028\u2029]/u;
+// Lone surrogates are valid JSON here but not for clients, which would refuse the whole update manifest.
+const forbiddenTextPattern = /[\p{Cc}\p{Cs}\p{Bidi_Control}\u2028\u2029]/u;
 
 /** Returns the stable version whose notes a build ships, so prereleases and build suffixes share them. */
 export function stableVersionOf(version: string): string {
@@ -124,7 +125,7 @@ export function parseReleaseNote(fileName: string, text: string): ReleaseNote {
         }
         if (forbiddenTextPattern.test(value)) {
           return reject(
-            `${label}.${locale} contains a control, line separator, or bidirectional formatting character`,
+            `${label}.${locale} contains a control, line separator, bidirectional formatting, or lone surrogate character`,
           );
         }
       }
