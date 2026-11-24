@@ -62,7 +62,9 @@ impl MarketplaceSourceStore {
             namespaces,
             sources_root,
         };
-        if store.repository.list_sources()?.is_empty() {
+        if store.repository.list_sources()?.is_empty()
+            && !store.repository.has_source_deletions()?
+        {
             let default_source = MarketplaceSource {
                 url: DEFAULT_MARKETPLACE_URL.to_owned(),
                 branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
@@ -352,17 +354,14 @@ mod tests {
 
     /// Characterizes startup reseeding after the user deliberately removed every source.
     #[test]
-    fn empty_user_source_list_is_reseeded_on_reopen() {
+    fn empty_user_source_list_is_preserved_on_reopen() {
         ora_logging::with_trace_logging(|| {
             let temp = TempDir::new().expect("create temp directory");
             let (_, store) = store_with_repository(&temp);
             assert_eq!(store.delete(DEFAULT_MARKETPLACE_URL).unwrap(), vec![]);
             drop(store);
             let (_, reopened) = store_with_repository(&temp);
-            assert_eq!(
-                reopened.list().unwrap(),
-                vec![third_party(DEFAULT_MARKETPLACE_URL)]
-            );
+            assert_eq!(reopened.list().unwrap(), vec![]);
         });
     }
 

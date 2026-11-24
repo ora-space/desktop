@@ -122,13 +122,22 @@ impl SqlitePluginMarketplaceSourceRepository {
         })
     }
 
-    /// Removes one source by URL and returns whether the row existed.
-    pub fn delete_source(&self, url: &str) -> Result<bool, DatabaseError> {
+    /// Checks whether source deletion has recorded an intentional user choice.
+    pub fn has_source_deletions(&self) -> Result<bool, DatabaseError> {
         self.pool.with_connection(|connection| {
-            let deleted = connection.execute(
-                "DELETE FROM plugin_marketplace_source WHERE url = ?1",
-                params![url],
-            )?;
+            connection.query_row("SELECT EXISTS(SELECT 1 FROM user_config WHERE key = 'marketplace_sources_edited')", [], |row| row.get(0)).map_err(Into::into)
+        })
+    }
+
+    /// Deletes a source and records user intent in the same transaction.
+    pub fn delete_source(&self, url: &str) -> Result<bool, DatabaseError> {
+        self.pool.with_connection_mut(|connection| {
+            let transaction = connection.transaction()?;
+            let deleted = transaction.execute("DELETE FROM plugin_marketplace_source WHERE url = ?1", params![url])?;
+            if deleted > 0 {
+                transaction.execute("INSERT INTO user_config (key, value) VALUES ('marketplace_sources_edited', 'true') ON CONFLICT(key) DO NOTHING", [])?;
+            }
+            transaction.commit()?;
             Ok(deleted > 0)
         })
     }
