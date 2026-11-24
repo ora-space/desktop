@@ -282,6 +282,12 @@ export interface ScheduledArtifactsCapability {
   ): Promise<void>;
 }
 
+/** Describes the local installation that a host runs from. */
+export interface InstallationCapability {
+  /** Whether this process created the local data, so no earlier version ran here. */
+  isNew(): Promise<boolean>;
+}
+
 /** Collects the host capabilities consumed by the shared application shell. */
 export interface PlatformAdapter {
   readonly worktreeStorage: WorktreeStorageCapability;
@@ -289,6 +295,7 @@ export interface PlatformAdapter {
   readonly locationActions: LocationActionsCapability;
   readonly surfaces: SurfaceCapability;
   readonly updates?: DesktopUpdateCapability;
+  readonly installation?: InstallationCapability;
   readonly pluginMarketplace?: PluginMarketplaceCapability;
   readonly cloudConnection?: CloudConnectionCapability;
   readonly diagnosticLogs?: DiagnosticLogsCapability;

@@ -21,6 +21,7 @@ import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
 import { MarketplaceAutoSyncBridge } from "./features/settings/marketplace-auto-sync-bridge";
 import { PluginOperationEventBridge } from "./features/settings/plugin-operation-event-bridge";
+import { ReleaseNotesCard } from "./features/release-notes/release-notes-card";
 import { SurfaceDownloadPrompt } from "./features/surface/surface-download-prompt";
 import { SurfaceDownloadToaster } from "./features/surface/surface-download-toaster";
 import { SurfaceEventBridge } from "./features/surface/surface-event-bridge";
@@ -219,6 +220,7 @@ function AppShellContent({
               <SurfaceEventBridge />
               <SurfaceDownloadToaster />
               <SurfaceDownloadPrompt />
+              <ReleaseNotesCard align={surfaceVisible ? "left" : "right"} />
               {/* Mounted here, not in the sidebar, so collapsing the sidebar does
                   not take the workspace dialogs down with it. */}
               <WorkspaceDialogs />
