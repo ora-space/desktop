@@ -75,6 +75,8 @@ export const settingsTranslations = {
       "点击验证会保存探测网址，并使用当前表单中的代理配置探测；不会自动保存代理配置。无法连接可能由目标网站或网络限制引起，不代表代理配置有误。",
     "settings.proxy.checkUrl": "探测网址",
     "settings.proxy.checkUrlRequired": "请输入要探测的网址。",
+    "settings.proxy.checkUrlLoadError":
+      "无法读取已保存的探测网址，请重试；代理配置仍可编辑。",
     "settings.proxy.checkUrlSaveError":
       "探测网址未保存，未执行探测。请检查网址并重试。",
     "settings.proxy.checkConfirm": "验证",
@@ -248,6 +250,8 @@ export const settingsTranslations = {
       "Check saves this URL and fetches it through the proxy shown in this form. Proxy settings are not saved automatically. The site or network may prevent a connection; a failed check does not mean the proxy settings are invalid.",
     "settings.proxy.checkUrl": "URL to check",
     "settings.proxy.checkUrlRequired": "Enter a URL to check.",
+    "settings.proxy.checkUrlLoadError":
+      "Could not read the saved check URL. Retry to check; proxy settings can still be edited.",
     "settings.proxy.checkUrlSaveError":
       "The URL was not saved and no check was run. Check the URL and retry.",
     "settings.proxy.checkConfirm": "Check",

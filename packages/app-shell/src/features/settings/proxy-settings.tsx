@@ -118,6 +118,8 @@ function ProxySettingsEditor({
     controller.isLoading ||
     controller.isSaving ||
     controller.loadError !== null;
+  const checkBlocked =
+    busy || controller.isCheckUrlLoading || controller.checkUrlError !== null;
 
   const save = async () => {
     if (parsed === null) {
@@ -224,7 +226,7 @@ function ProxySettingsEditor({
             </Button>
             <Button
               variant="outline"
-              disabled={busy || parsed === null}
+              disabled={checkBlocked || parsed === null}
               onClick={() => {
                 setCheckUrl(controller.checkUrl);
                 setCheckOpen(true);
@@ -232,6 +234,19 @@ function ProxySettingsEditor({
             >
               {t("settings.proxy.check")}
             </Button>
+            {controller.checkUrlError !== null && (
+              <>
+                <span role="alert" className="text-xs text-destructive">
+                  {t("settings.proxy.checkUrlLoadError")}
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={() => void controller.retry()}
+                >
+                  {t("common.retry")}
+                </Button>
+              </>
+            )}
             {controller.loadError !== null && (
               <>
                 <span role="alert" className="text-xs text-destructive">
@@ -256,8 +271,14 @@ function ProxySettingsEditor({
       {checkOpen && parsed !== null && (
         <CheckProxyDialog
           checking={controller.isChecking}
-          blocked={busy}
-          readFailed={controller.loadError !== null}
+          blocked={checkBlocked}
+          readError={
+            controller.loadError !== null
+              ? t("settings.proxy.loadError")
+              : controller.checkUrlError !== null
+                ? t("settings.proxy.checkUrlLoadError")
+                : null
+          }
           onRetry={() => void controller.retry()}
           url={checkUrl}
           onUrlChange={setCheckUrl}
@@ -276,7 +297,7 @@ function ProxySettingsEditor({
 interface CheckProxyDialogProps {
   checking: boolean;
   blocked: boolean;
-  readFailed: boolean;
+  readError: string | null;
   onRetry: () => void;
   url: string;
   onUrlChange: (url: string) => void;
@@ -289,7 +310,7 @@ interface CheckProxyDialogProps {
 function CheckProxyDialog({
   checking,
   blocked,
-  readFailed,
+  readError,
   onRetry,
   url,
   onUrlChange,
@@ -361,9 +382,9 @@ function CheckProxyDialog({
             }}
           />
         </label>
-        {readFailed && (
+        {readError !== null && (
           <div className="space-y-2">
-            <p role="alert">{t("settings.proxy.loadError")}</p>
+            <p role="alert">{readError}</p>
             <Button variant="outline" onClick={onRetry}>
               {t("common.retry")}
             </Button>
