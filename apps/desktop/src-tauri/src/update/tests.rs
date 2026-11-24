@@ -3,6 +3,7 @@
 use crate::update::artifact_store::{
     ArtifactDescriptor, ArtifactVerifier, StoredArtifact, UpdateArtifactStore,
 };
+use crate::update::release_notes::{ReleaseNote, ReleaseNoteCategory, ReleaseNoteEntry};
 use crate::update::service::proxy_url;
 use crate::update::state::{ReadyUpdate, RuntimeUpdateState};
 use crate::update::{DesktopUpdateStatus, ManualUpdateReason};
@@ -84,6 +85,19 @@ async fn commit_release(
         .await
         .expect("commit succeeds");
     (descriptor, artifact)
+}
+
+/// Builds notes as the update service attaches them to an offered release.
+fn release_note() -> ReleaseNote {
+    ReleaseNote {
+        version: "0.3.0".to_owned(),
+        date: "2026-12-10".to_owned(),
+        entries: vec![ReleaseNoteEntry {
+            category: ReleaseNoteCategory::Fix,
+            zh_cn: "修复".to_owned(),
+            en_us: "Fixed".to_owned(),
+        }],
+    }
 }
 
 /// Verifies a commit records full identity and leaves no interrupted staging directory.
@@ -276,13 +290,15 @@ async fn runtime_state_keeps_status_and_installable_data_together() {
         installer: "test-installer".to_owned(),
         descriptor,
         artifact,
+        notes: vec![release_note()],
     };
     let mut state = RuntimeUpdateState::Ready(ready);
 
     assert_eq!(
         state.status(),
         DesktopUpdateStatus::Ready {
-            version: "0.3.0".to_owned()
+            version: "0.3.0".to_owned(),
+            notes: vec![release_note()],
         }
     );
     let installing = state.begin_install().expect("ready state installs");
@@ -339,10 +355,12 @@ fn status_serializes_to_the_shape_the_webview_consumes() {
         },
         DesktopUpdateStatus::Ready {
             version: "0.3.0".to_owned(),
+            notes: vec![release_note()],
         },
         DesktopUpdateStatus::ManualUpdate {
             version: "0.3.0".to_owned(),
             reason: ManualUpdateReason::SystemPackage,
+            notes: Vec::new(),
         },
         DesktopUpdateStatus::Installing {
             version: "0.3.0".to_owned(),
@@ -358,8 +376,21 @@ fn status_serializes_to_the_shape_the_webview_consumes() {
             { "kind": "current" },
             { "kind": "checking" },
             { "kind": "downloading", "version": "0.3.0", "downloaded": 1024, "total": 4096 },
-            { "kind": "ready", "version": "0.3.0" },
-            { "kind": "manual_update", "version": "0.3.0", "reason": "system_package" },
+            {
+                "kind": "ready",
+                "version": "0.3.0",
+                "notes": [{
+                    "version": "0.3.0",
+                    "date": "2026-12-10",
+                    "entries": [{ "category": "fix", "zh-CN": "修复", "en-US": "Fixed" }],
+                }],
+            },
+            {
+                "kind": "manual_update",
+                "version": "0.3.0",
+                "reason": "system_package",
+                "notes": [],
+            },
             { "kind": "installing", "version": "0.3.0" },
             { "kind": "failed", "message": "endpoint unreachable" },
         ]) as Value

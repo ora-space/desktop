@@ -3,6 +3,7 @@
 use super::artifact_store::{ArtifactDescriptor, UpdateArtifactStore};
 use super::job::UpdateJob;
 use super::platform::{InstallSupport, install_support};
+use super::release_notes::notes_between;
 use super::state::{ReadyUpdate, RuntimeUpdateState};
 use super::verifier::UpdateVerifier;
 use super::{DesktopUpdateStatus, UpdateError};
@@ -217,6 +218,20 @@ impl UpdateService {
             return Ok(());
         };
 
+        // Parsed from the manifest of this very check, so a status never shows another release's notes.
+        let notes = notes_between(
+            &update.raw_json,
+            &self.inner.app.package_info().version,
+            &update.version,
+        )
+        .unwrap_or_else(|reason| {
+            ora_warn!(
+                message = "Desktop update notes are hidden",
+                version = %update.version,
+                reason = %reason,
+            );
+            Vec::new()
+        });
         if let InstallSupport::Manual(reason) = install_support() {
             self.inner.artifacts.clear();
             ora_info!(
@@ -226,6 +241,7 @@ impl UpdateService {
             self.set_state(RuntimeUpdateState::ManualUpdate {
                 version: update.version,
                 reason,
+                notes,
             });
             return Ok(());
         }
@@ -248,6 +264,7 @@ impl UpdateService {
                 installer: update,
                 descriptor,
                 artifact,
+                notes,
             }));
             ora_info!(message = "Desktop update recovered from cache", version = %version);
             return Ok(());
@@ -269,6 +286,7 @@ impl UpdateService {
             installer: update,
             descriptor,
             artifact,
+            notes,
         }));
         ora_info!(message = "Desktop update downloaded", version = %version);
         Ok(())

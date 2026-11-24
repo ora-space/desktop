@@ -8,12 +8,14 @@ mod artifact_store;
 pub mod commands;
 mod job;
 mod platform;
+mod release_notes;
 mod service;
 mod state;
 #[cfg(test)]
 mod tests;
 mod verifier;
 
+pub use release_notes::ReleaseNote;
 pub use service::{DesktopUpdateMode, UpdateService};
 
 use ora_scheduler::SchedulerError;
@@ -48,11 +50,17 @@ pub enum DesktopUpdateStatus {
         total: Option<u64>,
     },
     /// A verified package is ready for an explicit user installation.
-    Ready { version: String },
+    Ready {
+        version: String,
+        /// Untrusted manifest notes, empty when the manifest has none that may be shown.
+        notes: Vec<ReleaseNote>,
+    },
     /// A newer release exists but this installation must be updated by other means.
     ManualUpdate {
         version: String,
         reason: ManualUpdateReason,
+        /// Untrusted manifest notes, empty when the manifest has none that may be shown.
+        notes: Vec<ReleaseNote>,
     },
     /// The update installation has started.
     Installing { version: String },

@@ -10,6 +10,8 @@ Desktop application self-update orchestration around Tauri's signed updater plug
   recurring check afterwards.
 - Persist a downloaded package in the identity-addressed `~/.ora/cache/desktop-updates/v2/`
   store, recover it after a process restart, and drop it once the running build supersedes it.
+- Read the unsigned release notes a manifest may carry, apart from the check, so they are only ever
+  shown or hidden and never change an update outcome.
 - Decide whether the running installation is one the updater is allowed to replace in place.
 
 ## Non-responsibilities

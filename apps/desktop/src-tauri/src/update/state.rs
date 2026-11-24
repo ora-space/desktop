@@ -1,6 +1,6 @@
 //! Runtime state machine for one Desktop update operation.
 
-use super::{DesktopUpdateStatus, ManualUpdateReason, UpdateError};
+use super::{DesktopUpdateStatus, ManualUpdateReason, ReleaseNote, UpdateError};
 use crate::update::artifact_store::{ArtifactDescriptor, StoredArtifact};
 
 /// Binds an installer handle to the exact verified artifact it is allowed to install.
@@ -9,6 +9,7 @@ pub(super) struct ReadyUpdate<I> {
     pub(super) installer: I,
     pub(super) descriptor: ArtifactDescriptor,
     pub(super) artifact: StoredArtifact,
+    pub(super) notes: Vec<ReleaseNote>,
 }
 
 /// Keeps the webview status and installable data in one state so they cannot diverge.
@@ -24,6 +25,7 @@ pub(super) enum RuntimeUpdateState<I> {
     ManualUpdate {
         version: String,
         reason: ManualUpdateReason,
+        notes: Vec<ReleaseNote>,
     },
     Installing(ReadyUpdate<I>),
     Failed {
@@ -48,10 +50,16 @@ impl<I: Clone> RuntimeUpdateState<I> {
             },
             Self::Ready(ready) => DesktopUpdateStatus::Ready {
                 version: ready.descriptor.identity.release_version.clone(),
+                notes: ready.notes.clone(),
             },
-            Self::ManualUpdate { version, reason } => DesktopUpdateStatus::ManualUpdate {
+            Self::ManualUpdate {
+                version,
+                reason,
+                notes,
+            } => DesktopUpdateStatus::ManualUpdate {
                 version: version.clone(),
                 reason: *reason,
+                notes: notes.clone(),
             },
             Self::Installing(ready) => DesktopUpdateStatus::Installing {
                 version: ready.descriptor.identity.release_version.clone(),

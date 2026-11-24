@@ -25,6 +25,7 @@ tauri-build = { version = "2.6.3", features = [] }
 toml = { workspace = true }
 
 [dependencies]
+chrono = { workspace = true }
 chrono-tz = "0.10"
 base64 = { workspace = true }
 getrandom = "0.3"
