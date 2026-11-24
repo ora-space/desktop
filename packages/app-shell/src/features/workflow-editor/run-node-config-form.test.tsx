@@ -141,12 +141,19 @@ it("edits an existing condition without changing branch IDs or order", async () 
     config: { cases: conditionSample.cases },
   });
   render(<RunNodeConfigForm {...input} />);
+  expect(
+    screen.getByRole("button", { name: "Remove condition" }),
+  ).toBeDisabled();
   await user.click(
     screen.getByLabelText(
       appI18n.t("settings.workflow.field.operator", { index: 1 }),
     ),
   );
-  await user.click(await screen.findByRole("option", { name: "Is not empty" }));
+  const empty = await screen.findByRole("option", { name: "Is not empty" });
+  expect(
+    screen.queryByRole("option", { name: "Equals" }),
+  ).not.toBeInTheDocument();
+  await user.click(empty);
   await user.click(submit());
   expect(input.onSubmit.mock.calls).toEqual([[conditionSample.preview]]);
 });
@@ -162,10 +169,11 @@ it("uses separate iteration entry and member catalogs and returns just the chang
   });
   render(<RunNodeConfigForm {...input} />);
   await user.click(screen.getByLabelText("Iterator source"));
+  const available = await screen.findByRole("option", { name: "start.other" });
   expect(
     screen.queryByRole("option", { name: "member.output" }),
   ).not.toBeInTheDocument();
-  await user.click(await screen.findByRole("option", { name: "start.other" }));
+  await user.click(available);
   await user.click(submit());
   expect(input.onSubmit.mock.calls).toEqual([
     [
@@ -246,12 +254,13 @@ it("repairs a stale collect selector using only this iteration's member outputs"
   expect(screen.getByRole("alert")).toHaveTextContent("Collect target");
   expect(input.onSubmit).not.toHaveBeenCalled();
   await user.click(screen.getByLabelText("Collect target"));
+  const available = await screen.findByRole("option", {
+    name: "member.output",
+  });
   expect(
     screen.queryByRole("option", { name: "start.items" }),
   ).not.toBeInTheDocument();
-  await user.click(
-    await screen.findByRole("option", { name: "member.output" }),
-  );
+  await user.click(available);
   await user.click(submit());
   expect(input.onSubmit.mock.calls).toEqual([
     [
@@ -442,10 +451,11 @@ it("edits an existing carried variable's type-compatible feedback", async () => 
   );
   render(<RunNodeConfigForm {...input} />);
   await user.click(screen.getByLabelText("Feedback for count"));
+  const available = await screen.findByRole("option", { name: "body.next" });
   expect(
     screen.queryByRole("option", { name: "start.items" }),
   ).not.toBeInTheDocument();
-  await user.click(await screen.findByRole("option", { name: "body.next" }));
+  await user.click(available);
   await user.click(submit());
   expect(input.onSubmit.mock.calls[0]?.[0].patch).toEqual([
     {
@@ -472,9 +482,13 @@ it("filters nested arrays and edits the iteration failure strategy", async () =>
   });
   render(<RunNodeConfigForm {...input} />);
   await user.click(screen.getByLabelText("Iterator source"));
+  await screen.findByRole("option", { name: "start.items" });
   expect(
-    screen.queryByRole("option", { name: /structured_output/ }),
-  ).not.toBeInTheDocument();
+    screen
+      .getAllByRole("option")
+      .map((option) => option.getAttribute("aria-label"))
+      .sort(),
+  ).toEqual(["start.items", "start.other"]);
   await user.keyboard("{Escape}");
   await user.click(
     screen.getByLabelText(
@@ -557,5 +571,87 @@ it("rejects a changed model removed from the live catalog", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent(
     appI18n.t("settings.workflow.field.agentModel"),
   );
+  expect(input.onSubmit).not.toHaveBeenCalled();
+});
+
+it("discards dirty fields when the same execution receives changed effective config", async () => {
+  const input = props({
+    kind: "loop",
+    config: { maxIterations: 5, until: { logic: "and", conditions: [] } },
+  });
+  const view = render(<RunNodeConfigForm {...input} />);
+  fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "9" } });
+  expect(submit()).toBeEnabled();
+  view.rerender(
+    <RunNodeConfigForm
+      {...input}
+      effective={{
+        kind: "loop",
+        config: { maxIterations: 7, until: { logic: "and", conditions: [] } },
+      }}
+    />,
+  );
+  expect(screen.getByRole("spinbutton")).toHaveValue(7);
+  expect(submit()).toBeDisabled();
+});
+
+it("serializes an edited variable and a cleared operand as distinct replace operations", async () => {
+  const input = props({
+    kind: "condition",
+    config: {
+      cases: [
+        {
+          id: "case-1",
+          conditions: [
+            {
+              variableSelector: ["start", "items"],
+              operator: "contains",
+              value: "first",
+            },
+          ],
+        },
+      ],
+    },
+  });
+  const user = userEvent.setup();
+  render(<RunNodeConfigForm {...input} />);
+  await user.click(screen.getByLabelText("Variable 1"));
+  await user.click(await screen.findByRole("option", { name: "start.other" }));
+  await user.click(screen.getByLabelText("Condition 1"));
+  await user.click(await screen.findByRole("option", { name: "Is empty" }));
+  await user.click(submit());
+  expect(
+    JSON.parse(JSON.stringify(input.onSubmit.mock.calls[0]?.[0].patch)),
+  ).toEqual([
+    {
+      op: "replace",
+      path: "/cases/0/conditions/0/variableSelector",
+      value: ["start", "other"],
+    },
+    { op: "replace", path: "/cases/0/conditions/0/operator", value: "empty" },
+    { op: "replace", path: "/cases/0/conditions/0/value", value: null },
+  ]);
+});
+
+it("blocks a preview with incompatible existing feedback", async () => {
+  const input = props({
+    kind: "loop",
+    config: {
+      maxIterations: 5,
+      until: { logic: "and", conditions: [] },
+      variables: [
+        {
+          name: "count",
+          valueType: "number",
+          initial: { kind: "constant", value: 0 },
+          feedback: ["start", "items"],
+        },
+      ],
+    },
+  });
+  render(<RunNodeConfigForm {...input} />);
+  fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "7" } });
+  await userEvent.setup().click(submit());
+  expect(screen.getByRole("alert")).toHaveTextContent("Feedback for count");
   expect(input.onSubmit).not.toHaveBeenCalled();
 });

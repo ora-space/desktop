@@ -30,6 +30,7 @@ import { WorkflowPromptEditor } from "./workflow-prompt-editor";
 
 /** Edits one condition group shared by branch routing and Loop termination. */
 export function WorkflowConditionRules({
+  showValidation,
   conditions,
   logic,
   onChange,
@@ -40,6 +41,7 @@ export function WorkflowConditionRules({
   minimumConditions = 0,
   fixedRules,
 }: {
+  showValidation?: boolean;
   conditions: WorkflowConditionComparison[];
   logic: WorkflowConditionLogic;
   onChange: (group: {
@@ -96,11 +98,9 @@ export function WorkflowConditionRules({
           variableCatalog,
           comparison.variableSelector,
         )?.valueType;
-        const invalid = invalidComparisonField(
-          comparison,
-          variableCatalog,
-          operators,
-        );
+        const invalid = showValidation
+          ? invalidComparisonField(comparison, variableCatalog, operators)
+          : undefined;
         const errorId = invalid
           ? `${id}-rule-${comparisonIndex}-error`
           : undefined;
@@ -186,7 +186,9 @@ export function WorkflowConditionRules({
                 >
                   <SelectTrigger
                     className="h-7 w-auto max-w-[min(100%,11.5rem)] min-w-0 shrink justify-start gap-0.5 overflow-hidden border-0 bg-transparent px-1 pr-0.5 shadow-none dark:bg-transparent [&_[data-slot=select-value]]:flex-none [&_svg]:size-3"
-                    aria-invalid={invalid === "variable"}
+                    aria-invalid={
+                      showValidation ? invalid === "variable" : undefined
+                    }
                     aria-describedby={
                       invalid === "variable" ? errorId : undefined
                     }
@@ -229,7 +231,9 @@ export function WorkflowConditionRules({
                 >
                   <SelectTrigger
                     size="sm"
-                    aria-invalid={invalid === "operator"}
+                    aria-invalid={
+                      showValidation ? invalid === "operator" : undefined
+                    }
                     aria-describedby={
                       invalid === "operator" ? errorId : undefined
                     }
@@ -274,7 +278,9 @@ export function WorkflowConditionRules({
               {needsValue && (
                 <div
                   role="group"
-                  aria-invalid={invalid === "value"}
+                  aria-invalid={
+                    showValidation ? invalid === "value" : undefined
+                  }
                   aria-describedby={invalid === "value" ? errorId : undefined}
                   className="min-w-0 border-t border-border/70 px-1 py-0.5"
                 >
@@ -294,7 +300,9 @@ export function WorkflowConditionRules({
                     >
                       <SelectTrigger
                         className="h-8 w-full min-w-0 border-0 bg-transparent px-1.5 shadow-none dark:bg-transparent"
-                        aria-invalid={invalid === "value"}
+                        aria-invalid={
+                          showValidation ? invalid === "value" : undefined
+                        }
                         aria-describedby={
                           invalid === "value" ? errorId : undefined
                         }
@@ -315,6 +323,7 @@ export function WorkflowConditionRules({
                     </Select>
                   ) : (
                     <WorkflowPromptEditor
+                      showValidation={showValidation}
                       key={`${selectorToText(comparison.variableSelector)}-${comparison.operator}-${comparisonIndex}`}
                       compact
                       value={comparisonValueToText(comparison.value)}

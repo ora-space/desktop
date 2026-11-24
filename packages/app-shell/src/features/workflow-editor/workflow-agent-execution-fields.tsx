@@ -48,6 +48,7 @@ function workflowModelDisplayName(
 }
 
 export function AgentExecutionFields({
+  showValidation,
   config,
   capabilities,
   agents,
@@ -59,6 +60,7 @@ export function AgentExecutionFields({
   variableCatalog,
   onChange,
 }: {
+  showValidation?: boolean;
   config: Pick<WorkflowAgentConfig, "executor" | "prompt">;
   capabilities: Pick<WorkflowCapabilities, "agentModels">;
   agents?: AgentEntry[];
@@ -284,6 +286,7 @@ export function AgentExecutionFields({
         htmlFor="workflow-agent-prompt"
       >
         <WorkflowPromptEditor
+          showValidation={showValidation}
           value={config.prompt}
           variableCatalog={variableCatalog}
           ariaLabel={t("settings.workflow.field.prompt")}

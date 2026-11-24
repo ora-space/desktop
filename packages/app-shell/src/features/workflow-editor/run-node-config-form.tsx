@@ -64,6 +64,7 @@ export interface RunNodeConfigFormProps extends Pick<
   RunNodeConfigEdit,
   "runId" | "nodeRunId" | "baseRevision"
 > {
+  /** Changing the effective config discards local edits, including rich text, even at the same revision. */
   effective: RunNodeConfig;
   variables: WorkflowVariableCatalogEntry[];
   /** Outputs of direct members visible at the selected iteration's collection boundary. */
@@ -110,7 +111,10 @@ function Draft({
   const { t } = useTranslation();
   const [draft, setDraft] = useState(effective);
   const [attempted, setAttempted] = useState(false);
-  const iteratorChoices = variables.filter(isIteratorSource);
+  // Preview validates the root declaration as an array, while nested traversal needs an object.
+  const iteratorChoices = variables.filter(
+    (entry) => isIteratorSource(entry) && entry.selector.length === 2,
+  );
   const collectChoices = memberOutputs.filter(isCollectOutput);
   function invalidRuleField(rules: WorkflowConditionComparison[]) {
     for (const [offset, rule] of rules.entries()) {
@@ -143,6 +147,7 @@ function Draft({
         invalidField = t("settings.workflow.field.agentModel");
       fields = (
         <AgentExecutionFields
+          showValidation
           config={config}
           capabilities={capabilities}
           variableCatalog={variables}
@@ -160,16 +165,18 @@ function Draft({
           index: index + 1,
         });
         const invalid = invalidRuleField(item.conditions);
-        if (invalid) invalidField ??= [item.id, invalid].join(" · ");
+        const branchLabel = index === 0 ? "IF" : `ELIF ${index}`;
+        if (invalid) invalidField ??= [branchLabel, invalid].join(" · ");
         return (
           <WorkflowConditionRules
+            showValidation
             key={item.id}
             fixedRules={
               effective.kind === "condition"
                 ? effective.config.cases[index]
                 : undefined
             }
-            branchLabel={index === 0 ? "IF" : "ELIF"}
+            branchLabel={branchLabel}
             logicLabel={label}
             conditions={item.conditions}
             logic={item.logic ?? "and"}
@@ -208,6 +215,7 @@ function Draft({
               {t("settings.workflow.loop.until")}
             </h3>
             <WorkflowConditionRules
+              showValidation
               {...config.until}
               variableCatalog={variables}
               operators={capabilities.conditionOperators}
@@ -233,6 +241,7 @@ function Draft({
                 htmlFor={`run-loop-feedback-${i}`}
               >
                 <SelectorField
+                  showValidation
                   htmlId={`run-loop-feedback-${i}`}
                   selector={variable.feedback}
                   choices={choices}
@@ -271,6 +280,7 @@ function Draft({
       fields = (
         <>
           <IterationSelectorFields
+            showValidation
             config={config}
             iteratorChoices={iteratorChoices}
             collectChoices={collectChoices}

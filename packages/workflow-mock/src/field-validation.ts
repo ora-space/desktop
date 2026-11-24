@@ -6,15 +6,18 @@ import { isWorkflowConditionComparisonComplete } from "./node-data";
 import type { WorkflowChoice } from "./capabilities";
 import type { WorkflowVariableCatalogEntry } from "./variable-catalog";
 
+/** An array-valued catalog entry can be authored as an iteration source, including a schema path. */
 export function isIteratorSource(entry: WorkflowVariableCatalogEntry) {
-  return entry.selector.length === 2 && entry.valueType.startsWith("array");
+  return entry.valueType.startsWith("array");
 }
+/** Collection targets are root outputs of direct iteration members supplied by the caller. */
 export function isCollectOutput(entry: WorkflowVariableCatalogEntry) {
   return (
     entry.selector.length === 2 &&
     ["output", "structured_output"].includes(entry.selector[1]!)
   );
 }
+/** Conservative declaration-level filter. The runtime validates each actual feedback value. */
 export function supportsFeedback(
   target: WorkflowVariableValueType,
   source: WorkflowVariableValueType,
@@ -32,6 +35,7 @@ export function supportsFeedback(
   );
 }
 
+/** Groups operators by the types of operands they can evaluate. */
 function operandFamily(operator: string) {
   switch (operator) {
     case "greater_than":
@@ -70,6 +74,7 @@ export function operatorSupportsType(
       return true;
   }
 }
+/** Resolves the complete selector against the catalog for this execution scope. */
 export function findVariable(
   catalog: WorkflowVariableCatalogEntry[],
   selector: string[],
@@ -81,6 +86,7 @@ export function findVariable(
   );
 }
 
+/** Validates all serialized variable tokens in a prompt or comparison template. */
 export function validReferences(
   value: unknown,
   catalog: WorkflowVariableCatalogEntry[],

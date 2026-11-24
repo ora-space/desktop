@@ -1302,11 +1302,13 @@ export function InspectorField({
 }
 
 export function IterationSelectorFields({
+  showValidation,
   config,
   iteratorChoices,
   collectChoices,
   updateConfig,
 }: {
+  showValidation?: boolean;
   config: Pick<WorkflowIterationConfig, "iteratorSelector" | "collectSelector">;
   iteratorChoices: WorkflowVariableCatalogEntry[];
   collectChoices: WorkflowVariableCatalogEntry[];
@@ -1324,6 +1326,7 @@ export function IterationSelectorFields({
         htmlFor="workflow-node-iteration-iterator"
       >
         <SelectorField
+          showValidation={showValidation}
           htmlId="workflow-node-iteration-iterator"
           selector={config.iteratorSelector}
           choices={iteratorChoices}
@@ -1342,6 +1345,7 @@ export function IterationSelectorFields({
         htmlFor="workflow-node-iteration-collect"
       >
         <SelectorField
+          showValidation={showValidation}
           htmlId="workflow-node-iteration-collect"
           selector={config.collectSelector}
           choices={collectChoices}
@@ -1404,6 +1408,7 @@ export function IterationErrorStrategy({
   );
 }
 export function SelectorField({
+  showValidation,
   htmlId,
   selector,
   placeholder,
@@ -1411,6 +1416,7 @@ export function SelectorField({
   label,
   onPick,
 }: {
+  showValidation?: boolean;
   htmlId: string;
   selector: string[];
   placeholder: string;
@@ -1436,7 +1442,7 @@ export function SelectorField({
       <SelectTrigger
         className="h-8 w-full bg-background"
         id={htmlId}
-        aria-invalid={!resolved}
+        aria-invalid={showValidation ? !resolved : undefined}
         aria-label={label}
       >
         {resolved !== undefined ? (
