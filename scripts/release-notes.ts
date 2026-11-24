@@ -1,8 +1,10 @@
 // Release notes are handwritten per stable version in release-notes/<version>.json. This module owns
 // their format, and the checks that decide whether a versioned package may ship them.
 import { execFile } from "node:child_process";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import process from "node:process";
 import { promisify } from "node:util";
 
 export const RELEASE_NOTES_DIRECTORY = "release-notes";
@@ -201,15 +203,27 @@ export async function requireReleaseNotes(
 
 /** Rejects notes that differ from HEAD; other local edits stay allowed for patched distributions. */
 async function requireCommittedReleaseNotes(root: string): Promise<void> {
-  /** Runs Git against the packaged checkout, preserving its diagnostic on failure. */
+  // A private index that holds only HEAD ignores flags such as assume-unchanged and skip-worktree,
+  // which make the checkout's own index hide edits.
+  const temporary = await mkdtemp(path.join(tmpdir(), "ora-release-notes-"));
+  /** Runs Git against the packaged checkout and the private index. */
   const git = async (args: string[]): Promise<string> => {
-    const { stdout } = await promisify(execFile)("git", ["-C", root, ...args]);
+    const { stdout } = await promisify(execFile)("git", ["-C", root, ...args], {
+      env: {
+        ...process.env,
+        GIT_INDEX_FILE: path.join(temporary, "index"),
+      },
+    });
     return stdout;
   };
   let changes: string;
   try {
+    // A source copy nested in another repository must not be checked against that repository.
+    if ((await git(["rev-parse", "--show-prefix"])).trimEnd() !== "") {
+      throw new Error("the packaging root is not the Git checkout root");
+    }
     // Without a commit there is nothing the notes could match.
-    await git(["rev-parse", "--verify", "--quiet", "HEAD"]);
+    await git(["read-tree", "HEAD"]);
     changes = await git([
       "status",
       "--porcelain",
@@ -223,6 +237,8 @@ async function requireCommittedReleaseNotes(root: string): Promise<void> {
       `Packaging with --tag requires a Git checkout to verify ${RELEASE_NOTES_DIRECTORY}`,
       { cause: error },
     );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
   }
   if (changes !== "") {
     throw new Error(

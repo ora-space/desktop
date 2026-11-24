@@ -237,6 +237,35 @@ Deno.test("edits outside release-notes do not block a patched package", () =>
   }),
 );
 
+for (const flag of ["--assume-unchanged", "--skip-worktree"]) {
+  Deno.test(`packaging sees edits that ${flag} hides from git status`, () =>
+    withTempDirectory(async (root) => {
+      await writeNotes(root, { "0.7.0.json": releaseNote("0.7.0") });
+      await commitAll(root);
+      await git(root, ["update-index", flag, "release-notes/0.7.0.json"]);
+      await writeNotes(root, {
+        "0.7.0.json": { ...releaseNote("0.7.0"), date: "2026-12-11" },
+      });
+      await assert.rejects(
+        requireReleaseNotes(root, "0.7.0"),
+        /differs from the checked-out commit/,
+      );
+    }),
+  );
+}
+
+Deno.test("a source copy inside another repository cannot be packaged", () =>
+  withTempDirectory(async (root) => {
+    const copy = path.join(root, "copy");
+    await writeNotes(copy, { "0.7.0.json": releaseNote("0.7.0") });
+    await commitAll(root);
+    await assert.rejects(
+      requireReleaseNotes(copy, "0.7.0"),
+      /requires a Git checkout/,
+    );
+  }),
+);
+
 Deno.test("notes outside a Git checkout cannot be packaged", () =>
   withTempDirectory(async (root) => {
     await writeNotes(root, { "0.7.0.json": releaseNote("0.7.0") });
