@@ -78,7 +78,8 @@ export type SettingsCategory =
   | "proxy"
   | "cloud"
   | "privacy"
-  | "developer";
+  | "developer"
+  | "releaseNotes";
 
 interface UiState {
   sidebarCollapsed: boolean;

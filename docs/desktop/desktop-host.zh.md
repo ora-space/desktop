@@ -51,6 +51,7 @@
 | `write_workflow_export`、`read_workflow_import` | 工作流文件的导出和导入 |
 | `download_today_log`、`download_plugin_log` | 把诊断日志复制到保存对话框选定的位置 |
 | `surface_*`、`plugin_webview_invoke` | 插件 surface，见 [Surface](../plugins/surfaces.zh.md) |
+| `is_new_installation` | 数据库是否由本次启动新建，见[更新日志](../development/release-notes.zh.md#展示) |
 | `get_desktop_update_status`、`check_desktop_update`、`install_desktop_update` | 见 [Desktop 更新](#desktop-更新) |
 
 ## 持久化路径

@@ -74,6 +74,7 @@ desktop_command_registry! {
     commands::plugin::initialize_hook,
     update::commands::install_desktop_update,
     commands::plugin::install_plugin,
+    commands::installation::is_new_installation,
     commands::agent_runtime::list_agent_models,
     commands::agent::list_agents,
     commands::plugin::list_available_plugins,

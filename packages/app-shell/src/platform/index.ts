@@ -8,6 +8,7 @@ export {
   type LocationActionsCapability,
   type DesktopUpdateCapability,
   type DiagnosticLogsCapability,
+  type InstallationCapability,
   type DesktopUpdateStatus,
   type MarketplaceAutoSyncEvent,
   type PluginInstallProgress,

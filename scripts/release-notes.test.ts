@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  bundleReleaseNotes,
   MAX_RELEASE_NOTE_TEXT_LENGTH,
   parseReleaseNote,
   readReleaseNotes,
@@ -151,6 +152,29 @@ Deno.test("a build without a notes directory has no notes", () =>
   }),
 );
 
+Deno.test("a frontend build bundles every version of its checkout", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, {
+      "0.7.0.json": releaseNote("0.7.0"),
+      "0.6.9.json": releaseNote("0.6.9"),
+    });
+    assert.deepEqual(await bundleReleaseNotes(root), [
+      releaseNote("0.6.9"),
+      releaseNote("0.7.0"),
+    ]);
+  }),
+);
+
+Deno.test("a frontend build hides unreadable notes instead of failing", () =>
+  withTempDirectory(async (root) => {
+    await writeNotes(root, {
+      "0.7.0.json": releaseNote("0.7.0"),
+      "0.6.9.json": "broken",
+    });
+    assert.deepEqual(await bundleReleaseNotes(root), []);
+  }),
+);
+
 for (const version of ["0.7.0", "0.7.0-rc.1", "0.7.0+yellow", "0.7.0-rc.1+x"]) {
   Deno.test(`packaging ${version} requires the notes of 0.7.0`, () =>
     withTempDirectory(async (root) => {
@@ -286,9 +310,17 @@ Deno.test("the packaging check leaves no trace in the checkout", () =>
       [...Deno.readDirSync(path.join(root, ".git"))]
         .map((entry) => entry.name)
         .sort();
-    const before = entries();
+    const index = () => Deno.readFile(path.join(root, ".git", "index"));
+    // A newer modification time would make git status refresh and rewrite the checkout's index.
+    const later = new Date(Date.now() + 60_000);
+    await Deno.utime(
+      path.join(root, "release-notes", "0.7.0.json"),
+      later,
+      later,
+    );
+    const before = [entries(), await index()];
     await requireReleaseNotes(root, "0.7.0");
-    assert.deepEqual(entries(), before);
+    assert.deepEqual([entries(), await index()], before);
   }),
 );
 

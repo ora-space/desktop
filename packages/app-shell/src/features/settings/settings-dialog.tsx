@@ -31,6 +31,7 @@ import {
   IconDeviceDesktop,
   IconFolder,
   IconLanguage,
+  IconListDetails,
   IconMoon,
   IconProng,
   IconCloud,
@@ -55,6 +56,7 @@ import {
   useSettingsStore,
   type SettingsPreferences,
 } from "../../state/stores/settings-store";
+import { ReleaseNotesHistory } from "../release-notes/release-notes-history";
 import { DesktopUpdateControl } from "../workspace/desktop-update-control";
 import type { ThemeMode } from "../../state/stores/settings-store";
 
@@ -124,6 +126,11 @@ export function SettingsDialog() {
       id: "developer",
       icon: IconBug,
       label: t("settings.nav.developer"),
+    },
+    {
+      id: "releaseNotes",
+      icon: IconListDetails,
+      label: t("releaseNotes.title"),
     },
   ];
 
@@ -223,6 +230,12 @@ export function SettingsDialog() {
                 {category === "proxy" && <ProxySettings />}
                 {category === "cloud" && <CloudConnectionSettings />}
                 {category === "privacy" && <PrivacySettings />}
+                {category === "releaseNotes" && (
+                  <div className="space-y-6">
+                    <SettingsHeading title={t("releaseNotes.title")} />
+                    <ReleaseNotesHistory />
+                  </div>
+                )}
                 {category === "developer" && (
                   <DeveloperSettings
                     developerMode={developerMode}

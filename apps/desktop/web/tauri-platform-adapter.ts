@@ -17,6 +17,7 @@ import {
   type DesktopUpdateCapability,
   type DesktopUpdateStatus,
   type DiagnosticLogsCapability,
+  type InstallationCapability,
   type DownloadAction,
   type LocationActionsCapability,
   type LocationTarget,
@@ -201,6 +202,9 @@ export class TauriPlatformAdapter implements PlatformAdapter {
   readonly surfaces: SurfaceCapability = createTauriSurfaces();
 
   readonly updates: DesktopUpdateCapability = createTauriUpdates();
+  readonly installation: InstallationCapability = {
+    isNew: () => invoke<boolean>("is_new_installation"),
+  };
 
   readonly pluginMarketplace: PluginMarketplaceCapability =
     createTauriPluginMarketplace();

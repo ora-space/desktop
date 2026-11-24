@@ -184,6 +184,19 @@ export async function readReleaseNotes(root: string): Promise<ReleaseNote[]> {
 }
 
 /**
+ * Returns the notes that a frontend build injects. Untagged builds skip the packaging checks, so
+ * unreadable notes hide all of them instead of failing the build.
+ */
+export async function bundleReleaseNotes(root: string): Promise<ReleaseNote[]> {
+  try {
+    return await readReleaseNotes(root);
+  } catch (error) {
+    console.warn(`Building without release notes: ${(error as Error).message}`);
+    return [];
+  }
+}
+
+/**
  * Throws unless a versioned package may ship its notes: every file is valid, the version has one, and
  * the directory holds exactly what the checked-out commit holds.
  */
@@ -204,7 +217,7 @@ export async function requireReleaseNotes(
 /** Rejects notes that differ from HEAD; other local edits stay allowed for patched distributions. */
 async function requireCommittedReleaseNotes(root: string): Promise<void> {
   const temporary = await mkdtemp(path.join(tmpdir(), "ora-release-notes-"));
-  // Keeps the private index out of the checkout's Git directory and runs none of its hooks.
+  // Writes nothing to the checkout's Git directory and runs none of its hooks.
   const isolated = [
     ["core.splitIndex", "false"],
     ["core.fsmonitor", "false"],
@@ -214,7 +227,7 @@ async function requireCommittedReleaseNotes(root: string): Promise<void> {
   const git = async (args: string[], index?: string): Promise<string> => {
     const { stdout } = await promisify(execFile)(
       "git",
-      ["-C", root, ...isolated, ...args],
+      ["-C", root, "--no-optional-locks", ...isolated, ...args],
       {
         env:
           index === undefined
