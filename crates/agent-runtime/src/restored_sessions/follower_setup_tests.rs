@@ -222,10 +222,24 @@ fn a_follower_sees_the_state_of_the_session_that_replaced_a_stale_one() {
     ] {
         run_case(async move {
             let (owned, followed) = replaced_turn(report).await;
-            // The follower's first state is what it joined on; the rest is the replacement's.
-            assert_eq!(followed[0], stale());
-            assert_eq!(followed[1..], replaced);
+            // A follower is first told what it joined on; the rest is the replacement's.
+            assert_eq!(followed[..2], [on("a"), stale()]);
+            assert_eq!(followed[2..], replaced);
             assert_eq!(owned[owned.len() - replaced.len()..], replaced);
+        });
+    }
+}
+
+/// Nothing is withdrawn that was never reported: an empty report would say the agent has none.
+#[test]
+fn a_replacement_withdraws_nothing_the_stale_session_never_reported() {
+    let on_a = || State::Model("a".to_string());
+    for (report, expected) in [
+        (Report::NeverAny, vec![on_a(), on_a()]),
+        (Report::Nothing, Vec::new()),
+    ] {
+        run_case(async move {
+            assert_eq!(replaced_turn(report).await, (expected.clone(), expected));
         });
     }
 }
