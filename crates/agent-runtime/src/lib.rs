@@ -200,7 +200,8 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     /// and offering the agent's own catalog on exactly that, and inferring it from a stale absence
     /// would silently drop a model chosen for a session that could already have been told.
     reported_config_options: Vec<SessionConfigOption>,
-    /// Whether the last command report was beyond the shown limit, so each excess is logged once.
+    /// Whether the current provider session last reported more commands than shown, so each excess is
+    /// logged once.
     commands_exceed_limit: bool,
     scheduler: Scheduler,
     events: H::Events,
