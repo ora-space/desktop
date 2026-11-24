@@ -91,7 +91,7 @@ into any Workspace:
 - `ora-agent-runtime` prepends `<available_skills>` (names, descriptions, and native absolute
   `SKILL.md` paths) to the first user prompt of a live session (after any leading `/command` text
   block) and resends it after cold `session/load`, reopened stopped sessions, or reported
-  compaction. Mid-session installs, upgrades, renames, or uninstalls send only a `<skills_updated>`
+  compaction. Mid-session installs, upgrades, renames, or uninstalls send only a `<available_skills_update>`
   path delta on the next prompt without interrupting turns or restarting agents.
 - When an agent advertises `sessionCapabilities.additionalDirectories`, `session/new` and
   `session/load` also pass the two readable storage roots plus `_meta["ora/skillDirectories"]`.

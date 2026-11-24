@@ -310,7 +310,7 @@ interfaces; they are generic parameters, so each host gets its own monomorphized
 
 On Desktop, `ora-agent-runtime` injects `<available_skills>` (full catalog on a live session's first
 prompt, cold `session/load`, reopened stopped session, or post-compaction reset) and
-`<skills_updated>` (path-keyed deltas on mid-session catalog changes) into outgoing prompts—after any
+`<available_skills_update>` (path-keyed deltas on mid-session catalog changes) into outgoing prompts—after any
 leading `/command` text block—and forwards the two readable Skill storage roots in ACP
 `additionalDirectories` (when advertised) plus `_meta["ora/skillDirectories"]` during `session/new`
 and `session/load`. `NoSkillCatalog` leaves Node sessions completely unchanged.

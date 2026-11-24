@@ -124,7 +124,7 @@ prompt 是有序的 ACP `ContentBlock`（文本、图片、音频、资源链接
 | `RuntimeEvents`      | 标题和模型目录通知；写入的每一行历史          | `AppEventPublisher`           | 每一行成为一个 Thread 事件   |
 | `WorkspaceDirectory` | Workspace 的 `cwd`                            | Workspace 仓储加路径基准      | 本次执行的 checkout          |
 
-在 Desktop 上，`ora-agent-runtime` 会在活跃会话的首条 prompt（以及冷启动 `session/load`、重新打开已停止会话或压缩重置后的下一条 prompt）中注入全量 `<available_skills>`，在会话中途 Skill 集合变化时注入按路径计算的 `<skills_updated>` 增量（若有前导 `/命令` 文本块，则紧随其后），并在 Agent 支持 `additionalDirectories` 时于 `session/new` / `session/load` 中传递两个稳定的可读存储根目录及 `_meta["ora/skillDirectories"]`。`NoSkillCatalog` 使 Node 会话保持不变。
+在 Desktop 上，`ora-agent-runtime` 会在活跃会话的首条 prompt（以及冷启动 `session/load`、重新打开已停止会话或压缩重置后的下一条 prompt）中注入全量 `<available_skills>`，在会话中途 Skill 集合变化时注入按路径计算的 `<available_skills_update>` 增量（若有前导 `/命令` 文本块，则紧随其后），并在 Agent 支持 `additionalDirectories` 时于 `session/new` / `session/load` 中传递两个稳定的可读存储根目录及 `_meta["ora/skillDirectories"]`。`NoSkillCatalog` 使 Node 会话保持不变。
 
 失败以 `RuntimeError`（分类、类型化公开错误、上下文、错误链）离开 crate；Desktop 把它无损地转换为 `BackendError` 并能转回。crate 不得依赖 `ora-backend`、SQLite 或 Tauri。没有人在场的宿主使用的入口（`wait_for_agent`、`start_session_with_id`、`prompt_session_as_message`）见 [Node Agent 会话](../node/agent-sessions.zh.md)。
 
