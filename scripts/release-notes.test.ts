@@ -35,6 +35,30 @@ Deno.test("the repository's release notes are valid", async () => {
   await readReleaseNotes(fileURLToPath(new URL("..", import.meta.url)));
 });
 
+// Backfilled after the fact, so each carries the date its release was published.
+Deno.test(
+  "the repository keeps the backfilled notes for the history",
+  async () => {
+    const notes = await readReleaseNotes(
+      fileURLToPath(new URL("..", import.meta.url)),
+    );
+    const published = {
+      "0.3.0": "2026-09-29",
+      "0.4.0": "2026-10-15",
+      "0.5.0": "2026-10-26",
+      "0.6.0": "2026-11-20",
+    };
+    assert.deepEqual(
+      Object.fromEntries(
+        notes
+          .filter(({ version }) => Object.hasOwn(published, version))
+          .map(({ version, date }) => [version, date]),
+      ),
+      published,
+    );
+  },
+);
+
 Deno.test("a complete notes file keeps every field", () => {
   const note = {
     ...releaseNote("0.7.0"),

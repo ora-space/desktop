@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "version": "0.3.0",
+  "date": "2026-09-29",
+  "entries": [
+    {
+      "category": "feature",
+      "zh-CN": "工作流支持迭代节点和循环：可以遍历数组，设置循环的退出条件，并查看每一轮的结果。",
+      "en-US": "Workflows support iteration nodes and loops: go through an array, set exit conditions, and see the result of each round."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "工作流失败后会显示原因，并可以从失败处继续；失败的智能体节点可以自动重试。",
+      "en-US": "A failed workflow shows why and can resume from the failure; failed agent nodes can retry automatically."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "新增变量聚合节点，智能体节点可以指定要用的 MCP。",
+      "en-US": "Added a variable aggregator node, and agent nodes can choose which MCP servers to use."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "可以通过插件安装工作流；导入工作流时会预览它依赖的插件。",
+      "en-US": "Workflows can be installed as plugins, and importing a workflow previews the plugins it depends on."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "支持扩展包，一次安装一组插件。",
+      "en-US": "Extension packs install a set of plugins together."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "插件市场会定期自动同步，安装和更新时显示下载进度。",
+      "en-US": "The plugin marketplace syncs automatically, and installs and updates show download progress."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "对话中可以查看会话用量和回复耗时，并在输入框设置思考强度。",
+      "en-US": "Chats show session usage and reply time, and the composer can set the thinking level."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "文件浏览器可以新建、复制、移动和删除文件。",
+      "en-US": "The file explorer can create, copy, move, and delete files."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "对话支持右键复制和粘贴；输入不支持的斜杠命令时会提示。",
+      "en-US": "Chats support right-click copy and paste, and warn about unsupported slash commands."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "显示 MCP 的运行健康状态，连接异常时在对话中提示。",
+      "en-US": "MCP servers show their health, and chats point out connection problems."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "设置的开发者选项里可以下载诊断日志。",
+      "en-US": "Developer options in settings can download diagnostic logs."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "智能体长时间没有响应时会自动重试并显示提示。",
+      "en-US": "An agent that stops responding is retried automatically, with a notice."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "很长的对话和工作流记录滚动更流畅，工作流画布拖动更顺滑。",
+      "en-US": "Long chats and workflow transcripts scroll more smoothly, and so does dragging the workflow canvas."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "侧边栏按类型分组，可以按状态筛选工作流，悬停显示完整标题。",
+      "en-US": "The sidebar groups its rows, filters workflows by status, and shows full titles on hover."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复从插件市场安装插件时应用崩溃的问题。",
+      "en-US": "Fixed a crash when installing plugins from the marketplace."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复一个插件源失败时整个插件市场无法刷新的问题。",
+      "en-US": "Fixed one failing source preventing the whole plugin marketplace from refreshing."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复重新打开对话后消息时间不正确的问题。",
+      "en-US": "Fixed message times being wrong after reopening a chat."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "工作流中的智能体可以使用工作区之外的文件。",
+      "en-US": "Agents in workflows can use files outside the workspace."
+    }
+  ]
+}
