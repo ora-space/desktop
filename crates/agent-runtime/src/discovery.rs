@@ -1,23 +1,26 @@
 //! Maps what an agent offers outside a session onto the public contract.
 
+use ora_contracts::SHOWN_AGENT_COMMAND_LIMIT;
 use ora_domain::AgentRef;
 use ora_logging::ora_warn;
 use ora_plugin_protocol::AgentDiscoverResult;
 
-/// How many of an agent's commands a client shows.
+/// Whether a client shows only part of one report.
 ///
 /// Clients apply the limit, to discovered and session-reported commands alike; what is delivered
-/// is never cut. It is known here only so that hiding some leaves a trace in Desktop's log.
-const SHOWN_COMMAND_LIMIT: usize = 500;
+/// is never cut. It is checked here only so that hiding some leaves a trace in Desktop's log.
+pub(crate) fn exceeds_shown_commands(count: usize) -> bool {
+    count > SHOWN_AGENT_COMMAND_LIMIT
+}
 
-/// Records that a client will show only part of one report, without recording what it says.
+/// Records one report beyond the limit, without recording what it says.
 pub(crate) fn warn_when_commands_exceed_limit(agent_ref: &AgentRef, count: usize) {
-    if count > SHOWN_COMMAND_LIMIT {
+    if exceeds_shown_commands(count) {
         ora_warn!(
             agent = %agent_ref,
             count,
-            shown = SHOWN_COMMAND_LIMIT,
-            "agent reported more commands than are shown",
+            limit = SHOWN_AGENT_COMMAND_LIMIT,
+            "agent reported more commands than the limit shown",
         );
     }
 }
@@ -53,7 +56,7 @@ pub(crate) fn response(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{response, warn_when_commands_exceed_limit};
     use ora_domain::AgentRef;
     use ora_plugin_protocol::{AgentCommand, AgentDiscoverResult, AgentModel};
@@ -65,7 +68,7 @@ mod tests {
 
     /// Collects every recorded event as its fields.
     #[derive(Clone, Default)]
-    struct Recorded(Arc<Mutex<Vec<Vec<(String, String)>>>>);
+    pub(crate) struct Recorded(Arc<Mutex<Vec<Vec<(String, String)>>>>);
 
     impl<S: tracing::Subscriber> Layer<S> for Recorded {
         fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
@@ -82,6 +85,22 @@ mod tests {
             self.0
                 .push((field.name().to_string(), format!("{value:?}")));
         }
+    }
+
+    /// Returns the size of every report recorded as beyond the limit, in order.
+    pub(crate) fn warnings(recorded: &Recorded) -> Vec<String> {
+        let events = recorded.0.lock().unwrap();
+        events
+            .iter()
+            .filter(|fields| {
+                fields.iter().any(|(name, value)| {
+                    name == "message"
+                        && value == "agent reported more commands than the limit shown"
+                })
+            })
+            .flat_map(|fields| fields.iter().filter(|(name, _)| name == "count"))
+            .map(|(_, count)| count.clone())
+            .collect()
     }
 
     /// Names the agent the cases discover.
@@ -147,7 +166,7 @@ mod tests {
             vec![vec![
                 (
                     "message".to_string(),
-                    "agent reported more commands than are shown".to_string()
+                    "agent reported more commands than the limit shown".to_string()
                 ),
                 (
                     "method".to_string(),
@@ -155,8 +174,31 @@ mod tests {
                 ),
                 ("agent".to_string(), "official/test.agent".to_string()),
                 ("count".to_string(), "501".to_string()),
-                ("shown".to_string(), "500".to_string()),
+                ("limit".to_string(), "500".to_string()),
             ]]
         );
+    }
+
+    /// A discovery beyond the limit is recorded too, and still answers with every command.
+    #[test]
+    fn a_discovery_beyond_the_limit_is_recorded_and_not_cut() {
+        let recorded = Recorded::default();
+        let commands = (0..501)
+            .map(|index| AgentCommand {
+                name: format!("c{index}"),
+                description: String::new(),
+                input_hint: None,
+            })
+            .collect();
+        let answer = ora_logging::with_recorded_trace_logging(recorded.clone(), || {
+            let discovered = AgentDiscoverResult {
+                models: Vec::new(),
+                commands: Some(commands),
+            };
+            response(&agent(), discovered)
+        });
+
+        assert_eq!(answer.commands.map(|commands| commands.len()), Some(501));
+        assert_eq!(warnings(&recorded), vec!["501"]);
     }
 }

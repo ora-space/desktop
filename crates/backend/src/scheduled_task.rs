@@ -280,11 +280,10 @@ impl ScheduledTaskApi {
             })?;
         let response = self
             .agent_runtime
-            .discover(DiscoverAgentRequest {
-                agent_ref: agent_ref.to_string(),
-                workspace_id: workspace.id.to_string(),
-                include_commands: false,
-            })
+            .discover(DiscoverAgentRequest::models_only(
+                agent_ref.to_string(),
+                workspace.id.to_string(),
+            ))
             .await?;
         require_requested_model(model, &response.models)
     }

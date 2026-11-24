@@ -327,10 +327,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 self.reported_config_options = config.config_options.clone();
             }
             SessionUpdate::AvailableCommandsUpdate(commands) => {
-                crate::discovery::warn_when_commands_exceed_limit(
-                    &self.session.agent_ref,
-                    commands.available_commands.len(),
-                );
+                let count = commands.available_commands.len();
+                // An agent may report often; only going over the limit is news.
+                if !self.commands_exceed_limit {
+                    crate::discovery::warn_when_commands_exceed_limit(
+                        &self.session.agent_ref,
+                        count,
+                    );
+                }
+                self.commands_exceed_limit = crate::discovery::exceeds_shown_commands(count);
             }
             _ => {}
         }

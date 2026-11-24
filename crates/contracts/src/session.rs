@@ -49,6 +49,11 @@ pub struct AgentModel {
     pub default: bool,
 }
 
+/// How many of an agent's commands a client shows, whether discovered or reported by a session.
+///
+/// A client cuts what it shows; what is delivered is never cut.
+pub const SHOWN_AGENT_COMMAND_LIMIT: usize = 500;
+
 /// One command an agent reported before any session exists.
 ///
 /// The text is whatever the agent wrote, often taken from repository files, so a client shows it
@@ -73,6 +78,17 @@ pub struct DiscoverAgentRequest {
     pub workspace_id: String,
     /// Asking for commands may make the agent's plugin wait for them, so model-only callers do not.
     pub include_commands: bool,
+}
+
+impl DiscoverAgentRequest {
+    /// Asks for models alone, which never waits for the agent to report its commands.
+    pub fn models_only(agent_ref: AgentRef, workspace_id: String) -> Self {
+        Self {
+            agent_ref,
+            workspace_id,
+            include_commands: false,
+        }
+    }
 }
 
 /// Returns what one agent offers outside any session.
@@ -743,6 +759,22 @@ mod tests {
                     "durationMs": 12_000,
                 },
             })
+        );
+    }
+
+    /// A caller that only needs models must never make an agent's plugin wait for commands.
+    #[test]
+    fn models_only_discovery_asks_for_no_commands() {
+        assert_eq!(
+            super::DiscoverAgentRequest::models_only(
+                "official/test.agent".into(),
+                "workspace".to_string()
+            ),
+            super::DiscoverAgentRequest {
+                agent_ref: "official/test.agent".into(),
+                workspace_id: "workspace".to_string(),
+                include_commands: false,
+            }
         );
     }
 }

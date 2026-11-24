@@ -200,6 +200,8 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     /// and offering the agent's own catalog on exactly that, and inferring it from a stale absence
     /// would silently drop a model chosen for a session that could already have been told.
     reported_config_options: Vec<SessionConfigOption>,
+    /// Whether the last command report was beyond the shown limit, so each excess is logged once.
+    commands_exceed_limit: bool,
     scheduler: Scheduler,
     events: H::Events,
     title_acquisition: TitleAcquisition,
@@ -765,6 +767,10 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             turn_cancel: Arc::default(),
         };
         actors.insert(session.id.clone(), handle.clone());
+        // Setup already recorded its own excess.
+        let commands_exceed_limit = setup.channel.as_ref().is_some_and(|channel| {
+            discovery::exceeds_shown_commands(channel.available_commands.len())
+        });
         #[cfg(feature = "test-support")]
         let test_prompt_inactivity_windows = *self
             .inner
@@ -788,6 +794,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 rebuilt_binding: None,
                 load_restoration: Default::default(),
                 reported_config_options: setup.config_options,
+                commands_exceed_limit,
                 scheduler: self.inner.scheduler.clone(),
                 events: self.inner.events.clone(),
                 title_acquisition: setup.title_acquisition,
