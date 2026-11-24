@@ -18,6 +18,7 @@ use crate::session_setup::{
     SessionMcpError, SessionMcpHost, observe_session_mcp_health, resolve_session_mcp,
     resolve_session_mcp_revision,
 };
+use crate::skill_catalog::DesktopSkillCatalog;
 use crate::task::resolve_workspace_cwd;
 use ora_agent_runtime::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, AgentSessionMcpCapabilities,
@@ -84,6 +85,7 @@ impl AgentRuntimeHost for DesktopRuntimeHost {
     type Store = DesktopSessionStore;
     type Attach = PluginApi;
     type Setup = SessionMcpHost;
+    type Skills = DesktopSkillCatalog;
     type Events = AppEventPublisher;
     type Directory = DesktopWorkspaceDirectory;
 }
@@ -94,6 +96,7 @@ pub(crate) struct AgentRuntimeSetup {
     pub plugin_host: Arc<PluginApi>,
     pub pool: RepositoryPool,
     pub home_directory: PathBuf,
+    pub skills_root: PathBuf,
     pub relative_path_base: PathBuf,
     pub sessions_root: PathBuf,
     pub scheduler: Scheduler,
@@ -110,18 +113,21 @@ pub(crate) fn open_agent_runtime(
         plugin_host,
         pool,
         home_directory,
+        skills_root,
         relative_path_base,
         sessions_root,
         scheduler,
         app_events,
         host_mcp_servers,
     } = setup;
+    let skill_catalog = DesktopSkillCatalog::new(pool.clone(), skills_root, &home_directory);
     Ok(AgentRuntimeManager::new(
         ora_agent_runtime::AgentRuntimeSetup {
             session_setup: SessionMcpHost::from_plugin_api(plugin_host.clone())
                 .with_host_servers(host_mcp_servers),
             attach: plugin_host,
             store: DesktopSessionStore { pool: pool.clone() },
+            skill_catalog,
             directory: DesktopWorkspaceDirectory {
                 pool,
                 relative_path_base,

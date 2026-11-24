@@ -18,7 +18,7 @@
 //! session and fails closed with `agent_not_installed`; rejecting an identity here would also
 //! reject the portable identities the runtime deliberately accepts.
 
-use super::prerequisites::plugin_initializer;
+use super::prerequisites::SkillRoleWorkspaceInitializer;
 use crate::error::BackendError;
 use ora_application::{
     ApplicationError, ExecutionContext, NodeType, SkillMaterializationReceipt,
@@ -104,13 +104,10 @@ impl DependencySources<'_> {
         &self,
         graph: &WorkflowGraph,
     ) -> Result<SkillMaterializationReceipt, BackendError> {
-        let initializer = plugin_initializer(self.skills_root, self.pool, self.plugin_api)
-            .map_err(|error| ApplicationError::WorkflowRunStartFailed {
-                message: error.to_string(),
-            })?;
-        let receipt = initializer
-            .resolve_graph(graph)
-            .map_err(ApplicationError::from_start_prerequisites_error)?;
+        let receipt =
+            SkillRoleWorkspaceInitializer::new(self.skills_root.to_path_buf(), self.pool.clone())
+                .resolve_graph(graph)
+                .map_err(ApplicationError::from_start_prerequisites_error)?;
         validate_mcp_bindings(self.plugin_api, graph)
             .map_err(ApplicationError::from_start_prerequisites_error)?;
         Ok(receipt)

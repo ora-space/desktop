@@ -2,12 +2,9 @@
 
 use ora_plugin_protocol::{
     AGENT_ACP_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_START_METHOD, AGENT_STOP_METHOD,
-    AgentEffectCoordinationContext, AgentEffectReadinessContext, AgentListModelsParams,
-    AgentListModelsResult, AgentStartContext, AgentStartResult, EFFECT_COORDINATE_METHOD,
-    EFFECT_REACTIVATE_METHOD, EFFECT_VERIFY_READY_METHOD, INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE,
-    JSON_RPC_VERSION, METHOD_NOT_FOUND_CODE, PluginEffectCoordination, PluginEffectResource,
-    PluginRegistrationParams, REGISTER_METHOD, SHUTDOWN_METHOD, SKILL_DIRECTORY_V1, read_message,
-    write_message,
+    AgentListModelsParams, AgentListModelsResult, AgentStartContext, AgentStartResult,
+    INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE, JSON_RPC_VERSION, METHOD_NOT_FOUND_CODE,
+    PluginRegistrationParams, REGISTER_METHOD, SHUTDOWN_METHOD, read_message, write_message,
 };
 use serde_json::{Value, json};
 use std::fs::OpenOptions;
@@ -28,7 +25,6 @@ pub(super) const DISCOVERY_JOURNAL: &str = "list_models_calls.txt";
 #[derive(Default)]
 struct FakePlugin {
     running: bool,
-    quiesced: bool,
     acp: FakeAcpAgent,
 }
 
@@ -47,16 +43,8 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             AGENT_START_METHOD.to_string(),
             AGENT_STOP_METHOD.to_string(),
             AGENT_LIST_MODELS_METHOD.to_string(),
-            EFFECT_COORDINATE_METHOD.to_string(),
-            EFFECT_REACTIVATE_METHOD.to_string(),
-            EFFECT_VERIFY_READY_METHOD.to_string(),
         ],
         emits: vec![AGENT_ACP_METHOD.to_string()],
-        effect_resources: Some(vec![PluginEffectResource {
-            workspace_relative_path: ".opencode/skills".to_string(),
-            materialization_format: SKILL_DIRECTORY_V1.to_string(),
-            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-        }]),
     };
     write_message(
         &mut output,
@@ -120,12 +108,10 @@ impl FakePlugin {
                     return Err(PluginError::invalid_params(method, "cwd must not be empty"));
                 }
                 self.running = true;
-                self.quiesced = false;
                 serde_json::to_value(AgentStartResult::acp_v1()).map_err(PluginError::internal)
             }
             AGENT_STOP_METHOD => {
                 self.running = false;
-                self.quiesced = false;
                 Ok(json!({}))
             }
             AGENT_LIST_MODELS_METHOD => {
@@ -141,54 +127,10 @@ impl FakePlugin {
                 serde_json::to_value(AgentListModelsResult { models: models() })
                     .map_err(PluginError::internal)
             }
-            EFFECT_COORDINATE_METHOD => {
-                let context: AgentEffectCoordinationContext = serde_json::from_value(params)
-                    .map_err(|error| PluginError::invalid_params(method, error))?;
-                self.require_running()?;
-                self.quiesced = true;
-                Ok(json!({
-                    "targetId": context.target_id,
-                    "state": "safe_to_mutate",
-                }))
-            }
-            EFFECT_REACTIVATE_METHOD => {
-                let context: AgentEffectCoordinationContext = serde_json::from_value(params)
-                    .map_err(|error| PluginError::invalid_params(method, error))?;
-                self.require_running()?;
-                self.quiesced = false;
-                Ok(json!({
-                    "targetId": context.target_id,
-                    "state": "reactivated",
-                }))
-            }
-            EFFECT_VERIFY_READY_METHOD => {
-                let context: AgentEffectReadinessContext = serde_json::from_value(params)
-                    .map_err(|error| PluginError::invalid_params(method, error))?;
-                self.require_running()?;
-                if self.quiesced {
-                    return Err(PluginError {
-                        code: -32000,
-                        message: "fake agent is quiesced for a Skill mutation".to_string(),
-                    });
-                }
-                serde_json::to_value(context).map_err(PluginError::internal)
-            }
             _ => Err(PluginError {
                 code: METHOD_NOT_FOUND_CODE,
                 message: format!("unknown plugin method {method}"),
             }),
-        }
-    }
-
-    /// Refuses Effect readiness operations until the outer agent has started.
-    fn require_running(&self) -> Result<(), PluginError> {
-        if self.running {
-            Ok(())
-        } else {
-            Err(PluginError {
-                code: -32000,
-                message: "fake agent is not running".to_string(),
-            })
         }
     }
 }

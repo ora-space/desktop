@@ -83,9 +83,10 @@ runtime registered for its node type.
 - Does not persist anything itself; it only defines the persistence port.
 - Does not drive Ora sessions; agent execution is delegated through the `NodeExecutor` port that
   the engine wraps as the Agent node runtime.
-- Does not resolve roles or materialize skills; role and skill binding validation is wired by the
-  backend at deploy time through `WorkflowRunWorktreeInitializer`, while Effect independently owns
-  physical Skill materialization. `start` therefore only validates graph executability.
+- Does not resolve roles or inspect skill storage directly; role and skill binding validation is
+  wired by the backend at deploy time through `WorkflowRunWorkspaceInitializer`, while
+  `ora-agent-runtime` delivers Skill catalog metadata over prompts from formal storage. `start`
+  therefore only validates graph executability.
 - Does not run the workflow-run CRUD handlers (see the parent `workflow_run` module).
 - Start-time graph-structural validation (`validate_executable_graph`, e.g. "output must be
   terminal", unique condition case ids) is graph policy like `WorkflowGraph::parse` itself — it
@@ -97,7 +98,7 @@ Exported from `workflow_run::engine`: `WorkflowRunEngine`, `WorkflowRunControlHa
 `NodeExecutor`, `WorkflowRunCallback`, `WorkflowRunEngineRepository`,
 `WorkflowRunInvalidationPublisher`, `NoRunInvalidations`, `WorkflowGraph`,
 `WorkflowGraphNode`, `AgentConfig`, `AgentExecutor`, `AgentSkill`, `AgentMcp`, `NodeType`,
-`GraphError`, `UnknownNodeType`, `AgentSkillDeliveryProvider`, `SkillMaterializationReceipt`,
+`GraphError`, `UnknownNodeType`, `SkillMaterializationReceipt`, `MaterializedSkillBinding`,
 `WorkflowRunPayload`, the automatic-retry types (`AgentRetryPolicy`, `WorkflowRetryRepository`,
 `WorkflowRetryTimer`, `NoRetryTimer`, `NodeRetryWait`, `NodeAutoRetry`), and the repository
 outcome enums including `BindWorkflowNodeSessionResult`. The node runtime traits and registry are internal to the engine

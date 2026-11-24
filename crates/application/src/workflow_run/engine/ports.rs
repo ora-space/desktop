@@ -167,10 +167,6 @@ pub enum StartPrerequisitesError {
     WorkflowRoleNotFound { role_id: String },
     #[error("skill materialization failed: {message}")]
     SkillMaterializationError { message: String },
-    #[error("agent {agent_ref} does not support workflow-managed skills")]
-    AgentSkillDeliveryUnsupported { agent_ref: String },
-    #[error("failed to resolve skill delivery for agent {agent_ref}: {message}")]
-    AgentSkillDeliveryError { agent_ref: String, message: String },
     #[error("repository operation failed")]
     Repository(#[from] RepositoryError),
 }

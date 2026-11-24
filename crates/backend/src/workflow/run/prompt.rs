@@ -9,11 +9,11 @@ use std::path::PathBuf;
 
 use super::last_failure::PreviousFailure;
 
-/// One required skill already resolved from the run's frozen materialization receipt.
+/// One required skill resolved against Ora's live formal catalog storage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RequiredWorkflowSkill {
     pub(crate) invocation_name: String,
-    pub(crate) package_paths: Vec<PathBuf>,
+    pub(crate) skill_md_path: PathBuf,
 }
 
 /// Inputs required to turn one workflow node into a self-contained Agent prompt.
@@ -36,8 +36,8 @@ pub(crate) fn assemble_workflow_prompt(request: WorkflowPromptRequest<'_>) -> Ve
     let mut blocks = Vec::new();
 
     if !required_skills.is_empty() {
-        // The leading slash commands perform the actual CLI invocation; keeping their mandatory
-        // contract isolated prevents the current task from being parsed as command arguments.
+        // Keep the mandatory skill reading instructions isolated in their own content block so
+        // downstream prompt consumers and task context remain clearly separated.
         push_text_block(&mut blocks, required_skills);
     }
     push_text_block(
@@ -499,7 +499,7 @@ fn prompt_copy(locale: WorkflowRunLocale) -> PromptCopy {
     }
 }
 
-/// Renders executable slash commands followed by a localized mandatory-skill contract.
+/// Renders a localized mandatory-skill contract pointing to each skill's formal `SKILL.md` path.
 pub(super) fn render_required_skills(
     skills: &[RequiredWorkflowSkill],
     locale: WorkflowRunLocale,
@@ -507,64 +507,43 @@ pub(super) fn render_required_skills(
     if skills.is_empty() {
         return String::new();
     }
-    let invocation = skills
-        .iter()
-        .map(|skill| format!("/{}", skill.invocation_name))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let required = skills
-        .iter()
-        .map(|skill| format!("- /{}", skill.invocation_name))
-        .collect::<Vec<_>>()
-        .join("\n");
     let locations = skills
         .iter()
         .map(|skill| {
-            let paths = skill
-                .package_paths
-                .iter()
-                .map(|path| format!("  - {}", render_prompt_path(path)))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("- /{}\n{paths}", skill.invocation_name)
+            format!(
+                "- {}: {}",
+                skill.invocation_name,
+                render_prompt_path(&skill.skill_md_path)
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let contract = match locale {
+    match locale {
         WorkflowRunLocale::ZhCn => format!(
             "<required_skills>\n\n\
-你必须在执行工作流步骤前调用以下技能。\n\n\
-必需技能：\n{required}\n\n\
-以下技能包已物化到本次工作流的权威工作区：\n{locations}\n\n\
-调用技能时，必须使用上述本次运行中的物化副本。\n\n\
-技能调用是强制性的前置条件。\n\n\
+你必须在执行工作流步骤前读取并遵循以下技能的 SKILL.md 说明文件。\n\n\
+必需技能：\n{locations}\n\n\
 规则：\n\
-1. 在分析任务之前，调用上方列出的每个必需技能。\n\
-2. 不要以你自己对技能的理解代替技能调用。\n\
-3. 在调用所有必需技能之前，不要开始项目探索、代码阅读、推理或任务执行。\n\
-4. 调用后，遵循每项技能返回的说明。\n\
-5. 如列出多个技能，必须全部调用后再继续。\n\
-6. 如果有任何必需技能尚未调用，不要声称任务已完成。\n\n\
+1. 在分析任务之前，按上方所示路径读取每个必需技能的 SKILL.md 文件并遵循其中说明。\n\
+2. 不要以你自己对技能的理解代替读取技能的 SKILL.md 说明。\n\
+3. 在读取所有必需技能之前，不要开始项目探索、代码阅读、推理或任务执行。\n\
+4. 如列出多个技能，必须全部读取并遵循后再继续。\n\
+5. 如果有任何必需技能尚未读取并遵循，不要声称任务已完成。\n\n\
 </required_skills>"
         ),
         WorkflowRunLocale::EnUs => format!(
             "<required_skills>\n\n\
-You MUST invoke the following skills before performing the workflow step.\n\n\
-Required skills:\n{required}\n\n\
-The skill packages have been materialized in this workflow run's authoritative workspace:\n{locations}\n\n\
-When invoking a skill, you MUST use the materialized copy for this run shown above.\n\n\
-Skill invocation is a mandatory prerequisite.\n\n\
+You MUST read and follow the instructions in the SKILL.md files below before performing the workflow step.\n\n\
+Required skills:\n{locations}\n\n\
 Rules:\n\
-1. Invoke every required skill listed above before analyzing the task.\n\
-2. Do not replace skill invocation with your own interpretation of the skill.\n\
-3. Do not begin project exploration, code reading, reasoning, or task execution before the required skills have been invoked.\n\
-4. After invocation, follow the instructions returned by each skill.\n\
-5. If multiple skills are listed, invoke all of them before proceeding.\n\
-6. Do not claim completion if any required skill has not been invoked.\n\n\
+1. Read each required skill's SKILL.md file at the path shown above and follow its instructions before analyzing the task.\n\
+2. Do not replace reading the skill's SKILL.md instructions with your own assumptions.\n\
+3. Do not begin project exploration, code reading, reasoning, or task execution before reading the required skills.\n\
+4. If multiple skills are listed, read and follow all of them before proceeding.\n\
+5. Do not claim completion if any required skill has not been read and followed.\n\n\
 </required_skills>"
         ),
-    };
-    format!("{invocation}\n\n{contract}")
+    }
 }
 
 /// Renders a filesystem path with portable separators for Agent-facing prompt text.
@@ -638,7 +617,7 @@ fn failure_kind_label(kind: NodeFailureKind, locale: WorkflowRunLocale) -> &'sta
         }
         (WorkflowRunLocale::EnUs, NodeFailureKind::StructuredOutput) => "Structured output invalid",
         (WorkflowRunLocale::EnUs, NodeFailureKind::MissingSkillMaterialization) => {
-            "Skill not materialized"
+            "Skill unavailable"
         }
         (WorkflowRunLocale::EnUs, NodeFailureKind::SessionEndedWithoutStopReason) => {
             "Session ended unexpectedly"
@@ -770,15 +749,19 @@ mod tests {
             required_skills: &[
                 RequiredWorkflowSkill {
                     invocation_name: "review".to_string(),
-                    package_paths: vec![
-                        worktree_root.join(".agents").join("skills").join("review"),
-                    ],
+                    skill_md_path: worktree_root
+                        .join("atoms")
+                        .join("skills")
+                        .join("review")
+                        .join("SKILL.md"),
                 },
                 RequiredWorkflowSkill {
                     invocation_name: "verify".to_string(),
-                    package_paths: vec![
-                        worktree_root.join(".agents").join("skills").join("verify"),
-                    ],
+                    skill_md_path: worktree_root
+                        .join("atoms")
+                        .join("skills")
+                        .join("verify")
+                        .join("SKILL.md"),
                 },
             ],
             locale: WorkflowRunLocale::EnUs,
@@ -804,18 +787,20 @@ mod tests {
             texts,
             vec![
                 format!(
-                    "/review /verify\n\n<required_skills>\n\nYou MUST invoke the following skills before performing the workflow step.\n\nRequired skills:\n- /review\n- /verify\n\nThe skill packages have been materialized in this workflow run's authoritative workspace:\n- /review\n  - {}\n- /verify\n  - {}\n\nWhen invoking a skill, you MUST use the materialized copy for this run shown above.\n\nSkill invocation is a mandatory prerequisite.\n\nRules:\n1. Invoke every required skill listed above before analyzing the task.\n2. Do not replace skill invocation with your own interpretation of the skill.\n3. Do not begin project exploration, code reading, reasoning, or task execution before the required skills have been invoked.\n4. After invocation, follow the instructions returned by each skill.\n5. If multiple skills are listed, invoke all of them before proceeding.\n6. Do not claim completion if any required skill has not been invoked.\n\n</required_skills>",
+                    "<required_skills>\n\nYou MUST read and follow the instructions in the SKILL.md files below before performing the workflow step.\n\nRequired skills:\n- review: {}\n- verify: {}\n\nRules:\n1. Read each required skill's SKILL.md file at the path shown above and follow its instructions before analyzing the task.\n2. Do not replace reading the skill's SKILL.md instructions with your own assumptions.\n3. Do not begin project exploration, code reading, reasoning, or task execution before reading the required skills.\n4. If multiple skills are listed, read and follow all of them before proceeding.\n5. Do not claim completion if any required skill has not been read and followed.\n\n</required_skills>",
                     render_prompt_path(
                         &worktree_root
-                            .join(".agents")
+                            .join("atoms")
                             .join("skills")
                             .join("review")
+                            .join("SKILL.md")
                     ),
                     render_prompt_path(
                         &worktree_root
-                            .join(".agents")
+                            .join("atoms")
                             .join("skills")
                             .join("verify")
+                            .join("SKILL.md")
                     )
                 ),
                 format!(
@@ -1076,29 +1061,22 @@ mod tests {
 
     #[test]
     fn required_skills_use_chinese_copy_for_a_chinese_run() {
+        let skill_md_path = PathBuf::from("app-data")
+            .join("atoms")
+            .join("skills")
+            .join("openspec_explore")
+            .join("SKILL.md");
         assert_eq!(
             render_required_skills(
                 &[RequiredWorkflowSkill {
                     invocation_name: "openspec-explore".to_string(),
-                    package_paths: vec![
-                        PathBuf::from("worktrees")
-                            .join("run-1")
-                            .join(".agents")
-                            .join("skills")
-                            .join("openspec_explore")
-                    ],
+                    skill_md_path: skill_md_path.clone(),
                 }],
                 WorkflowRunLocale::ZhCn,
             ),
             format!(
-                "/openspec-explore\n\n<required_skills>\n\n你必须在执行工作流步骤前调用以下技能。\n\n必需技能：\n- /openspec-explore\n\n以下技能包已物化到本次工作流的权威工作区：\n- /openspec-explore\n  - {}\n\n调用技能时，必须使用上述本次运行中的物化副本。\n\n技能调用是强制性的前置条件。\n\n规则：\n1. 在分析任务之前，调用上方列出的每个必需技能。\n2. 不要以你自己对技能的理解代替技能调用。\n3. 在调用所有必需技能之前，不要开始项目探索、代码阅读、推理或任务执行。\n4. 调用后，遵循每项技能返回的说明。\n5. 如列出多个技能，必须全部调用后再继续。\n6. 如果有任何必需技能尚未调用，不要声称任务已完成。\n\n</required_skills>",
-                render_prompt_path(
-                    &PathBuf::from("worktrees")
-                        .join("run-1")
-                        .join(".agents")
-                        .join("skills")
-                        .join("openspec_explore")
-                )
+                "<required_skills>\n\n你必须在执行工作流步骤前读取并遵循以下技能的 SKILL.md 说明文件。\n\n必需技能：\n- openspec-explore: {}\n\n规则：\n1. 在分析任务之前，按上方所示路径读取每个必需技能的 SKILL.md 文件并遵循其中说明。\n2. 不要以你自己对技能的理解代替读取技能的 SKILL.md 说明。\n3. 在读取所有必需技能之前，不要开始项目探索、代码阅读、推理或任务执行。\n4. 如列出多个技能，必须全部读取并遵循后再继续。\n5. 如果有任何必需技能尚未读取并遵循，不要声称任务已完成。\n\n</required_skills>",
+                render_prompt_path(&skill_md_path)
             )
         );
     }

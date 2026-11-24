@@ -21,6 +21,7 @@ mod session_history;
 mod session_setup;
 mod settings;
 mod skill;
+mod skill_catalog;
 mod skill_reconciliation;
 mod source_boundary;
 mod task;

@@ -50,9 +50,12 @@ use ora_plugin_lifecycle::{
 use ora_plugin_manager::{Installer, PluginContribution, PluginManager};
 use ora_plugin_registry::RegistryIndex;
 use ora_utils::http::{ProxyConfig, ReqwestDownloader, S3Config};
+#[cfg(test)]
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+#[cfg(test)]
+use std::sync::PoisonError;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 

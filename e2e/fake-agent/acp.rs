@@ -430,16 +430,16 @@ impl FakeAcpAgent {
                 });
             }
         }
-        if let Some(mode) = prompt_mode(&prompt) {
-            if mode == PromptMode::Crash {
-                // An abrupt exit of the whole plugin process is a session crash, not a prompt
-                // stream the test dropped; the journal write above is already flushed.
-                std::process::exit(17);
-            }
-            // Silent and drop modes return a normal result to this frame handler, which discards
-            // its notifications and holds the request until ACP cancel. This keeps the process
-            // alive for drop mode and produces no update or terminal end for silent mode.
+        if let Some(mode) = prompt_mode(&prompt)
+            && mode == PromptMode::Crash
+        {
+            // An abrupt exit of the whole plugin process is a session crash, not a prompt
+            // stream the test dropped; the journal write above is already flushed.
+            std::process::exit(17);
         }
+        // Silent and drop modes return a normal result to this frame handler, which discards
+        // its notifications and holds the request until ACP cancel. This keeps the process
+        // alive for drop mode and produces no update or terminal end for silent mode.
         if let Some(delay) = prompt_delay(&prompt) {
             std::thread::sleep(std::time::Duration::from_millis(delay));
         }

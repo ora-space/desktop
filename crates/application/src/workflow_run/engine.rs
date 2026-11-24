@@ -75,8 +75,7 @@ pub use retry::{
     WorkflowRetryRepository, WorkflowRetryTimer, retry_chain_from_payload,
 };
 pub use skill_delivery::{
-    AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,
-    MaterializedSkillBinding, SkillDiscoveryRoots, SkillMaterializationReceipt, WorkflowRunPayload,
+    MaterializedSkillBinding, SkillMaterializationReceipt, WorkflowRunPayload,
     WorkflowRunPayloadError,
 };
 pub use snapshot_switch::{SnapshotIncompatibility, SnapshotSwitchPlan, plan_snapshot_switch};

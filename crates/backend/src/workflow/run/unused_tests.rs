@@ -53,7 +53,7 @@ fn unused_agents_are_excluded_from_preparation_execution_and_restart() {
             .unwrap();
         assert_eq!(published.snapshot.graph, source);
         let initializer =
-            SkillRoleWorkspaceInitializer::new(temp.path().join("skills"), pool.clone()).unwrap();
+            SkillRoleWorkspaceInitializer::new(temp.path().join("skills"), pool.clone());
         assert_eq!(
             initializer
                 .initialize_workspace(&graph, temp.path())

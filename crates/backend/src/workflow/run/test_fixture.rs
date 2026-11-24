@@ -519,8 +519,7 @@ pub(super) fn switch_if_requested(
 ) -> Result<bool, crate::error::BackendError> {
     use super::prerequisites::SkillRoleWorkspaceInitializer;
     use ora_application::{ApplicationError, WorkflowRunWorkspaceInitializer};
-    let initializer =
-        SkillRoleWorkspaceInitializer::new(skills_root.to_path_buf(), pool.clone()).unwrap();
+    let initializer = SkillRoleWorkspaceInitializer::new(skills_root.to_path_buf(), pool.clone());
     let switch = super::snapshot_switch::prepare_resume(pool, run_id, snapshot_id, |graph| {
         Ok(initializer
             .initialize_workspace(graph, workspace_root)

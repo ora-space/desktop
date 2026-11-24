@@ -545,9 +545,10 @@ async fn target_dependencies_are_checked_before_checkpoint_rollback() {
     }
 }
 
-/// Switching versions freezes the same agent-declared discovery path that creation would use.
+/// Switching versions freezes catalog-resolved skill bindings for the target snapshot without
+/// requiring any Effect declaration or workspace package paths.
 #[tokio::test]
-async fn switched_receipt_uses_the_agent_declared_skill_directory() {
+async fn switched_receipt_freezes_catalog_skill_bindings_without_workspace_paths() {
     let original = SKILL_GRAPH.replace(
         r#""skillId":"code_review","enabled":true"#,
         r#""skillId":"code_review","enabled":false"#,
@@ -558,38 +559,6 @@ async fn switched_receipt_uses_the_agent_declared_skill_directory() {
     fixture
         .install_skill_plugin("review-pack", "code_review")
         .await;
-    let agent_id = "official/ora-space.opencode";
-    fixture
-        .runs
-        .plugin_api
-        .replace_agent_effect_declaration(
-            ora_domain::PluginId::parse(agent_id).unwrap(),
-            Some(ora_effect::ConsumerDeclaration {
-                consumer: ora_effect::ConsumerIdentity::new(
-                    ora_effect::ConsumerKind::agent_plugin(),
-                    agent_id,
-                )
-                .unwrap(),
-                adapter: ora_effect::ConsumerAdapterIdentity::parse("ora/agent-plugin").unwrap(),
-                capabilities: ora_effect::CapabilitySet {
-                    materialization_contracts: [
-                        ora_effect::MaterializationContract::skill_directory_v1().capability_key(),
-                    ]
-                    .into(),
-                    ..Default::default()
-                },
-                resources: vec![ora_effect::FilesystemResourceTemplate {
-                    relative_path: ora_effect::ResourcePath::parse(".claude/skills").unwrap(),
-                    materialization_format: ora_effect::MaterializationFormat::skill_directory_v1(),
-                    materialization_contract:
-                        ora_effect::MaterializationContract::skill_directory_v1(),
-                    accepts: Default::default(),
-                    coordination: ora_effect::CoordinationRequirement::Uninterrupted,
-                    ownership_relative_path: None,
-                }],
-            }),
-        )
-        .unwrap();
     fixture.publish_target(SKILL_GRAPH);
     let resumed = fixture
         .runs
@@ -608,10 +577,8 @@ async fn switched_receipt_uses_the_agent_declared_skill_directory() {
         serde_json::from_str(row.payload.as_deref().unwrap()).unwrap();
     let bindings = payload.skill_materialization.bindings_for_node("reviewer");
     assert_eq!(bindings.len(), 1);
-    assert_eq!(
-        bindings[0].package_paths,
-        vec![ora_utils::path::StrictRelativePath::parse(".claude/skills/code_review").unwrap()]
-    );
+    assert_eq!(bindings[0].skill_id, "code_review");
+    assert_eq!(bindings[0].invocation_name, "code-review");
 }
 
 /// Scheduling accepts an installed, unconfigured MCP and keeps a running start idempotent
