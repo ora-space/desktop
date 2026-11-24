@@ -11,7 +11,7 @@ use ora_contracts::*;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -179,5 +179,349 @@ fn workflow_mcp_allowlists_survive_restore_rebuild_and_refresh() -> TestResult {
         backend.sessions().stop(StopSessionRequest { session_id: ordinary.session.id }).await?;
         Ok(())
     })
+    })
+}
+
+/// Polls a run until it is terminal, returning the last public detail.
+async fn terminal(
+    backend: &Backend,
+    run_id: &str,
+) -> Result<GetWorkflowRunResponse, Box<dyn std::error::Error>> {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let detail = backend.workflow_runs().get(GetWorkflowRunRequest {
+                run_id: run_id.to_string(),
+            })?;
+            if matches!(
+                detail.run.status,
+                WorkflowRunStatus::Succeeded
+                    | WorkflowRunStatus::Failed
+                    | WorkflowRunStatus::Cancelled
+            ) {
+                return Ok(detail);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?
+}
+
+/// One agent node that binds the MCP plugin and completes on its own.
+fn single_agent_graph() -> Value {
+    json!({"nodes": [
+        {"id": "start", "data": {"kind": "start"}},
+        {"id": "first", "data": {"kind": "agent", "title": "First step", "agentConfig": {
+            "retry": {"enabled": false, "maxRetries": 0, "initialDelaySeconds": 0},
+            "executor": {"agentCli": "official/ora-space.opencode", "modelId": "anthropic/claude-sonnet-4"},
+            "prompt": "hello", "mcps": [{"mcpId": "official/first", "enabled": true}]
+        }}}
+    ], "edges": [{"source": "start", "target": "first"}]})
+}
+
+/// A chain whose first agent binds the MCP plugin and whose second step fails on its first
+/// prompt, so the run settles as `Failed` with a `Succeeded` predecessor.
+fn failing_chain() -> Value {
+    let agent = |id: &str, title: &str, prompt: &str, mcps: Value| {
+        json!({"id": id, "data": {"kind": "agent", "title": title, "agentConfig": {
+            "retry": {"enabled": false, "maxRetries": 0, "initialDelaySeconds": 0},
+            "executor": {"agentCli": "official/ora-space.opencode", "modelId": "anthropic/claude-sonnet-4"},
+            "prompt": prompt, "mcps": mcps
+        }}})
+    };
+    json!({"nodes": [
+        {"id": "start", "data": {"kind": "start"}},
+        agent("first", "First step", "hello", json!([{"mcpId": "official/first", "enabled": true}])),
+        agent("second", "Second step", "[fail-times:1] hello", json!([]))
+    ], "edges": [{"source": "start", "target": "first"}, {"source": "first", "target": "second"}]})
+}
+
+/// Installs one MCP package that declares a required setting with no value: installed enough to
+/// schedule, not configured enough to open a session.
+fn install_unconfigured_mcp_plugin(home: &Path, name: &str) -> std::io::Result<PathBuf> {
+    let root = home
+        .join("plugins")
+        .join("installed")
+        .join("official")
+        .join(name)
+        .join("1.0.0");
+    fs::create_dir_all(root.join("assets"))?;
+    fs::write(
+        root.join("orax.toml"),
+        format!(
+            "resolver = 1\nidentifier = \"{name}\"\nkind = \"mcp\"\nversion = \"1.0.0\"\ndescription = \"Unconfigured MCP fixture\"\n"
+        ),
+    )?;
+    let command = root.join("assets").join("server");
+    fs::write(&command, "#!/bin/sh\n")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&command, fs::Permissions::from_mode(0o755))?;
+    }
+    fs::write(
+        root.join("assets").join("config.json"),
+        json!({
+            "schemaVersion": 1,
+            "settings": {"apiKey": {"type": "string", "title": "API key", "description": "Required credential", "required": true}},
+            "transport": {"type": "stdio", "command": "assets/server", "args": [], "env": {}}
+        })
+        .to_string(),
+    )?;
+    Ok(root)
+}
+
+/// Publishes one graph and creates a pending run the way the run screen does.
+fn pending_run(
+    backend: &Backend,
+    workspace_id: &str,
+    graph: &Value,
+) -> Result<WorkflowRun, Box<dyn std::error::Error>> {
+    let workflow = backend.workflows().create(CreateWorkflowRequest {
+        name: "MCP preflight".into(),
+        graph: Some(graph.to_string()),
+    })?;
+    backend.workflows().publish(PublishWorkflowRequest {
+        workflow_id: workflow.workflow.id.clone(),
+        version: Some("v1".into()),
+    })?;
+    Ok(backend
+        .workflow_runs()
+        .create(CreateWorkflowRunRequest {
+            workspace_id: workspace_id.to_string(),
+            workflow_id: workflow.workflow.id,
+            locale: WorkflowRunLocale::EnUs,
+            snapshot_id: None,
+            kickoff_input: None,
+            name: None,
+            inject_last_failure: None,
+        })?
+        .run)
+}
+
+/// Removes one installed MCP package through the plugin use case, as the plugin market does.
+async fn uninstall_mcp(backend: &Backend, plugin_id: &str) -> TestResult {
+    backend
+        .plugins()
+        .uninstall(UninstallPluginRequest {
+            plugin_id: plugin_id.to_string(),
+            data_disposition: PluginDataDisposition::Delete,
+            hook_execution_acknowledged: false,
+        })
+        .await?;
+    Ok(())
+}
+
+/// A finished run whose MCP disappeared cannot restart, and the refusal dispatches nothing.
+#[test]
+fn a_succeeded_run_cannot_restart_after_its_mcp_plugin_is_gone() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let home = &setup.backend_paths().home_directory;
+        let package_root = install_fake_opencode_plugin(home)?;
+        install_mcp_plugin(home, "first")?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let run = pending_run(&backend, &workspace_id, &single_agent_graph())?;
+        backend.workflow_runs().start(StartWorkflowRunRequest {
+            run_id: run.id.clone(),
+        })?;
+        let succeeded = terminal(&backend, &run.id).await?;
+        assert_eq!(
+            succeeded.run.status,
+            WorkflowRunStatus::Succeeded,
+            "run={:?} nodes={:?}",
+            succeeded.run.error,
+            succeeded
+                .nodes
+                .iter()
+                .map(|node| (&node.node_id, node.status, &node.error))
+                .collect::<Vec<_>>()
+        );
+
+        uninstall_mcp(&backend, "official/first").await?;
+        let journal_before = mcp_calls(&package_root)?.len();
+        let sessions_before = backend
+            .sessions()
+            .list(ListSessionsRequest {})?
+            .sessions
+            .len();
+
+        let error = backend
+            .workflow_runs()
+            .restart(RestartWorkflowRunRequest {
+                run_id: run.id.clone(),
+            })
+            .err()
+            .ok_or("a restart of a finished run must be refused")?;
+        assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
+        assert_eq!(
+            backend
+                .workflow_runs()
+                .get(GetWorkflowRunRequest {
+                    run_id: run.id.clone(),
+                })?
+                .run,
+            succeeded.run,
+            "the refused restart must leave the finished run untouched"
+        );
+        assert_eq!(
+            backend
+                .sessions()
+                .list(ListSessionsRequest {})?
+                .sessions
+                .len(),
+            sessions_before,
+            "the refusal must not create a Session"
+        );
+        assert_eq!(
+            mcp_calls(&package_root)?.len(),
+            journal_before,
+            "the refusal must not open another ACP session"
+        );
+        Ok(())
+    })
+}
+
+/// A failed run cannot resume around an MCP its already-succeeded node needs, because the whole
+/// frozen graph stays the deployment unit.
+#[test]
+fn a_failed_run_cannot_resume_around_a_succeeded_nodes_mcp() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let home = &setup.backend_paths().home_directory;
+        let package_root = install_fake_opencode_plugin(home)?;
+        install_mcp_plugin(home, "first")?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let run = pending_run(&backend, &workspace_id, &failing_chain())?;
+        backend.workflow_runs().start(StartWorkflowRunRequest {
+            run_id: run.id.clone(),
+        })?;
+        let failed = terminal(&backend, &run.id).await?;
+        assert_eq!(failed.run.status, WorkflowRunStatus::Failed);
+        assert_eq!(
+            failed
+                .nodes
+                .iter()
+                .find(|node| node.node_id == "first")
+                .map(|node| node.status),
+            Some(WorkflowNodeStatus::Succeeded)
+        );
+
+        uninstall_mcp(&backend, "official/first").await?;
+        let journal_before = mcp_calls(&package_root)?.len();
+        let error = backend
+            .workflow_runs()
+            .resume_from_failure(ResumeWorkflowRunRequest {
+                run_id: run.id.clone(),
+                rollback: None,
+                snapshot_id: None,
+            })
+            .err()
+            .ok_or("a resume must not route around a removed MCP")?;
+        assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
+        assert_eq!(
+            backend
+                .workflow_runs()
+                .get(GetWorkflowRunRequest {
+                    run_id: run.id.clone(),
+                })?
+                .run,
+            failed.run,
+            "the refused resume must leave the failed run untouched"
+        );
+        assert_eq!(
+            mcp_calls(&package_root)?.len(),
+            journal_before,
+            "the refusal must not open another ACP session"
+        );
+        Ok(())
+    })
+}
+
+/// An installed but unconfigured MCP passes the scheduling precheck and then fails the node's
+/// session setup, so one run shows both sides of the boundary.
+#[test]
+fn an_incomplete_mcp_passes_precheck_and_fails_the_node_session() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let home = &setup.backend_paths().home_directory;
+        let package_root = install_fake_opencode_plugin(home)?;
+        install_unconfigured_mcp_plugin(home, "first")?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let run = pending_run(&backend, &workspace_id, &single_agent_graph())?;
+
+        let started = backend.workflow_runs().start(StartWorkflowRunRequest {
+            run_id: run.id.clone(),
+        })?;
+        assert_eq!(started.run.status, WorkflowRunStatus::Running);
+
+        let failed = terminal(&backend, &run.id).await?;
+        assert_eq!(failed.run.status, WorkflowRunStatus::Failed);
+        let node = failed
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "first")
+            .ok_or("the node row is missing")?;
+        let error = node
+            .error
+            .as_deref()
+            .ok_or("the node did not report an error")?;
+        assert!(
+            error.contains("configuration is incomplete"),
+            "the node must fail the session setup for its incomplete configuration: {error}"
+        );
+        assert!(node.session_id.is_none(), "no Session may be delivered");
+        assert_eq!(
+            mcp_calls(&package_root)?.len(),
+            0,
+            "an incomplete selection must never reach ACP"
+        );
+        Ok(())
+    })
+}
+
+/// The package can disappear between the precheck and the first dispatch: the node session setup
+/// then refuses it, so nothing runs with a partial selection.
+#[test]
+fn uninstalling_between_precheck_and_dispatch_fails_the_node_session() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let home = &setup.backend_paths().home_directory;
+        let package_root = install_fake_opencode_plugin(home)?;
+        install_mcp_plugin(home, "first")?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let run = pending_run(&backend, &workspace_id, &single_agent_graph())?;
+
+        let started = backend.workflow_runs().start(StartWorkflowRunRequest {
+            run_id: run.id.clone(),
+        })?;
+        assert_eq!(started.run.status, WorkflowRunStatus::Running);
+        uninstall_mcp(&backend, "official/first").await?;
+
+        let failed = terminal(&backend, &run.id).await?;
+        assert_eq!(failed.run.status, WorkflowRunStatus::Failed);
+        let node = failed
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "first")
+            .ok_or("the node row is missing")?;
+        let error = node
+            .error
+            .as_deref()
+            .ok_or("the node did not report an error")?;
+        assert!(
+            error.contains("is not installed"),
+            "the node must fail closed as its selected plugin disappeared: {error}"
+        );
+        assert!(node.session_id.is_none(), "no Session may be delivered");
+        assert_eq!(
+            mcp_calls(&package_root)?.len(),
+            0,
+            "a missing selection must never reach ACP"
+        );
+        Ok(())
     })
 }
