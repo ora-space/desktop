@@ -37,13 +37,21 @@ export function localizeAgentEffectFailureReason(
         ? t("chat.agentEffectFailure.reason.skill_directory_link", {
             relativePath,
           })
-        : reason.message;
+        : reason.parameters.location === "workspace_root"
+          ? t(
+              "chat.agentEffectFailure.reason.skill_directory_link_workspace_root",
+            )
+          : reason.message;
     case "unsafe_skill_directory":
       return relativePath !== null
         ? t("chat.agentEffectFailure.reason.unsafe_skill_directory", {
             relativePath,
           })
-        : reason.message;
+        : reason.parameters.location === "workspace_root"
+          ? t(
+              "chat.agentEffectFailure.reason.unsafe_skill_directory_workspace_root",
+            )
+          : reason.message;
     case "managed_item_drift":
       return relativePath !== null
         ? t("chat.agentEffectFailure.reason.managed_item_drift", {
@@ -62,13 +70,5 @@ export function localizeAgentEffectFailureSummary(
   readiness: Extract<AgentEffectReadiness, { kind: "failed" }>,
   t: TFunction,
 ): string {
-  const primary = readiness.reasons.find(
-    (reason) => reason.message === readiness.message,
-  ) ??
-    readiness.reasons[0] ?? {
-      code: readiness.recoveryRequired ? "recovery_required" : "effect_failure",
-      message: readiness.message,
-      parameters: {},
-    };
-  return localizeAgentEffectFailureReason(primary, t);
+  return localizeAgentEffectFailureReason(readiness.primaryReason, t);
 }

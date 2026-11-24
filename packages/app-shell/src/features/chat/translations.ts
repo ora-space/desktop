@@ -381,8 +381,12 @@ export const chatTranslations = {
       "存在未由 Ora 管理的旧技能目录，无法覆盖：{{relativePath}}",
     "chat.agentEffectFailure.reason.skill_directory_link":
       "技能目录不支持符号链接或 Windows junction：{{relativePath}}",
+    "chat.agentEffectFailure.reason.skill_directory_link_workspace_root":
+      "工作区文件夹本身是符号链接或 Windows 联接，不受支持。",
     "chat.agentEffectFailure.reason.unsafe_skill_directory":
       "技能目录路径不安全或被不受支持的条目占用：{{relativePath}}",
+    "chat.agentEffectFailure.reason.unsafe_skill_directory_workspace_root":
+      "工作区文件夹本身的路径不安全，无法同步技能。",
     "chat.agentEffectFailure.reason.managed_item_drift":
       "由 Ora 管理的技能目录在外部被修改，无法安全覆盖：{{relativePath}}",
     "chat.agentEffectFailure.reason.managed_item_drift_generic":
@@ -858,8 +862,12 @@ export const chatTranslations = {
       "Unmanaged Skill directory cannot be overwritten: {{relativePath}}",
     "chat.agentEffectFailure.reason.skill_directory_link":
       "Symbolic links and Windows junctions are not supported: {{relativePath}}",
+    "chat.agentEffectFailure.reason.skill_directory_link_workspace_root":
+      "The workspace folder itself is a symbolic link or Windows junction, which is not supported.",
     "chat.agentEffectFailure.reason.unsafe_skill_directory":
       "Skill directory path is unsafe or occupied by an unsupported entry: {{relativePath}}",
+    "chat.agentEffectFailure.reason.unsafe_skill_directory_workspace_root":
+      "The workspace folder itself is unsafe, so Skills cannot be synced.",
     "chat.agentEffectFailure.reason.managed_item_drift":
       "A Skill directory managed by Ora changed outside Ora and cannot be overwritten safely: {{relativePath}}",
     "chat.agentEffectFailure.reason.managed_item_drift_generic":

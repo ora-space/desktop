@@ -89,8 +89,11 @@ fn observation_error(
             &display
         }
     );
+    // When the workspace root itself is unsafe there is no non-empty project-relative path;
+    // emit a structured marker so the UI can localize the root failure without exposing any
+    // absolute path.
     let parameters = if display.is_empty() {
-        BTreeMap::new()
+        BTreeMap::from([("location".to_string(), "workspace_root".to_string())])
     } else {
         BTreeMap::from([("relativePath".to_string(), display)])
     };

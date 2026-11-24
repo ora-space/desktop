@@ -13,6 +13,7 @@ fn unsafe_skill_entries_block_the_bound_target_until_fixed() {
     ] {
         assert_blocked_then_repaired(path, Entry::DirectoryLink);
     }
+    assert_blocked_then_repaired("", Entry::RegularFile);
     #[cfg(unix)]
     for (path, entry) in [
         (".agents/skills/review/dangling", Entry::DanglingLink),
@@ -26,6 +27,7 @@ fn unsafe_skill_entries_block_the_bound_target_until_fixed() {
 #[derive(Clone, Copy)]
 enum Entry {
     DirectoryLink,
+    RegularFile,
     #[cfg(unix)]
     DanglingLink,
     #[cfg(unix)]
@@ -40,6 +42,10 @@ fn create_entry(entry: Entry, destination: &std::path::Path, link: &std::path::P
     match entry {
         Entry::DirectoryLink => {
             fs::create_dir(destination).unwrap();
+        }
+        Entry::RegularFile => {
+            fs::write(link, b"not a directory").unwrap();
+            return;
         }
         Entry::DanglingLink => {}
         Entry::FileLink => {
@@ -59,16 +65,20 @@ fn create_entry(entry: Entry, destination: &std::path::Path, link: &std::path::P
     #[cfg(unix)]
     std::os::unix::fs::symlink(destination, link).unwrap();
     #[cfg(windows)]
-    {
-        let Entry::DirectoryLink = entry;
-        fs::create_dir(destination).unwrap();
-        let output = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(link)
-            .arg(destination)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
+    match entry {
+        Entry::DirectoryLink => {
+            fs::create_dir(destination).unwrap();
+            let output = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(destination)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+        }
+        Entry::RegularFile => {
+            fs::write(link, b"not a directory").unwrap();
+        }
     }
 }
 
@@ -117,6 +127,10 @@ fn assert_blocked_then_repaired(relative: &str, entry: Entry) {
     };
     assert!(matches!(condition.owner, ConditionOwner::Resource(_)));
     let (code, message) = match entry {
+        Entry::RegularFile => (
+            "unsafe_skill_directory",
+            "The skill directory or an ancestor is unsafe",
+        ),
         #[cfg(unix)]
         Entry::Fifo => (
             "unsafe_skill_directory",
@@ -144,7 +158,7 @@ fn assert_blocked_then_repaired(relative: &str, entry: Entry) {
         format!("{message}: {display}")
     );
     let expected_parameters = if relative.is_empty() {
-        BTreeMap::new()
+        BTreeMap::from([("location".to_string(), "workspace_root".to_string())])
     } else {
         BTreeMap::from([("relativePath".to_string(), relative.to_string())])
     };
@@ -164,7 +178,10 @@ fn assert_blocked_then_repaired(relative: &str, entry: Entry) {
     #[cfg(unix)]
     fs::remove_file(&link).unwrap();
     #[cfg(windows)]
-    fs::remove_dir(&link).unwrap();
+    match entry {
+        Entry::DirectoryLink => fs::remove_dir(&link).unwrap(),
+        Entry::RegularFile => fs::remove_file(&link).unwrap(),
+    }
     fs::create_dir(&link).unwrap();
     // A desktop metadata file must not keep the repaired Target blocked.
     let skill_root = workspace_root.join(".agents").join("skills");

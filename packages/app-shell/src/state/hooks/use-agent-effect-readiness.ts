@@ -17,7 +17,8 @@ export type AgentEffectReadiness =
   | { kind: "blocked" }
   | {
       kind: "failed";
-      message: string;
+      /** Structured primary blocker for compact surfaces so they localize without matching backend text. */
+      primaryReason: AgentEffectFailureReason;
       reasons: AgentEffectFailureReason[];
       /** The Target that must be recovered, when the failure is the recovery quarantine. */
       targetId: string | null;
@@ -50,12 +51,12 @@ function isEffectTargetReady(status: EffectTargetStatus | undefined): boolean {
 }
 
 /**
- * Returns the reason a Target needs manual intervention instead of another sync interval,
+ * Returns the primary structured failure reason requiring manual intervention,
  * or null while convergence is still expected to make progress on its own.
  */
-export function effectTargetFailureMessage(
+export function effectTargetPrimaryFailure(
   status: EffectTargetStatus | undefined,
-): string | null {
+): AgentEffectFailureReason | null {
   if (status === undefined || status === null) return null;
   const blocking = status.conditions.filter(
     (condition) => condition.impact === "blocking",
@@ -69,18 +70,28 @@ export function effectTargetFailureMessage(
   const resourceBlocking = blocking.find(
     (condition) => condition.ownerKind === "resource",
   );
-  if (
-    status.phase !== "recovery_required" &&
-    manualBlocking === undefined &&
-    resourceBlocking === undefined
-  ) {
-    return null;
+  if (manualBlocking !== undefined) {
+    return {
+      code: manualBlocking.code,
+      message: manualBlocking.message,
+      parameters: manualBlocking.parameters,
+    };
   }
-  return (
-    manualBlocking?.message ??
-    resourceBlocking?.message ??
-    "Effect recovery is required."
-  );
+  if (resourceBlocking !== undefined) {
+    return {
+      code: resourceBlocking.code,
+      message: resourceBlocking.message,
+      parameters: resourceBlocking.parameters,
+    };
+  }
+  if (status.phase === "recovery_required") {
+    return {
+      code: "recovery_required",
+      message: "Effect recovery is required.",
+      parameters: {},
+    };
+  }
+  return null;
 }
 
 /**
@@ -91,7 +102,7 @@ export function effectTargetStatusPollInterval(
   status: EffectTargetStatus | undefined,
 ): number | false {
   if (isEffectTargetReady(status)) return false;
-  if (effectTargetFailureMessage(status) !== null) {
+  if (effectTargetPrimaryFailure(status) !== null) {
     return FAILED_POLL_INTERVAL_MS;
   }
   return BLOCKED_POLL_INTERVAL_MS;
@@ -133,8 +144,8 @@ export function useAgentEffectReadiness(
   // A first prompt must not race the initial status query: no Target evidence is not readiness.
   if (status == null) return { kind: "blocked" };
   if (isEffectTargetReady(status)) return { kind: "ready" };
-  const failure = effectTargetFailureMessage(status);
-  if (failure !== null) {
+  const primaryReason = effectTargetPrimaryFailure(status);
+  if (primaryReason !== null) {
     const reasons = status.conditions
       .filter((condition) => condition.impact === "blocking")
       .map((condition) => ({
@@ -144,7 +155,7 @@ export function useAgentEffectReadiness(
       }));
     return {
       kind: "failed",
-      message: failure,
+      primaryReason,
       reasons,
       targetId: status.targetId,
       // Only the recovery quarantine closes journals; other blocking Conditions use the

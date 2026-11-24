@@ -140,12 +140,16 @@ revision key; an unchanged publication creates no revision.
 ## Interfaces
 
 - `getEffectTargetStatus` exposes a Target's desired, observed, applied and ready generations,
-  recovery identity and current Conditions (including structured safe `parameters` such as
-  Workspace-relative conflict paths) to the frontend.
+  recovery identity and current Conditions (including structured safe `parameters`) to the
+  frontend. For Skill directory Conditions (`preserved_item_conflict`, `skill_directory_link`,
+  `unsafe_skill_directory`, and `managed_item_drift`), `parameters.relativePath` is a `/`-separated
+  project-relative path and never an absolute filesystem path; when the Workspace root itself is
+  unsafe, `relativePath` is omitted and `parameters.location` is `"workspace_root"`.
 - `retryEffectTarget` wakes one Target without changing Desired State. The send gate localizes
-  known Resource-owned blocking Conditions, such as a preserved Skill directory conflict, from their
-  code and Workspace-relative path parameter; after the user removes the external cause, this
-  command retries the Target and refreshes only its readiness caches.
+  known blocking Conditions from their `code` and structured parameters (`relativePath` or
+  `location`), and falls back to the backend-approved safe `message` when parameters are absent;
+  after the user removes the external cause, this command retries the Target and refreshes only its
+  readiness caches.
 - `recoverEffectTarget` is the controlled exit from `RecoveryRequired`; the chat send gate offers
   it while readiness is blocked by a recovery quarantine, and a refusal keeps the quarantine.
 - Plugin registration exposes `effectResources`. Agent Consumers implement `effect/coordinate`,

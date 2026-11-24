@@ -54,8 +54,15 @@ reconciler 在准备时、应用后和就绪后取样业务时间；同一个 At
 
 ## 接口
 
-- `getEffectTargetStatus` 向前端暴露 Target 的 desired、observed、applied 和 ready 代，恢复身份和当前的 Condition（含项目相对冲突路径等结构化安全 `parameters`）。
-- `retryEffectTarget` 只唤醒一个 Target，不改变 Desired State。发送门控按 `code` 与项目相对路径参数本地化显示已知的 Resource 级 blocking Condition（例如旧技能目录造成的 preserved item 冲突）；用户移除外部原因后，该命令重新唤醒 Target，并且只刷新它的 readiness 缓存。
+- `getEffectTargetStatus` 向前端暴露 Target 的 desired、observed、applied 和 ready 代，
+  恢复身份以及当前 Condition（含结构化安全 `parameters`）。对已知 Skill 目录类 Condition
+  （`preserved_item_conflict`、`skill_directory_link`、`unsafe_skill_directory` 与
+  `managed_item_drift`），`parameters.relativePath` 为 `/` 分隔的项目相对路径且绝不出现
+  绝对路径；工作区根本身不安全时不提供 `relativePath`，改为设置
+  `parameters.location = "workspace_root"`。
+- `retryEffectTarget` 只唤醒一个 Target，不改变 Desired State。发送门控按 `code` 与结构化
+  参数（`relativePath` 或 `location`）本地化已知阻塞 Condition，缺参数时回退到后端安全
+  `message`；用户移除外部原因后，该命令重新唤醒 Target，并且只刷新它的 readiness 缓存。
 - `recoverEffectTarget` 是 `RecoveryRequired` 的受控出口；当发送门控被恢复隔离阻塞时，对话界面提供这个入口，拒绝恢复时隔离保持不变。
 - 插件注册暴露 `effectResources`。Agent Consumer 实现 `effect/coordinate`、`effect/reactivate` 和 `effect/verify_ready`；这些载荷留在 `ConsumerAdapter` 边界之后，不给通用机制增加 Agent 专有的阶段。
 - 包适配器在发布之前计算不可变的指纹；SQLite 保存摘要和指纹，但从不通过 Resource 适配器读取包目录。

@@ -32,15 +32,7 @@ export function AgentEffectRecoveryBanner({
   const reasons: AgentEffectFailureReason[] =
     readiness.reasons.length > 0
       ? readiness.reasons
-      : [
-          {
-            code: readiness.recoveryRequired
-              ? "recovery_required"
-              : "effect_failure",
-            message: readiness.message,
-            parameters: {},
-          },
-        ];
+      : [readiness.primaryReason];
   const reasonMessages = reasons.map((reason) =>
     localizeAgentEffectFailureReason(reason, t),
   );

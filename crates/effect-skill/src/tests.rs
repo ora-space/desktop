@@ -632,3 +632,78 @@ fn identical_physical_declarations_share_a_resource_key_without_sharing_targets(
         EffectTargetId::new("target-b")
     );
 }
+
+#[test]
+fn managed_item_drift_reports_project_relative_path() {
+    let resource = resource_at("resource-1", ".agents/skills");
+    let (desired, revision) = desired_skill();
+    let native_identity = NativeResourceIdentity::parse("grilling")
+        .unwrap_or_else(|error| panic!("native identity: {error}"));
+    let managed_id = ManagedIdentity::new("managed-1");
+    let recorded_fingerprint = Fingerprint::sha256(b"recorded package");
+    let observed_fingerprint = Fingerprint::sha256(b"externally edited package");
+    let managed_item = ManagedItem {
+        identity: managed_id.clone(),
+        resource: resource.identity.clone(),
+        desired_effect: desired.identity.clone(),
+        applied_revision: revision.identity.clone(),
+        native_identity: native_identity.clone(),
+        fingerprint: recorded_fingerprint,
+        applied_generation: Generation::new(1),
+    };
+    let observed = ResourceObservation {
+        occupied_file_names: Default::default(),
+        resource: resource.identity.clone(),
+        items: BTreeMap::from([(
+            native_identity.clone(),
+            ObservedItem {
+                native_identity,
+                fingerprint: observed_fingerprint.clone(),
+                ownership_evidence: OwnershipEvidence::Claims(managed_id.clone()),
+            },
+        )]),
+        fingerprint: observed_fingerprint,
+    };
+    let requirement = ResourceRequirement {
+        target: EffectTargetId::new("target-1"),
+        resource: resource.identity.clone(),
+        desired_effects: BTreeSet::from([desired.identity.clone()]),
+        materialization_contract: MaterializationContract::skill_directory_v1(),
+        digest: Digest::sha256(b"requirement"),
+    };
+
+    let result = SkillPlanner
+        .plan_resource(ResourcePlanningInput {
+            resource: &resource,
+            generation: Generation::new(2),
+            requirements: &[requirement],
+            desired_effects: &BTreeMap::from([(desired.identity.clone(), desired)]),
+            revisions: &BTreeMap::from([(revision.identity.clone(), revision)]),
+            managed: &[managed_item],
+            observed: &observed,
+        })
+        .unwrap_or_else(|error| panic!("resource projection: {error}"));
+    let PlanningResult::Blocked(conditions) = result else {
+        panic!("drifted managed item must block projection");
+    };
+
+    assert_eq!(
+        conditions,
+        vec![ConditionProposal {
+            owner: ConditionOwner::Resource(resource.identity),
+            subject: ConditionSubject::ManagedItem(managed_id),
+            code: StableConditionCode::from_static("managed_item_drift"),
+            impact: ConditionImpact::Blocking,
+            retry: ConditionRetry::Manual,
+            generation: ConditionGeneration::At(Generation::new(2)),
+            safe_details: SafeConditionDetails {
+                message: "A Managed Item changed outside Ora and cannot be overwritten safely."
+                    .to_string(),
+                parameters: BTreeMap::from([(
+                    "relativePath".to_string(),
+                    ".agents/skills/grilling".to_string(),
+                )]),
+            },
+        }]
+    );
+}
