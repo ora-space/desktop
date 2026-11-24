@@ -77,7 +77,7 @@ interface ChatViewProps {
   sendDisabledHint?: string;
   skills?: Skill[];
   roles?: Agent[];
-  /** `null` while the Agent has not reported its commands. */
+  /** `null`, also when omitted, while the Agent has not reported its commands. */
   availableCommands?: acp.AvailableCommand[] | null;
 }
 
@@ -125,7 +125,7 @@ export function ChatView({
   sendDisabledHint,
   skills = [],
   roles = [],
-  availableCommands = NO_COMMANDS,
+  availableCommands = null,
 }: ChatViewProps) {
   const { t } = useTranslation();
   // A loading session takes the thread layout even before its turns arrive, so the
