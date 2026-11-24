@@ -212,6 +212,33 @@ mod tests {
         PluginId::new("official", name).expect("plugin id")
     }
 
+    /// Characterizes how one future value resets the whole map and the next write drops old keys.
+    #[test]
+    fn unreadable_map_defaults_and_is_replaced_by_the_next_write() {
+        ora_logging::with_trace_logging(|| {
+            let temp = TempDir::new().unwrap();
+            let levels = PluginLogLevels::open(temp.path());
+            levels.set(&id("a"), LogLevel::Debug).unwrap();
+            let path = temp.path().join("plugins").join("log-levels.json");
+            let mut raw: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            raw["official/b"] = serde_json::json!("future-level");
+            std::fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+            let reopened = PluginLogLevels::open(temp.path());
+            assert_eq!(
+                reopened.state(&id("a")),
+                PluginLogLevelState {
+                    level: LogLevel::Info,
+                    configured: false
+                }
+            );
+            reopened.set(&id("c"), LogLevel::Warn).unwrap();
+            let replaced: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(replaced, serde_json::json!({"official/c": "warn"}));
+        });
+    }
+
     /// Unset plugins report the default; a set level persists across reopen, publishes to live
     /// subscribers, and leaves other plugins untouched.
     #[test]

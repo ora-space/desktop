@@ -70,6 +70,62 @@ it("saves proxy settings through the backend", async () => {
   );
 });
 
+it("restores every saved proxy field with a fresh query cache after remount", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "proxy.example",
+    port: 3128,
+    username: "alice",
+    password: "saved-secret",
+  };
+  const client = createTestClient(createFixtureHandlers(state));
+  const first = renderProxy(client);
+  expect(await screen.findByLabelText(/主机|Host/)).toHaveValue(
+    "proxy.example",
+  );
+  first.unmount();
+  renderProxy(client);
+  expect(await screen.findByLabelText(/主机|Host/)).toHaveValue(
+    "proxy.example",
+  );
+  expect(screen.getByLabelText(/端口|Port/)).toHaveValue("3128");
+  expect(screen.getByLabelText(/用户名|Username/)).toHaveValue("alice");
+  expect(screen.getByLabelText(/密码|Password/)).toHaveValue("saved-secret");
+});
+
+// Characterization of the unsafe current behavior, not the desired fix contract.
+it("reproduces an unreadable saved proxy appearing empty and remaining overwritable", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "saved.example",
+    port: 3128,
+    username: null,
+    password: null,
+  };
+  const handlers = createFixtureHandlers(state);
+  handlers.getProxySettings = async () => {
+    throw new Error("simulated storage read failure");
+  };
+  const client = createTestClient(handlers);
+  const user = userEvent.setup();
+  renderProxy(client);
+  const host = await screen.findByLabelText(/主机|Host/);
+  expect(host).toHaveValue("");
+  expect(screen.getByRole("alert")).toBeInTheDocument();
+  expect(state.proxySettings?.host).toBe("saved.example");
+  await user.type(host, "replacement.example");
+  await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() =>
+    expect(state.proxySettings).toEqual({
+      host: "replacement.example",
+      port: 7890,
+      username: null,
+      password: null,
+    }),
+  );
+});
+
 it("clears saved proxy settings through the backend", async () => {
   const state = createFixtureState();
   state.proxySettings = {

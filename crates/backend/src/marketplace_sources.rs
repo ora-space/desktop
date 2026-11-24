@@ -350,6 +350,22 @@ mod tests {
         );
     }
 
+    /// Characterizes startup reseeding after the user deliberately removed every source.
+    #[test]
+    fn empty_user_source_list_is_reseeded_on_reopen() {
+        ora_logging::with_trace_logging(|| {
+            let temp = TempDir::new().expect("create temp directory");
+            let (_, store) = store_with_repository(&temp);
+            assert_eq!(store.delete(DEFAULT_MARKETPLACE_URL).unwrap(), vec![]);
+            drop(store);
+            let (_, reopened) = store_with_repository(&temp);
+            assert_eq!(
+                reopened.list().unwrap(),
+                vec![third_party(DEFAULT_MARKETPLACE_URL)]
+            );
+        });
+    }
+
     #[test]
     fn add_update_and_delete_persist_sources() {
         let temp = TempDir::new().expect("create temp directory");
