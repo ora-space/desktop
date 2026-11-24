@@ -33,14 +33,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         permissions: &HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
     ) {
         ora_debug!(session_id = %self.session.id, pending_permissions = permissions.len(), "cancelling prompt");
-        for (request_id, _) in permissions.values() {
-            let _ = client
-                .respond(
-                    request_id,
-                    &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
-                )
-                .await;
-        }
+        crate::prompt_permissions::cancel_pending(client, permissions).await;
         let _ = client
             .notify(
                 AGENT_METHOD_NAMES.session_cancel,

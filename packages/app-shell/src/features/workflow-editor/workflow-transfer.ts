@@ -1,6 +1,7 @@
 import type { InstalledPlugin, Skill } from "@ora/contracts";
 import {
   WORKFLOW_NODE_KINDS,
+  isWorkflowPromptInactivity,
   workflowAgentCompletionIssues,
   type DemoWorkflow,
 } from "@ora/workflow-mock";
@@ -103,6 +104,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function agentConfigImportIssue(config: unknown): string | null {
   if (!isRecord(config)) {
     return null;
+  }
+  if (!isWorkflowPromptInactivity(config.promptInactivity)) {
+    return "unsupported agentConfig.promptInactivity";
   }
   const version = config.schemaVersion;
   if (version !== undefined && version !== 3 && version !== 4) {

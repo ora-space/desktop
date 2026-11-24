@@ -154,7 +154,7 @@ struct Fixture {
     agent: mpsc::UnboundedSender<AgentInput>,
     frames: mpsc::UnboundedReceiver<Value>,
     routed: tokio::task::JoinHandle<()>,
-    _state: watch::Sender<ConnectionState>,
+    state: watch::Sender<ConnectionState>,
     scheduler: ora_scheduler::Scheduler,
 }
 
@@ -281,7 +281,7 @@ impl Fixture {
             agent,
             frames,
             routed,
-            _state: state,
+            state,
             scheduler,
         }
     }
@@ -393,7 +393,10 @@ fn title_polling_admission_preserves_a_waiting_prompt_policy() {
         assert_eq!(fixture.next_frame().await["method"], "session/list");
         let mut waiting = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::Unbounded,
+            )
             .await
             .unwrap();
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
@@ -528,14 +531,17 @@ async fn completion(stream: &mut SessionEventStream<PromptSessionEvent>) -> Stop
 /// A hidden child can stay silent for hours without changing another session's default timer.
 /// See specs/test-cases/desktop/core/workflow/prompt-inactivity.md#a-silent-waiting-prompt-remains-cancellable-and-session-local.
 #[test]
-fn waiting_prompt_survives_silence_while_default_session_retries() {
+fn unbounded_prompt_survives_silence_while_default_session_retries() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
         fixture.add_session("default");
         let mut waiting = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::Unbounded,
+            )
             .await
             .unwrap();
         assert_eq!(fixture.next_frame().await["params"]["sessionId"], "waiting");
@@ -828,16 +834,39 @@ fn parent_permission_rearms_the_prompt_window() {
 
 /// Explicit cancellation still obtains the actual provider fence after an arbitrarily long wait.
 #[test]
-fn waiting_prompt_remains_cancellable_and_reusable() {
+fn unbounded_prompt_remains_cancellable_and_reusable() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
         let mut stream = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::Unbounded,
+            )
             .await
             .unwrap();
-        fixture.next_frame().await;
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(7200)).await;
+        assert!(stream.try_recv().is_none());
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "waiting".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::Unbounded,
+            )
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(7200)).await;
         stream.cancel_and_wait().await.unwrap();
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");
@@ -867,7 +896,10 @@ fn dropping_a_waiting_prompt_cancels_its_owner() {
         fixture.add_session("waiting");
         let stream = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::Unbounded,
+            )
             .await
             .unwrap();
         fixture.next_frame().await;
@@ -886,15 +918,435 @@ fn dropping_a_waiting_prompt_cancels_its_owner() {
     });
 }
 
-/// A real provider EOF terminates an opted-out prompt through the generation's failure control.
+/// A provider-confirmed timeout releases the caller only after the same session is reusable.
 #[test]
-fn provider_disconnect_ends_a_waiting_prompt() {
+fn confirmed_bounded_timeout_can_prompt_again_without_reloading() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
         let mut stream = fixture
             .manager
             .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(1800)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(
+            stream.recv().await.unwrap().unwrap_err().public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        let mut next = fixture
+            .manager
+            .prompt_session(prompt("waiting"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        fixture
+            .agent
+            .send(AgentInput::Finish("waiting".into(), StopReason::EndTurn))
+            .unwrap();
+        assert_eq!(completion(&mut next).await, StopReason::EndTurn);
+        fixture.shutdown().await;
+    });
+}
+
+/// A queued progress frame keeps the clock it received at ingress while the actor was busy.
+#[test]
+fn wait_uses_the_routed_arrival_time_even_when_processed_after_the_deadline() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(1799)).await;
+        let arrived = tokio::time::Instant::now();
+        let update = serde_json::from_value(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"progress"}})).unwrap();
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::Update(
+                SessionNotification::new("waiting", update),
+                arrived,
+            ))
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::SessionUpdate { .. }
+        ));
+        let before_expiry = arrived + Duration::from_secs(1800) - Duration::from_millis(1);
+        assert!(
+            tokio::time::timeout_at(before_expiry, fixture.next_frame())
+                .await
+                .is_err(),
+            "a timely progress frame must prevent an early cancel"
+        );
+        tokio::time::advance(Duration::from_millis(1)).await;
+        let cancel = tokio::time::timeout(Duration::from_secs(1), fixture.next_frame())
+            .await
+            .expect("expiry follows receipt, including time spent queued");
+        assert_eq!(cancel["method"], "session/cancel");
+        assert!(stream.recv().await.unwrap().is_err());
+        fixture.shutdown().await;
+    });
+}
+
+/// Queue an inert permission in the fixture's in-memory route without yielding to its actor.
+fn queue_fixture_permission(fixture: &Fixture) {
+    let request = ora_acp::PermissionRequest {
+        request_id: serde_json::from_value(json!("pending")).unwrap(),
+        request: serde_json::from_value(json!({
+            "sessionId":"waiting","toolCall":{"toolCallId":"fixture"},
+            "options":[{"optionId":"once","name":"Fixture choice","kind":"allow_once"}]
+        }))
+        .unwrap(),
+    };
+    fixture
+        .supervisor
+        .routes
+        .route_event(crate::routing::SessionEvent::Permission(request))
+        .unwrap();
+}
+
+/// An outstanding permission belongs to cancellation when its window has already closed.
+#[test]
+fn bounded_settlement_cancels_a_pending_permission_at_the_boundary() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(1799)).await;
+        queue_fixture_permission(&fixture);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let reply = fixture.next_frame().await;
+        assert_eq!(reply["id"], "pending");
+        assert_eq!(reply["result"]["outcome"]["outcome"], "cancelled");
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(
+            stream.recv().await.unwrap().unwrap_err().public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        fixture.shutdown().await;
+    });
+}
+
+/// Timely progress in the boundary batch lets a temporarily deferred request finish once.
+#[test]
+fn renewed_wait_resumes_a_deferred_permission() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(1799)).await;
+        queue_fixture_permission(&fixture);
+        let progress = serde_json::from_value(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"continuing"}})).unwrap();
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::update(
+                SessionNotification::new("waiting", progress),
+            ))
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let reply = fixture.next_frame().await;
+        assert_eq!(reply["id"], "pending");
+        assert_eq!(reply["result"]["outcome"]["optionId"], "once");
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "waiting".to_owned(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        assert!(fixture.frames.try_recv().is_err());
+        fixture.shutdown().await;
+    });
+}
+
+/// A ready provider completion wins the whole batch, including a deferred request with no selectable option.
+#[test]
+fn renewed_wait_settles_a_ready_terminal_before_deferred_work() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(1799)).await;
+        let terminal = crate::routing::tests::session_response("waiting").await;
+        let request = ora_acp::PermissionRequest {
+            request_id: serde_json::from_value(json!("inert")).unwrap(),
+            request: serde_json::from_value(
+                json!({"sessionId":"waiting","toolCall":{"toolCallId":"fixture"},"options":[]}),
+            )
+            .unwrap(),
+        };
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::Permission(request))
+            .unwrap();
+        let progress = serde_json::from_value(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"continuing"}})).unwrap();
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::update(
+                SessionNotification::new("waiting", progress),
+            ))
+            .unwrap();
+        fixture
+            .supervisor
+            .routes
+            .route_event(crate::routing::SessionEvent::Response(terminal))
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let reply = fixture.next_frame().await;
+        assert_eq!(reply["id"], "inert");
+        assert_eq!(reply["result"]["outcome"]["outcome"], "cancelled");
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        assert!(fixture.frames.try_recv().is_err());
+        fixture.shutdown().await;
+    });
+}
+
+/// Traffic already queued behind a non-cancel response is recorded before the old route closes.
+#[test]
+fn unconfirmed_wait_drains_the_queued_tail_before_failure() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        let mut follower = fixture
+            .manager
+            .load_session(ora_contracts::LoadSessionRequest {
+                session_id: "waiting".into(),
+            })
+            .await
+            .unwrap();
+        let (configured, done) = oneshot::channel();
+        fixture
+            .agent
+            .send(AgentInput::CancelReply {
+                session_id: "waiting".to_owned(),
+                reply: CancelReply::Ignore,
+                configured,
+            })
+            .unwrap();
+        done.await.unwrap();
+        let terminal = crate::routing::tests::session_response("waiting").await;
+        tokio::time::advance(Duration::from_secs(1800)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        let routes = &fixture.supervisor.routes;
+        let settling: SessionUpdate = serde_json::from_value(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"settling"}})).unwrap();
+        routes
+            .route_event(crate::routing::SessionEvent::update(
+                SessionNotification::new("waiting", settling.clone()),
+            ))
+            .unwrap();
+        // Settlement consumes the first update and the response. The drain consumes the tail.
+        routes
+            .route_event(crate::routing::SessionEvent::Response(terminal))
+            .unwrap();
+        let tail: SessionUpdate = serde_json::from_value(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"last update"}})).unwrap();
+        routes
+            .route_event(crate::routing::SessionEvent::update(
+                SessionNotification::new("waiting", tail.clone()),
+            ))
+            .unwrap();
+        assert!(
+            matches!(stream.recv().await.unwrap().unwrap(), PromptSessionEvent::SessionUpdate { update, .. } if update == settling)
+        );
+        assert!(
+            matches!(stream.recv().await.unwrap().unwrap(), PromptSessionEvent::SessionUpdate { update, .. } if update == tail)
+        );
+        assert_eq!(
+            stream.recv().await.unwrap().unwrap_err().public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        assert!(stream.recv().await.is_none());
+        let mut received = Vec::new();
+        loop {
+            match follower
+                .recv()
+                .await
+                .expect("follower error after the boundary")
+                .unwrap()
+            {
+                ora_contracts::LoadSessionEvent::SessionUpdate { update, .. }
+                    if update == tail || update == settling =>
+                {
+                    received.push(update)
+                }
+                ora_contracts::LoadSessionEvent::TurnEnded {
+                    stop_reason: StopReason::Cancelled,
+                    ..
+                } => break,
+                _ => {}
+            }
+        }
+        assert_eq!(received, vec![settling, tail]);
+        assert_eq!(
+            follower.recv().await.unwrap().unwrap_err().public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        assert!(follower.recv().await.is_none());
+        fixture.shutdown().await;
+    });
+}
+
+/// Expiry settles the owner even if the CLI also ignores cancellation.
+#[test]
+fn waiting_prompt_times_out_without_a_cancellation_acknowledgement() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        let mut connection = fixture.supervisor.current().unwrap();
+        connection.close_session_supported = true;
+        fixture
+            .state
+            .send_replace(ConnectionState::Ready(connection));
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        let mut follower = fixture
+            .manager
+            .load_session(ora_contracts::LoadSessionRequest {
+                session_id: "waiting".into(),
+            })
+            .await
+            .unwrap();
+        let (configured, done) = oneshot::channel();
+        fixture
+            .agent
+            .send(AgentInput::CancelReply {
+                session_id: "waiting".into(),
+                reply: CancelReply::Ignore,
+                configured,
+            })
+            .unwrap();
+        done.await.unwrap();
+        tokio::time::advance(Duration::from_secs(1799)).await;
+        assert!(stream.try_recv().is_none());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        fixture
+            .manager
+            .cancel_turn_prompt(
+                "waiting",
+                tokio::time::Instant::now() + Duration::from_secs(60),
+            )
+            .unwrap();
+        tokio::time::advance(crate::limits::CANCELLATION_GRACE - Duration::from_millis(1)).await;
+        assert!(
+            stream.try_recv().is_none(),
+            "the node must wait for the outstanding cancellation"
+        );
+        let close = fixture.next_frame().await;
+        assert_eq!(close["method"], "session/close");
+        assert!(
+            stream.try_recv().is_none(),
+            "the node must wait for isolation to settle"
+        );
+        fixture
+            .agent
+            .send(AgentInput::RawFrame(
+                json!({"jsonrpc":"2.0","id":close["id"],"result":{}}),
+            ))
+            .unwrap();
+        let err = stream.recv().await.unwrap().unwrap_err();
+        assert!(!err.is_turn_cancel_unanswered());
+        assert_eq!(
+            err.public_error(),
+            &PublicError::AgentTimedOut(EmptyErrorParams {})
+        );
+        assert!(stream.recv().await.is_none());
+        let mut ended = false;
+        loop {
+            let event = follower
+                .recv()
+                .await
+                .expect("the timeout must reach the follower");
+            match event {
+                Ok(ora_contracts::LoadSessionEvent::TurnEnded {
+                    stop_reason: StopReason::Cancelled,
+                    ..
+                }) => {
+                    assert!(!ended);
+                    ended = true;
+                }
+                Err(error) => {
+                    assert!(
+                        ended,
+                        "the follower must receive the turn boundary before its error"
+                    );
+                    assert_eq!(error.public_error(), err.public_error());
+                    break;
+                }
+                Ok(ora_contracts::LoadSessionEvent::Completed) => {
+                    panic!("a timed-out follower cannot complete successfully")
+                }
+                Ok(_) => {}
+            }
+        }
+        assert!(ended);
+        assert!(follower.recv().await.is_none());
+        let late = SessionNotification::new(
+            "waiting",
+            SessionUpdate::Plan(agent_client_protocol_schema::v1::Plan::new(Vec::new())),
+        );
+        assert!(
+            fixture
+                .supervisor
+                .routes
+                .route_event(crate::routing::SessionEvent::update(late))
+                .is_err(),
+            "the old route must be detached before the owner sees failure"
+        );
+        assert_eq!(stream.end_cause(), Some(PromptEndCause::InactivityTimeout));
+        assert!(fixture.frames.try_recv().is_err());
+        fixture.shutdown().await;
+    });
+}
+
+/// A real provider EOF terminates an opted-out prompt through the generation's failure control.
+#[test]
+fn provider_disconnect_ends_an_unbounded_prompt() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("waiting");
+        let mut stream = fixture
+            .manager
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::Unbounded,
+            )
             .await
             .unwrap();
         fixture.next_frame().await;
@@ -918,7 +1370,10 @@ fn releasing_the_host_and_stream_ends_a_silent_waiting_actor() {
         fixture.add_session("waiting");
         let stream = fixture
             .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
+            .prompt_session_with_inactivity_policy(
+                prompt("waiting"),
+                PromptInactivityPolicy::Unbounded,
+            )
             .await
             .unwrap();
         fixture.next_frame().await;
@@ -931,7 +1386,7 @@ fn releasing_the_host_and_stream_ends_a_silent_waiting_actor() {
             routed,
             scheduler,
             _directory,
-            _state,
+            state,
             agent,
         } = fixture;
         drop(manager);
@@ -942,7 +1397,7 @@ fn releasing_the_host_and_stream_ends_a_silent_waiting_actor() {
         routed.await.unwrap();
         plugin.shutdown_and_wait().await;
         scheduler.shutdown().await;
-        drop((agent, _state, _directory));
+        drop((agent, state, _directory));
     });
 }
 
@@ -1191,6 +1646,7 @@ impl<S: tracing::Subscriber> Layer<S> for InactivityLogs {
             Some(
                 "prompt inactive; cancelling stalled attempt"
                     | "inactive prompt cancellation settled"
+                    | "workflow prompt exceeded its silence limit"
             )
         ) {
             fields.0.insert(
@@ -1223,6 +1679,49 @@ impl Visit for LogFields {
         self.0
             .insert(field.name().to_string(), json!(format!("{value:?}")));
     }
+}
+
+/// The bounded timeout has one structured, content-free record for the operation.
+#[test]
+fn bounded_timeout_logs_the_window_and_settlement_outcome() {
+    let logs = InactivityLogs::default();
+    ora_logging::initialize_test_clock();
+    ora_logging::with_recorded_trace_logging(logs.clone(), || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(/*start_paused*/ true)
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut fixture = Fixture::new().await;
+                fixture.add_session("waiting");
+                let mut stream = fixture
+                    .manager
+                    .prompt_session_with_inactivity_policy(
+                        prompt("waiting"),
+                        PromptInactivityPolicy::Wait,
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+                tokio::time::advance(Duration::from_secs(1800)).await;
+                assert!(stream.recv().await.unwrap().is_err());
+                fixture.shutdown().await;
+            });
+    });
+    let records = logs.0.lock().unwrap();
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert!(record["operation_id"].as_u64().is_some_and(|id| id > 0));
+    assert_eq!(
+        serde_json::to_value(record).unwrap(),
+        json!({
+            "message":"workflow prompt exceeded its silence limit", "level":"WARN", "method":"finish_expired_wait",
+            "session_id":"waiting", "operation_id":record["operation_id"], "policy":"Wait", "attempt":1,
+            "window_ms":1800000.0, "silent_elapsed_ms":1800000.0, "running_tools":0, "pending_tools":0,
+            "end_cause":"inactivity_timeout", "cancellation_result":"confirmed"
+        })
+    );
 }
 
 /// Diagnostics independently identify the inactivity decision and provider cancellation fence.

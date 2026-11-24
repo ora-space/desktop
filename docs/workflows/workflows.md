@@ -143,7 +143,7 @@ structured output, interactivity, retry and prompt inactivity. The runtime meani
   0–5 and `initialDelaySeconds` 0–300. Absent or `null` means
   `{ enabled: true, maxRetries: 2, initialDelaySeconds: 10 }`; a present object must be complete.
   The section is hidden for interactive nodes.
-- **Prompt inactivity**: `agentConfig.promptInactivity: "timeout" | "wait"`; absent or `null` means
+- **Prompt inactivity**: `agentConfig.promptInactivity: "timeout" | "wait" | "unbounded"`; `"unbounded"` explicitly disables the silence limit. Absent or `null` means
   `"timeout"`. Opening an old graph never adds the field.
 - **Structured output**: an object-rooted JSON Schema edited visually or as raw JSON in a dialog that
   updates the node only on save.

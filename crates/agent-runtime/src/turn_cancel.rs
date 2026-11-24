@@ -181,7 +181,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.cancel(client, permissions).await;
         let settled = timeout_at(
             turn_deadline.unwrap_or_else(|| Instant::now() + CANCELLATION_GRACE),
-            settle_cancelled_prompt(self, &mut channel, client, pending, events, saw_output),
+            settle_cancelled_prompt(
+                self,
+                &mut channel,
+                client,
+                pending,
+                events,
+                saw_output,
+                followers,
+            ),
         )
         .await;
         let reusable = matches!(
@@ -191,7 +199,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let session_invalid =
             matches!(&settled, Ok(Some(Err(error))) if provider_session_invalid(error));
         if !reusable {
-            drain_queued_prompt_events(self, &mut channel, client, events, saw_output).await;
+            drain_queued_prompt_events(self, &mut channel, client, events, saw_output, followers)
+                .await;
         }
         // Every answer once `session/cancel` is written answers the cancel.
         let stop_reason = StopReason::Cancelled;
@@ -327,7 +336,7 @@ async fn ready_response<H: AgentRuntimeHost>(
     });
     for event in before {
         match event {
-            SessionEvent::Update(update) => {
+            SessionEvent::Update(update, _) => {
                 *saw_output |= produced_output(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
@@ -405,7 +414,7 @@ mod tests {
         };
         let (sender, mut events) = tokio::sync::mpsc::channel(4);
         let update = || {
-            SessionEvent::Update(SessionNotification::new(
+            SessionEvent::update(SessionNotification::new(
                 "session-1",
                 SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
             ))

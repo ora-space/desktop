@@ -516,6 +516,7 @@ mod tests {
             (json!(null), PromptInactivityPolicy::Timeout),
             (json!("timeout"), PromptInactivityPolicy::Timeout),
             (json!("wait"), PromptInactivityPolicy::Wait),
+            (json!("unbounded"), PromptInactivityPolicy::Unbounded),
         ] {
             let graph = parse_config(json!({"promptInactivity": value})).unwrap();
             assert_eq!(
@@ -580,6 +581,8 @@ mod tests {
     fn rejects_invalid_prompt_inactivity_with_node_and_field_context() {
         for value in [
             json!("disabled"),
+            json!({"waitMinutes":75}),
+            json!({"waitMinutes":65536}),
             json!(true),
             json!(45),
             json!({}),

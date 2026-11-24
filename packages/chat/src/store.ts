@@ -1,6 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import {
   type ContractsClient,
+  type LoadSessionEvent,
   type PromptSessionEvent,
   LocalTransportError,
   RemoteContractError,
@@ -331,9 +332,11 @@ export function createChatStore(
         error: null,
       }));
       try {
-        for await (const event of client.load(
-          { sessionId: oraSessionId },
-          { signal: controller.signal },
+        for await (const event of staged.read(
+          client,
+          oraSessionId,
+          controller.signal,
+          describeError,
         )) {
           let batchPreview = false;
           if (event.type === "session_update") {
@@ -969,6 +972,37 @@ class HistoryBuilder {
     private readonly createId: () => string,
     private readonly now: () => number,
   ) {}
+
+  /** A follower timeout immediately after its live turn boundary belongs to that turn.
+   * All other errors still abort the load, including errors during historical replay.
+   */
+  async *read(
+    client: ChatSessionClient,
+    sessionId: string,
+    signal?: AbortSignal,
+    describeError: (error: unknown) => string = errorMessage,
+  ): AsyncGenerator<LoadSessionEvent> {
+    let endedLiveTurn = false;
+    try {
+      for await (const event of client.load({ sessionId }, { signal })) {
+        endedLiveTurn =
+          event.type === "turn_ended" &&
+          event.stopReason === "cancelled" &&
+          event.recordedAt == null;
+        yield event;
+      }
+    } catch (error) {
+      const last = this.turns.at(-1);
+      if (!endedLiveTurn || !last || !isAgentTimedOutError(error)) throw error;
+      this.replaceLast({
+        ...last,
+        status: "failed",
+        error: describeError(error),
+      });
+      this.permissions.length = 0;
+      yield { type: "completed" };
+    }
+  }
 
   applyUpdate(
     update: acp.SessionUpdate,
@@ -1820,7 +1854,7 @@ export async function loadSessionConversation(
 ): Promise<SessionConversation> {
   const staged = new HistoryBuilder(() => crypto.randomUUID(), Date.now);
   let completed = false;
-  for await (const event of client.load({ sessionId }, { signal })) {
+  for await (const event of staged.read(client, sessionId, signal)) {
     if (event.type === "session_update") {
       const configOptions = sessionScopedConfigOptions(event.update);
       if (configOptions) {
@@ -1836,6 +1870,8 @@ export async function loadSessionConversation(
       staged.addPermission(event);
     } else if (event.type === "turn_ended") {
       staged.endTurn(event.stopReason, recordedAtMillis(event.recordedAt));
+    } else if (event.type === "history_notice") {
+      staged.addHistoryNotice(event.notice);
     } else {
       completed = true;
     }

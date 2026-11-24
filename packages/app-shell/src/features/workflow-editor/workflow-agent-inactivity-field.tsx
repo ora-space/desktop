@@ -6,7 +6,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@ora/ui";
-import type { WorkflowAgentConfig } from "@ora/workflow-mock";
+import {
+  WORKFLOW_WAIT_MINUTES,
+  type WorkflowAgentConfig,
+} from "@ora/workflow-mock";
 import { InspectorField } from "./workflow-node-details";
 
 /** Edits silence handling independently of node failure retries, including interactive nodes. */
@@ -28,7 +31,11 @@ export function WorkflowAgentInactivityField({
       <Select
         value={value}
         onValueChange={(promptInactivity) => {
-          if (promptInactivity === "timeout" || promptInactivity === "wait") {
+          if (
+            promptInactivity === "timeout" ||
+            promptInactivity === "wait" ||
+            promptInactivity === "unbounded"
+          ) {
             onChange({ ...config, promptInactivity });
           }
         }}
@@ -49,13 +56,18 @@ export function WorkflowAgentInactivityField({
           <SelectItem value="wait">
             {t("settings.workflow.promptInactivity.wait")}
           </SelectItem>
+          <SelectItem value="unbounded">
+            {t("settings.workflow.promptInactivity.unbounded")}
+          </SelectItem>
         </SelectContent>
       </Select>
       <p
         id="workflow-agent-prompt-inactivity-hint"
         className="text-[10px] leading-relaxed text-muted-foreground"
       >
-        {t("settings.workflow.promptInactivity.hint")}
+        {t("settings.workflow.promptInactivity.hint", {
+          minutes: WORKFLOW_WAIT_MINUTES,
+        })}
       </p>
     </InspectorField>
   );

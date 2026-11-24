@@ -1,7 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { cn } from "@ora/ui";
 import type { WorkflowAgentConfig } from "@ora/workflow-runtime";
-import { normalizeWorkflowAgentConfig } from "@ora/workflow-mock";
+import {
+  WORKFLOW_WAIT_MINUTES,
+  normalizeWorkflowAgentConfig,
+} from "@ora/workflow-mock";
 import { IconRobot } from "@tabler/icons-react";
 import { PluginLogoMark } from "../settings/plugin-logo";
 import { useAgentCatalog } from "../../state/hooks/use-agent-catalog";
@@ -212,11 +215,15 @@ export function RunActAgentConfig({
           {t("settings.workflow.field.promptInactivity")}
         </p>
         <StaticValue
-          value={t(
-            config.promptInactivity === "wait"
-              ? "workflowRun.inspector.promptInactivityWait"
-              : "workflowRun.inspector.promptInactivityTimeout",
-          )}
+          value={
+            config.promptInactivity === "unbounded"
+              ? t("workflowRun.inspector.promptInactivityUnbounded")
+              : config.promptInactivity === "wait"
+                ? t("workflowRun.inspector.promptInactivityWait", {
+                    minutes: WORKFLOW_WAIT_MINUTES,
+                  })
+                : t("workflowRun.inspector.promptInactivityTimeout")
+          }
         />
       </div>
 

@@ -2,8 +2,7 @@
 //!
 //! A published `start -> worker -> output` graph is started through `WorkflowRuns`; the executor
 //! creates the node session, drives the prompt through the real agent runtime, and records the
-//! failure through the production transitions. Retry is disabled so the assertions observe the
-//! final result instead of a scheduled workflow retry.
+//! failure through the production transitions, including node-level retry when configured.
 
 use super::abnormal_support::{
     CRASH_MARKER, DROP_MARKER, SILENT_MARKER, open_abnormal_backend, prompt_marker_count,
@@ -49,13 +48,13 @@ fn agent_config(prompt: &str) -> Value {
 fn start_run(
     backend: &Backend,
     workspace_id: &str,
-    prompt: &str,
+    config: Value,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let workflow = backend
         .workflows()
         .create(CreateWorkflowRequest {
             name: "Abnormal first turn".to_string(),
-            graph: Some(single_agent_graph(agent_config(prompt))),
+            graph: Some(single_agent_graph(config)),
         })?
         .workflow;
     backend.workflows().publish(PublishWorkflowRequest {
@@ -203,7 +202,7 @@ fn a_silent_workflow_first_turn_exhausts_inactivity_and_fails_the_node() -> Test
         let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
         let backend = open_abnormal_backend(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
-        let run_id = start_run(&backend, &workspace_id, SILENT_MARKER)?;
+        let run_id = start_run(&backend, &workspace_id, agent_config(SILENT_MARKER))?;
         assert_frozen_worker_is_interactive(&backend, &run_id)?;
 
         let detail = settle_failed(&backend, &run_id).await?;
@@ -217,15 +216,89 @@ fn a_silent_workflow_first_turn_exhausts_inactivity_and_fails_the_node() -> Test
     })
 }
 
+/// A published bounded Wait reaches a persisted failed node with just one provider send.
+#[test]
+fn a_bounded_wait_fails_the_workflow_node_without_resending() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let mut config = agent_config(SILENT_MARKER);
+        config["promptInactivity"] = json!("wait");
+        let run_id = start_run(&backend, &workspace_id, config)?;
+        wait_for_prompt_marker(&package, SILENT_MARKER).await?;
+        // Only advance the actor's clock after the external process confirms delivery.
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(1801)).await;
+        tokio::time::resume();
+        let detail = settle_failed(&backend, &run_id).await?;
+        assert_failed_without_parking(&detail, "session", &["no progress for 30 minutes"])?;
+        assert_eq!(prompt_marker_count(&package, SILENT_MARKER), 1);
+        Ok(())
+    })
+}
+
+/// Each node attempt sends once. The configured noninteractive retry owns the second attempt.
+#[test]
+fn bounded_wait_consumes_the_configured_noninteractive_node_retry() -> TestResult {
+    current_thread_runtime()?.block_on(async {
+        let setup = DesktopTestSetup::new()?;
+        let package = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let backend = open_ready_backend(&setup)?;
+        let workspace_id = seed_workspace(&setup, &backend)?;
+        let mut config = agent_config(SILENT_MARKER);
+        config["interactive"] = json!(false);
+        config["promptInactivity"] = json!("wait");
+        config["retry"] = json!({"enabled":true,"maxRetries":1,"initialDelaySeconds":0});
+        let run_id = start_run(&backend, &workspace_id, config)?;
+        for attempt in 1..=2 {
+            tokio::time::timeout(RUN_DEADLINE, async {
+                while prompt_marker_count(&package, SILENT_MARKER) < attempt {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+            })
+            .await?;
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(1801)).await;
+            tokio::time::resume();
+        }
+        let detail = settle_failed(&backend, &run_id).await?;
+        let (row, _) = worker(&detail)?;
+        assert_eq!(row.status, WorkflowNodeStatus::Failed);
+        assert!(
+            row.error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("no progress for 30 minutes")
+        );
+        assert_eq!(detail.failed_attempts.as_ref().map_or(0, Vec::len), 1);
+        assert_eq!(prompt_marker_count(&package, SILENT_MARKER), 2);
+        Ok(())
+    })
+}
+
 /// A workflow session crash fails the node with the provider-connection diagnostic.
 #[test]
 fn a_crashed_workflow_first_turn_fails_the_node_without_parking() -> TestResult {
+    check_first_turn_crash(agent_config(CRASH_MARKER))
+}
+
+/// The finite wait also attributes provider death to the session immediately.
+#[test]
+fn a_crashed_bounded_first_turn_fails_the_node_without_parking() -> TestResult {
+    let mut config = agent_config(CRASH_MARKER);
+    config["promptInactivity"] = json!("wait");
+    check_first_turn_crash(config)
+}
+
+fn check_first_turn_crash(config: Value) -> TestResult {
     run_case(async {
         let setup = DesktopTestSetup::new()?;
         let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
         let backend = open_ready_backend(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
-        let run_id = start_run(&backend, &workspace_id, CRASH_MARKER)?;
+        let run_id = start_run(&backend, &workspace_id, config)?;
         assert_frozen_worker_is_interactive(&backend, &run_id)?;
 
         let detail = settle_failed(&backend, &run_id).await?;
@@ -260,7 +333,7 @@ fn a_workflow_first_turn_without_a_terminal_event_fails_the_node() -> TestResult
         let backend = open_ready_backend(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
         backend.workflow_runs().arm_test_owner_stream_drop("worker");
-        let run_id = start_run(&backend, &workspace_id, DROP_MARKER)?;
+        let run_id = start_run(&backend, &workspace_id, agent_config(DROP_MARKER))?;
         assert_frozen_worker_is_interactive(&backend, &run_id)?;
         let claimed_session = tokio::time::timeout(
             RUN_DEADLINE,

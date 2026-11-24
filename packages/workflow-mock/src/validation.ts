@@ -190,9 +190,17 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
     ) &&
     new Set(config.mcps.map((mcp) => mcp.mcpId)).size === config.mcps.length &&
     typeof config.prompt === "string" &&
-    (config.promptInactivity == null ||
-      config.promptInactivity === "timeout" ||
-      config.promptInactivity === "wait") &&
+    isWorkflowPromptInactivity(config.promptInactivity) &&
     validateWorkflowAgentRetry(config.retry).length === 0
+  );
+}
+
+/** Supported frozen values at workflow graph and file-import boundaries. */
+export function isWorkflowPromptInactivity(value: unknown): boolean {
+  return (
+    value == null ||
+    value === "timeout" ||
+    value === "wait" ||
+    value === "unbounded"
   );
 }

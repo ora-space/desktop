@@ -282,6 +282,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 return;
             }
         };
+        #[cfg(feature = "test-support")]
+        let windows = self
+            .test_prompt_inactivity_windows
+            .unwrap_or(&PROMPT_INACTIVITY_WINDOWS);
+        #[cfg(not(feature = "test-support"))]
+        let windows = &PROMPT_INACTIVITY_WINDOWS;
+        let mut liveness = PromptLiveness::for_policy(windows, inactivity_policy);
         if settles_handoff {
             // Accepting the request is the last thing Ora can observe about delivery:
             // past it the frame is on the agent's stdin and what the agent does with
@@ -303,37 +310,76 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 self.settle_record(outcome);
             }
         }
-        let mut permissions = HashMap::new();
+        let mut permissions = crate::prompt_permissions::PromptPermissions::default();
         let mut input_state = ActiveInputState::default();
         let mut saw_output = false;
-        #[cfg(feature = "test-support")]
-        let windows = self
-            .test_prompt_inactivity_windows
-            .unwrap_or(&PROMPT_INACTIVITY_WINDOWS);
-        #[cfg(not(feature = "test-support"))]
-        let windows = &PROMPT_INACTIVITY_WINDOWS;
-        let mut liveness = PromptLiveness::new(windows);
         let mut tool_timings = ToolTimings::default();
         loop {
-            let input = tokio::select! {
-                input = input_state.recv(
-                    &mut channel.events,
-                    &mut channel.controls,
-                    &mut self.commands,
-                ) => Some(input),
-                () = liveness.wait(inactivity_policy) => None,
+            // At expiry, drain only the inputs already ready at the boundary. A flowing
+            // queue of unrelated notifications must not postpone a timeout indefinitely.
+            let input = if let Some(deadline) = liveness.wait_deadline() {
+                let boundary = input_state.boundary_deadline().unwrap_or(deadline);
+                if tokio::time::Instant::now() >= boundary {
+                    let next = input_state.at_wait_deadline(
+                        boundary,
+                        &mut channel.events,
+                        &mut channel.controls,
+                        &mut self.commands,
+                        &self.turn_cancel,
+                    );
+                    if next.is_none() && boundary != deadline {
+                        input_state.clear_wait_boundary();
+                        continue;
+                    }
+                    next
+                } else if self.turn_cancel.deadline().is_none()
+                    && let Some(permission) = permissions.take_deferred()
+                {
+                    Some(ActiveInput::Event(SessionEvent::Permission(permission)))
+                } else {
+                    tokio::select! {
+                        biased;
+                        () = tokio::time::sleep_until(deadline) => continue,
+                        input = input_state.recv(&mut channel.events, &mut channel.controls, &mut self.commands) => Some(input),
+                    }
+                }
+            } else {
+                tokio::select! {
+                    input = input_state.recv(&mut channel.events, &mut channel.controls, &mut self.commands) => Some(input),
+                    () = liveness.wait(), if inactivity_policy == PromptInactivityPolicy::Timeout => None,
+                }
             };
             let Some(input) = input else {
+                if liveness.wait_deadline().is_some() {
+                    self.finish_expired_wait(
+                        channel,
+                        pending,
+                        liveness.snapshot(),
+                        crate::turn_cancel::PromptStop {
+                            operation_id,
+                            client: &client,
+                            permissions: &permissions.pending,
+                            events: &events,
+                            end_report: &end_report,
+                            followers: &mut followers,
+                            tool_timings: &tool_timings,
+                            saw_output: &mut saw_output,
+                        },
+                    )
+                    .await;
+                    return;
+                }
                 match retry_stalled_prompt(
                     self,
                     &mut channel,
                     pending,
                     &events,
                     &mut liveness,
-                    &mut permissions,
+                    &mut permissions.pending,
                     &mut request,
                     record_prompt.attempt_instruction.as_deref(),
                     &mut saw_output,
+                    &mut followers,
                 )
                 .await
                 {
@@ -386,13 +432,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
             };
             match input {
-                ActiveInput::Event(SessionEvent::Update(update)) => {
+                ActiveInput::Event(SessionEvent::Update(update, arrived)) => {
                     saw_output |= produced_output(&update.update);
                     // Record before forwarding: a client that drops mid-turn must not also cost
                     // the durable record of what the provider produced.
                     self.observe_session_update(&update.update);
                     let update = update.update;
-                    liveness.observe(&update);
+                    liveness.observe_at(
+                        &update,
+                        if liveness.wait_deadline().is_some() {
+                            arrived
+                        } else {
+                            tokio::time::Instant::now()
+                        },
+                    );
                     let tool_timing = tool_timings.observe(&update);
                     let outcome = match &tool_timing {
                         Some(timing) => self.recorder.record_timed_update(&update, timing),
@@ -411,62 +464,45 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         end_report.record(PromptEndCause::StreamDropped);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
-                        self.cancel(&client, &permissions).await;
+                        self.cancel(&client, &permissions.pending).await;
                         self.isolate_channel(channel).await;
                         return;
                     }
                 }
                 ActiveInput::Event(SessionEvent::Permission(permission)) => {
-                    let public_id = permission.request_id.to_string();
-                    let option_ids = permission
-                        .request
-                        .options
-                        .iter()
-                        .map(|option| option.option_id.to_string())
-                        .collect::<Vec<_>>();
-                    ora_debug!(session_id = %self.session.id, tool_call = ?permission.request.tool_call, option_count = option_ids.len(), request_id = %public_id, "permission requested");
-                    // Ora has no user-configurable approval policy yet, so every request is
-                    // granted through the same `respond_permission` path a real user's choice
-                    // would take, instead of being left pending for
-                    // `RuntimeCommand::RespondToPermission`. A future policy can gate this
-                    // auto-response and leave the request in `permissions` for the frontend to
-                    // answer instead.
-                    let auto_option_id = pick_auto_allow_option(&permission.request.options)
-                        .map(|option| option.option_id.to_string());
-                    permissions.insert(public_id.clone(), (permission.request_id, option_ids));
-                    let Some(option_id) = auto_option_id else {
-                        ora_warn!(session_id = %self.session.id, request_id = %public_id, "permission request offered no allow option");
+                    if let Err(error) = permissions
+                        .answer(
+                            &client,
+                            &self.session.id,
+                            permission,
+                            &mut liveness,
+                            input_state.boundary_deadline(),
+                        )
+                        .await
+                    {
+                        ora_warn!(session_id = %self.session.id, error = %error, "failed to answer permission request");
                         end_report.record(PromptEndCause::Unknown);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
-                        self.cancel(&client, &permissions).await;
-                        self.isolate_channel(channel).await;
-                        return;
-                    };
-                    let auto_response = respond_permission(
-                        &client,
-                        RespondToPermissionRequest {
-                            session_id: self.session.id.to_string(),
-                            permission_request_id: public_id,
-                            option_id,
-                        },
-                        &mut permissions,
-                    )
-                    .await;
-                    if let Err(error) = auto_response {
-                        ora_warn!(session_id = %self.session.id, error = %error, "failed to auto-allow permission request");
-                        end_report.record(PromptEndCause::Unknown);
-                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                        followers.finish(StopReason::Cancelled);
-                        self.cancel(&client, &permissions).await;
+                        self.cancel(&client, &permissions.pending).await;
                         self.isolate_channel(channel).await;
                         return;
                     }
-                    liveness.permission_settled(&permission.request.tool_call);
                 }
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {
                         continue;
+                    }
+                    if !permissions.pending.is_empty() {
+                        // The prompt answered during arbitration. Release its deferred requests before reusing the channel.
+                        let _ = tokio::time::timeout(
+                            CANCELLATION_GRACE,
+                            crate::prompt_permissions::cancel_pending(
+                                &client,
+                                &permissions.pending,
+                            ),
+                        )
+                        .await;
                     }
                     match pending.finish(response) {
                         Ok(response) => {
@@ -584,7 +620,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     end_report.record(PromptEndCause::Unknown);
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
-                    self.cancel(&client, &permissions).await;
+                    self.cancel(&client, &permissions.pending).await;
                     let _ = events.try_send(Err(session_event_overflow(
                         "session event queue overflowed",
                     )));
@@ -599,7 +635,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     return;
                 }
                 ActiveInput::Command(RuntimeCommand::RespondToPermission { request, response }) => {
-                    let result = respond_permission(&client, request, &mut permissions).await;
+                    let result =
+                        respond_permission(&client, request, &mut permissions.pending).await;
                     let _ = response.send(result);
                 }
                 ActiveInput::Command(RuntimeCommand::Cancel {
@@ -635,7 +672,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         crate::turn_cancel::PromptStop {
                             operation_id,
                             client: &client,
-                            permissions: &permissions,
+                            permissions: &permissions.pending,
                             events: &events,
                             end_report: &end_report,
                             followers: &mut followers,
@@ -650,7 +687,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Command(RuntimeCommand::Stop { response }) => {
                     end_report.record(PromptEndCause::Unknown);
-                    self.cancel(&client, &permissions).await;
+                    self.cancel(&client, &permissions.pending).await;
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
                     self.isolate_channel(channel).await;
@@ -734,7 +771,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::CommandsClosed => {
                     end_report.record(PromptEndCause::SessionCrashed);
-                    self.cancel(&client, &permissions).await;
+                    self.cancel(&client, &permissions.pending).await;
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
                     self.isolate_channel(channel).await;
@@ -746,93 +783,5 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{current_model, produced_output, stale_load_retry_allowed};
-    use crate::attach::LoadRestoration;
-    use agent_client_protocol_schema::v1::{
-        ContentBlock, ContentChunk, Plan, SessionUpdate, TextContent, ToolCall, ToolCallUpdate,
-        ToolCallUpdateFields,
-    };
-    use agent_client_protocol_schema::v1::{
-        SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-        SessionConfigSelect, SessionConfigSelectOption, SessionConfigSelectOptions,
-        SessionConfigValueId,
-    };
-
-    #[test]
-    fn a_stale_load_retry_requires_no_output_and_only_one_attempt() {
-        assert!(stale_load_retry_allowed(
-            true,
-            false,
-            true,
-            LoadRestoration::Restored
-        ));
-        assert!(!stale_load_retry_allowed(
-            true,
-            true,
-            true,
-            LoadRestoration::Restored
-        ));
-        assert!(!stale_load_retry_allowed(
-            true,
-            false,
-            false,
-            LoadRestoration::Restored
-        ));
-        assert!(!stale_load_retry_allowed(
-            false,
-            false,
-            true,
-            LoadRestoration::Restored
-        ));
-    }
-
-    #[test]
-    fn output_classification_covers_text_tools_and_controls() {
-        let text = || {
-            SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
-                TextContent::new("hello"),
-            )))
-        };
-        for update in [
-            text(),
-            SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::Text(
-                TextContent::new("thinking"),
-            ))),
-            SessionUpdate::ToolCall(ToolCall::new("tool", "Tool")),
-            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new("tool", ToolCallUpdateFields::new())),
-        ] {
-            assert!(produced_output(&update), "{update:?}");
-        }
-        // A plan can fail without any assistant output or tool side effect and is retryable.
-        assert!(!produced_output(&SessionUpdate::Plan(
-            Plan::new(Vec::new())
-        )));
-    }
-
-    /// An empty configuration report carries no model and must not terminate the actor.
-    #[test]
-    fn an_empty_provider_report_has_no_rebuild_model() {
-        pretty_assertions::assert_eq!(current_model(&[]), None);
-    }
-
-    #[test]
-    fn the_rebuild_model_comes_from_the_restored_provider() {
-        let option = SessionConfigOption::new(
-            SessionConfigId::new("model"),
-            "Model",
-            SessionConfigKind::Select(SessionConfigSelect::new(
-                SessionConfigValueId::new("deepseek/deepseek-v4-pro"),
-                SessionConfigSelectOptions::Ungrouped(vec![SessionConfigSelectOption::new(
-                    "deepseek/deepseek-v4-pro",
-                    "DeepSeek V4 Pro",
-                )]),
-            )),
-        )
-        .category(SessionConfigOptionCategory::Model);
-        assert_eq!(
-            current_model(&[option]),
-            Some("deepseek/deepseek-v4-pro".to_string())
-        );
-    }
-}
+#[path = "actor_prompt/tests.rs"]
+mod tests;

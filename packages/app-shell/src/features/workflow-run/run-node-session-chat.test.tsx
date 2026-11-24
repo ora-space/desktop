@@ -393,6 +393,48 @@ describe("RunNodeSessionChat", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the node transcript visible after a followed turn times out", async () => {
+    const handlers = createFixtureHandlers(createFixtureState());
+    const load = vi.fn(async function* () {
+      yield {
+        type: "session_update",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: "Review this node" },
+        },
+      } as const;
+      yield {
+        type: "session_update",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Recorded progress" },
+        },
+      } as const;
+      yield { type: "turn_ended", stopReason: "cancelled" } as const;
+      throw new RemoteContractError(
+        {
+          code: "agent_timed_out",
+          params: {},
+          requestId: "00000000-0000-4000-8000-000000000000",
+        },
+        null,
+      );
+    });
+    handlers.loadSession = load;
+    const client = createTestClient(handlers);
+    const chatStore = createChatStore(client.session, {
+      describeError: () => "Turn timed out",
+    });
+    render(<RunNodeSessionChat sessionId={sessionId} status="failed" />, {
+      wrapper: createHookWrapper(client, createTestQueryClient(), chatStore),
+    });
+    expect(await screen.findByText("Turn timed out")).toBeInTheDocument();
+    expect(screen.getByText("Recorded progress")).toBeInTheDocument();
+    expect(screen.getByText("Review this node")).toBeInTheDocument();
+    expect(chatStore.getState().conversations[sessionId]?.error).toBeNull();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
   it("does not retry a failed node session load after a runtime fault", async () => {
     const clientHandlers: TestHandlers =
       createFixtureHandlers(createFixtureState());

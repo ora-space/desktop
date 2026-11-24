@@ -174,7 +174,17 @@ impl SessionFollowers {
 
     /// Closes every loaded conversation stream with the active turn's recorded boundary.
     pub(super) fn finish(&mut self, stop_reason: StopReason) {
+        self.finish_with_result(stop_reason, Ok(LoadSessionEvent::Completed));
+    }
+
+    /// Deliver a terminal reason after the recorded turn boundary, including to replaying views.
+    pub(super) fn finish_with_result(
+        &mut self,
+        stop_reason: StopReason,
+        result: Result<LoadSessionEvent, RuntimeError>,
+    ) {
         for follower in std::mem::take(&mut self.followers).into_values() {
+            let result = result.clone();
             tokio::spawn(async move {
                 if follower
                     .events
@@ -182,7 +192,7 @@ impl SessionFollowers {
                     .await
                     .is_ok()
                 {
-                    let _ = follower.events.send(Ok(LoadSessionEvent::Completed)).await;
+                    let _ = follower.events.send(result).await;
                 }
             });
         }

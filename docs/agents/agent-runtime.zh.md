@@ -88,9 +88,9 @@ setup 按无活动计时，而不是总时长。交付 MCP server 的请求有 1
 
 ### prompt 无活动与重试
 
-每个 prompt 有一个 `PromptInactivityPolicy`。`Timeout`（普通聊天和默认值）应用无活动窗口；`Wait` 从不仅因为沉默就取消、重发或让 prompt 失败。工作流的 Agent 节点可以选择 `Wait`，见[工作流运行](../workflows/workflow-runs.zh.md#prompt-无活动)。
+每个 prompt 有一个 `PromptInactivityPolicy`。`Timeout`（普通聊天和默认值）应用无活动窗口；`Wait` 每轮只发送一次，达到工作流静默上限（固定 30 分钟）时本轮失败。有限等待在工具运行和权限应答期间持续计时，只有可归属的有效进展才能续期。长时间静默的节点可显式选择 `Unbounded`。见[工作流运行](../workflows/workflow-runs.zh.md#prompt-无活动)。
 
-Agent 消息、思考、计划和工具生命周期更新会重置窗口；会话外围的通知（`available_commands_update`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update`）不会。运行中的工具会暂停窗口直到最后一个并行工具结束，等待权限也会暂停到得到答复，所以一个长工具可以运行数小时。prompt 没有绝对时长上限。
+在 `Timeout` 策略下，Agent 消息、思考、计划和工具生命周期更新会重置窗口；会话外围的通知（`available_commands_update`、`current_mode_update`、`config_option_update`、`session_info_update`、`usage_update`）不会。运行中的工具会暂停窗口直到最后一个并行工具结束，等待权限也会暂停到得到答复，所以一个长工具可以运行数小时。prompt 没有绝对时长上限。
 
 CodeAgent `_subagent/update` 帧是唯一的投影例外：只要其外层 `toolCallId` 指向本次尝试中仍为 `pending` 或 `in_progress` 的父委托，每一帧都为父窗口续期一个完整窗口但不暂停计时，重试则清除旧尝试的父委托观察重新开始（续期依赖父 `toolCallId` 在同一 provider 会话内唯一；若 provider 在新委托上复用同一 id，旧任务迟到的子帧仍可能为其续期）。实测 CodeAgent 父 `Task` 从不报告 `in_progress`，这一续期仅在子代理持续按窗口发帧期间保持前台委托存活。续期只看子帧是否到达、不判断子代理是否健康，在 CodeAgent 为父调用补发 `in_progress` 前有两个接受的边界：一是子代理内单个正常工具运行超过当次窗口且期间没有中间帧（或子代理停止发帧）时，父 prompt 仍会被取消并重试，使子代理和该工具重跑；二是子代理即使陷入错误或重试循环，只要持续发帧就会无限续期父窗口，须手动停止。
 

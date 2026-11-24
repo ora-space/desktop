@@ -143,7 +143,21 @@ describe("parseWorkflowImportFile", () => {
 });
 
 describe("workflow inactivity setting transfer", () => {
-  it.each([undefined, null, "timeout", "wait"] as const)(
+  it("rejects a minute override before creating a preview or draft", () => {
+    const graph = createMockWorkflow("en-US");
+    const agent = graph.nodes.find((node) => node.data.kind === "agent")!;
+    Object.assign(agent.data.agentConfig!, {
+      promptInactivity: { waitMinutes: 75 },
+    });
+    expect(parseWorkflowImportFile(JSON.stringify(graph))).toMatchObject({
+      ok: false,
+      failure: {
+        reason: "invalidAgentConfig",
+        detail: "unsupported agentConfig.promptInactivity",
+      },
+    });
+  });
+  it.each([undefined, null, "timeout", "wait", "unbounded"] as const)(
     "exports and imports the frozen snapshot policy %s despite later draft edits",
     (promptInactivity) => {
       const workflow = createMockWorkflow("en-US");

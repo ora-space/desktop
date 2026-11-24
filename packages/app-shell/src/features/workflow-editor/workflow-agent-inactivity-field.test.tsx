@@ -188,7 +188,29 @@ describe("Agent prompt inactivity settings", () => {
     await waitFor(() => expect(savedConfig().promptInactivity).toBe("wait"));
   });
 
-  it("renders the Chinese choices and explains manual stopping separately from failure retries", async () => {
+  it("requires an explicit choice to save unbounded waiting", async () => {
+    await appI18n.changeLanguage("en-US");
+    const user = userEvent.setup();
+    render(<Harness config={{ promptInactivity: "wait" }} />);
+    const select = screen.getByRole("combobox", {
+      name: "When no progress is reported",
+    });
+    expect(select).toHaveTextContent("Keep waiting");
+    await user.click(select);
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Wait indefinitely (stop manually)",
+      }),
+    );
+    await waitFor(() =>
+      expect(savedConfig().promptInactivity).toBe("unbounded"),
+    );
+    expect(
+      screen.queryByRole("spinbutton", { name: "Silence limit (minutes)" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the Chinese choices and explains the fixed silence window and node retry behavior", async () => {
     await appI18n.changeLanguage("zh-CN");
     const user = userEvent.setup();
     render(<Harness />);
@@ -200,7 +222,7 @@ describe("Agent prompt inactivity settings", () => {
     );
     expect(
       document.getElementById("workflow-agent-prompt-inactivity-hint"),
-    ).toHaveTextContent("可手动停止。实际执行错误仍按失败自动重试设置处理。");
+    ).toHaveTextContent("连续 30 分钟无进展后本轮失败");
     await user.click(select);
     await user.click(await screen.findByRole("option", { name: "持续等待" }));
     await waitFor(() => expect(savedConfig().promptInactivity).toBe("wait"));

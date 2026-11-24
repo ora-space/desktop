@@ -653,11 +653,11 @@ async fn run_process_generation<A: AgentAttach>(
             inbound = process.inbound.recv() => {
                 match inbound {
                     Some(AcpInboundEvent::SessionUpdate(update)) => {
-                        let _ = routes.route_event(SessionEvent::Update(update));
+                        let _ = routes.route_event(SessionEvent::update(update));
                     }
                     Some(AcpInboundEvent::ExtensionNotification(extension)) => {
                         if let Some(update) = subagent_updates.translate(extension) {
-                            let _ = routes.route_event(SessionEvent::Update(update));
+                            let _ = routes.route_event(SessionEvent::update(update));
                         }
                     }
                     Some(AcpInboundEvent::PermissionRequest(permission)) => {
@@ -671,7 +671,7 @@ async fn run_process_generation<A: AgentAttach>(
                                         ),
                                     ).await;
                                 }
-                                SessionEvent::Update(_) | SessionEvent::Response(_) => {}
+                                SessionEvent::Update(_, _) | SessionEvent::Response(_) => {}
                             }
                         }
                     }

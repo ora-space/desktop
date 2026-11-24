@@ -608,7 +608,7 @@ pub(super) async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<
             break;
         };
         match event {
-            SessionEvent::Update(notification) => {
+            SessionEvent::Update(notification, _) => {
                 if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
                     // Command updates replace the full catalog, so the last setup value wins.
                     available_commands = update.available_commands.clone();
@@ -755,7 +755,7 @@ mod tests {
         // id the still-missing response has not revealed.
         tokio::time::sleep(Duration::from_millis(150)).await;
         registry
-            .route_event(SessionEvent::Update(SessionNotification::new(
+            .route_event(SessionEvent::update(SessionNotification::new(
                 "unrevealed-session",
                 SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("Setting up")),
             )))

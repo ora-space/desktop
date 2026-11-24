@@ -2,7 +2,7 @@ use agent_client_protocol_schema::v1::{
     Meta, SessionUpdate, ToolCallId, ToolCallStatus, ToolCallUpdate,
 };
 use ora_domain::PromptInactivityPolicy;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -50,6 +50,23 @@ pub(super) struct PromptLiveness {
     seen_pending_tools: HashSet<ToolCallId>,
     /// Projection ownership survives later deltas that omit metadata for the same tool.
     projected_tools: HashSet<ToolCallId>,
+    /// Single-send waits continue counting even when the retry clock pauses for an active tool.
+    wait_progress: Option<WaitProgress>,
+}
+
+struct WaitProgress {
+    last: Instant,
+    limit: Duration,
+    tools: HashMap<ToolCallId, ToolProgress>,
+    plans: HashMap<Option<String>, Vec<agent_client_protocol_schema::v1::PlanEntry>>,
+}
+
+/// Last reported fields of a tool within this send, including partial updates.
+#[derive(Default)]
+struct ToolProgress {
+    status: Option<ToolCallStatus>,
+    content: Vec<agent_client_protocol_schema::v1::ToolCallContent>,
+    output: Option<serde_json::Value>,
 }
 
 /// Identifies one automatic re-send of a stalled prompt, counted from the first retry.
@@ -86,9 +103,22 @@ impl PromptLiveness {
             pending_tools: HashSet::new(),
             seen_pending_tools: HashSet::new(),
             projected_tools: HashSet::new(),
+            wait_progress: None,
         };
         liveness.reset_at(now);
         liveness
+    }
+
+    /// Sets up the clock once, at admission, so event-loop wakeups never reset a deadline.
+    pub(super) fn for_policy(windows: &'static [Duration], policy: PromptInactivityPolicy) -> Self {
+        let mut state = Self::new(windows);
+        state.wait_progress = policy.wait_limit().map(|limit| WaitProgress {
+            last: Instant::now(),
+            limit,
+            tools: HashMap::new(),
+            plans: HashMap::new(),
+        });
+        state
     }
 
     /// Returns a deadline only while ordinary prompt progress is expected.
@@ -98,25 +128,37 @@ impl PromptLiveness {
 
     /// Captures the exact window and tool ownership used by an inactivity decision.
     pub(super) fn snapshot(&self) -> PromptLivenessSnapshot {
-        let window = self.windows[self.attempt];
+        let (window, last) = self.wait_progress.as_ref().map_or_else(
+            || {
+                let window = self.windows[self.attempt];
+                (window, self.deadline - window)
+            },
+            |wait| (wait.limit, wait.last),
+        );
         PromptLivenessSnapshot {
             attempt: self.attempt + 1,
             window,
-            silent_elapsed: Instant::now().saturating_duration_since(self.deadline - window),
+            silent_elapsed: Instant::now().saturating_duration_since(last),
             running_tools: self.running_tools.len(),
             pending_tools: self.pending_tools.len(),
         }
     }
 
-    /// Waits only for an enabled deadline; tools and an explicit wait policy keep other actor
-    /// inputs responsive without treating silence as permission to cancel the prompt.
-    pub(super) async fn wait(&self, policy: PromptInactivityPolicy) {
-        match policy {
-            PromptInactivityPolicy::Timeout => match self.deadline() {
-                Some(deadline) => tokio::time::sleep_until(deadline).await,
-                None => std::future::pending().await,
-            },
-            PromptInactivityPolicy::Wait => std::future::pending().await,
+    /// Bounds provider writes performed while handling a single-send turn (such as an allow reply).
+    pub(super) fn wait_deadline(&self) -> Option<Instant> {
+        self.wait_progress
+            .as_ref()
+            .map(|progress| progress.last + progress.limit)
+    }
+
+    /// Waits for this turn's silence deadline independently of other actor inputs.
+    pub(super) async fn wait(&self) {
+        if let Some(deadline) = self.wait_deadline() {
+            tokio::time::sleep_until(deadline).await;
+        } else if let Some(deadline) = self.deadline() {
+            tokio::time::sleep_until(deadline).await;
+        } else {
+            std::future::pending().await
         }
     }
 
@@ -147,11 +189,13 @@ impl PromptLiveness {
     }
 
     /// Applies only activity that proves the current prompt, rather than session chrome, moved.
+    #[cfg(test)]
     pub(super) fn observe(&mut self, update: &SessionUpdate) {
         self.observe_at(update, Instant::now());
     }
 
-    fn observe_at(&mut self, update: &SessionUpdate, now: Instant) {
+    /// Apply progress at route arrival, independent of actor scheduling delays.
+    pub(super) fn observe_at(&mut self, update: &SessionUpdate, now: Instant) {
         // A display projection is not proof that this prompt awaits that child. Parent delegate
         // tools keep their existing in-progress pause; child output cannot create another pause.
         let (meta, tool) = match update {
@@ -174,6 +218,9 @@ impl PromptLiveness {
             let delegate = ToolCallId::new(delegate);
             if self.pending_tools.contains(&delegate) || self.running_tools.contains(&delegate) {
                 self.reset_at(now);
+                if let Some(wait) = &mut self.wait_progress {
+                    wait.observe(update, now);
+                }
             }
         }
         if let Some(id) = tool {
@@ -197,6 +244,9 @@ impl PromptLiveness {
             }
         } else if projection == Projection::Projected {
             return;
+        }
+        if let Some(wait) = &mut self.wait_progress {
+            wait.observe(update, now);
         }
         match update {
             SessionUpdate::AgentMessageChunk(_)
@@ -227,13 +277,25 @@ impl PromptLiveness {
             // always rearm.
             Projection::Parent => {
                 self.projected_tools.remove(&tool.tool_call_id);
-                self.reset_at(Instant::now());
+                self.permission_progress(&tool.tool_call_id);
             }
             Projection::Inherited => {
                 if !self.projected_tools.contains(&tool.tool_call_id) {
-                    self.reset_at(Instant::now());
+                    self.permission_progress(&tool.tool_call_id);
                 }
             }
+        }
+    }
+
+    /// An answered parent permission advances both clocks.
+    fn permission_progress(&mut self, id: &ToolCallId) {
+        let now = Instant::now();
+        self.reset_at(now);
+        if (self.pending_tools.contains(id) || self.running_tools.contains(id))
+            && let Some(wait) = &mut self.wait_progress
+            && now < wait.last + wait.limit
+        {
+            wait.last = now;
         }
     }
 
@@ -265,6 +327,90 @@ impl PromptLiveness {
     }
 }
 
+impl WaitProgress {
+    /// Renew on new output or a state transition, even for a running tool. Repeated status
+    /// broadcasts and session housekeeping cannot keep a stalled turn alive.
+    fn observe(&mut self, update: &SessionUpdate, now: Instant) {
+        if now < self.last || now >= self.last + self.limit {
+            return;
+        }
+        let advanced = match update {
+            SessionUpdate::AgentMessageChunk(chunk) | SessionUpdate::AgentThoughtChunk(chunk) => {
+                !matches!(&chunk.content, agent_client_protocol_schema::v1::ContentBlock::Text(text) if text.text.is_empty())
+            }
+            SessionUpdate::Plan(plan) => {
+                let source = ora_history::child_source_id(plan.meta.as_ref()).map(str::to_owned);
+                let mut entries = plan.entries.clone();
+                for entry in &mut entries {
+                    entry.meta = None;
+                }
+                if self.plans.get(&source) == Some(&entries) {
+                    false
+                } else {
+                    self.plans.insert(source, entries);
+                    true
+                }
+            }
+            SessionUpdate::ToolCall(call) => self
+                .tools
+                .entry(call.tool_call_id.clone())
+                .or_default()
+                .observe(
+                    Some(call.status),
+                    Some(&call.content),
+                    call.raw_output.as_ref(),
+                ),
+            SessionUpdate::ToolCallUpdate(call) => self
+                .tools
+                .entry(call.tool_call_id.clone())
+                .or_default()
+                .observe(
+                    call.fields.status,
+                    call.fields.content.as_ref(),
+                    call.fields.raw_output.as_ref(),
+                ),
+            _ => false,
+        };
+        if advanced {
+            self.last = now;
+        }
+    }
+}
+
+impl ToolProgress {
+    /// Compare only fields actually present in this tool update.
+    fn observe(
+        &mut self,
+        status: Option<ToolCallStatus>,
+        content: Option<&Vec<agent_client_protocol_schema::v1::ToolCallContent>>,
+        output: Option<&serde_json::Value>,
+    ) -> bool {
+        let mut changed = false;
+        if let Some(status) = status {
+            changed |= self.status.replace(status) != Some(status);
+        }
+        if let Some(content) = content
+            && self.content != *content
+        {
+            changed |= !content.is_empty();
+            self.content.clone_from(content);
+        }
+        if let Some(output) = output
+            && self.output.as_ref() != Some(output)
+        {
+            changed |= match output {
+                serde_json::Value::Null => false,
+                serde_json::Value::String(text) => !text.is_empty(),
+                serde_json::Value::Array(items) => !items.is_empty(),
+                serde_json::Value::Object(fields) => !fields.is_empty(),
+                _ => true,
+            };
+            self.output = Some(output.clone());
+        }
+        changed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{PromptLiveness, PromptLivenessSnapshot, PromptRetry};
@@ -283,6 +429,119 @@ mod tests {
         Duration::from_secs(60),
         Duration::from_secs(90),
     ];
+
+    /// Real progress renews a node-specific window even for a long-running tool. Repeating
+    /// its current status or reporting only token usage cannot postpone the eventual expiry.
+    #[tokio::test(start_paused = true)]
+    async fn bounded_wait_renews_only_for_progress_and_expires_with_a_running_tool() {
+        let mut live =
+            PromptLiveness::for_policy(&SINGLE_WINDOW, ora_domain::PromptInactivityPolicy::Wait);
+        let tool = SessionUpdate::ToolCall(
+            ToolCall::new("tool", "scan").status(ToolCallStatus::InProgress),
+        );
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_secs(50)).await;
+            live.observe(&serde_json::from_value(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"progress"}})).unwrap());
+            assert!(
+                tokio::time::timeout(Duration::ZERO, live.wait())
+                    .await
+                    .is_err()
+            );
+        }
+        live.observe(&tool);
+        tokio::time::advance(Duration::from_secs(50)).await;
+        live.observe(&tool);
+        live.observe(&SessionUpdate::UsageUpdate(UsageUpdate::new(1, 100)));
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1749), live.wait())
+                .await
+                .is_err()
+        );
+        tokio::time::timeout(Duration::from_secs(1), live.wait())
+            .await
+            .expect("expired despite the stuck tool");
+    }
+
+    /// A delayed consumer uses arrival time, and metadata-only deltas cannot extend a turn.
+    #[tokio::test(start_paused = true)]
+    async fn bounded_tool_output_uses_arrival_time_and_only_renews_for_changes() {
+        let mut live =
+            PromptLiveness::for_policy(&SINGLE_WINDOW, ora_domain::PromptInactivityPolicy::Wait);
+        let base = Instant::now();
+        let window = Duration::from_secs(1800);
+        tokio::time::advance(window).await;
+        let mut delta =
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"tool","rawOutput":{"lines":1}});
+        let received = base + window - Duration::from_secs(1);
+        live.observe_at(&serde_json::from_value(delta.clone()).unwrap(), received);
+        assert_eq!(live.wait_deadline(), Some(received + window));
+        delta["title"] = json!("renamed");
+        live.observe_at(
+            &serde_json::from_value(delta.clone()).unwrap(),
+            Instant::now(),
+        );
+        assert_eq!(live.wait_deadline(), Some(received + window));
+        delta["rawOutput"] = json!({"lines":2});
+        live.observe_at(&serde_json::from_value(delta).unwrap(), received + window);
+        assert_eq!(live.wait_deadline(), Some(received + window));
+    }
+
+    /// Only an open parent tool earns permission progress. Neither empty chunks nor late
+    /// delegated traffic extend a completed call.
+    #[tokio::test(start_paused = true)]
+    async fn bounded_wait_tracks_owned_permissions_and_finished_delegations() {
+        let mut live =
+            PromptLiveness::for_policy(&SINGLE_WINDOW, ora_domain::PromptInactivityPolicy::Wait);
+        let initial = live.wait_deadline().unwrap();
+        let permission = |id: &str| ToolCallUpdate::new(id.to_owned(), ToolCallUpdateFields::new());
+        tokio::time::advance(Duration::from_secs(10)).await;
+        live.permission_settled(&permission("unknown"));
+        assert_eq!(live.wait_deadline(), Some(initial));
+        live.observe(&parent_delegate(ToolCallStatus::Pending));
+        tokio::time::advance(Duration::from_secs(10)).await;
+        live.permission_settled(&permission("call-1"));
+        assert_eq!(
+            live.wait_deadline(),
+            Some(initial + Duration::from_secs(20))
+        );
+        live.observe(&parent_delegate(ToolCallStatus::Completed));
+        tokio::time::advance(Duration::from_secs(10)).await;
+        live.permission_settled(&permission("call-1"));
+        live.observe(&subagent_chunk(Some("call-1")));
+        for kind in ["agent_message_chunk", "agent_thought_chunk"] {
+            live.observe(
+                &serde_json::from_value(
+                    json!({"sessionUpdate":kind,"content":{"type":"text","text":""}}),
+                )
+                .unwrap(),
+            );
+        }
+        assert_eq!(
+            live.wait_deadline(),
+            Some(initial + Duration::from_secs(20))
+        );
+    }
+
+    /// Interleaved parent and child plan metadata cannot manufacture progress.
+    #[tokio::test(start_paused = true)]
+    async fn bounded_plans_compare_entries_per_source() {
+        let mut live =
+            PromptLiveness::for_policy(&SINGLE_WINDOW, ora_domain::PromptInactivityPolicy::Wait);
+        live.observe(&parent_delegate(ToolCallStatus::Pending));
+        let parent = json!({"sessionUpdate":"plan","entries":[{"content":"parent","priority":"high","status":"pending"}]});
+        live.observe(&serde_json::from_value(parent.clone()).unwrap());
+        let mut child = parent.clone();
+        child["_meta"] = json!({"_subagent/update":{"sessionId":"sess-1","taskId":"task-1","toolCallId":"call-1"}});
+        child["entries"][0]["content"] = json!("child");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        live.observe(&serde_json::from_value(child.clone()).unwrap());
+        let deadline = live.wait_deadline();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        live.observe(&serde_json::from_value(parent).unwrap());
+        child["entries"][0]["_meta"] = json!({"event":2});
+        live.observe(&serde_json::from_value(child).unwrap());
+        assert_eq!(live.wait_deadline(), deadline);
+    }
 
     /// Builds the metadata one update carries for the `opencode/child-session` namespace.
     fn child_meta(source: &Value) -> Meta {

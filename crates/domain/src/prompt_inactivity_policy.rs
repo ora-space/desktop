@@ -10,8 +10,20 @@ pub enum PromptInactivityPolicy {
     /// Cancel and retry when the runtime's meaningful-activity window expires.
     #[default]
     Timeout,
-    /// Await completion even without updates, while retaining explicit cancellation and errors.
+    /// Wait for the default workflow silence window without resending the prompt.
     Wait,
+    /// Send once without imposing a silence deadline.
+    Unbounded,
+}
+
+impl PromptInactivityPolicy {
+    /// Returns a deadline budget for single-send turns. Ordinary prompts use a retry schedule.
+    pub fn wait_limit(self) -> Option<std::time::Duration> {
+        match self {
+            Self::Wait => Some(std::time::Duration::from_secs(30 * 60)),
+            Self::Unbounded | Self::Timeout => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -29,6 +41,7 @@ mod tests {
         for (policy, wire) in [
             (PromptInactivityPolicy::Timeout, "\"timeout\""),
             (PromptInactivityPolicy::Wait, "\"wait\""),
+            (PromptInactivityPolicy::Unbounded, "\"unbounded\""),
         ] {
             assert_eq!(serde_json::to_string(&policy).unwrap(), wire);
             assert_eq!(

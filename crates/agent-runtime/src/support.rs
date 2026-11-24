@@ -1,9 +1,9 @@
-use super::connection::AgentAcpClient;
 use crate::{ErrorClassification, RuntimeError};
 use agent_client_protocol_schema::v1::{
     PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
     RequestPermissionResponse, SelectedPermissionOutcome,
 };
+use ora_acp::{AcpClient, AcpTransport};
 use ora_contracts::{
     AgentRef as ContractAgentRef, RespondToPermissionRequest, RespondToPermissionResponse,
     Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
@@ -15,11 +15,11 @@ use std::collections::HashMap;
 
 /// Responds to a pending permission after validating the public request ownership.
 pub(super) async fn respond_permission(
-    client: &AgentAcpClient,
+    client: &AcpClient<impl AcpTransport>,
     request: RespondToPermissionRequest,
     permissions: &mut HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
 ) -> Result<RespondToPermissionResponse, RuntimeError> {
-    let Some((request_id, options)) = permissions.remove(&request.permission_request_id) else {
+    let Some((request_id, options)) = permissions.get(&request.permission_request_id) else {
         return Err(RuntimeError::new(
             ErrorClassification::Conflict,
             PublicError::PermissionRequestNotPending(EmptyErrorParams {}),
@@ -27,7 +27,6 @@ pub(super) async fn respond_permission(
         ));
     };
     if !options.contains(&request.option_id) {
-        permissions.insert(request.permission_request_id, (request_id, options));
         return Err(RuntimeError::new(
             ErrorClassification::InvalidRequest,
             PublicError::PermissionOptionInvalid(EmptyErrorParams {}),
@@ -38,9 +37,10 @@ pub(super) async fn respond_permission(
         PermissionOptionId::new(request.option_id),
     ));
     client
-        .respond(&request_id, &RequestPermissionResponse::new(outcome))
+        .respond(request_id, &RequestPermissionResponse::new(outcome))
         .await
         .map_err(map_acp_error)?;
+    permissions.remove(&request.permission_request_id);
     Ok(RespondToPermissionResponse {})
 }
 
@@ -213,7 +213,7 @@ pub(super) fn permission_not_pending() -> RuntimeError {
 /// Every deadline in the runtime — process start, ACP initialize, session load, config exchange —
 /// collapses onto one public error because the user's response to all of them is to retry. The
 /// phase that actually expired stays in `context` for logs, where it distinguishes them.
-pub(super) fn agent_timed_out(context: &'static str) -> RuntimeError {
+pub(super) fn agent_timed_out(context: impl Into<String>) -> RuntimeError {
     RuntimeError::new(
         ErrorClassification::Unprocessable,
         PublicError::AgentTimedOut(EmptyErrorParams {}),
@@ -338,6 +338,43 @@ mod tests {
     use agent_client_protocol_schema::v1::{PermissionOption, PermissionOptionKind};
     use ora_contracts::{EmptyErrorParams, PublicError};
     use pretty_assertions::assert_eq;
+
+    /// Cancelling a blocked reply leaves its correlation id available to settlement.
+    #[tokio::test]
+    async fn a_permission_stays_pending_until_its_reply_is_written() {
+        struct BlockedWriter;
+        impl ora_acp::AcpTransport for BlockedWriter {
+            async fn send(&self, _: serde_json::Value) -> Result<(), ora_acp::AcpError> {
+                std::future::pending().await
+            }
+        }
+        let (_input, messages) = tokio::sync::mpsc::unbounded_channel();
+        let peer = ora_acp::AcpPeer::spawn(messages, BlockedWriter);
+        let mut pending = std::collections::HashMap::from([(
+            "permission".to_owned(),
+            (
+                serde_json::from_str("7").unwrap(),
+                vec!["choice".to_owned()],
+            ),
+        )]);
+        {
+            let response = super::respond_permission(
+                &peer.client,
+                ora_contracts::RespondToPermissionRequest {
+                    session_id: "session".into(),
+                    permission_request_id: "permission".into(),
+                    option_id: "choice".into(),
+                },
+                &mut pending,
+            );
+            tokio::select! {
+                biased;
+                _ = response => panic!("the transport has not completed its write"),
+                () = std::future::ready(()) => {},
+            }
+        }
+        assert!(pending.contains_key("permission"));
+    }
 
     /// Keeps unreadable session history on the same typed recovery path as a failed write.
     #[test]
