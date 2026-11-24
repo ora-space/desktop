@@ -19,7 +19,8 @@ export function useProxySettings() {
   });
   const urlMutation = useMutation({
     mutationFn: (url: string) => client.proxy.setCheckUrl({ url }),
-    onSuccess: (response) => {
+    onSuccess: async (response) => {
+      await queryClient.cancelQueries({ queryKey: settingsKeys.proxyCheckUrl });
       queryClient.setQueryData(settingsKeys.proxyCheckUrl, response);
     },
   });

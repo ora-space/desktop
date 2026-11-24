@@ -6,6 +6,7 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { createAppQueryClient } from "../../state/query-client";
+import { settingsKeys } from "../../state/data/settings";
 import { expect, it, vi } from "vitest";
 import type { ContractsClient } from "@ora/contracts";
 import { toast } from "@ora/ui";
@@ -520,4 +521,56 @@ it("does not replace an unreadable saved URL with the default and recovers on re
       /探测网址|URL to check/,
     ),
   ).toHaveValue("https://saved.example/probe");
+});
+
+it("does not let an older background response replace a newly confirmed target", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "proxy.example",
+    port: 3128,
+    username: null,
+    password: null,
+  };
+  const handlers = createFixtureHandlers(state);
+  let pending = false;
+  let complete: ((value: { url: string }) => void) | undefined;
+  handlers.getProxyCheckUrl = () =>
+    pending
+      ? new Promise<{ url: string }>((resolve) => {
+          complete = resolve;
+        })
+      : Promise.resolve({ url: state.proxyCheckUrl });
+  const client = createTestClient(handlers);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const user = userEvent.setup();
+  renderProxy(client, queryClient);
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  const input = within(dialog).getByLabelText(/探测网址|URL to check/);
+  await user.clear(input);
+  await user.type(input, "https://new.example/check");
+  pending = true;
+  act(() => {
+    void queryClient.refetchQueries({ queryKey: settingsKeys.proxyCheckUrl });
+  });
+  await waitFor(() => expect(complete).toBeDefined());
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await act(async () => {
+    complete!({ url: "https://google.com" });
+  });
+  await user.click(
+    screen.getByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  expect(
+    within(await screen.findByRole("dialog")).getByLabelText(
+      /探测网址|URL to check/,
+    ),
+  ).toHaveValue("https://new.example/check");
 });
