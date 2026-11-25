@@ -144,11 +144,13 @@ turn locally until `startSession` returns.
   from the connection, whether a turn, a title poll, an MCP refresh or session setup reads them, or
   none of these. It takes the answer before the caller gets it, so a view opened later sees the
   options after the change. A caller stops waiting after 30 seconds; a later answer is still taken
-  while the provider session lasts. Changes in flight do not wait for each other. A change whose
+  while the provider session lasts, and shown by the turn that is running. An agent that does not read
+  holds up the caller, not the actor. Changes in flight do not wait for each other. A change whose
   provider session goes before answering is settled then: it succeeds when the host gave the session
   up (`Stop`, which is also how a switch or a deletion reaches the actor, a turn whose owner stopped
   reading, or a rebuild, which leaves the caller on the replacement's options) and fails when the
-  agent was lost. A model chosen while a session held no provider is an intent applied at the next
+  agent was lost. A session that holds no provider is asked directly, and attaching waits for that.
+  A model chosen while a session held no provider is an intent applied at the next
   attach. Reasoning effort is read only from the
   `thought_level` option a live session reports; there is no pre-session effort catalog.
 - **Stop and delete.** Explicit stop calls `session/close` when advertised, unloads the route and
