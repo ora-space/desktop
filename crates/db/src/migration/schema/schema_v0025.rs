@@ -71,9 +71,21 @@ const UP_STATEMENTS: &[&str] = &[
     "DROP TABLE IF EXISTS effect_scopes;",
 ];
 
-/// Intentionally empty: the Effect ledger and pre-migration filesystem ownership cannot be
-/// meaningfully restored once D9 cleanup and this drop have executed.
-const DOWN_STATEMENTS: &[&str] = &[];
+/// Rejects downgrading past migration `0025` so older builds cannot silently delete the `0025`
+/// migration record after Effect tables are already dropped.
+///
+/// Leaving `DOWN_STATEMENTS` empty would let an older build's runner mark `0025` rolled back even
+/// though `skills.package_root` remains and Effect tables cannot be restored; reopening on a newer
+/// build would then fail re-running `ALTER TABLE skills ADD COLUMN package_root`. Failing inside
+/// the rollback transaction rolls back the temporary trigger itself and leaves `0025` recorded.
+const DOWN_STATEMENTS: &[&str] = &[
+    "CREATE TEMP TRIGGER _ora_reject_0025_downgrade
+     BEFORE INSERT ON migrations
+     BEGIN
+         SELECT RAISE(ABORT, 'migration 0025 (Effect retirement) is irreversible and cannot be downgraded');
+     END;",
+    "INSERT INTO migrations (version, up_sql, down_sql, executed_at) VALUES ('', '', '', 0);",
+];
 
 /// Retires all Effect ledger tables/triggers while preserving plugin skill `package_root`s.
 pub fn migration() -> Migration {
@@ -83,7 +95,10 @@ pub fn migration() -> Migration {
 #[cfg(test)]
 mod tests {
     use crate::migration::reconcile_database_versions;
-    use crate::{MigrationCatalog, default_migration_catalog, test_clock::TestClock};
+    use crate::{
+        DatabaseError, DatabaseOrigin, MigrationCatalog, MigrationDirection,
+        default_migration_catalog, test_clock::TestClock,
+    };
     use ora_logging::with_trace_logging;
     use pretty_assertions::assert_eq;
     use rusqlite::Connection;
@@ -237,6 +252,66 @@ mod tests {
                          VALUES ('w1', 'p1', 'main', 'l1', 'active', 1, 1, 0);",
                 )
                 .unwrap();
+        });
+    }
+
+    /// Opening a migrated `0025` database on an older build must fail the irreversible downgrade,
+    /// preserve the `0025` migration record without leaving temporary triggers behind, and allow
+    /// reopening on the newer build cleanly.
+    #[test]
+    fn downgrade_from_0025_is_rejected_and_newer_build_still_reopens_cleanly() {
+        with_trace_logging(|| {
+            let latest = default_migration_catalog().unwrap();
+            let previous = pre_0025_catalog();
+            let mut connection = Connection::open_in_memory().unwrap();
+            connection
+                .execute_batch("PRAGMA foreign_keys = ON;")
+                .unwrap();
+
+            assert_eq!(
+                reconcile_database_versions(&mut connection, &latest, &TestClock::new(1)).unwrap(),
+                DatabaseOrigin::Created
+            );
+
+            let error = reconcile_database_versions(&mut connection, &previous, &TestClock::new(2))
+                .expect_err("older build must not silently roll back irreversible migration 0025");
+            assert!(
+                matches!(
+                    &error,
+                    DatabaseError::MigrationStepFailed {
+                        version,
+                        direction: MigrationDirection::Down,
+                        source,
+                    } if version == "0025" && source.to_string().contains("irreversible")
+                ),
+                "unexpected downgrade error: {error:?}"
+            );
+
+            let has_0025: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM migrations WHERE version = '0025'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(has_0025, 1, "migration 0025 record must remain intact");
+
+            let leftover_temp_triggers: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_temp_master WHERE type = 'trigger' AND name = '_ora_reject_0025_downgrade'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                leftover_temp_triggers, 0,
+                "failed downgrade transaction must roll back its temporary trigger"
+            );
+
+            assert_eq!(
+                reconcile_database_versions(&mut connection, &latest, &TestClock::new(3)).unwrap(),
+                DatabaseOrigin::Existing
+            );
         });
     }
 }

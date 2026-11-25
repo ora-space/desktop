@@ -73,8 +73,9 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   way.
 - Migration `0025` adds nullable `package_root` onto `skills`, backfills plugin Skill roots from
   retired Effect source revisions, and drops all remaining `effect_*` triggers and tables in
-  child-before-parent order. Its downgrade is intentionally empty because the ledger and its
-  filesystem ownership markers cannot be meaningfully restored once cleaned up.
+  child-before-parent order. Its persisted downgrade explicitly aborts inside the rollback
+  transaction because the retired ledger and filesystem ownership markers cannot be restored, so an
+  older build refuses to strip the `0025` bookkeeping row and a newer build can reopen cleanly.
 
 ## Application bootstrap
 
