@@ -111,6 +111,63 @@ fn waiting_retry_uses_its_predecessor_until_the_timer_starts_it() {
             Ok(())
         }).unwrap();
     }
+    store.pool.with_connection(|db| {
+        db.execute("INSERT INTO workflow_node_runs(id,run_id,scope_id,node_id,node_type,status,created_at,updated_at) VALUES('loop','F','root:F','loop','loop',1,1,1)", [])?;
+        db.execute("INSERT INTO workflow_execution_scopes(id,run_id,parent_loop_node_run_id,round_index,status,state,created_at,updated_at) VALUES ('different-scope','F','loop',1,1,'{}',1,1)", [])?;
+        Ok(())
+    }).unwrap();
+    // Each recorded candidate differs from the waiting attempt in exactly one coordinate.
+    for (id, node, scope, index) in [
+        ("wrong-node", "different-node", "root:F", None),
+        ("wrong-scope", "agent", "different-scope", None),
+        ("wrong-index", "agent", "root:F", Some(0)),
+    ] {
+        store.pool.with_connection(|db| {
+            db.execute("INSERT INTO workflow_node_runs(id,run_id,scope_id,node_id,node_type,iteration,status,is_deleted,created_at,updated_at) VALUES(?1,'F',?2,?3,'agent',?4,3,1,1,1)",params![id,scope,node,index])?;
+            db.execute("UPDATE workflow_debug_attempts SET dispatch_input=?2,container_attempt=NULL WHERE node_run_id=?1",params![id,input.to_string()])?;
+            db.execute("UPDATE workflow_node_runs SET payload=json_set(payload,'$.retry_chain',json_array(?1),'$.retry_wait.previous_node_run_id',?1) WHERE id='second'",[id])?;
+            Ok(())
+        }).unwrap();
+        assert!(
+            matches!(
+                store.preview(&request, impact),
+                Err(DatabaseError::WorkflowDebug(
+                    DebugRejection::MissingInputEvidence
+                ))
+            ),
+            "{id}"
+        );
+    }
+    store.pool.with_connection(|db| {
+        db.execute("UPDATE workflow_node_runs SET payload=json_set(payload,'$.retry_chain',json_array('t3','retry'),'$.retry_wait.previous_node_run_id','retry') WHERE id='second'",[])?;
+        Ok(())
+    }).unwrap();
+    repo.begin_node_retry(&second, 60).unwrap();
+    let recent =
+        json!({"variablePool":WorkflowVariablePool::default(), "prompt":"more recent dispatch"});
+    assert!(store.record_agent_dispatch("F", "second", &recent).unwrap());
+    let third = ora_domain::WorkflowNodeRunId::new("third");
+    repo.schedule_node_retry(
+        &second,
+        &NodeFailure::new(NodeFailureKind::Session, "retry"),
+        &NodeRetryToSchedule {
+            node_run_id: third.clone(),
+            retry: 3,
+            max_retries: 3,
+            delay_ms: 20,
+            due_at: 90,
+        },
+        70,
+    )
+    .unwrap();
+    request.selection = WorkflowDebugSelection::NodeRunId(third.to_string());
+    let preview = store
+        .preview(&request, |planning| {
+            assert_eq!(planning.dispatch.as_ref(), Some(&recent));
+            impact(planning)
+        })
+        .unwrap();
+    assert_eq!(preview.input_source_node_run_id.as_deref(), Some("second"));
 }
 
 /// Seeds a real migrated database with two runs of the same published definition.
