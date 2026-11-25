@@ -65,9 +65,11 @@ Desktop application self-update orchestration around Tauri's signed updater plug
 
 - A failed check is logged and surfaced as `Failed` only when nothing was installable in the
   current process before it. A persisted candidate is retained for a later reconciliation retry.
+  The log and the surfaced message carry the whole cause chain.
 - A plugin installation failure restores `Ready` and keeps the verified artifact so the user can
-  retry. A package that fails the pre-install record, digest, or signature checks is removed and
-  transitions to `Failed` instead of advertising a broken retry.
+  retry; the webview reports it from the rejected install command. A package that fails the
+  pre-install record, digest, or signature checks is removed and transitions to `Failed` instead of
+  advertising a broken retry.
 - An installation that the updater cannot perform — a `deb` or `rpm` package, or a bare executable
   on Linux — is reported as `ManualUpdate` before any download is spent, because the static
   manifest only advertises an AppImage for Linux.

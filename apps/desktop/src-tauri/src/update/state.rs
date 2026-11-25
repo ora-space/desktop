@@ -3,6 +3,7 @@
 use super::release_notes::visible_notes;
 use super::{DesktopUpdateStatus, ManualUpdateReason, ReleaseNote, UpdateError};
 use crate::update::artifact_store::{ArtifactDescriptor, StoredArtifact};
+use ora_utils::error::error_chain;
 use semver::Version;
 use serde_json::Value;
 
@@ -134,7 +135,7 @@ impl<I: Clone> RuntimeUpdateState<I> {
         match retained {
             Some(ready) if retained_is_valid => Self::Ready(ready),
             Some(_) | None => Self::Failed {
-                message: error.to_string(),
+                message: error_chain(error),
             },
         }
     }

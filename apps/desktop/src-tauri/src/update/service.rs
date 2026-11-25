@@ -9,6 +9,7 @@ use super::{DesktopUpdateStatus, UpdateError};
 use ora_backend::Settings;
 use ora_logging::{ora_error, ora_info, ora_warn};
 use ora_scheduler::{CronHandle, DelayHandle, Scheduler};
+use ora_utils::error::error_chain;
 use semver::Version;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -129,7 +130,10 @@ impl UpdateService {
             self.set_state(RuntimeUpdateState::Checking);
         }
         if let Err(error) = self.check_and_download_inner().await {
-            ora_warn!(message = "Desktop update check failed", error = %error);
+            ora_warn!(
+                message = "Desktop update check failed",
+                error = %error_chain(&error),
+            );
             let retained_is_valid = match retained.as_ref() {
                 Some(ready) => self
                     .inner
@@ -172,7 +176,7 @@ impl UpdateService {
             Ok(bytes) => bytes,
             Err(error) => {
                 self.set_state(RuntimeUpdateState::Failed {
-                    message: error.to_string(),
+                    message: error_chain(&error),
                 });
                 return Err(error);
             }
