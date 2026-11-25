@@ -7,9 +7,8 @@
 
 use ora_application::WorkflowGraph;
 use ora_contracts::{WorkflowDebugImpact, WorkflowDebugPreview};
-use ora_db::workflow_debug::{DebugPlanningInput, DebugRejection};
+use ora_db::workflow_debug::{DebugPlanningInput, DebugRejection, Transaction};
 use ora_domain::WorkflowNodeStatus;
-use rusqlite::Transaction;
 
 /// Plans a top-level edit: the target plus its transitive successors are the recompute scope.
 pub(super) fn plan(input: &DebugPlanningInput) -> Result<WorkflowDebugImpact, DebugRejection> {
