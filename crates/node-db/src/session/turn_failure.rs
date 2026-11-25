@@ -85,6 +85,75 @@ impl<G: WriteGuard> SessionJournal<G> {
     }
 }
 
+/// Back-fills `TurnFailureSettled{session_ending}` for the last failed turn, when one is due, and
+/// returns the execution's new last sequence.
+///
+/// Called in the transaction of every end decision: the last Thread event was persisted before it,
+/// so a keep-on-failure session whose last event is a failed `turnEnded` without a settlement gets
+/// its conclusion here, mirroring the cancels the same decision settles as `session_ending` (D6).
+pub(crate) fn settle_failure_as_ending_if_due<G: WriteGuard>(
+    tx: &rusqlite::Transaction<'_>,
+    guard: &Arc<G>,
+    current: &SessionExecution,
+    last: u64,
+) -> Result<u64, Error> {
+    if !current.command.payload.spec.keep_session_on_failure {
+        return Ok(last);
+    }
+    let Some(turn) = last_failed_turn(tx, &current.command.execution_id)? else {
+        return Ok(last);
+    };
+    if failure_settled(tx, &current.command.execution_id, &turn)?.is_some() {
+        return Ok(last);
+    }
+    guard.before_write(WritePoint::Progress)?;
+    Ok(write_failure_settlement(
+        tx,
+        guard,
+        current,
+        last,
+        TurnFailureSettled {
+            turn_id: turn,
+            outcome: TurnFailureOutcome::SessionEnding,
+        },
+    )?
+    .value())
+}
+
+/// The failed turn of the last persisted Thread event, when that event is a `turnEnded` carrying a
+/// `failure`. A failure without a persisted Thread event has no conclusion to back-fill (D6).
+fn last_failed_turn(
+    tx: &rusqlite::Transaction<'_>,
+    execution: &ExecutionId,
+) -> Result<Option<TurnId>, Error> {
+    let mut statement =
+        tx.prepare("SELECT event FROM execution_events WHERE execution=?1 ORDER BY sequence DESC")?;
+    let events = statement.query_map([execution.as_str()], |row| row.get::<_, String>(0))?;
+    for event in events {
+        let message: NodeToControllerMessage = serde_json::from_str(&event?)?;
+        let NodeToControllerMessage::ThreadEvent(thread) = message else {
+            continue;
+        };
+        let Some(turn) = thread.payload.turn_id else {
+            continue;
+        };
+        if thread.payload.record.get("type").and_then(serde_json::Value::as_str) != Some("turnEnded")
+        {
+            continue;
+        }
+        if !thread
+            .payload
+            .record
+            .get("failure")
+            .is_some_and(|failure| !failure.is_null())
+        {
+            continue;
+        }
+        return Ok(Some(turn));
+    }
+    Ok(None)
+}
+
 /// Writes one failed-turn settlement after `last` and queues the event.
 fn write_failure_settlement<G: WriteGuard>(
     tx: &rusqlite::Transaction<'_>,

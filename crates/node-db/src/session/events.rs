@@ -154,7 +154,9 @@ impl<G: WriteGuard> SessionJournal<G> {
                 }
                 // Every accepted cancel is settled before any terminal (invariant 2), including
                 // ends that never went through a deferred decision, such as restart settlement.
-                let last = super::settle_pending_as_ending(&tx, &guard, &current)?;
+                let mut last = super::settle_pending_as_ending(&tx, &guard, &current)?;
+                // The last failed turn gets its `session_ending` beside the terminal (D6).
+                last = super::settle_failure_as_ending_if_due(&tx, &guard, &current, last)?;
                 sequence = last
                     .checked_add(1)
                     .filter(|s| *s <= i64::MAX as u64)
