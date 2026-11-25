@@ -2,6 +2,7 @@ DROP TRIGGER workflow_debug_admit;
 DROP TRIGGER workflow_debug_dispatch_recorded;
 DROP TRIGGER workflow_debug_node_removed;
 DROP TABLE workflow_debug_retired_attempts;
+DROP TABLE workflow_debug_first_attempts;
 DROP TABLE workflow_debug_operations;
 DROP TABLE workflow_debug_previews;
 DROP TABLE workflow_debug_attempts;

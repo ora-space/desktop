@@ -79,6 +79,11 @@ CREATE TABLE workflow_debug_retired_attempts (
     node_run_id TEXT PRIMARY KEY REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
     operation_id INTEGER NOT NULL REFERENCES workflow_debug_operations(id) ON DELETE CASCADE
 );
+-- The attempt the scheduler first admitted for a confirmed, still undispatched position.
+CREATE TABLE workflow_debug_first_attempts (
+    operation_id INTEGER PRIMARY KEY REFERENCES workflow_debug_operations(id) ON DELETE CASCADE,
+    node_run_id TEXT NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE
+);
 
 -- Record only new attempts. A retry waiting for its backoff has no dispatch evidence yet.
 CREATE TRIGGER workflow_debug_admit AFTER INSERT ON workflow_node_runs
@@ -101,4 +106,17 @@ BEGIN
     FROM workflow_runs r JOIN workflow_snapshots snap ON snap.id = r.snapshot_id
     LEFT JOIN workflow_execution_scopes s ON s.id = NEW.scope_id
     WHERE r.id = NEW.run_id;
+    -- Bind the first attempt of a confirmed logical position to the operation that scheduled it.
+    INSERT INTO workflow_debug_first_attempts(operation_id,node_run_id)
+    SELECT op.id,NEW.id FROM workflow_debug_operations op
+    JOIN workflow_debug_previews p ON p.id=op.preview_id
+    JOIN workflow_debug_attempts a ON a.node_run_id=NEW.id AND a.snapshot_id=p.snapshot_id
+    WHERE op.run_id=NEW.run_id AND op.revision IS NOT NULL
+      AND json_extract(p.plan,'$.target.nodeRunId') IS NULL
+      AND json_extract(p.plan,'$.target.scopeId')=NEW.scope_id
+      AND json_extract(p.plan,'$.target.nodeId')=NEW.node_id
+      AND json_extract(p.plan,'$.target.containerNodeRunId') IS a.container_attempt
+      AND json_extract(p.plan,'$.target.index') IS NEW.iteration
+      AND NOT EXISTS(SELECT 1 FROM workflow_debug_first_attempts bound
+          WHERE bound.operation_id=op.id);
 END;

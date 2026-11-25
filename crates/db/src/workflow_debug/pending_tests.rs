@@ -113,6 +113,21 @@ fn pending_edit_binds_first_dispatch_without_allocating_an_attempt() {
     store
         .apply_after_stop("other", "continue", 1, |_, _| Ok(()))
         .unwrap();
+    let first_dispatch =
+        |store: &WorkflowDebugStore| store.history("other").unwrap()[0].first_node_run_id.clone();
+    // Nothing is allocated by the confirmation itself, and another node starting first does not count.
+    assert_eq!(first_dispatch(&store), None);
+    store
+        .pool
+        .with_connection(|db| {
+            db.execute(
+                "UPDATE workflow_node_runs SET is_deleted=1 WHERE id='s1'",
+                [],
+            )?;
+            insert_attempt(db, "s2", "sib", "agent", None)
+        })
+        .unwrap();
+    assert_eq!(first_dispatch(&store), None);
     store
         .pool
         .with_connection(|db| {
@@ -126,6 +141,7 @@ fn pending_edit_binds_first_dispatch_without_allocating_an_attempt() {
         })
         .unwrap();
     let reopened = WorkflowDebugStore::new(RepositoryPool::new(&path).unwrap());
+    assert_eq!(first_dispatch(&reopened), Some("first".into()));
     let first = reopened
         .attempt(&GetWorkflowDebugAttemptRequest {
             run_id: "other".into(),
@@ -137,10 +153,27 @@ fn pending_edit_binds_first_dispatch_without_allocating_an_attempt() {
         first.configuration.unwrap()["agentConfig"]["prompt"],
         "echo {{#start.text#}}"
     );
+    let history = reopened.history("other").unwrap();
+    assert_eq!(history.len(), 1);
     assert_eq!(
-        reopened.history("other").unwrap()[0].preview.target,
-        preview.target
+        (
+            history[0].preview.target.clone(),
+            history[0].first_node_run_id.as_deref()
+        ),
+        (preview.target, Some("first"))
     );
+    // A replacement attempt of the same position never takes the binding over.
+    reopened
+        .pool
+        .with_connection(|db| {
+            db.execute(
+                "UPDATE workflow_node_runs SET is_deleted=1 WHERE id='first'",
+                [],
+            )?;
+            insert_attempt(db, "again", "agent", "agent", None)
+        })
+        .unwrap();
+    assert_eq!(first_dispatch(&reopened), Some("first".into()));
 }
 
 /// A target admitted by the normal scheduler after preview must receive no edit or stop request.

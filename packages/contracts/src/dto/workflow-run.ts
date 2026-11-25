@@ -367,6 +367,11 @@ export type UpdateWorkflowRunInputResponse = { run: WorkflowRun };
 
 export type WorkflowDebugHistoryEntry = {
   /**
+   * First attempt the scheduler admitted for a `pendingTarget` after the revision applied.
+   * Null until then, and always null for an operation that selected an existing attempt.
+   */
+  firstNodeRunId: string | null;
+  /**
    * Run status and error as they were when the confirmation was accepted. A terminal run keeps
    * them while the stop is in progress and returns to `running` once the revision applies.
    */

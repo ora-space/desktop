@@ -3,7 +3,8 @@ use rusqlite::{Row, Transaction};
 
 const OPERATION: &str =
     "SELECT o.id,o.request_id,p.base_revision,o.state,o.revision,o.failure,p.plan,p.patch,
-        o.unsettled_attempts,o.prior_status,o.prior_error
+        o.unsettled_attempts,o.prior_status,o.prior_error,
+        (SELECT node_run_id FROM workflow_debug_first_attempts bound WHERE bound.operation_id=o.id)
     FROM workflow_debug_operations o JOIN workflow_debug_previews p ON p.id=o.preview_id
     JOIN workflow_runs r ON r.id=o.run_id AND r.is_deleted=0";
 
@@ -203,6 +204,7 @@ fn history_row(row: &Row<'_>) -> rusqlite::Result<WorkflowDebugHistoryEntry> {
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     Ok(WorkflowDebugHistoryEntry {
+        first_node_run_id: row.get(11)?,
         prior_run_status: run_status(row, 9)?,
         prior_error: row.get(10)?,
         operation: WorkflowDebugOperation {

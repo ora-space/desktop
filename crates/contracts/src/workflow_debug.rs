@@ -142,6 +142,9 @@ pub struct WorkflowDebugOperation {
 #[ts(export_to = "workflow-run.ts")]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowDebugHistoryEntry {
+    /// First attempt the scheduler admitted for a `pendingTarget` after the revision applied.
+    /// Null until then, and always null for an operation that selected an existing attempt.
+    pub first_node_run_id: Option<String>,
     /// Run status and error as they were when the confirmation was accepted. A terminal run keeps
     /// them while the stop is in progress and returns to `running` once the revision applies.
     pub prior_run_status: crate::WorkflowRunStatus,
