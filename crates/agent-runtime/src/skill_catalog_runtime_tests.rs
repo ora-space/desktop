@@ -87,6 +87,10 @@ impl SkillCatalogSource for DynamicSkillCatalog {
         })
     }
 
+    fn revision(&self) -> u64 {
+        0
+    }
+
     fn extra_read_roots(&self) -> Vec<PathBuf> {
         self.roots.lock().unwrap().clone()
     }

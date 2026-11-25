@@ -22,6 +22,7 @@ mod settings;
 mod skill;
 mod skill_catalog;
 mod skill_reconciliation;
+mod skill_revision;
 mod source_boundary;
 mod task;
 #[cfg(test)]

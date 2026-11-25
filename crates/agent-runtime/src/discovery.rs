@@ -1,5 +1,7 @@
 //! Maps what an agent offers outside a session onto the public contract.
 
+use crate::host::RuntimeEvents;
+use crate::{AgentRuntimeHost, AgentRuntimeManager};
 use ora_contracts::SHOWN_AGENT_COMMAND_LIMIT;
 use ora_domain::AgentRef;
 use ora_logging::ora_warn;
@@ -52,6 +54,17 @@ pub(crate) fn response(
             })
             .collect(),
         commands,
+    }
+}
+
+impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
+    /// Tells clients that commands discovered from any agent were discovered with other Skills.
+    ///
+    /// Agents are neither asked again nor restarted, and their models do not depend on Skills.
+    pub fn invalidate_discovered_commands(&self) {
+        for (agent_ref, _status) in self.inner.connections.statuses() {
+            self.inner.events.agent_models_invalidated(&agent_ref);
+        }
     }
 }
 

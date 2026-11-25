@@ -26,18 +26,21 @@ impl SqliteSkillRepository {
     }
 
     /// Replaces the catalog projection owned by one installed Skill plugin.
+    ///
+    /// Returns whether the catalog was touched at all, which a plugin without Skills before and after
+    /// leaves alone.
     pub fn replace_plugin_skills(
         &self,
         plugin_id: &PluginId,
         _plugin_version: &str,
         skills: &[PluginSkillProjection],
         updated_at: i64,
-    ) -> Result<(), crate::DatabaseError> {
+    ) -> Result<bool, crate::DatabaseError> {
         let plugin_id = plugin_id.canonical();
         self.pool.with_connection_mut(|connection| {
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            transaction.execute(
+            let removed = transaction.execute(
                 "UPDATE skills SET is_deleted = 1, updated_at = ?2
                  WHERE namespace = ?1 COLLATE NOCASE AND is_deleted = 0",
                 params![&plugin_id, updated_at],
@@ -69,27 +72,29 @@ impl SqliteSkillRepository {
                 )?;
             }
             transaction.commit()?;
-            Ok(())
+            Ok(removed > 0 || !skills.is_empty())
         })
     }
 
     /// Makes every Skill from an uninstalled plugin disappear from the catalog.
+    ///
+    /// Returns whether it had any.
     pub fn remove_plugin_skills(
         &self,
         plugin_id: &PluginId,
         updated_at: i64,
-    ) -> Result<(), crate::DatabaseError> {
+    ) -> Result<bool, crate::DatabaseError> {
         let plugin_id = plugin_id.canonical();
         self.pool.with_connection_mut(|connection| {
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            transaction.execute(
+            let removed = transaction.execute(
                 "UPDATE skills SET is_deleted = 1, updated_at = ?2
                  WHERE namespace = ?1 COLLATE NOCASE AND is_deleted = 0",
                 params![&plugin_id, updated_at],
             )?;
             transaction.commit()?;
-            Ok(())
+            Ok(removed > 0)
         })
     }
 

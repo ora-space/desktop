@@ -10,6 +10,7 @@ export const AGENT_UNUSABLE = -32002;
 export const SUPPORTED_ACP_VERSION = 1;
 export const AGENT_DISCOVERY_BUDGET_MS = 60000;
 export const AGENT_COMMANDS_WAIT_CAP_MS = 2000;
+export const SKILL_DIRECTORIES_META_KEY = "ora/skillDirectories" as const;
 export const OPENCODE_MCP_CONFIG_V1 = "ora/opencode-mcp-config.v1" as const;
 export const CLAUDE_MCP_CONFIG_V1 = "ora/claude-mcp-config.v1" as const;
 export const MAX_STORAGE_FILE_BYTES = 8388608;
