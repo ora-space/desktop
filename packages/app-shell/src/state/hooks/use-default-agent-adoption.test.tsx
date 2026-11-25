@@ -1,6 +1,6 @@
 import { act, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useAgentModels } from "./use-agent-models";
+import { useAgentDiscovery } from "./use-agent-discovery";
 import { useTargetAgentCli } from "./use-target-agent-cli";
 import { useTargetAgentReadiness } from "./use-target-agent-readiness";
 import type {
@@ -188,7 +188,7 @@ it("upgrades a v1 preference to the installed identity used by model discovery",
   });
   const state = createFixtureState();
   const handlers = createFixtureHandlers(state);
-  const listModels = vi.fn(handlers.listAgentModels!);
+  const discover = vi.fn(handlers.discoverAgent!);
   const { result } = renderHookWithClient(
     () => {
       useDefaultAgentAdoption();
@@ -204,12 +204,12 @@ it("upgrades a v1 preference to the installed identity used by model discovery",
           taskId: null,
           sessionId: null,
         }),
-        models: useAgentModels(selected, "workspace-upgrade"),
+        models: useAgentDiscovery(selected, "workspace-upgrade", "models"),
       };
     },
     createTestClient({
       ...handlers,
-      listAgentModels: listModels,
+      discoverAgent: discover,
       listSessions: async () => ({ sessions: [] }),
     }),
   );
@@ -218,9 +218,10 @@ it("upgrades a v1 preference to the installed identity used by model discovery",
   );
   expect(result.current.selected).toBe(AGENT_REF.opencode);
   expect(result.current.readiness).toBe("ready");
-  expect(listModels.mock.calls[0]?.[0]).toEqual({
+  expect(discover.mock.calls[0]?.[0]).toEqual({
     agentRef: AGENT_REF.opencode,
     workspaceId: "workspace-upgrade",
+    includeCommands: false,
   });
   expect(
     JSON.parse(localStorage.getItem("ora.settings.v1")!).state.settings
