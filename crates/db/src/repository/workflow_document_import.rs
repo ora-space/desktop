@@ -72,14 +72,20 @@ impl WorkflowDocumentSourceRepository for SqliteWorkflowDocumentSourceRepository
         self.pool
             .with_connection(|connection| {
                 // The upsert keeps a conflict record current without ever taking an `imported` row
-                // away from the copy it names: a path that delivered a copy stays delivered.
+                // away from a copy the user still has: a path that delivered a surviving copy stays
+                // delivered. A record whose copy was deleted has nothing left to protect, so it
+                // becomes the conflict this cycle can retry from.
                 connection.execute(
                     "INSERT INTO workflow_document_imports
                          (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
                      VALUES (?1, ?2, ?3, 'conflict_skipped', NULL, ?4)
                      ON CONFLICT (source_namespace, identifier, document_path) DO UPDATE
                          SET state = 'conflict_skipped', workflow_id = NULL, recorded_at = excluded.recorded_at
-                         WHERE workflow_document_imports.state = 'conflict_skipped'",
+                         WHERE workflow_document_imports.state = 'conflict_skipped'
+                             OR NOT EXISTS(
+                                 SELECT 1 FROM workflows w
+                                 WHERE w.id = workflow_document_imports.workflow_id AND w.is_deleted = 0
+                             )",
                     params![
                         source.namespace,
                         source.identifier,
@@ -383,6 +389,30 @@ mod tests {
             repository.find_record(&source).expect("lookup"),
             Some(WorkflowDocumentSourceRecord::ImportedAlive),
             "a late conflict must not take the delivered copy's record away"
+        );
+    }
+
+    #[test]
+    fn records_a_conflict_for_a_copy_the_user_deleted() {
+        let pool = test_pool();
+        let repository = SqliteWorkflowDocumentSourceRepository::new(pool.clone());
+        let source = source("assets/workflows/1.0.0.json");
+        repository
+            .commit_import(
+                imported_workflow("assets/workflows/1.0.0.json", "发布流程"),
+                SourcePrecondition::Unrecorded,
+            )
+            .expect("commit import");
+        delete_copies(&pool);
+
+        repository
+            .record_conflict_skip(&source, 11)
+            .expect("record");
+
+        assert_eq!(
+            repository.find_record(&source).expect("lookup"),
+            Some(WorkflowDocumentSourceRecord::ConflictSkipped),
+            "a deleted copy has nothing left to protect, so the conflict replaces its record"
         );
     }
 
