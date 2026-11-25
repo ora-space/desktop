@@ -52,8 +52,8 @@ export function useAgentDiscovery(
     retry: false,
     // Discovery is a real plugin call that may start a one-shot agent process,
     // so navigating between chat surfaces must not re-run it. What makes a
-    // catalog stale is an event — an agent process replaced, a plugin installed,
-    // enabled, or removed — and each of those invalidates this key explicitly.
+    // catalog stale is an event — an agent started, a plugin installed, enabled, or
+    // removed, the Skills changed — and each of those invalidates this key explicitly.
     staleTime: 5 * 60 * 1000,
   });
   return {
