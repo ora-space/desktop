@@ -141,8 +141,17 @@ pub(super) fn prepare_resume(
     let context = load_context(pool, run_id)?;
     let Some(snapshot_id) = snapshot_id.filter(|id| *id != context.run.snapshot_id.as_ref()) else {
         let graph = WorkflowGraph::parse(&context.current.graph).map_err(ApplicationError::from)?;
-        let frozen = parsed_payload(context.run.payload.as_deref()).skill_materialization;
-        resolve(&graph, Some(&frozen))?;
+        let frozen = match context.run.payload.as_deref() {
+            Some(raw) => Some(
+                serde_json::from_str::<WorkflowRunPayload>(raw)
+                    .map_err(|error| ApplicationError::WorkflowRunStartFailed {
+                        message: format!("failed to parse frozen workflow run payload: {error}"),
+                    })?
+                    .skill_materialization,
+            ),
+            None => None,
+        };
+        resolve(&graph, frozen.as_ref())?;
         return Ok(None);
     };
     let target = SqliteWorkflowRepository::new(pool.clone())

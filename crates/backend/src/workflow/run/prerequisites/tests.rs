@@ -438,3 +438,81 @@ fn rejects_conflicting_invocation_names_across_distinct_skills_and_allows_reuse(
         Some("uuid-underscore")
     );
 }
+
+/// Covers owner Decision A: when a bare skill name matches both a local and a plugin skill (or
+/// multiple active catalog entries), graph resolution rejects with the skill-dependency error
+/// naming the matching candidates, while explicit catalog IDs still resolve unambiguously.
+#[test]
+fn rejects_ambiguous_bare_skill_name_while_allowing_exact_catalog_ids() {
+    let temp = TempDir::new().unwrap();
+    let pool = test_pool(&temp);
+    let skills_root = temp.path().join("atoms").join("skills");
+    install_local_skill(&pool, &skills_root, "uuid-local-review", "review");
+    let plugin_pkg = temp
+        .path()
+        .join("plugins/installed/official/review-pack/1.0.0/assets/review");
+    install_plugin_skill(&pool, &plugin_pkg, "review");
+
+    let initializer = SkillRoleWorkspaceInitializer::new(skills_root.clone(), pool.clone());
+
+    let bare_graph = WorkflowGraph::parse(
+        r#"{
+            "nodes":[
+                {"id":"start","data":{"kind":"start"}},
+                {"id":"agent","data":{"kind":"agent","title":"Code review","agentConfig":{
+                    "executor":{"agentCli":"opencode","modelId":"m"},
+                    "prompt":"run",
+                    "skills":[{"skillId":"review","enabled":true}]
+                }}},
+                {"id":"out","data":{"kind":"output"}}
+            ],
+            "edges":[
+                {"source":"start","target":"agent"},
+                {"source":"agent","target":"out"}
+            ]
+        }"#,
+    )
+    .unwrap();
+    let error = initializer.resolve_graph(&bare_graph).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            StartPrerequisitesError::SkillMaterializationError { message }
+                if message.contains("Code review")
+                    && message.contains("review")
+                    && message.contains("uuid-local-review")
+                    && message.contains("plugin:official/review-pack:review")
+                    && message.contains("specify a concrete skill")
+        ),
+        "expected ambiguous skill dependency error, got: {error:?}"
+    );
+
+    // Selecting either concrete catalog ID succeeds unambiguously even while both exist.
+    for exact_id in ["uuid-local-review", "plugin:official/review-pack:review"] {
+        let exact_graph = WorkflowGraph::parse(&format!(
+            r#"{{
+                "nodes":[
+                    {{"id":"start","data":{{"kind":"start"}}}},
+                    {{"id":"agent","data":{{"kind":"agent","agentConfig":{{
+                        "executor":{{"agentCli":"opencode","modelId":"m"}},
+                        "prompt":"run",
+                        "skills":[{{"skillId":"{exact_id}","enabled":true}}]
+                    }}}}}},
+                    {{"id":"out","data":{{"kind":"output"}}}}
+                ],
+                "edges":[
+                    {{"source":"start","target":"agent"}},
+                    {{"source":"agent","target":"out"}}
+                ]
+            }}"#
+        ))
+        .unwrap();
+        let receipt = initializer
+            .resolve_graph(&exact_graph)
+            .expect("exact catalog ID must resolve despite same-named sibling");
+        assert_eq!(
+            receipt.bindings[0].catalog_skill_id.as_deref(),
+            Some(exact_id)
+        );
+    }
+}

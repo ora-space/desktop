@@ -94,12 +94,17 @@ pub(super) fn ensure_dependencies_available(
         return Ok(());
     }
     let graph = WorkflowGraph::parse(&context.graph_json).map_err(ApplicationError::from)?;
-    let frozen = context
-        .run
-        .payload
-        .as_deref()
-        .and_then(|raw| serde_json::from_str::<WorkflowRunPayload>(raw).ok())
-        .map(|payload| payload.skill_materialization);
+    let frozen = match context.run.payload.as_deref() {
+        Some(raw) => {
+            let payload: WorkflowRunPayload = serde_json::from_str(raw).map_err(|error| {
+                ApplicationError::WorkflowRunStartFailed {
+                    message: format!("failed to parse frozen workflow run payload: {error}"),
+                }
+            })?;
+            Some(payload.skill_materialization)
+        }
+        None => None,
+    };
     match frozen.as_ref() {
         Some(receipt) => {
             dependencies.validate_frozen_graph(&graph, receipt)?;

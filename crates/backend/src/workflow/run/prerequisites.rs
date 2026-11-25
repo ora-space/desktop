@@ -163,7 +163,19 @@ fn resolve_graph_skill_bindings(
                     catalog_skill_id,
                 )?,
                 None => {
-                    resolve_graph_ref_skill_entry(skills_root, skill_repository, &skill.skill_id)?
+                    resolve_graph_ref_skill_entry(skills_root, skill_repository, &skill.skill_id)
+                        .map_err(|error| match error {
+                            StartPrerequisitesError::SkillMaterializationError { message } => {
+                                StartPrerequisitesError::SkillMaterializationError {
+                                    message: format!(
+                                        "node {} ({}): {message}",
+                                        node_display_name(node),
+                                        node.id
+                                    ),
+                                }
+                            }
+                            other => other,
+                        })?
                 }
             };
             let Some(resolved) = resolved else {
@@ -269,15 +281,27 @@ pub(super) fn resolve_graph_ref_skill_entry(
     let skills = skill_repository
         .list_skills()
         .map_err(StartPrerequisitesError::Repository)?;
-    for skill in skills
+    let mut matching: Vec<&Skill> = skills
         .iter()
         .filter(|skill| skill.name.eq_ignore_ascii_case(candidate))
-    {
-        if let Some(entry) = usable_entry(&storage, skills_root, skill)? {
-            return Ok(Some(entry));
-        }
+        .collect();
+    if matching.len() > 1 {
+        matching.sort_by(|a, b| a.id.as_ref().cmp(b.id.as_ref()));
+        let candidates = matching
+            .iter()
+            .map(|skill| format!("{} ({})", skill.id, skill.namespace))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(StartPrerequisitesError::SkillMaterializationError {
+            message: format!(
+                "skill reference `{skill_id}` matches multiple skills ({candidates}); specify a concrete skill instead"
+            ),
+        });
     }
-    Ok(None)
+    match matching.into_iter().next() {
+        Some(skill) => usable_entry(&storage, skills_root, skill),
+        None => Ok(None),
+    }
 }
 
 fn usable_entry(

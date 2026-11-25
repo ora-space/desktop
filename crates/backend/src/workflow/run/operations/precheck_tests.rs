@@ -830,3 +830,205 @@ async fn a_rejected_start_creates_no_node_run() {
         "a rejected start must not create node-run rows"
     );
 }
+
+/// Covers owner Decision A across run creation, legacy-receipt start, and snapshot switch:
+/// when a local and a plugin skill share the same bare name, creating a run, starting a run whose
+/// receipt lacks a frozen catalog ID, and switching snapshots with the bare name are all rejected
+/// with `workflow_run_start_failed`, while referencing a concrete catalog ID succeeds.
+#[tokio::test]
+async fn ambiguous_bare_skill_name_blocks_create_start_and_snapshot_switch() {
+    let disabled = SKILL_GRAPH.replace(
+        r#""skillId":"code_review","enabled":true"#,
+        r#""skillId":"code_review","enabled":false"#,
+    );
+    let fixture = Fixture::open(&disabled);
+    fixture
+        .install_skill_plugin("review-pack", "code_review")
+        .await;
+    let local_skill = fixture
+        .backend
+        .skills()
+        .create(ora_contracts::CreateSkillRequest {
+            name: "code_review".to_string(),
+            description: "Local code review".to_string(),
+            content: Some("Local instructions".to_string()),
+        })
+        .expect("create same-named local skill")
+        .skill;
+
+    // Create a clean run on snapshot-1 (skill disabled) and settle it before publishing v2.
+    let switch_run_id = fixture.create_run();
+    fixture.start_and_settle(&switch_run_id).await;
+
+    // 1. Run creation with a bare name matching both local and plugin skills is rejected.
+    fixture.publish_target(SKILL_GRAPH);
+    let create_error = fixture
+        .runs
+        .create(CreateWorkflowRunRequest {
+            workspace_id: fixture.seeded.workspace_id.clone(),
+            workflow_id: fixture.seeded.workflow_id.clone(),
+            locale: WorkflowRunLocale::EnUs,
+            snapshot_id: Some("snapshot-2".to_string()),
+            kickoff_input: None,
+            name: None,
+            inject_last_failure: None,
+        })
+        .expect_err("ambiguous bare skill name must block run creation");
+    assert_eq!(
+        create_error.public_error().code(),
+        "workflow_run_start_failed"
+    );
+    assert!(
+        std::error::Error::source(&create_error)
+            .expect("source")
+            .to_string()
+            .contains("matches multiple skills")
+    );
+
+    // 2. Snapshot switch onto a graph carrying the ambiguous bare name is also rejected.
+    let switch_error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: switch_run_id.clone(),
+            rollback: None,
+            snapshot_id: Some("snapshot-2".to_string()),
+        })
+        .expect_err("ambiguous bare skill name must block snapshot switch");
+    assert_eq!(
+        switch_error.public_error().code(),
+        "workflow_run_start_failed"
+    );
+    assert!(
+        std::error::Error::source(&switch_error)
+            .expect("source")
+            .to_string()
+            .contains("specify a concrete skill")
+    );
+
+    // 3. A pending run with a legacy payload (no frozen `catalogSkillId`) targeting an ambiguous
+    // bare name is rejected on start rather than silently picking one skill.
+    let legacy_run_id = fixture
+        .runs
+        .create(CreateWorkflowRunRequest {
+            workspace_id: fixture.seeded.workspace_id.clone(),
+            workflow_id: fixture.seeded.workflow_id.clone(),
+            locale: WorkflowRunLocale::EnUs,
+            snapshot_id: Some(fixture.seeded.snapshot_id.to_string()),
+            kickoff_input: None,
+            name: None,
+            inject_last_failure: None,
+        })
+        .expect("create pending run on snapshot-1")
+        .run
+        .id;
+    let legacy_conn =
+        rusqlite::Connection::open(fixture.temporary.path().join("ora.sqlite3")).unwrap();
+    let legacy_payload = r#"{"locale":"en-US","skillMaterialization":{"bindings":[{"nodeId":"reviewer","skillId":"code_review","invocationName":"code-review"}]}}"#;
+    legacy_conn
+        .execute(
+            "UPDATE workflow_runs SET snapshot_id = 'snapshot-2', payload = ?2 WHERE id = ?1",
+            rusqlite::params![legacy_run_id, legacy_payload],
+        )
+        .unwrap();
+    drop(legacy_conn);
+
+    let start_error = fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: legacy_run_id,
+        })
+        .expect_err("ambiguous bare skill name must block starting a legacy run");
+    assert_eq!(
+        start_error.public_error().code(),
+        "workflow_run_start_failed"
+    );
+
+    // 4. Switching to a concrete catalog ID succeeds unambiguously even while both skills exist.
+    let explicit_graph = SKILL_GRAPH.replace(
+        r#""skillId":"code_review""#,
+        &format!(r#""skillId":"{}""#, local_skill.id),
+    );
+    let workflow_repo = ora_db::SqliteWorkflowRepository::new(fixture.runs.pool.clone());
+    let workflow = ora_domain::WorkflowId::new(&fixture.seeded.workflow_id);
+    workflow_repo
+        .update_draft(&workflow, explicit_graph, 40)
+        .unwrap();
+    workflow_repo
+        .publish_snapshot(
+            &workflow,
+            ora_domain::WorkflowSnapshotId::new("snapshot-3"),
+            "v3".into(),
+            41,
+        )
+        .unwrap();
+
+    let switched = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: switch_run_id.clone(),
+            rollback: None,
+            snapshot_id: Some("snapshot-3".to_string()),
+        })
+        .expect("explicit catalog skill ID must allow snapshot switch");
+    assert_eq!(switched.run.snapshot_id, "snapshot-3");
+    fixture
+        .runs
+        .cancel(CancelWorkflowRunRequest {
+            run_id: switch_run_id,
+        })
+        .await
+        .expect("cancel switched run");
+}
+
+/// Corrupt frozen payloads must fail precheck explicitly rather than silently falling back to
+/// unfrozen skill resolution.
+#[tokio::test]
+async fn corrupt_frozen_payload_rejects_start_and_same_snapshot_resume() {
+    let fixture = Fixture::open(SKILL_GRAPH);
+    fixture
+        .install_skill_plugin("review-pack", "code_review")
+        .await;
+    let pending_run_id = fixture.create_run();
+    let settled_run_id = fixture.create_run();
+    fixture.start_and_settle(&settled_run_id).await;
+
+    let conn = rusqlite::Connection::open(fixture.temporary.path().join("ora.sqlite3")).unwrap();
+    for id in [&pending_run_id, &settled_run_id] {
+        conn.execute(
+            "UPDATE workflow_runs SET payload = '{not-json' WHERE id = ?1",
+            rusqlite::params![id],
+        )
+        .unwrap();
+    }
+    drop(conn);
+
+    let start_error = fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: pending_run_id,
+        })
+        .expect_err("corrupt run payload must fail start precheck");
+    assert_eq!(
+        start_error.public_error().code(),
+        "workflow_run_start_failed"
+    );
+    assert!(
+        std::error::Error::source(&start_error)
+            .expect("source")
+            .to_string()
+            .contains("failed to parse frozen workflow run payload")
+    );
+
+    let resume_error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: settled_run_id,
+            rollback: None,
+            snapshot_id: None,
+        })
+        .expect_err("corrupt run payload must fail same-snapshot resume");
+    assert_eq!(
+        resume_error.public_error().code(),
+        "workflow_run_start_failed"
+    );
+}
