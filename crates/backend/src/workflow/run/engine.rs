@@ -289,6 +289,16 @@ pub(crate) fn reconcile_running_workflow_runs(
 
         let _gate = run_locks.acquire_exclusive(run_id.as_ref());
 
+        // The sweep has dealt with independent interrupted attempts. A failed stop still owns
+        // its old round/ledger: an ordinary reconciliation wave must not consume it.
+        match repository.debug_dispatch_fence(&run_id) {
+            Ok(Some(_)) => continue,
+            Err(error) => {
+                ora_error!(run_id=%run_id,error=%error,"could not check debug fence on boot");
+                continue;
+            }
+            Ok(None) => {}
+        }
         let exiting_loops = match super::recovery::pending_loop_exits(&repository, &node_runs) {
             Ok(ids) => ids,
             Err(error) => {
@@ -336,8 +346,16 @@ pub(crate) fn reconcile_running_workflow_runs(
             .iter()
             .any(|node_run| is_awaiting_input(node_run, &graph))
         {
-            // A genuine awaiting node: preserve the run for the human to continue.
-            continue;
+            match ora_db::workflow_debug::WorkflowDebugStore::new(pool.clone())
+                .has_dispatch(run_id.as_ref())
+            {
+                Ok(true) => {} // the ordinary ready projection still preserves the parked attempt
+                Ok(false) => continue,
+                Err(error) => {
+                    ora_error!(run_id=%run_id,error=%error,"could not read pending debug dispatch");
+                    continue;
+                }
+            }
         }
         // No running node and no awaiting node: resume scheduling. A dispatch failure is handled
         // by the normal execution path, which fails the node and run.

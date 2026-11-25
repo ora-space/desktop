@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use tempfile::TempDir;
 
 /// One Loop whose body is `entry → writer`; the loop ends once the writer answers `done`.
-const LOOP_GRAPH: &str = r#"{"schemaVersion":2,"nodes":[
+pub(super) const LOOP_GRAPH: &str = r#"{"schemaVersion":2,"nodes":[
     {"id":"start","data":{"kind":"start"}},
     {"id":"loop","data":{"kind":"loop","loopConfig":{
         "maxIterations":3,

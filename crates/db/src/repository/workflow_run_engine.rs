@@ -139,6 +139,19 @@ impl SqliteWorkflowRunEngineRepository {
 }
 
 impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
+    fn terminal_debug_schedule(
+        &self,
+        run: &WorkflowRunId,
+    ) -> Result<Option<Vec<String>>, RepositoryError> {
+        self.pool.with_connection(|db| {
+            let raw:Option<String>=db.query_row("SELECT json_extract(p.plan,'$.schedule') FROM workflow_debug_dispatch d JOIN workflow_debug_operations o ON o.id=d.operation_id JOIN workflow_debug_previews p ON p.id=o.preview_id WHERE d.run_id=?1 AND o.prior_status IN (2,3,4)",[run.as_ref()],|r|r.get(0)).optional()?;
+            Ok(raw.map(|v|serde_json::from_str(&v)).transpose()?)
+        }).map_err(RepositoryError::new)
+    }
+
+    fn restore_debug_outcome(&self, run: &WorkflowRunId, now: i64) -> Result<(), RepositoryError> {
+        self.pool.with_connection(|db| {db.execute("UPDATE workflow_runs SET (run_status,error,output,finished_at)=(SELECT o.prior_status,o.prior_error,o.prior_output,o.prior_finished_at FROM workflow_debug_operations o JOIN workflow_debug_dispatch d ON d.operation_id=o.id WHERE d.run_id=?1),state='{\"current_nodes\":[]}',updated_at=?2 WHERE id=?1 AND run_status=1 AND EXISTS(SELECT 1 FROM workflow_debug_dispatch WHERE run_id=?1)",params![run.as_ref(),now])?; Ok(())}).map_err(RepositoryError::new)
+    }
     fn revised_graph(
         &self,
         run: &WorkflowRunId,
@@ -662,7 +675,8 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id FROM workflow_runs WHERE run_status IN (?1, ?2) AND is_deleted = 0",
+                    "SELECT id FROM workflow_runs WHERE is_deleted=0 AND (run_status IN (?1, ?2) OR id IN
+                        (SELECT run_id FROM workflow_debug_operations WHERE state='stopping'))",
                 )?;
                 let mut rows = statement.query(params![
                     WorkflowRunStatus::Running.database_value(),
@@ -709,6 +723,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                 transaction.execute(
                     "UPDATE sessions SET status = ?2, updated_at = ?3
                      WHERE workspace_id = (SELECT workspace_id FROM workflow_runs WHERE id = ?1 AND is_deleted = 0)
+                       AND id NOT IN (SELECT n.session_id FROM workflow_node_runs n JOIN workflow_debug_boot_protected p ON n.id=p.id WHERE n.session_id IS NOT NULL)
                        AND status = ?4 AND is_deleted = 0",
                     params![
                         run_id.as_ref(),

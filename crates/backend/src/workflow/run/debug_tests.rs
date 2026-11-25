@@ -23,6 +23,7 @@ use serde_json::json;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+mod lifecycle;
 
 /// start → x → out, with an independent leaf branch start → s.
 const GRAPH: &str = r#"{"nodes":[
@@ -149,6 +150,11 @@ impl Fixture {
         engine.start(&run_id).unwrap();
         let store = WorkflowDebugStore::new(pool.clone());
         for row in node_runs(&pool, &run_id) {
+            if row.node_id == "x" {
+                SqliteWorkflowRunEngineRepository::new(pool.clone())
+                    .bind_node_run_session(&row.id, &SessionId::new("session-1"), 50)
+                    .unwrap();
+            }
             if row.node_id == "x" || row.node_id == "s" {
                 store
                     .record_agent_dispatch(

@@ -233,14 +233,24 @@ impl WorkflowRuns {
         let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
         let engine = self.engine.clone();
         let run_locks = self.run_locks.clone();
-        let response = spawn_repository_work(move || {
+        let pool = self.pool.clone();
+        let (response, was_running) = spawn_repository_work(move || {
             // Serialize the `Cancelled` transition against every other mutation for the run; the
             // async session cleanup below runs outside the gate.
             let _gate = run_locks.acquire_exclusive(request.run_id.clone());
-            engine.cancel(request).map_err(BackendError::from)
+            let was_running = SqliteWorkflowRunEngineRepository::new(pool)
+                .find_execution_context(&ora_domain::WorkflowRunId::new(&request.run_id))
+                .map_err(|source| ApplicationError::WorkflowRunRepository { source })?
+                .is_some_and(|ctx| ctx.run.status == ora_domain::WorkflowRunStatus::Running);
+            Ok((
+                engine.cancel(request).map_err(BackendError::from)?,
+                was_running,
+            ))
         })
         .await?;
-        self.stop_workflow_run_sessions(&run_id).await;
+        if was_running {
+            self.stop_workflow_run_sessions(&run_id).await;
+        }
         Ok(response)
     }
 

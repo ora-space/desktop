@@ -320,6 +320,10 @@ never read by scheduling, resume, rollback or snapshot switching.
 
 ## Recovery after restart
 
+If you cancel while a confirmed debug edit is stopping old work, its receipt records `stop_failed` with reason `run_cancelled`. A running workflow is cancelled; a previously finished workflow keeps its original outcome. If the edit applied first, its revision stays in history, but cancellation prevents the remaining dispatches.
+
+On startup Desktop checks unfinished debug operations before ordinary interruption cleanup. If isolation of an external writer cannot be proved, history lists the unresolved attempt IDs and their scope remains blocked. If the revision was already applied, the scheduler can dispatch a ready, unclaimed position. An attempt already started under that revision follows ordinary interruption recovery; it is not dispatched a second time.
+
 Desktop runs the boot sweep only after it holds the application instance lock (see
 [Desktop host](../desktop/desktop-host.md#startup)), so a live second process can never mark running
 work as interrupted. Interrupted outer rows fail as `interrupted_by_restart` and fail the run;

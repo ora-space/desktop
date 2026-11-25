@@ -159,7 +159,10 @@ where
     pub fn cancel(&self, run_id: &WorkflowRunId) -> Result<CancelWorkflowRunResult, EngineError> {
         let now = self.clock.now_timestamp_millis();
         let result = self.repository.cancel_run(run_id, now)?;
-        if matches!(result, CancelWorkflowRunResult::Cancelled) {
+        if matches!(
+            result,
+            CancelWorkflowRunResult::Cancelled | CancelWorkflowRunResult::DebugAbandoned
+        ) {
             self.run_events.publish_run_invalidated(run_id);
         }
         Ok(result)
@@ -277,6 +280,13 @@ where
         file_changes: Vec<FileChange>,
         payload_patch: Option<serde_json::Value>,
     ) -> Result<(), EngineError> {
+        if self
+            .repository
+            .debug_dispatch_fence(run_id)?
+            .is_some_and(|f| f.stopped_attempts.contains(node_run_id))
+        {
+            return Ok(());
+        }
         let now = self.clock.now_timestamp_millis();
         match self.repository.complete_node(
             node_run_id,
@@ -308,6 +318,13 @@ where
         node_run_id: &WorkflowNodeRunId,
         failure: NodeFailure,
     ) -> Result<(), EngineError> {
+        if self
+            .repository
+            .debug_dispatch_fence(run_id)?
+            .is_some_and(|f| f.stopped_attempts.contains(node_run_id))
+        {
+            return Ok(());
+        }
         let Some(node_run) = self.repository.find_node_run_by_id(node_run_id)? else {
             return Ok(());
         };
@@ -383,6 +400,17 @@ where
                 .repository
                 .list_node_runs_in_scope(&context.root_scope_id)?;
             let (pool, _) = execution_state_from(context.run.payload.as_deref());
+            // Leave a fenced container and its round/ledger untouched even when an independent
+            // callback drives a scheduling wave after boot. The projection below still sees the rows.
+            let fence = self.repository.debug_dispatch_fence(run_id)?;
+            let node_runs: Vec<_> = node_runs
+                .into_iter()
+                .filter(|n| {
+                    fence
+                        .as_ref()
+                        .is_none_or(|f| !f.stopped_attempts.contains(&n.id))
+                })
+                .collect();
 
             let mut completed_swift = false;
             for node_run in node_runs
@@ -466,10 +494,15 @@ where
             let projection = BranchProjection::new(&graph, &node_runs, &condition_decisions);
             // A stopping debug confirmation holds its affected scope: filter the fenced positions
             // out of the ready set so the coordinator can quiesce and apply before any re-dispatch.
-            let fence = self.repository.debug_dispatch_fence(run_id)?;
+            let schedule = self.repository.terminal_debug_schedule(run_id)?;
             let ready: Vec<&WorkflowGraphNode> = projection
                 .ready_nodes()
                 .into_iter()
+                .filter(|node| {
+                    schedule
+                        .as_ref()
+                        .is_none_or(|scope| scope.contains(&node.id))
+                })
                 .filter(|node| {
                     !fence
                         .as_ref()
@@ -480,7 +513,31 @@ where
             if ready.is_empty() {
                 // The run must not finish while a debug fence is pending: the affected scope still
                 // owes a re-dispatch under the new revision once the coordinator applies it.
-                if !projection.has_in_flight() && fence.is_none() {
+                let local_drained = schedule.as_ref().is_some_and(|scope| {
+                    !scope.iter().any(|id| {
+                        matches!(
+                            projection.state(id),
+                            super::branch_projection::ProjectedNodeState::Running
+                                | super::branch_projection::ProjectedNodeState::AwaitingInput
+                        )
+                    })
+                });
+                if local_drained
+                    && fence.is_none()
+                    && graph
+                        .nodes()
+                        .filter(|n| graph.region_owner(&n.id).is_none())
+                        .any(|n| {
+                            !matches!(
+                                projection.state(&n.id),
+                                super::branch_projection::ProjectedNodeState::Succeeded
+                                    | super::branch_projection::ProjectedNodeState::Inactive
+                            )
+                        })
+                {
+                    self.repository.restore_debug_outcome(run_id, now)?;
+                    self.run_events.publish_run_invalidated(run_id);
+                } else if !projection.has_in_flight() && fence.is_none() {
                     let output = self.runtimes.compute_run_output(&node_runs);
                     self.repository.finish_run(run_id, output, now)?;
                     self.run_events.publish_run_invalidated(run_id);

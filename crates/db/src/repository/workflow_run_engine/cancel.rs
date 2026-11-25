@@ -24,7 +24,19 @@ pub(super) fn cancel_run(
         let Some(status) = status else {
             return Ok(CancelWorkflowRunResult::NotFound);
         };
+        // Revoke the intent in the same transaction: after a crash neither the boot sweep nor a
+        // late stop acknowledgement may turn a cancelled operation back into runnable work.
+        let abandoned = transaction.execute(
+            "UPDATE workflow_debug_operations SET state='stop_failed',failure='run_cancelled',
+             unsettled_attempts=(SELECT json_extract(plan,'$.stop') FROM workflow_debug_previews WHERE id=preview_id),
+             released=(SELECT json_array_length(plan,'$.stop')=0 FROM workflow_debug_previews WHERE id=preview_id)
+             WHERE run_id=?1 AND state='stopping'", [run_id.as_ref()],
+        )?;
         if WorkflowRunStatus::from_database_value(status)? != WorkflowRunStatus::Running {
+            if abandoned != 0 {
+                transaction.commit()?;
+                return Ok(CancelWorkflowRunResult::DebugAbandoned);
+            }
             return Ok(CancelWorkflowRunResult::NotActive);
         }
         // Waiting attempts are cancelled like running ones; dropping their marker keeps the

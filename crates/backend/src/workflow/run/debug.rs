@@ -9,7 +9,7 @@ use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
-use ora_application::{ApplicationError, Clock, RepositoryError, WorkflowRunEngineRepository};
+use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
 use ora_contracts::{
     CommitWorkflowDebugRequest, PreviewWorkflowDebugRequest, StopSessionRequest,
     WorkflowDebugOperation, WorkflowDebugPreview,
@@ -21,14 +21,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-mod strategy;
+pub(super) mod strategy;
 
 /// Maps a debug-store failure onto the backend error surface like the other run use cases.
 fn store_error(error: ora_db::DatabaseError) -> BackendError {
-    ApplicationError::WorkflowRunRepository {
-        source: RepositoryError::new(error),
-    }
-    .into()
+    BackendError::from_debug_store(error)
 }
 
 /// Stops one bound session and proves it unloaded. The agent runtime implements it; coordination
@@ -98,12 +95,9 @@ impl WorkflowDebugCoordinator {
     /// active stopping or unreleased failed stop.
     pub(crate) fn ensure_no_fence(&self, run_id: &str) -> Result<(), BackendError> {
         let store = WorkflowDebugStore::new(self.pool.clone());
-        if store.dispatch_fence(run_id).map_err(store_error)?.is_some() {
-            return Err(store_error(ora_db::DatabaseError::WorkflowDebug(
-                ora_db::workflow_debug::DebugRejection::OperationInProgress,
-            )));
-        }
-        Ok(())
+        store
+            .ensure_debug_operation_inactive(run_id)
+            .map_err(store_error)
     }
 
     /// Confirms a preview and carries it to the new dispatch, or returns the durable operation.
@@ -118,51 +112,79 @@ impl WorkflowDebugCoordinator {
     ) -> Result<WorkflowDebugOperation, BackendError> {
         let store = WorkflowDebugStore::new(self.pool.clone());
         let run_id = WorkflowRunId::new(&request.run_id);
-        let entry = match store.claim(&request).map_err(store_error)? {
-            DebugClaim::Claimed(entry) => entry,
-            DebugClaim::Existing(entry) => return Ok(entry.operation),
-        };
-
-        let stop_ids: Vec<WorkflowNodeRunId> = entry
-            .preview
-            .impact
-            .stop
-            .iter()
-            .map(WorkflowNodeRunId::new)
-            .collect();
-
-        // Cancel the affected attempts under the gate so their late callbacks and retries become
-        // no-ops through the existing status guards, without failing the run or its siblings.
-        let now = self.clock.now_timestamp_millis();
-        {
+        let stop_ids = {
             let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
-            let repository = SqliteWorkflowRunEngineRepository::new(self.pool.clone());
-            for id in &stop_ids {
-                let _ = repository.transition_node_run_status(
-                    id,
-                    WorkflowNodeStatus::Running,
-                    WorkflowNodeStatus::Cancelled,
-                    now,
-                );
-            }
-        }
+            let entry = match store.claim(&request).map_err(store_error)? {
+                DebugClaim::Claimed(entry) => entry,
+                DebugClaim::Existing(entry) => return Ok(entry.operation),
+            };
 
-        // Stop the bound sessions outside the gate: a driver callback acquires the gate on its own,
-        // so waiting here must never hold it. A stop that cannot be proven records stop_failed and
-        // keeps the fence; no revision and no new dispatch follow.
-        let repository = SqliteWorkflowRunEngineRepository::new(self.pool.clone());
-        for id in &stop_ids {
-            let session_id = repository
-                .find_node_run_by_id(id)
-                .map_err(|source| {
-                    BackendError::from(ApplicationError::WorkflowRunRepository { source })
-                })?
-                .and_then(|node| node.session_id);
-            if let Some(session_id) = session_id
-                && let Err(error) = self.stopper.stop(session_id.to_string()).await
+            let stop_ids: Vec<WorkflowNodeRunId> = entry
+                .preview
+                .impact
+                .stop
+                .iter()
+                .map(WorkflowNodeRunId::new)
+                .collect();
+
+            // Cancel the affected attempts under the gate so their late callbacks and retries become
+            // no-ops through the existing status guards, without failing the run or its siblings.
+            let now = self.clock.now_timestamp_millis();
             {
+                let repository = SqliteWorkflowRunEngineRepository::new(self.pool.clone());
+                for id in &stop_ids {
+                    repository
+                        .transition_node_run_status(
+                            id,
+                            WorkflowNodeStatus::Running,
+                            WorkflowNodeStatus::Cancelled,
+                            now,
+                        )
+                        .map_err(|source| ApplicationError::WorkflowRunRepository { source })?;
+                }
+            }
+
+            // Stop the bound sessions outside the gate: a driver callback acquires the gate on its own,
+            // so waiting here must never hold it. A stop that cannot be proven records stop_failed and
+            // keeps the fence; no revision and no new dispatch follow.
+            stop_ids
+        };
+        let repository = SqliteWorkflowRunEngineRepository::new(self.pool.clone());
+        for (index, id) in stop_ids.iter().enumerate() {
+            let row = repository.find_node_run_by_id(id).map_err(|source| {
+                BackendError::from(ApplicationError::WorkflowRunRepository { source })
+            })?;
+            let result = match row {
+                Some(ora_domain::WorkflowNodeRun {
+                    session_id: Some(session_id),
+                    ..
+                }) => self
+                    .stopper
+                    .stop(session_id.to_string())
+                    .await
+                    .map_err(|e| e.to_string()),
+                Some(node)
+                    if node.started_at.is_none()
+                        && node
+                            .payload
+                            .as_deref()
+                            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                            .is_some_and(|v| v[ora_application::RETRY_WAIT_KEY].is_object()) =>
+                {
+                    Ok(())
+                }
+                _ => Err("cannot prove isolation before session binding".to_owned()),
+            };
+            if let Err(error) = result {
                 let reason = format!("failed to stop attempt {id}: {error}");
-                let _ = store.record_stop_failure(&request.run_id, &request.request_id, &reason);
+                store
+                    .record_stop_failure(
+                        &request.run_id,
+                        &request.request_id,
+                        &reason,
+                        &stop_ids[index..],
+                    )
+                    .map_err(store_error)?;
                 let DebugClaim::Existing(failed) = store.claim(&request).map_err(store_error)?
                 else {
                     return Err(store_error(
@@ -175,20 +197,32 @@ impl WorkflowDebugCoordinator {
 
         // Apply the revision and the projection in one commit under the gate, then notify and
         // re-dispatch. The fence lifts with the applied operation, so the wave reads the new scope.
-        let applied = {
-            let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
-            store
-                .apply_after_stop(&request.run_id, &request.request_id, |tx, preview| {
-                    strategy::settle(tx, preview)
-                })
-                .map_err(store_error)?
-        };
-        self.transitions.publish_run_invalidated(&run_id);
-        {
-            let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        let applied = store
+            .apply_after_stop(
+                &request.run_id,
+                &request.request_id,
+                self.clock.now_timestamp_millis(),
+                strategy::settle,
+            )
+            .map_err(store_error)?;
+        if matches!(
+            applied.phase,
+            ora_contracts::WorkflowDebugPhase::Applied { .. }
+        ) {
+            self.transitions.publish_run_invalidated(&run_id);
+            drop(_gate);
+            let _dispatch_gate = self.run_locks.acquire_exclusive(request.run_id.clone());
             self.engine
                 .resume(&run_id)
                 .map_err(ApplicationError::from_workflow_engine_error)?;
+        } else if matches!(&applied.phase,ora_contracts::WorkflowDebugPhase::StopFailed {reason,..} if reason=="run_cancelled")
+        {
+            // All the requested stops just acknowledged. Releasing the old fence grants no
+            // dispatch and does not replace the cancellation receipt.
+            store
+                .release_failed_stop(&request.run_id, &request.request_id)
+                .map_err(store_error)?;
         }
         Ok(applied)
     }

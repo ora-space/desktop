@@ -63,7 +63,7 @@ fn downstream_closure(graph: &WorkflowGraph, target: &str) -> Vec<String> {
 ///
 /// The first real dispatch assigns the new attempt id (the `workflow_debug_admit` trigger binds it
 /// to the revision applied in the same transaction); the settle never pre-assigns attempt rows.
-pub(super) fn settle(
+pub(in crate::workflow::run) fn settle(
     transaction: &Transaction<'_>,
     preview: &WorkflowDebugPreview,
 ) -> Result<(), ora_db::DatabaseError> {

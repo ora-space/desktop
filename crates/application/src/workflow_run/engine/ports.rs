@@ -225,6 +225,8 @@ pub enum AdvanceWorkflowRunResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelWorkflowRunResult {
     Cancelled,
+    /// The debug intent was abandoned; the original terminal run and its reason were preserved.
+    DebugAbandoned,
     NotActive,
     NotFound,
 }
@@ -334,6 +336,23 @@ pub const INVALID_START_OPTION_DETAIL: &str = "value is not one of the configure
 ///
 /// Automatic retries persist through the [`WorkflowRetryRepository`] supertrait.
 pub trait WorkflowRunEngineRepository: WorkflowRetryRepository {
+    /// An operation reopened from a terminal run authorizes only its confirmed schedule, even
+    /// after process restart. A running run continues ordinary independent work.
+    fn terminal_debug_schedule(
+        &self,
+        _run: &WorkflowRunId,
+    ) -> Result<Option<Vec<String>>, RepositoryError> {
+        Ok(None)
+    }
+
+    /// Restores the saved outcome after a terminal run's limited scheduling scope drains.
+    fn restore_debug_outcome(
+        &self,
+        _run: &WorkflowRunId,
+        _now: i64,
+    ) -> Result<(), RepositoryError> {
+        Ok(())
+    }
     /// Returns the graph overlay bound to this physical attempt when debug revisions are active.
     fn revised_graph(
         &self,

@@ -18,6 +18,7 @@ mod normalize;
 mod operations;
 mod pending;
 mod read_set;
+mod recovery;
 pub use operations::DebugClaim;
 #[cfg(test)]
 mod tests;

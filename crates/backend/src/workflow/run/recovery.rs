@@ -45,7 +45,20 @@ pub(crate) fn run_workflow_run_boot_sweep(
         }
     };
     for run_id in &run_ids {
-        if let Err(error) = sweep_one_run(&repository, run_id, clock.now_timestamp_millis()) {
+        let _gate = run_locks.acquire_exclusive(run_id.as_ref());
+        let store = ora_db::workflow_debug::WorkflowDebugStore::new(pool.clone());
+        let now = clock.now_timestamp_millis();
+        let protected = match store
+            .recover_stopping(run_id.as_ref(), now, super::debug::strategy::settle)
+            .and_then(|()| store.protected_attempts(run_id.as_ref()))
+        {
+            Ok(ids) => ids,
+            Err(error) => {
+                ora_error!(run_id=%run_id,error=%error,"could not recover debug intent before sweep");
+                continue;
+            }
+        };
+        if let Err(error) = sweep_except(&repository, run_id, now, &protected) {
             ora_error!(run_id = %run_id, error = %error, "workflow run boot sweep failed to sweep one run");
         }
     }
@@ -66,12 +79,23 @@ enum SweepDecision {
 }
 
 /// Applies the crash sweep to one recoverable run.
+#[cfg(test)]
 pub(super) fn sweep_one_run(
     repository: &SqliteWorkflowRunEngineRepository,
     run_id: &WorkflowRunId,
     now: i64,
 ) -> Result<(), RepositoryError> {
-    match decide_sweep(repository, run_id)? {
+    sweep_except(repository, run_id, now, &Default::default())
+}
+
+/// Ordinary recovery still owns interrupted work outside the debug stop list.
+fn sweep_except(
+    repository: &SqliteWorkflowRunEngineRepository,
+    run_id: &WorkflowRunId,
+    now: i64,
+    protected: &std::collections::HashSet<WorkflowNodeRunId>,
+) -> Result<(), RepositoryError> {
+    match decide_sweep(repository, run_id, protected)? {
         SweepDecision::Skip => Ok(()),
         SweepDecision::AbsorbIntoComposite(interrupted) => {
             repository.fail_interrupted_node_runs(run_id, &interrupted, now)
@@ -86,13 +110,16 @@ pub(super) fn sweep_one_run(
 fn decide_sweep(
     repository: &SqliteWorkflowRunEngineRepository,
     run_id: &WorkflowRunId,
+    protected: &std::collections::HashSet<WorkflowNodeRunId>,
 ) -> Result<SweepDecision, RepositoryError> {
     let node_runs = repository.list_node_runs(run_id)?;
     let exiting_loops = pending_loop_exits(repository, &node_runs)?;
     let running: Vec<&WorkflowNodeRun> = node_runs
         .iter()
         .filter(|node_run| {
-            node_run.status == WorkflowNodeStatus::Running && !exiting_loops.contains(&node_run.id)
+            node_run.status == WorkflowNodeStatus::Running
+                && !exiting_loops.contains(&node_run.id)
+                && !protected.contains(&node_run.id)
         })
         .collect();
     // No `Running` row means the run was parked awaiting input (or already terminal): the
