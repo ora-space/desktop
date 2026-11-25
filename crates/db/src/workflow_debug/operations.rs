@@ -3,7 +3,7 @@ use rusqlite::{Row, Transaction};
 
 const OPERATION: &str =
     "SELECT o.id,o.request_id,p.base_revision,o.state,o.revision,o.failure,p.plan,p.patch,
-        o.unsettled_attempts
+        o.unsettled_attempts,o.prior_status,o.prior_error
     FROM workflow_debug_operations o JOIN workflow_debug_previews p ON p.id=o.preview_id
     JOIN workflow_runs r ON r.id=o.run_id AND r.is_deleted=0";
 
@@ -49,9 +49,13 @@ impl WorkflowDebugStore {
             if read_set::facts(&tx,&request.run_id,&receipt.0)? != serde_json::from_str::<Value>(&receipt.1)? {
                 return Err(DebugRejection::StalePreview.into());
             }
+            // Acceptance also keeps the run as it is now: a terminal run returns to that state
+            // and reason when the debugged scope does not settle successfully.
             tx.execute(
-                "INSERT INTO workflow_debug_operations(run_id,request_id,preview_id,state)
-                VALUES (?1,?2,?3,'stopping')",
+                "INSERT INTO workflow_debug_operations(run_id,request_id,preview_id,state,
+                        prior_status,prior_error,prior_output,prior_finished_at)
+                SELECT r.id,?2,?3,'stopping',r.run_status,r.error,r.output,r.finished_at
+                FROM workflow_runs r WHERE r.id=?1",
                 params![request.run_id, request.request_id, request.preview_id],
             )?;
             let entry = tx.query_row(
@@ -66,10 +70,14 @@ impl WorkflowDebugStore {
 
     /// Persists the coordinator's verified stop result and projection changes in a single commit.
     /// Called under the run gate after quiescence. A replay never re-enters the effect closure.
+    ///
+    /// A run that was terminal when the confirmation was accepted returns to `running` in the same
+    /// commit; `now` stamps that change.
     pub fn apply_after_stop(
         &self,
         run: &str,
         request: &str,
+        now: i64,
         settle: impl FnOnce(&Transaction<'_>, &WorkflowDebugPreview) -> Result<(), DatabaseError>,
     ) -> Result<WorkflowDebugOperation, DatabaseError> {
         self.pool.with_connection_mut(|db| {
@@ -93,6 +101,20 @@ impl WorkflowDebugStore {
             // The strategy may create new attempts inside settle. They must see the new revision.
             tx.execute("UPDATE workflow_debug_operations SET state='applied',revision=?3
                 WHERE run_id=?1 AND request_id=?2",params![run,request,revision])?;
+            // A run accepted in a terminal state returns to running together with the revision,
+            // but only while it still shows that very state. One that moved on while the stop was
+            // in flight keeps its own outcome; recovery then reads the new revision.
+            tx.execute(
+                "UPDATE workflow_runs SET run_status=?2,error=NULL,output=NULL,finished_at=NULL,updated_at=?3
+                WHERE id=?1 AND run_status=(SELECT prior_status FROM workflow_debug_operations
+                    WHERE run_id=?1 AND request_id=?4) AND run_status<>?2",
+                params![
+                    run,
+                    ora_domain::WorkflowRunStatus::Running.database_value(),
+                    now,
+                    request
+                ],
+            )?;
             let live_before: String = tx.query_row(
                 "SELECT json_group_array(id) FROM workflow_node_runs WHERE run_id=?1 AND is_deleted=0",
                 [run], |row| row.get(0),
@@ -181,6 +203,8 @@ fn history_row(row: &Row<'_>) -> rusqlite::Result<WorkflowDebugHistoryEntry> {
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     Ok(WorkflowDebugHistoryEntry {
+        prior_run_status: run_status(row, 9)?,
+        prior_error: row.get(10)?,
         operation: WorkflowDebugOperation {
             operation_id: row.get::<_, i64>(0)?.to_string(),
             request_id: row.get(1)?,
@@ -189,5 +213,24 @@ fn history_row(row: &Row<'_>) -> rusqlite::Result<WorkflowDebugHistoryEntry> {
         },
         preview: decoded(row, 6)?,
         patch: decoded(row, 7)?,
+    })
+}
+
+/// Reads the run status stored at acceptance in its wire form.
+fn run_status(row: &Row<'_>, index: usize) -> rusqlite::Result<WorkflowRunStatus> {
+    use ora_domain::WorkflowRunStatus as Stored;
+    let stored = Stored::from_database_value(row.get(index)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })?;
+    Ok(match stored {
+        Stored::Pending => WorkflowRunStatus::Pending,
+        Stored::Running => WorkflowRunStatus::Running,
+        Stored::Succeeded => WorkflowRunStatus::Succeeded,
+        Stored::Failed => WorkflowRunStatus::Failed,
+        Stored::Cancelled => WorkflowRunStatus::Cancelled,
     })
 }

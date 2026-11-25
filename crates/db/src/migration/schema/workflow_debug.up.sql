@@ -58,6 +58,12 @@ CREATE TABLE workflow_debug_operations (
     failure TEXT,
     -- JSON array of the attempts a failed stop could not prove settled.
     unsettled_attempts TEXT NOT NULL DEFAULT '[]',
+    -- The run as it was when the confirmation was accepted. A terminal run returns to it when
+    -- the debugged scope does not settle successfully.
+    prior_status INTEGER NOT NULL,
+    prior_error TEXT,
+    prior_output TEXT,
+    prior_finished_at INTEGER,
     released INTEGER NOT NULL DEFAULT 0 CHECK(released IN (0,1)),
     CHECK ((state = 'applied') = (revision IS NOT NULL)),
     CHECK ((state = 'stop_failed') = (failure IS NOT NULL)),

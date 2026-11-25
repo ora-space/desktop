@@ -142,6 +142,10 @@ pub struct WorkflowDebugOperation {
 #[ts(export_to = "workflow-run.ts")]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowDebugHistoryEntry {
+    /// Run status and error as they were when the confirmation was accepted. A terminal run keeps
+    /// them while the stop is in progress and returns to `running` once the revision applies.
+    pub prior_run_status: crate::WorkflowRunStatus,
+    pub prior_error: Option<String>,
     pub operation: WorkflowDebugOperation,
     pub preview: WorkflowDebugPreview,
     pub patch: Vec<WorkflowDebugPatch>,

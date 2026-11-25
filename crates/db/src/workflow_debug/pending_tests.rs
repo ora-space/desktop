@@ -111,7 +111,7 @@ fn pending_edit_binds_first_dispatch_without_allocating_an_attempt() {
     let commit = commit(preview.preview_id);
     store.claim(&commit).unwrap();
     store
-        .apply_after_stop("other", "continue", |_, _| Ok(()))
+        .apply_after_stop("other", "continue", 1, |_, _| Ok(()))
         .unwrap();
     store
         .pool

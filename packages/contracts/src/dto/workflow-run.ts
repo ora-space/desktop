@@ -366,6 +366,12 @@ export type UpdateWorkflowRunInputRequest = {
 export type UpdateWorkflowRunInputResponse = { run: WorkflowRun };
 
 export type WorkflowDebugHistoryEntry = {
+  /**
+   * Run status and error as they were when the confirmation was accepted. A terminal run keeps
+   * them while the stop is in progress and returns to `running` once the revision applies.
+   */
+  priorRunStatus: WorkflowRunStatus;
+  priorError: string | null;
   operation: WorkflowDebugOperation;
   preview: WorkflowDebugPreview;
   patch: Array<WorkflowDebugPatch>;

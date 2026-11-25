@@ -107,7 +107,7 @@ fn revision_history_survives_reopen_and_two_edits() {
     ));
     assert!(
         store
-            .apply_after_stop("F", "k", |_, _| Err(
+            .apply_after_stop("F", "k", 1, |_, _| Err(
                 DatabaseError::IncompleteWorkflowRunContext
             ))
             .is_err()
@@ -116,7 +116,7 @@ fn revision_history_survives_reopen_and_two_edits() {
         store.history("F").unwrap()[0].operation.phase,
         WorkflowDebugPhase::Stopping
     );
-    let applied = store.apply_after_stop("F", "k", |_, _| Ok(())).unwrap();
+    let applied = store.apply_after_stop("F", "k", 1, |_, _| Ok(())).unwrap();
     assert_eq!(applied.phase, WorkflowDebugPhase::Applied { revision: 1 });
     let reopened = WorkflowDebugStore::new(RepositoryPool::new(&path).unwrap());
     let DebugClaim::Existing(original) = reopened.claim(&commit).unwrap() else {
@@ -134,7 +134,7 @@ fn revision_history_survives_reopen_and_two_edits() {
     commit.request_id = "second".into();
     reopened.claim(&commit).unwrap();
     reopened
-        .apply_after_stop("F", "second", |_, _| Ok(()))
+        .apply_after_stop("F", "second", 1, |_, _| Ok(()))
         .unwrap();
     assert_eq!(
         reopened
@@ -290,7 +290,7 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
     };
     store.claim(&commit).unwrap();
     store
-        .apply_after_stop("other", "confirm", |tx, plan| {
+        .apply_after_stop("other", "confirm", 1, |tx, plan| {
             for id in &plan.impact.invalidate {
                 tx.execute(
                     "UPDATE workflow_node_runs SET is_deleted=1 WHERE id=?1",
@@ -515,6 +515,160 @@ fn active_operation_fences_new_confirmations_and_recovery_entries() {
             .switch_run_snapshot(&run, &snapshot(), "{}", 4)
             .unwrap()
     );
+}
+
+/// Reads the status, error and finish time of run `F`.
+fn run_row(store: &WorkflowDebugStore) -> (i64, Option<String>, Option<i64>) {
+    store
+        .pool
+        .with_connection(|db| {
+            Ok(db.query_row(
+                "SELECT run_status,error,finished_at FROM workflow_runs WHERE id='F'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?)
+        })
+        .unwrap()
+}
+
+/// A run accepted in a terminal state keeps its own outcome while the stop is in flight, and
+/// returns to running only in the commit that applies the revision.
+#[test]
+fn terminal_run_returns_to_running_with_the_applied_revision() {
+    let (_temp, path, store) = fixture();
+    store
+        .record_agent_dispatch(
+            "F",
+            "t3",
+            &json!({"variablePool":WorkflowVariablePool::default()}),
+        )
+        .unwrap();
+    // The target failed and took the run with it.
+    store
+        .pool
+        .with_connection(|db| {
+            db.execute("UPDATE workflow_node_runs SET status=3 WHERE id='t3'", [])?;
+            db.execute(
+                "UPDATE workflow_runs SET run_status=3,error='E',finished_at=5 WHERE id='F'",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let preview = store.preview(&edit("fixed", 0), impact).unwrap();
+    let commit = CommitWorkflowDebugRequest {
+        run_id: "F".into(),
+        preview_id: preview.preview_id,
+        request_id: "k".into(),
+    };
+    assert!(matches!(
+        store.claim(&commit).unwrap(),
+        DebugClaim::Claimed(_)
+    ));
+    assert_eq!(run_row(&store), (3, Some("E".into()), Some(5)));
+    let applied = store
+        .apply_after_stop("F", "k", 7, |tx, _| {
+            tx.execute("UPDATE workflow_node_runs SET is_deleted=1 WHERE id='t3'", [])?;
+            tx.execute(
+                "INSERT INTO workflow_node_runs(id,run_id,scope_id,node_id,node_type,status,created_at,updated_at)
+                SELECT 't3-new','F',scope_id,'agent','agent',0,7,7
+                FROM workflow_run_root_scopes WHERE run_id='F'",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(applied.phase, WorkflowDebugPhase::Applied { revision: 1 });
+    assert_eq!(run_row(&store), (1, None, None));
+    let reopened = WorkflowDebugStore::new(RepositoryPool::new(&path).unwrap());
+    let history = reopened.history("F").unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(
+        (
+            history[0].prior_run_status,
+            history[0].prior_error.as_deref()
+        ),
+        (WorkflowRunStatus::Failed, Some("E"))
+    );
+    let attempt = |id: &str| {
+        reopened
+            .attempt(&GetWorkflowDebugAttemptRequest {
+                run_id: "F".into(),
+                node_run_id: id.into(),
+            })
+            .unwrap()
+    };
+    // The replacement starts under the new revision. The failed attempt stays readable under
+    // the one it actually used.
+    let replacement = attempt("t3-new");
+    assert_eq!(
+        (replacement.revision, replacement.status),
+        (Some(1), WorkflowNodeStatus::Pending)
+    );
+    let retired = attempt("t3");
+    assert_eq!(
+        (
+            retired.revision,
+            retired.superseded,
+            retired.retired_by_operation_id,
+            retired.configuration.unwrap()["agentConfig"]["prompt"].clone(),
+        ),
+        (
+            Some(0),
+            true,
+            Some(history[0].operation.operation_id.clone()),
+            json!("old"),
+        )
+    );
+}
+
+/// A run that reached a new outcome while the stop was in flight keeps that outcome: only the
+/// revision applies, and failure recovery reads it later.
+#[test]
+fn revision_applies_without_reopening_a_run_that_moved_on() {
+    let (_temp, _path, store) = fixture();
+    store
+        .record_agent_dispatch(
+            "F",
+            "t3",
+            &json!({"variablePool":WorkflowVariablePool::default()}),
+        )
+        .unwrap();
+    let preview = store.preview(&edit("one", 0), impact).unwrap();
+    let commit = CommitWorkflowDebugRequest {
+        run_id: "F".into(),
+        preview_id: preview.preview_id,
+        request_id: "k".into(),
+    };
+    assert!(matches!(
+        store.claim(&commit).unwrap(),
+        DebugClaim::Claimed(_)
+    ));
+    let history = store.history("F").unwrap();
+    assert_eq!(
+        (history[0].prior_run_status, history[0].prior_error.clone()),
+        (WorkflowRunStatus::Running, None)
+    );
+    // An independent branch failed while the coordinator was stopping the target.
+    store
+        .pool
+        .with_connection(|db| {
+            Ok(db
+                .execute(
+                    "UPDATE workflow_runs SET run_status=3,error='sibling' WHERE id='F'",
+                    [],
+                )
+                .map(|_| ())?)
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .apply_after_stop("F", "k", 9, |_, _| Ok(()))
+            .unwrap()
+            .phase,
+        WorkflowDebugPhase::Applied { revision: 1 }
+    );
+    assert_eq!(run_row(&store), (3, Some("sibling".into()), None));
 }
 
 /// The frozen boolean selects ELSE after replacing a comparison, without changing case identity.
