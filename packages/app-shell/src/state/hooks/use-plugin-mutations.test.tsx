@@ -80,9 +80,10 @@ describe("usePluginMutations", () => {
       },
     });
     const queryClient = createTestQueryClient();
-    const queryKey = agentRuntimeKeys.agentModels(
+    const queryKey = agentRuntimeKeys.agentDiscovery(
       AGENT_REF,
       TARGET.workspaceId,
+      "modelsAndCommands",
     );
     const loadModels = vi.fn(async () => ({ catalog: "current" }));
 

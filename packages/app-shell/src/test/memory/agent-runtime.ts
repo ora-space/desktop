@@ -35,16 +35,21 @@ export function agentRuntimeHandlers(state: AgentRuntimeMemoryState) {
     getAgentRuntimeStatus: async () => ({
       statuses: [...state.agentRuntimeStatuses],
     }),
-    listAgentModels: async (req) => {
+    discoverAgent: async (req) => {
       const options = state.agentModelsByCli?.[req.agentRef];
       const configOptions =
         options === undefined ? state.configOptions : options;
-      if (configOptions === null) return { models: [] };
+      const commands = req.includeCommands
+        ? state.discoveredCommandsByCli?.[req.agentRef]
+        : undefined;
+      const known = commands === undefined ? {} : { commands };
+      if (configOptions === null) return { models: [], ...known };
       const selector = configOptions.find(
         (option) => option.type === "select" && option.category === "model",
       );
-      if (selector?.type !== "select") return { models: [] };
+      if (selector?.type !== "select") return { models: [], ...known };
       return {
+        ...known,
         models: selector.options.flatMap((entry) =>
           "group" in entry
             ? entry.options.map((option) => ({

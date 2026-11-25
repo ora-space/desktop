@@ -64,11 +64,14 @@ error.
 | Direction     | Shape                         | Correlation        | Bounded by     |
 | ------------- | ----------------------------- | ------------------ | -------------- |
 | Host → plugin | `invoke` request/response     | runtime request id | `call_timeout` |
+| Host → plugin | `invoke_until`, the same      | runtime request id | caller's instant |
 | Host → plugin | `notify` notification         | none               | nothing        |
 | Plugin → host | whitelisted notification      | none               | nothing        |
 | Plugin → host | request served by the handler | plugin request id  | the handler    |
 
-`call_timeout` deliberately covers `invoke` only. Notifications carry payloads whose
+`call_timeout` deliberately covers `invoke` only, counted from the request reaching the
+writer. `invoke_until` stops at an instant the caller chose, so any wait for the writer
+counts and the plugin can be told the same moment. Notifications carry payloads whose
 own protocol owns correlation and cancellation — ACP traffic streams for minutes, which
 a control-call timeout would sever. Plugin-originated notifications arrive on the
 unbounded receiver returned by `launch`; connection-wide backpressure would let one

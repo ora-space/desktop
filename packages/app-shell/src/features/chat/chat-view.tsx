@@ -1,6 +1,8 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { IconLoader2 } from "@tabler/icons-react";
+import type { AgentDiscoveryScope } from "../../state/data/agent-runtime";
+import type { DiscoveredCommands } from "./agent-commands";
 import { Composer } from "./composer";
 import { LandingHeading } from "./empty-state";
 import { MessageList } from "./message-list";
@@ -41,6 +43,8 @@ interface ChatViewProps {
   modelSelectorDisabled?: boolean;
   /** Session whose model configuration the selector should display. */
   modelSelectorSessionId?: string;
+  /** Keeps the selector from waiting for commands this surface never shows. */
+  discoveryScope?: AgentDiscoveryScope;
   /** Hides message composition while retaining the ordinary transcript and trailing actions. */
   composerVisible?: boolean;
   onSend: (text: string, images?: acp.ImageContent[]) => void;
@@ -79,6 +83,8 @@ interface ChatViewProps {
   roles?: Agent[];
   /** `null`, also when omitted, while the Agent has not reported its commands. */
   availableCommands?: acp.AvailableCommand[] | null;
+  /** Shown in the composer while no report describes the Agent the next message goes to. */
+  discoveredCommands?: DiscoveredCommands;
 }
 
 /** Stable so an unreported catalog does not re-render the memoized message list. */
@@ -113,6 +119,7 @@ export function ChatView({
   disabled = false,
   modelSelectorDisabled = disabled,
   modelSelectorSessionId,
+  discoveryScope = "modelsAndCommands",
   composerVisible = true,
   onSend,
   onStop,
@@ -126,6 +133,7 @@ export function ChatView({
   skills = [],
   roles = [],
   availableCommands = null,
+  discoveredCommands,
 }: ChatViewProps) {
   const { t } = useTranslation();
   // A loading session takes the thread layout even before its turns arrive, so the
@@ -317,10 +325,12 @@ export function ChatView({
                   disabled={disabled}
                   modelSelectorDisabled={modelSelectorDisabled}
                   modelSelectorSessionId={modelSelectorSessionId}
+                  discoveryScope={discoveryScope}
                   sendDisabledHint={sendDisabledHint}
                   skills={skills}
                   roles={roles}
                   availableCommands={availableCommands}
+                  discoveredCommands={discoveredCommands}
                 />
               </TooltipTrigger>
               <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>

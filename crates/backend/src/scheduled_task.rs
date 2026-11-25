@@ -19,8 +19,8 @@ use ora_application::{
 };
 use ora_contracts::{
     AgentModel, CreateScheduledTaskRequest, CreateScheduledTaskResponse,
-    DeleteScheduledTaskRequest, DeleteScheduledTaskResponse, EmptyErrorParams,
-    GetScheduledTaskRequest, GetScheduledTaskResponse, ListAgentModelsRequest,
+    DeleteScheduledTaskRequest, DeleteScheduledTaskResponse, DiscoverAgentRequest,
+    EmptyErrorParams, GetScheduledTaskRequest, GetScheduledTaskResponse,
     ListScheduledRunArtifactsRequest, ListScheduledRunArtifactsResponse,
     ListScheduledTaskHistoryRequest, ListScheduledTaskHistoryResponse, ListScheduledTasksRequest,
     ListScheduledTasksResponse, PublicError, ReadScheduledRunArtifactRequest,
@@ -280,10 +280,10 @@ impl ScheduledTaskApi {
             })?;
         let response = self
             .agent_runtime
-            .models(ListAgentModelsRequest {
-                agent_ref: agent_ref.to_string(),
-                workspace_id: workspace.id.to_string(),
-            })
+            .discover(DiscoverAgentRequest::models_only(
+                agent_ref.to_string(),
+                workspace.id.to_string(),
+            ))
             .await?;
         require_requested_model(model, &response.models)
     }

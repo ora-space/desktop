@@ -360,6 +360,7 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     // Collected on the channel the actor inherits, so the non-command setup updates the agent sent
     // alongside them stay queued on it instead of being discarded with a throwaway registration.
     let available_commands = collect_setup_commands(&mut channel).await;
+    crate::discovery::warn_when_commands_exceed_limit(agent_ref, available_commands.len());
     let mut config_options = response.config_options.unwrap_or_default();
     if let Some(model) = model {
         config_options = apply_model_intent(

@@ -903,6 +903,7 @@ export function RunNodeSessionChat({
         disabled={composerDisabled}
         modelSelectorDisabled
         modelSelectorSessionId={sessionId}
+        discoveryScope="models"
         composerVisible={interactive}
         trailing={stepCard}
         composerActions={
