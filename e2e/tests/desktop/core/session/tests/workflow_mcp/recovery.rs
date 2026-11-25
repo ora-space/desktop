@@ -70,7 +70,8 @@ fn restoring_a_workflow_session_after_mcp_uninstall_fails_closed() -> TestResult
         let before = acp_calls(&package_root);
         let error = follow_up(&backend, &session_id)
             .await
-            .expect_err("an incomplete persisted selection must reject the continuation");
+            .err()
+            .ok_or("an incomplete persisted selection must reject the continuation")?;
         let error = error
             .downcast_ref::<BackendError>()
             .ok_or(error.to_string())?;
