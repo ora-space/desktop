@@ -4,7 +4,7 @@ use super::Migration;
 /// Legacy attempts deliberately acquire no inferred entry evidence.
 pub fn migration() -> Migration {
     Migration::new(
-        "0025",
+        "0026",
         &[include_str!("workflow_debug.up.sql")],
         &[include_str!("workflow_debug.down.sql")],
     )

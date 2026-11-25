@@ -96,7 +96,8 @@ CREATE VIEW workflow_debug_revisions AS
     SELECT run_id,revision FROM workflow_debug_baselines
     UNION ALL SELECT run_id,revision FROM workflow_debug_operations WHERE revision IS NOT NULL;
 
--- Record only new attempts. A retry waiting for its backoff has no dispatch evidence yet.
+-- A waiting retry captures its own entry state. Until dispatch, preview can use its replaced
+-- attempt's proven input; history never presents this as a new dispatch.
 CREATE TRIGGER workflow_debug_admit AFTER INSERT ON workflow_node_runs
 BEGIN
     INSERT INTO workflow_debug_attempts(node_run_id, snapshot_id, revision, container_attempt, entry_state)
