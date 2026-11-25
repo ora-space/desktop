@@ -141,9 +141,9 @@ turn locally until `startSession` returns.
 - **Configure.** A session that holds a provider reports its own options and is configured through
   `setSessionConfig`. The actor takes the agent's answer before the caller gets it, so a view opened
   later sees the options after the change; an answer for a provider session that was replaced
-  meanwhile is ignored. A model chosen while a session held no provider is an intent applied at the
-  next attach. Reasoning effort is read only from the `thought_level` option a live session reports;
-  there is no pre-session effort catalog.
+  meanwhile is ignored, and the caller gets the replacement's options. A model chosen while a session
+  held no provider is an intent applied at the next attach. Reasoning effort is read only from the
+  `thought_level` option a live session reports; there is no pre-session effort catalog.
 - **Stop and delete.** Explicit stop calls `session/close` when advertised, unloads the route and
   keeps provider history. Deletion is described in [Session history](session-history.md#deletion).
 

@@ -194,8 +194,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     config_options,
                     response,
                 } => {
-                    self.adopt_config_options(&agent_session_id, config_options);
-                    let _ = response.send(());
+                    let current = self.adopt_config_options(&agent_session_id, config_options);
+                    let _ = response.send(current);
                 }
                 RuntimeCommand::AdoptUserTitle { title, response } => {
                     self.adopt_user_title(title);

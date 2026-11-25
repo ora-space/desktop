@@ -152,8 +152,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             return;
                         }
                         RuntimeCommand::AdoptConfigOptions { agent_session_id, config_options, response } => {
-                            self.adopt_config_options(&agent_session_id, config_options);
-                            let _ = response.send(());
+                            let current = self.adopt_config_options(&agent_session_id, config_options);
+                            let _ = response.send(current);
                         }
                         RuntimeCommand::AdoptUserTitle { title, response } => {
                             self.channel = Some(channel);
@@ -348,17 +348,19 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
     }
 
-    /// Takes the options a direct configuration call was answered with, as if they were reported.
+    /// Takes the options a direct configuration call was answered with, as if they were reported,
+    /// and returns those the session is on.
     pub(super) fn adopt_config_options(
         &mut self,
         agent_session_id: &str,
         config_options: Vec<SessionConfigOption>,
-    ) {
+    ) -> Vec<SessionConfigOption> {
         if agent_session_id == self.provider_session_id() {
             self.observe_session_update(&SessionUpdate::ConfigOptionUpdate(
                 ConfigOptionUpdate::new(config_options),
             ));
         }
+        self.reported_config_options.clone()
     }
 
     /// Locks acquisition and records the user-chosen title so later agent titles cannot win.
