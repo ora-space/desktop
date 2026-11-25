@@ -1,17 +1,17 @@
 use ora_application::{
     BindWorkflowNodeSessionResult, CancelWorkflowRunResult, FileChange, NewImportedWorkflow,
     NodeFailure, NodeFailureKind, NodeRunToStart, ProjectRepository, RestartWorkflowRunResult,
-    ResumeWorkflowRunResult, SessionRepository, SkillRepository, StartWorkflowRunResult,
-    WorkflowDocumentSource, WorkflowDocumentSourceRepository, WorkflowRepository,
-    WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
+    ResumeWorkflowRunResult, SessionRepository, SkillNameClaimedError, SkillRepository,
+    StartWorkflowRunResult, WorkflowDocumentSource, WorkflowDocumentSourceRepository,
+    WorkflowRepository, WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
     WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::{
     AgentRef, AuditFields, Namespace, PluginId, Project, ProjectId, Session, SessionId,
-    SessionStatus, SkillOrigin, Workflow, WorkflowId, WorkflowNodeRunId, WorkflowNodeStatus,
-    WorkflowRun, WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Workspace,
-    WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
+    SessionStatus, Skill, SkillId, SkillOrigin, Workflow, WorkflowId, WorkflowNodeRunId,
+    WorkflowNodeStatus, WorkflowRun, WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot,
+    WorkflowSnapshotId, Workspace, WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -72,6 +72,43 @@ fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
 
     repository.remove_plugin_skills(&plugin_id, 20).unwrap();
     assert!(repository.list_skills().unwrap().is_empty());
+}
+
+/// Verifies the active-name unique index surfaces as a typed claim, not a storage failure.
+#[test]
+fn create_skill_reports_a_visible_name_claim() {
+    let (_temp_dir, pool) = bootstrapped_pool();
+    let repository = SqliteSkillRepository::new(pool);
+    let namespace = Namespace::local();
+    let skill = |id: &str, name: &str, updated_at: i64| {
+        Skill::new(
+            SkillId::new(id),
+            namespace.clone(),
+            name,
+            "Description",
+            AuditFields::new(1, updated_at, /*is_deleted*/ false),
+        )
+        .unwrap()
+    };
+
+    repository
+        .create_skill(skill("skill-1", "grilling", 1))
+        .unwrap();
+
+    // The index compares names case-insensitively, exactly like the name lookup.
+    let error = repository
+        .create_skill(skill("skill-2", "Grilling", 2))
+        .unwrap_err();
+    assert!(error.is::<SkillNameClaimedError>());
+
+    // Only visible rows are covered, so a deleted skill frees its name again.
+    repository
+        .soft_delete_skill(&SkillId::new("skill-1"), 3)
+        .unwrap();
+    repository
+        .create_skill(skill("skill-3", "grilling", 4))
+        .unwrap();
+    assert_eq!(repository.list_skills().unwrap().len(), 1);
 }
 /// Verifies project creation materializes the shared main workspace used by ordinary sessions.
 #[test]
