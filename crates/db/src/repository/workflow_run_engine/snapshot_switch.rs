@@ -4,8 +4,8 @@ use ora_application::RepositoryError;
 use ora_domain::{WorkflowRunId, WorkflowRunStatus, WorkflowSnapshotId};
 use rusqlite::{Transaction, TransactionBehavior, params};
 
-/// Points a Failed/Cancelled run at another snapshot, stores the migrated payload and, for a run
-/// with run-local debug revisions, starts a new configuration baseline in the same transaction.
+/// Points a Failed/Cancelled run at another snapshot, stores the migrated payload and starts
+/// a new configuration baseline in the same transaction, even before the first debug edit.
 ///
 /// Returns `false` when the run is missing or not in a resumable status.
 pub(super) fn switch_run_snapshot(
@@ -38,8 +38,7 @@ pub(super) fn switch_run_snapshot(
         if updated > 0 {
             transaction.execute(
                 "INSERT INTO workflow_debug_baselines(run_id,revision,snapshot_id)
-                 SELECT ?1,COALESCE((SELECT MAX(revision) FROM workflow_debug_revisions WHERE run_id=?1),0)+1,?2
-                 WHERE EXISTS(SELECT 1 FROM workflow_debug_revisions WHERE run_id=?1)",
+                 SELECT ?1,COALESCE((SELECT MAX(revision) FROM workflow_debug_revisions WHERE run_id=?1),0)+1,?2",
                 params![run_id.as_ref(), snapshot_id.as_ref()],
             )?;
         }

@@ -27,6 +27,8 @@ pub enum DebugRejection {
     StalePreview,
     #[error("request_conflict")]
     RequestConflict,
+    #[error("empty requestId")]
+    EmptyRequestId,
     #[error("debug_operation_active")]
     OperationActive,
     #[error("missing_input_evidence: {0}")]

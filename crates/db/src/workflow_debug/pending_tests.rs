@@ -293,6 +293,31 @@ fn pending_foreach_member_requires_owner_and_exact_bound_item() {
         .unwrap();
     assert_eq!(preview.target.index, Some(2));
     assert_eq!(preview.target.container_node_run_id.as_deref(), Some("it"));
+    store
+        .claim(&CommitWorkflowDebugRequest {
+            run_id: "other".into(),
+            preview_id: preview.preview_id,
+            request_id: "item".into(),
+        })
+        .unwrap();
+    store
+        .apply_after_stop("other", "item", 1, |_, _| Ok(()))
+        .unwrap();
+    store
+        .pool
+        .with_connection(|db| insert_attempt(db, "wrong-index", "agent", "agent", Some(1)))
+        .unwrap();
+    assert_eq!(store.history("other").unwrap()[0].first_node_run_id, None);
+    store
+        .pool
+        .with_connection(|db| insert_attempt(db, "selected-index", "agent", "agent", Some(2)))
+        .unwrap();
+    assert_eq!(
+        store.history("other").unwrap()[0]
+            .first_node_run_id
+            .as_deref(),
+        Some("selected-index")
+    );
 }
 
 /// A Loop member uses the actual round scope and carried value, never a future round.

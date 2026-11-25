@@ -22,6 +22,11 @@ impl From<DebugRejection> for BackendError {
             })
         };
         let (classification, public_error, context) = match &rejection {
+            DebugRejection::EmptyRequestId => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "workflow debug confirmation requires a request ID",
+            ),
             DebugRejection::StalePreview => (
                 ErrorClassification::Conflict,
                 PublicError::WorkflowDebugStalePreview(EmptyErrorParams {}),

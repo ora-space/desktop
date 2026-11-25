@@ -6,6 +6,66 @@ use serde_json::json;
 
 #[path = "pending_tests.rs"]
 mod pending_tests;
+#[path = "storage_measurement.rs"]
+mod storage_measurement;
+
+/// Backoff is a real attempt with its own entry, but no invented dispatch. The timer racing
+/// confirmation invalidates the receipt even though the physical attempt ID does not change.
+#[test]
+fn waiting_retry_uses_its_predecessor_until_the_timer_starts_it() {
+    use ora_application::{
+        NodeFailure, NodeFailureKind, NodeRetryToSchedule, WorkflowRetryRepository,
+    };
+    let (_temp, _, store) = fixture();
+    let input =
+        json!({"variablePool":WorkflowVariablePool::default(), "prompt":"original dispatch"});
+    assert!(store.record_agent_dispatch("F", "t3", &input).unwrap());
+    assert!(!store.record_agent_dispatch("F", "t3", &json!({})).unwrap());
+    let repo = crate::SqliteWorkflowRunEngineRepository::new(store.pool.clone());
+    let waiting = ora_domain::WorkflowNodeRunId::new("retry");
+    repo.schedule_node_retry(
+        &ora_domain::WorkflowNodeRunId::new("t3"),
+        &NodeFailure::new(NodeFailureKind::Session, "retry"),
+        &NodeRetryToSchedule {
+            node_run_id: waiting.clone(),
+            retry: 1,
+            max_retries: 1,
+            delay_ms: 20,
+            due_at: 30,
+        },
+        10,
+    )
+    .unwrap();
+    let mut request = edit("corrected", 0);
+    request.selection = WorkflowDebugSelection::NodeRunId(waiting.to_string());
+    let p = store
+        .preview(&request, |i| {
+            assert_eq!(i.dispatch.as_ref(), Some(&input));
+            assert_eq!(i.target.node_run_id.as_deref(), Some("retry"));
+            assert_eq!(i.entry["scopeId"], "root:F");
+            impact(i)
+        })
+        .unwrap();
+    assert!(
+        !store
+            .attempt(&GetWorkflowDebugAttemptRequest {
+                run_id: "F".into(),
+                node_run_id: waiting.to_string()
+            })
+            .unwrap()
+            .input_recorded
+    );
+    repo.begin_node_retry(&waiting, 30).unwrap();
+    assert!(matches!(
+        store.claim(&CommitWorkflowDebugRequest {
+            run_id: "F".into(),
+            preview_id: p.preview_id,
+            request_id: "confirm".into()
+        }),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::StalePreview))
+    ));
+    assert!(store.preview(&request, impact).is_err());
+}
 
 /// Seeds a real migrated database with two runs of the same published definition.
 fn fixture() -> (tempfile::TempDir, DatabaseLocation, WorkflowDebugStore) {
@@ -51,6 +111,79 @@ fn edit(value: &str, revision: u32) -> PreviewWorkflowDebugRequest {
         {"op":"replace","path":"/agentConfig/prompt","value":value}]}),
     )
     .unwrap()
+}
+
+/// Admission and apply must independently reject a stale or unavailable target.
+#[test]
+fn invalid_run_or_replaced_attempt_cannot_apply() {
+    let (_temp, _, store) = fixture();
+    store
+        .record_agent_dispatch(
+            "F",
+            "t3",
+            &json!({"variablePool":WorkflowVariablePool::default()}),
+        )
+        .unwrap();
+    let p = store.preview(&edit("new", 0), impact).unwrap();
+    let mut request = CommitWorkflowDebugRequest {
+        run_id: "F".into(),
+        preview_id: p.preview_id,
+        request_id: "  ".into(),
+    };
+    assert!(matches!(
+        store.claim(&request),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::EmptyRequestId))
+    ));
+    request.request_id = "k".into();
+    store.claim(&request).unwrap();
+    store
+        .pool
+        .with_connection(|db| {
+            db.execute(
+                "UPDATE workflow_node_runs SET is_deleted=1 WHERE id='t3'",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(matches!(
+        store.apply_after_stop("F", "k", 4, |_, _| panic!("stale settlement")),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::StalePreview))
+    ));
+    assert_eq!(
+        store.history("F").unwrap()[0].operation.phase,
+        WorkflowDebugPhase::Stopping
+    );
+    let mut other = edit("test", 0);
+    other.run_id = "other".into();
+    other.selection = WorkflowDebugSelection::NodeRunId("other-agent".into());
+    store
+        .pool
+        .with_connection(|db| insert_attempt(db, "other-agent", "agent", "agent", None))
+        .unwrap();
+    store
+        .record_agent_dispatch(
+            "other",
+            "other-agent",
+            &json!({"variablePool":WorkflowVariablePool::default()}),
+        )
+        .unwrap();
+    for (status, deleted) in [(0, 0), (1, 1)] {
+        store
+            .pool
+            .with_connection(|db| {
+                db.execute(
+                    "UPDATE workflow_runs SET run_status=?1,is_deleted=?2 WHERE id='other'",
+                    params![status, deleted],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(matches!(
+            store.preview(&other, impact),
+            Err(DatabaseError::WorkflowDebug(DebugRejection::InvalidTarget))
+        ));
+    }
 }
 
 /// Replays a lost response after reopening and checks CAS, rollback and request isolation.
@@ -337,6 +470,24 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
         "{{#iter.item#}}"
     );
     assert_eq!(attempt("f1").revision, Some(0));
+    store
+        .pool
+        .with_connection(|db| {
+            db.execute(
+                "UPDATE workflow_node_runs SET is_deleted=1 WHERE id='f1'",
+                [],
+            )?;
+            insert_attempt(db, "prefix-again", "agent", "agent", Some(1))
+        })
+        .unwrap();
+    let prefix = attempt("prefix-again");
+    assert_eq!(
+        (
+            prefix.revision,
+            prefix.configuration.unwrap()["agentConfig"]["prompt"].clone()
+        ),
+        (Some(1), json!("{{#iter.item#}}"))
+    );
     assert_eq!(
         attempt("new3").configuration.unwrap()["agentConfig"]["prompt"],
         json!("new-{{#iter.item#}}")
@@ -383,6 +534,20 @@ fn double_click_has_one_owner_and_failed_stop_stays_fenced() {
         );
     });
     let unsettled = [ora_domain::WorkflowNodeRunId::new("t3")];
+    store
+        .pool
+        .with_connection(|db| insert_attempt(db, "other-agent", "agent", "agent", None))
+        .unwrap();
+    assert!(
+        !store
+            .record_stop_failure(
+                "F",
+                "key",
+                "wrong run",
+                &[ora_domain::WorkflowNodeRunId::new("other-agent")]
+            )
+            .unwrap()
+    );
     assert!(
         store
             .record_stop_failure("F", "key", "still running", &unsettled)

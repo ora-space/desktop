@@ -33,12 +33,16 @@ pub(super) fn prepare(
         WorkflowDebugSelection::NodeRunId(id) => db.query_row(
         "SELECT n.node_id,n.scope_id,n.iteration,s.round_index,e.container_attempt,
                 e.snapshot_id,e.entry_state,CASE WHEN n.node_type='condition' AND json_valid(n.payload)
-                    THEN json_extract(n.payload,'$.debugCondition') ELSE e.dispatch_input END AS observed_input,n.node_type,snap.graph,n.id
+                    THEN json_extract(n.payload,'$.debugCondition') ELSE COALESCE(e.dispatch_input, prior.dispatch_input) END AS observed_input,n.node_type,snap.graph,n.id
          FROM workflow_node_runs n JOIN workflow_runs r ON r.id=n.run_id
          JOIN workflow_run_root_scopes root ON root.run_id=r.id
          JOIN workflow_execution_scopes s ON s.id=n.scope_id
          LEFT JOIN workflow_node_runs parent ON parent.id=s.parent_loop_node_run_id
-         LEFT JOIN workflow_debug_attempts e ON e.node_run_id=n.id
+          LEFT JOIN workflow_debug_attempts e ON e.node_run_id=n.id
+          LEFT JOIN workflow_node_runs replaced ON replaced.id=json_extract(CASE WHEN json_valid(n.payload) THEN n.payload END,'$.retry_wait.previous_node_run_id')
+            AND n.status=1 AND n.started_at IS NULL AND replaced.is_deleted=1 AND replaced.status=3
+            AND replaced.run_id=n.run_id AND replaced.scope_id=n.scope_id AND replaced.node_id=n.node_id AND replaced.iteration IS n.iteration
+          LEFT JOIN workflow_debug_attempts prior ON prior.node_run_id=replaced.id AND prior.snapshot_id=e.snapshot_id AND prior.container_attempt IS e.container_attempt
          JOIN workflow_snapshots snap ON snap.id=r.snapshot_id
          WHERE n.run_id=?1 AND n.id=?2 AND n.is_deleted=0
            AND (n.scope_id=root.scope_id OR (parent.scope_id=root.scope_id AND parent.is_deleted=0))

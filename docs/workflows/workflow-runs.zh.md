@@ -141,14 +141,14 @@ Start 输入把表单控件与变量池类型分开：文本、段落和下拉�
 
 ## 查询运行内调试历史
 
-`workflowRun.debugHistory({ runId })` 按受理顺序返回每次确认的请求键、预览、补丁和阶段。停稳成功并提交后，记录给出父修订和新修订；停稳失败的记录保留原因和无法证明已停稳的尝试（`unsettledNodeRunIds`）。每条记录同时保存受理时运行的状态和错误（`priorRunStatus`、`priorError`）：失败、取消或成功的运行在停稳期间保持原终态，在修订生效的同一次提交中回到运行中。重连后可以用原请求键关联同一次操作。停稳进行中，或停稳失败且栅栏尚未释放时，新的预览、新的确认、失败恢复、整次重启和快照切换都以 `debug_operation_active` 拒绝。拒绝以带类型的公开错误到达页面：`workflow_debug_stale_preview`、`workflow_debug_operation_active`、`workflow_debug_request_conflict`，带字段路径和原因的 `workflow_debug_patch_invalid`，以及带缺失事实或位置的 `workflow_debug_target_rejected`。
+`workflowRun.debugHistory({ runId })` 按受理顺序返回每次确认的请求键、预览、补丁和阶段。停稳成功并提交后，记录给出父修订和新修订；停稳失败的记录保留原因和无法证明已停稳的尝试（`unsettledNodeRunIds`）。每条记录同时保存受理时运行的状态和错误（`priorRunStatus`、`priorError`）：失败、取消或成功的运行在停稳期间保持原终态，在修订生效的同一次提交中回到运行中。重连后可以用原请求键关联同一次操作。停稳进行中，或停稳失败且栅栏尚未释放时，新的预览、新的确认、失败恢复、整次重启和快照切换都以 `workflow_debug_operation_active` 拒绝。拒绝以带类型的公开错误到达页面：`workflow_debug_stale_preview`、`workflow_debug_operation_active`、`workflow_debug_request_conflict`，带字段路径和原因的 `workflow_debug_patch_invalid`，以及带缺失事实或位置的 `workflow_debug_target_rejected`。
 
 `workflowRun.debugAttempt({ runId, nodeRunId })` 可以读取已被替代的尝试，返回所属轮或项、当时的配置修订、结果和输入证据是否齐备。foreach 的第 3 项使用 `index=2`，while 的第 3 轮使用 `round=3`。升级前缺少关联证据的尝试返回空配置与空修订。
+
+调试预览用 `nodeRunId` 选中已有尝试，用 `pendingTarget: { rootScopeId, scopeId, nodeId }` 选中尚未派发的位置。foreach 成员还需提供 `containerNodeRunId` 和从零开始的 `index`。预览按调度器的就绪条件核验前置和路径。若正常调度在确认前抢先派发，刷新后可选择实际尝试；修订生效后，历史记录用 `firstNodeRunId` 指向调度器为该位置首次登记的尝试，此前为空。若只有独立兄弟推进且目标及依赖仍有效，原预览可继续确认。选择容器入口时，预览会列出新容器将使用的成员配置。Iteration 的迭代源只接受声明为数组的根变量，指向嵌套数组的路径在 `iteratorSelector` 字段上被拒绝。
+
+失败恢复和整次重启都以运行当前的有效修订作为配置基线。重启会创建新的根，顶层的修改继续生效；两个入口重建容器时都从容器的入口配置开始，绑定在旧容器执行上的成员覆盖只留在历史里。只有成功切换发布快照才会开始新的基线：新快照和新的运行修订一起提交，之前的补丁和尝试留在历史里可供查询但不再重放，切回曾用过的快照也一样，切换前取得的预览随之过期。被拒绝的切换保留原快照和已有修订。
 
 ## 重启后的恢复
 
 Desktop 只有在持有应用实例锁之后才运行启动扫尾（见 [Desktop 宿主](../desktop/desktop-host.zh.md#启动)），所以存活的第二个进程永远不会把运行中的工作标记为已中断。被中断的外层行以 `interrupted_by_restart` 失败并让运行失败；运行中的容器内被中断的行失败，容器和运行保留，该轮以失败结算。合法的交互等待被保留，副作用未知的工具从不自动重放。
-
-调试预览用 `nodeRunId` 选中已有尝试，用 `pendingTarget: { rootScopeId, scopeId, nodeId }` 选中尚未派发的位置。foreach 成员还需提供 `containerNodeRunId` 和从零开始的 `index`。预览按调度器的就绪条件核验前置和路径。若正常调度在确认前抢先派发，刷新后可选择实际尝试；修订生效后，历史记录用 `firstNodeRunId` 指向调度器为该位置首次登记的尝试，此前为空。若只有独立兄弟推进且目标及依赖仍有效，原预览可继续确认。选择容器入口时，预览会列出新容器将使用的成员配置。Iteration 的迭代源只接受声明为数组的根变量，指向嵌套数组的路径在 `iteratorSelector` 字段上被拒绝。
-
-失败恢复和整次重启都以运行当前的有效修订作为配置基线。重启会创建新的根，顶层的修改继续生效；两个入口重建容器时都从容器的入口配置开始，绑定在旧容器执行上的成员覆盖只留在历史里。只有成功切换发布快照才会开始新的基线：新快照和新的运行修订一起提交，之前的补丁和尝试留在历史里可供查询但不再重放，切回归曾用过的快照也一样，切换前取得的预览随之过期。被拒绝的切换保留原快照和已有修订。

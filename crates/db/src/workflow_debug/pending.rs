@@ -165,7 +165,7 @@ pub(super) fn resolve(
     };
     if ready != ProjectedNodeState::Ready {
         return Err(missing(&format!(
-            "{} in {} is {ready:?}; prerequisites: {:?}",
+            "{} in {} is not ready for first dispatch; prerequisites: {}",
             pos.node_id,
             pos.scope_id,
             graph
@@ -176,7 +176,9 @@ pub(super) fn resolve(
                     .predecessors(&pos.node_id)
                     .into_iter()
                     .map(|n| &n.id)
-                    .collect::<Vec<_>>())
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", "))
                 .unwrap_or_default()
         ))
         .into());
