@@ -1,11 +1,10 @@
 #[cfg(test)]
 mod tests;
 
-use ora_agent_runtime::{SkillCatalogEntry, SkillCatalogSource};
+use ora_agent_runtime::{RuntimeError, SkillCatalogEntry, SkillCatalogSource};
 use ora_application::{FilesystemSkillStorage, SkillRepository as _, skill_package_is_usable};
 use ora_db::{RepositoryPool, SqliteSkillRepository};
 use ora_domain::{SkillOrigin, WorkspaceId};
-use ora_logging::ora_warn;
 use ora_utils::path::strip_verbatim_prefix;
 use std::path::{Path, PathBuf};
 
@@ -34,46 +33,37 @@ impl DesktopSkillCatalog {
 }
 
 impl SkillCatalogSource for DesktopSkillCatalog {
-    fn skill_catalog(&self, _workspace_id: &WorkspaceId) -> Vec<SkillCatalogEntry> {
-        let skills = match self.skill_repository.list_skills() {
-            Ok(skills) => skills,
-            Err(error) => {
-                ora_warn!(
-                    error = %error,
-                    "failed to query skill catalog for session delivery"
-                );
-                return Vec::new();
-            }
-        };
+    fn skill_catalog(
+        &self,
+        _workspace_id: &WorkspaceId,
+    ) -> Result<Vec<SkillCatalogEntry>, RuntimeError> {
+        let skills = self.skill_repository.list_skills().map_err(|error| {
+            RuntimeError::internal("failed to query skill catalog for session delivery", error)
+        })?;
         let storage = FilesystemSkillStorage::new(self.skills_root.clone());
-        skills
-            .into_iter()
-            .filter_map(|skill| {
-                match skill_package_is_usable(&storage, &skill) {
-                    Ok(true) => {}
-                    Ok(false) => return None,
-                    Err(error) => {
-                        ora_warn!(
-                            skill_id = %skill.id,
-                            skill_name = %skill.name,
-                            error = %error,
-                            "skipping unusable skill from session catalog"
-                        );
-                        return None;
-                    }
-                }
-                let package_dir = match &skill.origin {
-                    SkillOrigin::Local => self.skills_root.join(&skill.name),
-                    SkillOrigin::Plugin { package_root, .. } => strip_verbatim_prefix(package_root),
-                };
-                Some(SkillCatalogEntry {
-                    name: skill.name,
-                    description: skill.description,
-                    skill_md_path: package_dir.join("SKILL.md"),
-                    package_dir,
-                })
-            })
-            .collect()
+        let mut entries = Vec::with_capacity(skills.len());
+        for skill in skills {
+            let usable = skill_package_is_usable(&storage, &skill).map_err(|error| {
+                RuntimeError::internal(
+                    "failed to verify skill package usability for session catalog",
+                    error,
+                )
+            })?;
+            if !usable {
+                continue;
+            }
+            let package_dir = match &skill.origin {
+                SkillOrigin::Local => self.skills_root.join(&skill.name),
+                SkillOrigin::Plugin { package_root, .. } => strip_verbatim_prefix(package_root),
+            };
+            entries.push(SkillCatalogEntry {
+                name: skill.name,
+                description: skill.description,
+                skill_md_path: package_dir.join("SKILL.md"),
+                package_dir,
+            });
+        }
+        Ok(entries)
     }
 
     fn extra_read_roots(&self) -> Vec<PathBuf> {

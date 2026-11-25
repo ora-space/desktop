@@ -212,7 +212,18 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let agent_session_id = self.provider_session_id().to_string();
         let mut servers = snapshot.servers().to_vec();
         servers.extend(self.session_mcp.host_mcp_servers());
-        let skill_entries = self.skill_catalog.skill_catalog(&self.session.workspace_id);
+        let skill_entries = match self.skill_catalog.skill_catalog(&self.session.workspace_id) {
+            Ok(entries) => entries,
+            Err(error) => {
+                ora_warn!(
+                    session_id = %self.session.id,
+                    workspace_id = %self.session.workspace_id,
+                    error = %error,
+                    "failed to read skill catalog for session/load; omitting skill directory metadata",
+                );
+                Vec::new()
+            }
+        };
         let request = crate::skill_catalog::apply_skill_setup_to_load_session(
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
                 .mcp_servers(servers),

@@ -105,7 +105,9 @@ fn resolves_usable_local_and_plugin_skill_paths_and_excludes_broken_packages() {
             vec![skills_root.clone(), plugins_installed]
         );
 
-        let entries = catalog.skill_catalog(&WorkspaceId::new("ws-1"));
+        let entries = catalog
+            .skill_catalog(&WorkspaceId::new("ws-1"))
+            .expect("read usable skill catalog");
         assert_eq!(
             entries,
             vec![
@@ -132,7 +134,114 @@ fn resolves_usable_local_and_plugin_skill_paths_and_excludes_broken_packages() {
         repo.remove_plugin_skills(&plugin_id, 21)
             .expect("remove plugin skills");
 
-        assert_eq!(catalog.skill_catalog(&WorkspaceId::new("ws-1")), vec![]);
+        assert_eq!(
+            catalog
+                .skill_catalog(&WorkspaceId::new("ws-1"))
+                .expect("read emptied skill catalog"),
+            vec![]
+        );
+    });
+}
+
+#[test]
+fn returns_error_when_skill_repository_query_fails() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let app_data = temp.path().join("app-data");
+        fs::create_dir_all(&app_data).expect("create app data dir");
+        let home_dir = temp.path().join("home");
+        let skills_root = app_data.join("atoms").join("skills");
+        let db_path = app_data.join("ora.sqlite3");
+        let pool = test_pool(&app_data);
+
+        // Drop the `skills` table directly to simulate a database read error.
+        let conn = rusqlite::Connection::open(&db_path).expect("open sqlite db");
+        conn.execute("DROP TABLE skills", [])
+            .expect("drop skills table");
+        drop(conn);
+
+        let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir);
+        let error = catalog
+            .skill_catalog(&WorkspaceId::new("ws-1"))
+            .expect_err("database read failure must return an error rather than an empty catalog");
+        assert!(
+            error.to_string().contains("failed to query skill catalog"),
+            "unexpected error: {error}"
+        );
+    });
+}
+
+#[test]
+fn returns_error_when_skill_manifest_read_fails_with_io_error() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let app_data = temp.path().join("app-data");
+        let home_dir = temp.path().join("home");
+        let skills_root = app_data.join("atoms").join("skills");
+        let local_dir = skills_root.join("locked-skill");
+        fs::create_dir_all(&local_dir).expect("create locked skill dir");
+        let manifest_path = local_dir.join("SKILL.md");
+        fs::write(
+            &manifest_path,
+            "---\nname: locked-skill\ndescription: Locked\n---\nBody",
+        )
+        .expect("write SKILL.md");
+
+        let pool = test_pool(&app_data);
+        let repo = SqliteSkillRepository::new(pool.clone());
+        repo.create_skill(
+            Skill::new(
+                SkillId::new("skill-locked"),
+                Namespace::local(),
+                "locked-skill",
+                "Locked",
+                AuditFields::new(10, 10, /*is_deleted*/ false),
+            )
+            .expect("locked skill"),
+        )
+        .expect("insert locked skill");
+
+        let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir);
+
+        #[cfg(windows)]
+        let _lock = {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .share_mode(0)
+                .open(&manifest_path)
+                .expect("exclusively lock SKILL.md on Windows")
+        };
+
+        #[cfg(unix)]
+        let _restore_perms = {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&manifest_path, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permissions on SKILL.md");
+            struct RestorePerms(std::path::PathBuf);
+            impl Drop for RestorePerms {
+                fn drop(&mut self) {
+                    let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o644));
+                }
+            }
+            // Root ignores 0o000 permissions on Unix; only assert when fs::read actually fails.
+            if fs::read(&manifest_path).is_ok() {
+                let _ = fs::set_permissions(&manifest_path, fs::Permissions::from_mode(0o644));
+                return;
+            }
+            RestorePerms(manifest_path.clone())
+        };
+
+        let error = catalog
+            .skill_catalog(&WorkspaceId::new("ws-1"))
+            .expect_err("package manifest read I/O error must propagate instead of dropping skill");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to verify skill package usability"),
+            "unexpected error: {error}"
+        );
     });
 }
 
@@ -174,7 +283,9 @@ fn strips_windows_verbatim_prefix_from_persisted_plugin_package_roots() {
         .expect("insert plugin skill");
 
         let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir);
-        let entries = catalog.skill_catalog(&WorkspaceId::new("ws-1"));
+        let entries = catalog
+            .skill_catalog(&WorkspaceId::new("ws-1"))
+            .expect("read plugin skill catalog");
         assert_eq!(
             entries,
             vec![SkillCatalogEntry {

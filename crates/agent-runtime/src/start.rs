@@ -342,7 +342,18 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     let setup_registration = supervisor.begin_session_setup();
     let mut servers = mcp.into_servers();
     servers.extend(session_mcp.host_mcp_servers());
-    let skill_entries = skill_catalog.skill_catalog(workspace_id);
+    let skill_entries = match skill_catalog.skill_catalog(workspace_id) {
+        Ok(entries) => entries,
+        Err(error) => {
+            ora_warn!(
+                session_id = %ora_session_id,
+                workspace_id = %workspace_id,
+                error = %error,
+                "failed to read skill catalog for session/new; omitting skill directory metadata",
+            );
+            Vec::new()
+        }
+    };
     let extra_read_roots = if connection.additional_directories_supported {
         skill_catalog.extra_read_roots()
     } else {

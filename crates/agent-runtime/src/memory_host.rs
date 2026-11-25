@@ -185,8 +185,11 @@ impl SessionSetup for NoSessionMcp {
 pub struct NoSkillCatalog;
 
 impl SkillCatalogSource for NoSkillCatalog {
-    fn skill_catalog(&self, _workspace_id: &WorkspaceId) -> Vec<SkillCatalogEntry> {
-        Vec::new()
+    fn skill_catalog(
+        &self,
+        _workspace_id: &WorkspaceId,
+    ) -> Result<Vec<SkillCatalogEntry>, RuntimeError> {
+        Ok(Vec::new())
     }
 
     fn extra_read_roots(&self) -> Vec<PathBuf> {

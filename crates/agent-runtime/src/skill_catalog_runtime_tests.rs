@@ -48,6 +48,7 @@ const PLUGIN_ID: &str = "official/skill-test.agent";
 struct DynamicSkillCatalog {
     entries: Arc<Mutex<Vec<SkillCatalogEntry>>>,
     roots: Arc<Mutex<Vec<PathBuf>>>,
+    fail_reads: Arc<AtomicBool>,
 }
 
 impl DynamicSkillCatalog {
@@ -58,11 +59,24 @@ impl DynamicSkillCatalog {
     fn set_roots(&self, roots: Vec<PathBuf>) {
         *self.roots.lock().unwrap() = roots;
     }
+
+    fn set_fail_reads(&self, fail: bool) {
+        self.fail_reads.store(fail, Ordering::Release);
+    }
 }
 
 impl SkillCatalogSource for DynamicSkillCatalog {
-    fn skill_catalog(&self, _workspace_id: &WorkspaceId) -> Vec<SkillCatalogEntry> {
-        self.entries.lock().unwrap().clone()
+    fn skill_catalog(
+        &self,
+        _workspace_id: &WorkspaceId,
+    ) -> Result<Vec<SkillCatalogEntry>, RuntimeError> {
+        if self.fail_reads.load(Ordering::Acquire) {
+            return Err(RuntimeError::internal(
+                "synthetic skill catalog read failure",
+                std::io::Error::other("disk unavailable"),
+            ));
+        }
+        Ok(self.entries.lock().unwrap().clone())
     }
 
     fn extra_read_roots(&self) -> Vec<PathBuf> {
@@ -969,6 +983,156 @@ async fn run_empty_init_and_compaction_reset_scenario() {
     scheduler.shutdown().await;
 }
 
+/// Verifies M1: a catalog read failure on turn 1 neither injects nor commits `announced_skills`
+/// (so turn 2 still emits the full catalog), and a mid-session read failure emits no false removal
+/// delta and preserves the prior announced baseline for later turns.
+async fn run_catalog_read_failure_scenario() {
+    ora_logging::initialize_test_clock();
+    let dir = TempDir::new().unwrap();
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    let fail_next_prompt = Arc::new(AtomicBool::new(false));
+    let next_prompt_updates = Arc::new(Mutex::new(Vec::new()));
+    let attach = Arc::new(MockAgentAttach::default());
+    attach
+        .install(
+            dir.path(),
+            /*provider_prefix*/ "readerr",
+            /*additional_directories_supported*/ true,
+            /*legacy_effect_resources*/ false,
+            frames.clone(),
+            fail_next_prompt,
+            next_prompt_updates,
+        )
+        .await;
+
+    let skills = DynamicSkillCatalog::default();
+    let read_roots = vec![dir.path().join("atoms").join("skills")];
+    skills.set_roots(read_roots.clone());
+    let skill_a = entry(
+        "alpha",
+        "Alpha skill.",
+        &dir.path()
+            .join("atoms/skills/alpha/SKILL.md")
+            .to_string_lossy(),
+        &dir.path().join("atoms/skills/alpha").to_string_lossy(),
+    );
+    skills.set_entries(vec![skill_a.clone()]);
+    skills.set_fail_reads(true);
+
+    let mcp = ControllableMcpSetup::default();
+    let store = MemorySessionStore::default();
+    let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
+    let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        attach,
+        store,
+        directory: FixedDir(dir.path().to_path_buf()),
+        session_setup: mcp,
+        skill_catalog: skills.clone(),
+        events: RecordedEvents::default(),
+        home_directory: dir.path().to_path_buf(),
+        sessions_root: dir.path().join("sessions"),
+        scheduler: scheduler.clone(),
+    })
+    .unwrap();
+    manager
+        .wait_for_agent(&AgentRef::parse(PLUGIN_ID).unwrap())
+        .await
+        .unwrap();
+
+    // `session/new` succeeds even when `skill_catalog()` fails: keeps `additionalDirectories`
+    // and omits `_meta["ora/skillDirectories"]`.
+    let session = manager
+        .start_session(StartSessionRequest {
+            workspace_id: "ws-1".into(),
+            agent_ref: PLUGIN_ID.into(),
+            model: None,
+        })
+        .await
+        .unwrap()
+        .session;
+    {
+        let recorded = frames.lock().unwrap();
+        let news = acp_methods(&recorded, "session/new");
+        assert_eq!(news.len(), 1);
+        assert_eq!(
+            news[0]["params"]["additionalDirectories"],
+            serde_json::to_value(&read_roots).unwrap()
+        );
+        assert!(news[0]["params"].get("_meta").is_none());
+    }
+
+    // Turn 1 with failing catalog read: no catalog injected, and `announced_skills` stays `None`.
+    send_prompt(&manager, &session.id, "turn 1 while failing").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(prompt_texts(prompts[0]), vec!["turn 1 while failing"]);
+    }
+
+    // Catalog read recovers before Turn 2: because Turn 1 did NOT commit an empty baseline,
+    // Turn 2 must emit the FULL `<available_skills>` catalog rather than an incremental update.
+    skills.set_fail_reads(false);
+    send_prompt(&manager, &session.id, "turn 2 recovered").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        let texts = prompt_texts(prompts[1]);
+        assert_eq!(texts.len(), 2);
+        assert!(
+            texts[0].starts_with("<available_skills>\n"),
+            "expected full catalog after turn 1 read failure, got: {texts:?}"
+        );
+        assert!(texts[0].contains("alpha: Alpha skill."));
+        assert_eq!(texts[1], "turn 2 recovered");
+    }
+
+    // Mid-session catalog read failure on Turn 3: must NOT emit a false removal delta and must
+    // preserve `announced_skills = {alpha}`.
+    skills.set_fail_reads(true);
+    send_prompt(&manager, &session.id, "turn 3 mid-session read failure").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(
+            prompt_texts(prompts[2]),
+            vec!["turn 3 mid-session read failure"]
+        );
+    }
+
+    // Catalog recovers unchanged on Turn 4: baseline still holds `alpha`, so no block is emitted.
+    skills.set_fail_reads(false);
+    send_prompt(&manager, &session.id, "turn 4 recovered unchanged").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(prompt_texts(prompts[3]), vec!["turn 4 recovered unchanged"]);
+    }
+
+    // Adding `beta` on Turn 5 produces an incremental `<available_skills_update>` for `beta` only.
+    let skill_b = entry(
+        "beta",
+        "Beta skill.",
+        &dir.path()
+            .join("atoms/skills/beta/SKILL.md")
+            .to_string_lossy(),
+        &dir.path().join("atoms/skills/beta").to_string_lossy(),
+    );
+    skills.set_entries(vec![skill_a, skill_b]);
+    send_prompt(&manager, &session.id, "turn 5 add beta").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        let texts = prompt_texts(prompts[4]);
+        assert_eq!(texts.len(), 2);
+        assert!(texts[0].starts_with("<available_skills_update>\n"));
+        assert!(texts[0].contains("beta: Beta skill."));
+        assert!(!texts[0].contains("alpha"));
+        assert_eq!(texts[1], "turn 5 add beta");
+    }
+
+    scheduler.shutdown().await;
+}
+
 #[tokio::test]
 async fn skill_catalog_delivery_deltas_resets_capabilities_and_history_across_live_sessions() {
     tokio::time::timeout(Duration::from_secs(10), run_skill_catalog_e2e_scenario())
@@ -984,4 +1148,11 @@ async fn empty_first_turn_emits_delta_on_first_install_and_compaction_resets_to_
     )
     .await
     .expect("empty init and compaction reset scenario timed out");
+}
+
+#[tokio::test]
+async fn catalog_read_failure_skips_injection_and_preserves_announced_skills() {
+    tokio::time::timeout(Duration::from_secs(10), run_catalog_read_failure_scenario())
+        .await
+        .expect("catalog read failure scenario timed out");
 }

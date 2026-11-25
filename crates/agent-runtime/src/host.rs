@@ -286,7 +286,14 @@ pub struct SkillCatalogEntry {
 /// injection, no `additionalDirectories`, and no Skill setup metadata.
 pub trait SkillCatalogSource: Clone + Send + Sync + 'static {
     /// Lists the currently available Skills visible for sessions in `workspace_id`.
-    fn skill_catalog(&self, workspace_id: &WorkspaceId) -> Vec<SkillCatalogEntry>;
+    ///
+    /// Returns an error when the host cannot reliably read its Skill catalog or verify package
+    /// availability; the runtime treats a read failure as a skipped turn rather than an empty
+    /// catalog so active sessions do not receive false removal deltas.
+    fn skill_catalog(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<SkillCatalogEntry>, RuntimeError>;
 
     /// Lists stable parent directories under which Skill packages reside.
     fn extra_read_roots(&self) -> Vec<PathBuf>;

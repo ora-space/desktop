@@ -200,18 +200,34 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             self.finish_unsent_prompt(channel, &end_report, &events, &mut followers);
             return;
         }
-        let current_skills = self.skill_catalog.skill_catalog(&self.session.workspace_id);
-        let skill_injection = crate::skill_catalog::prepare_skill_catalog_injection(
-            self.announced_skills.as_ref(),
-            &current_skills,
-        );
-        let blocks = match &skill_injection {
-            Some(injection) => crate::skill_catalog::insert_catalog_block(
-                blocks,
-                injection.block_text.clone(),
-                prefix_len,
-            ),
-            None => blocks,
+        let (blocks, catalog_commit) = match self
+            .skill_catalog
+            .skill_catalog(&self.session.workspace_id)
+        {
+            Ok(current_skills) => {
+                let skill_injection = crate::skill_catalog::prepare_skill_catalog_injection(
+                    self.announced_skills.as_ref(),
+                    &current_skills,
+                );
+                let blocks = match &skill_injection {
+                    Some(injection) => crate::skill_catalog::insert_catalog_block(
+                        blocks,
+                        injection.block_text.clone(),
+                        prefix_len,
+                    ),
+                    None => blocks,
+                };
+                (blocks, Some(skill_injection))
+            }
+            Err(error) => {
+                ora_warn!(
+                    session_id = %self.session.id,
+                    workspace_id = %self.session.workspace_id,
+                    error = %error,
+                    "failed to read skill catalog for prompt; skipping catalog injection for this turn",
+                );
+                (blocks, None)
+            }
         };
         let agent_session_id = self.provider_session_id().to_string();
         let mut request = PromptRequest::new(agent_session_id.clone(), blocks);
@@ -230,12 +246,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             Ok(pending) => {
                 // Commit announced skill paths only once the ACP request is accepted on the wire:
                 // any failure before admission or send leaves the next prompt free to re-emit.
-                // An initial turn with an empty catalog records the empty announced set (ADR D3)
-                // so a skill installed later arrives as an incremental update rather than full.
-                if let Some(injection) = skill_injection {
-                    self.announced_skills = Some(injection.next_announced);
-                } else {
-                    self.announced_skills.get_or_insert_with(Default::default);
+                // A catalog read error skips both injection and commit so the next turn retries
+                // against the previous announced baseline. An initial turn with a readable empty
+                // catalog records the empty announced set (ADR D3) so a skill installed later
+                // arrives as an incremental update rather than full.
+                if let Some(skill_injection) = catalog_commit {
+                    if let Some(injection) = skill_injection {
+                        self.announced_skills = Some(injection.next_announced);
+                    } else {
+                        self.announced_skills.get_or_insert_with(Default::default);
+                    }
                 }
                 pending
             }
