@@ -167,7 +167,7 @@ pub(crate) fn end_decided(
 }
 
 /// Writes one settlement after `last`, marks its command executed and queues the event.
-fn write_settlement<G: WriteGuard>(
+pub(crate) fn write_settlement<G: WriteGuard>(
     tx: &rusqlite::Transaction<'_>,
     guard: &Arc<G>,
     current: &SessionExecution,
@@ -260,7 +260,7 @@ fn settled(
 }
 
 /// Whether an `EndSession` was ever accepted for the session.
-fn end_requested(
+pub(crate) fn end_requested(
     connection: &rusqlite::Connection,
     execution: &ExecutionId,
 ) -> Result<bool, Error> {

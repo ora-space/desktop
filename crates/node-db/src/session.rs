@@ -6,6 +6,7 @@ mod journal;
 mod model;
 mod restore;
 mod turn_cancel;
+mod turn_failure;
 pub use admission::{MAX_SESSIONS_PER_CHECKOUT, RefusedSession, SessionRefusal};
 pub use model::{
     CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,
