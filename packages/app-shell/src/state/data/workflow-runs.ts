@@ -764,6 +764,7 @@ function projectPersistedNodeState(
         )
       : undefined;
   return {
+    ...(nodeRun.id ? { nodeRunId: nodeRun.id } : {}),
     ...(nodeRun.iteration != null ? { iteration: nodeRun.iteration } : {}),
     status,
     ...(nodeRun.sessionId != null && nodeRun.sessionId !== ""

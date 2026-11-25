@@ -221,6 +221,7 @@ describe("ResumeRunDialog", () => {
     });
     await screen.findByText("改用当前发布版本 v2 续跑（当前运行用的是 v1）");
     await user.click(screen.getByRole("checkbox"));
+    expect(screen.getByRole("status")).toHaveTextContent("配置修改将不再生效");
     const dialog = screen.getByRole("alertdialog");
     await user.click(
       within(dialog).getByRole("button", { name: "从失败处继续" }),

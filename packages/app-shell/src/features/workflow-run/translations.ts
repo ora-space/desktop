@@ -108,6 +108,9 @@ export const workflowRunTranslations = {
     "workflowRun.resume.loadingPreview": "正在读取改动…",
     "workflowRun.resume.previewFailed": "无法读取改动。",
     "workflowRun.resume.confirm": "从失败处继续",
+    "workflowRun.inspector.attemptId": "执行记录 ID",
+    "workflowRun.resume.revisionReset":
+      "切换版本后，本次运行内的配置修改将不再生效。旧尝试仍可在历史中查看。",
     "workflowRun.resume.switchPublished":
       "改用当前发布版本 {{version}} 续跑（当前运行用的是 {{current}}）",
     "workflowRun.resume.snapshotReason.node_missing": "新版本删掉了节点 {{id}}",
@@ -660,6 +663,9 @@ export const workflowRunTranslations = {
     "workflowRun.resume.loadingPreview": "Reading changes…",
     "workflowRun.resume.previewFailed": "Could not read the changes.",
     "workflowRun.resume.confirm": "Resume from failure",
+    "workflowRun.inspector.attemptId": "Execution record ID",
+    "workflowRun.resume.revisionReset":
+      "Switching versions stops applying this run’s configuration edits. Earlier attempts remain in its history.",
     "workflowRun.resume.switchPublished":
       "Resume with the currently published version {{version}} (this run uses {{current}})",
     "workflowRun.resume.snapshotReason.node_missing":

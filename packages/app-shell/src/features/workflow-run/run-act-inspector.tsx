@@ -623,6 +623,13 @@ function RunActInspectorPanel({
         </InspectorSection>
 
         <InspectorSection title={t("workflowRun.inspector.execution")}>
+          {state.nodeRunId && (
+            <ReadOnlyField
+              label={t("workflowRun.inspector.attemptId")}
+              value={state.nodeRunId}
+              mono
+            />
+          )}
           {data.kind === "output" && state.output?.summary !== undefined && (
             <ReadOnlyField
               label={t("workflowRun.inspector.output")}

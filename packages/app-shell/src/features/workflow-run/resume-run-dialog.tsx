@@ -207,6 +207,13 @@ export function ResumeRunDialog({
                     t,
                   )}
                 </span>
+              ) : usePublished ? (
+                <span
+                  className="block text-xs text-muted-foreground"
+                  role="status"
+                >
+                  {t("workflowRun.resume.revisionReset")}
+                </span>
               ) : null}
             </span>
           </label>

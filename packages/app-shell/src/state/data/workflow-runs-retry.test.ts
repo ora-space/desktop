@@ -284,6 +284,7 @@ describe("buildDisplayRun retry status", () => {
     );
 
     expect(display.nodeStates.explore).toStrictEqual({
+      nodeRunId: "explore-attempt-3",
       status: "retry_waiting",
       retryWait: SHOWN_RETRY_WAIT_ATTEMPT_3,
       autoRetry: { retry: 2, maxRetries: 3 },
@@ -310,6 +311,7 @@ describe("buildDisplayRun retry status", () => {
     );
 
     expect(display.nodeStates.explore).toStrictEqual({
+      nodeRunId: "explore-attempt-3",
       status: "running",
       sessionId: "session-explore-3",
       startedAt: iso(34_100),
@@ -341,6 +343,7 @@ describe("buildDisplayRun retry status", () => {
       );
 
       expect(display.nodeStates.explore).toStrictEqual({
+        nodeRunId: "node-run-explore",
         status: "running",
         autoRetry: { retry: 2, maxRetries: 3 },
       });
@@ -360,6 +363,7 @@ describe("buildDisplayRun retry status", () => {
     );
 
     expect(display.nodeStates.explore).toStrictEqual({
+      nodeRunId: "node-run-explore",
       status: "awaiting_input",
     });
   });
@@ -394,6 +398,7 @@ describe("buildDisplayRun retry outcome", () => {
     );
 
     expect(display.nodeStates.explore).toStrictEqual({
+      nodeRunId: "node-run-explore",
       status: "cancelled",
       finishedAt: iso(32_000),
       errorMessage: '{"reason":"retry_abandoned"}',
@@ -419,6 +424,7 @@ describe("buildDisplayRun retry outcome", () => {
     );
 
     expect(display.nodeStates.explore).toStrictEqual({
+      nodeRunId: "node-run-explore",
       status: "cancelled",
       finishedAt: iso(32_000),
       autoRetry: { retry: 2, maxRetries: 3 },
@@ -463,6 +469,7 @@ describe("buildDisplayRun retry outcome", () => {
 
     // The owner's attempt number comes from error_detail.attempt (3), retry 2 walks back two.
     expect(display.nodeStates.explore).toStrictEqual({
+      nodeRunId: "explore-attempt-3",
       status: "failed",
       sessionId: "session-explore-3",
       startedAt: iso(34_000),
@@ -595,6 +602,7 @@ describe("buildDisplayRun failed attempts", () => {
       shownAttempt(REVIEW_1, { replacedBy: "manual_resume" }),
     ]);
     expect(display.nodeStates.start).toStrictEqual({
+      nodeRunId: "node-run-start",
       status: "succeeded",
       startedAt: iso(0),
       finishedAt: iso(1_000),
@@ -659,6 +667,7 @@ describe("buildDisplayRun failed attempts", () => {
     );
 
     const round1State = {
+      nodeRunId: "fix-round-1-attempt-2",
       iteration: 1,
       status: "retry_waiting",
       retryWait: {
@@ -680,6 +689,7 @@ describe("buildDisplayRun failed attempts", () => {
     };
     expect(display.roundStates?.fix).toStrictEqual([
       {
+        nodeRunId: "fix-round-0-attempt-2",
         iteration: 0,
         status: "succeeded",
         sessionId: "session-fix-round-0-2",
@@ -785,6 +795,7 @@ describe("buildDisplayRun failed attempts", () => {
     expect(display.rounds?.map((round) => round.nodeStates)).toStrictEqual([
       {
         child: {
+          nodeRunId: "child-round-0",
           status: "succeeded",
           sessionId: "session-child-round-0",
           startedAt: iso(20_000),
@@ -801,6 +812,7 @@ describe("buildDisplayRun failed attempts", () => {
       {
         // Had round 0's attempt 1 leaked in, it would show here as a manual resume of attempt 2.
         child: {
+          nodeRunId: "child-round-1",
           status: "retry_waiting",
           retryWait: {
             attempt: 3,
@@ -911,11 +923,13 @@ describe("buildDisplayRun failed attempts", () => {
 
     expect(display.nodeStates).toStrictEqual({
       start: {
+        nodeRunId: "node-run-start",
         status: "succeeded",
         startedAt: iso(0),
         finishedAt: iso(1_000),
       },
       explore: {
+        nodeRunId: "node-run-explore",
         status: "failed",
         startedAt: iso(34_000),
         finishedAt: iso(40_000),
