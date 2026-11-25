@@ -72,15 +72,16 @@ pub use task::{
 pub use task::{PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, TaskWorkspaceCommit};
 pub use user_config::{DeveloperMode, NetworkProxySettings, UserConfigService};
 pub use workflow::{
-    ActivateVersionResult, ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler,
-    DeleteSnapshotResult, DeleteWorkflowHandler, DeleteWorkflowResult, GetDraftHandler,
-    GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler,
-    ImportMarketplaceWorkflowsHandler, ImportWorkflowsHandler, ListVersionsHandler,
-    ListWorkflowsHandler, MarketplaceWorkflowDocument, NewImportedWorkflow, PublishSnapshotResult,
-    PublishWorkflowHandler, RollbackDraftResult, RollbackWorkflowHandler, UpdateDraftHandler,
-    UpdateDraftResult, UpdateWorkflowHandler, UpdateWorkflowResult, UuidWorkflowIdGenerator,
-    WorkflowDocument, WorkflowDocumentSource, WorkflowDocumentSourceRepository,
-    WorkflowDocumentSourceState, WorkflowIdGenerator, WorkflowRepository,
+    ActivateVersionResult, ActivateWorkflowHandler, ConflictSkipCommit, CreateWorkflowHandler,
+    DeleteSnapshotHandler, DeleteSnapshotResult, DeleteWorkflowHandler, DeleteWorkflowResult,
+    GetDraftHandler, GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler,
+    ImportCommit, ImportMarketplaceWorkflowsHandler, ImportWorkflowsHandler, ListVersionsHandler,
+    ListWorkflowsHandler, MarketplaceImportOperation, MarketplaceWorkflowDocument,
+    NewImportedWorkflow, PublishSnapshotResult, PublishWorkflowHandler, RollbackDraftResult,
+    RollbackWorkflowHandler, SourcePrecondition, UpdateDraftHandler, UpdateDraftResult,
+    UpdateWorkflowHandler, UpdateWorkflowResult, UuidWorkflowIdGenerator, WorkflowDocument,
+    WorkflowDocumentSource, WorkflowDocumentSourceRecord, WorkflowDocumentSourceRepository,
+    WorkflowIdGenerator, WorkflowRepository,
 };
 pub use workflow_run::{
     AUTO_RETRY_KEY, AdvanceWorkflowRunResult, AgentCompletion, AgentCompletionSignal, AgentConfig,

@@ -1353,15 +1353,31 @@ mod tests {
             })
         );
         assert_eq!(
+            serde_json::to_value(MarketplaceWorkflowOutcome::SkippedDeletedCopy {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.5.0.json".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "state": "skipped_deleted_copy",
+                "pluginId": "official/ora.cdase-workflow",
+                "sourceFile": "assets/workflows/1.5.0.json"
+            })
+        );
+        assert_eq!(
             serde_json::to_value(MarketplaceWorkflowOutcome::SkippedConflict {
                 plugin_id: "official/ora.cdase-workflow".to_string(),
                 source_file: "assets/workflows/2.0.0.json".to_string(),
+                name: "发布流程".to_string(),
+                known_conflict: true,
             })
             .unwrap(),
             json!({
                 "state": "skipped_conflict",
                 "pluginId": "official/ora.cdase-workflow",
-                "sourceFile": "assets/workflows/2.0.0.json"
+                "sourceFile": "assets/workflows/2.0.0.json",
+                "name": "发布流程",
+                "knownConflict": true
             })
         );
         assert_eq!(

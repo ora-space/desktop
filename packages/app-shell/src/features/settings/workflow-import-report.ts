@@ -9,6 +9,7 @@ import {
   collectWorkflowDependencies,
   type WorkflowDependency,
 } from "../workflow-editor/workflow-transfer";
+import type { MarketplaceImportTrigger } from "./plugin-install-feedback";
 
 /** One workflow document the imported package created, with the plugin references it carries. */
 export interface ImportedWorkflowReport {
@@ -52,10 +53,43 @@ export interface WorkflowImportReport {
   counts: WorkflowImportDependencyCounts;
 }
 
+/** One document the operation left unimported because a workflow already uses its name. */
+export interface UnresolvedWorkflowEntry {
+  /** Canonical identifier of the plugin or Pack member that carried the document. */
+  pluginId: string;
+  /** Package-relative path the document was read from. */
+  sourceFile: string;
+  /** Name of the surviving workflow in the library that blocks this document's import. */
+  name: string;
+  /**
+   * Whether the record already carried this conflict before the operation ran. A known conflict was
+   * reported once; an upgrade lists it as still unresolved instead of opening the report for it.
+   */
+  knownConflict: boolean;
+}
+
+/** One document whose previously imported copy was deleted during the running install cycle. */
+export interface DeletedWorkflowCopyEntry {
+  /** Canonical identifier of the plugin or Pack member that carried the document. */
+  pluginId: string;
+  /** Package-relative path whose copy was deleted. */
+  sourceFile: string;
+}
+
 /** The outcomes one import returned, plus the archive or plugin name to show for them. */
 export interface WorkflowImportReportInput {
   fileName: string;
   outcomes: readonly ImportedWorkflowOutcome[];
+  /**
+   * Documents the operation left unimported because of a name conflict, listed under the report's
+   * "not imported" group with the recovery the user can take.
+   */
+  unresolved?: readonly UnresolvedWorkflowEntry[];
+  /**
+   * Documents whose copy the user deleted during the running install cycle. They are not a failure
+   * and not something to retry from the card, so the report names them with their own recovery.
+   */
+  deletedCopies?: readonly DeletedWorkflowCopyEntry[];
 }
 
 /**
@@ -72,10 +106,11 @@ export function importedArchiveName(path: string): string {
 /**
  * Reduces a marketplace document report to the local import outcomes the report dialog renders.
  *
- * The dialog lists the documents that became workflows and the ones that were refused; the skips a
- * marketplace upgrade reports are counts rather than rows, so they stay in the toast summary shown
- * beside it. Keeping one report surface for both entry points means a user reads the same
- * vocabulary whichever path delivered the document.
+ * The dialog lists the documents that became workflows and the ones that were refused; the skipped
+ * documents keep their own groups on the marketplace surface, because a conflict names the workflow
+ * that blocked it and a deleted copy names the user's own earlier choice. Keeping one report
+ * surface for both entry points means a user reads the same vocabulary whichever path delivered the
+ * document.
  */
 export function marketplaceReportOutcomes(
   outcomes: readonly MarketplaceWorkflowOutcome[],
@@ -100,6 +135,7 @@ export function marketplaceReportOutcomes(
         });
         break;
       case "skipped_processed":
+      case "skipped_deleted_copy":
       case "skipped_conflict":
         break;
     }
@@ -108,15 +144,54 @@ export function marketplaceReportOutcomes(
 }
 
 /**
- * Builds the report dialog input for a marketplace install, upgrade, or retry response,
- * or returns `null` when every document was skipped so callers keep a one-line toast.
+ * Builds the report dialog input for a marketplace install, upgrade, or retry response, or returns
+ * `null` when the response has nothing the user has to act on.
+ *
+ * What opens the dialog follows the operation: an install or a card retry opens it whenever a
+ * document is left unimported by a name conflict, because the user asked for those documents now;
+ * an upgrade opens it only for a conflict it is reporting for the first time, and keeps a known
+ * conflict in its neutral summary otherwise. Whenever the dialog does open, every conflict of the
+ * batch is listed, with the known ones marked as still unresolved.
  */
 export function marketplaceWorkflowReportInput(
   pluginId: string,
   workflows: readonly MarketplaceWorkflowOutcome[],
+  trigger: MarketplaceImportTrigger,
 ): WorkflowImportReportInput | null {
   const outcomes = marketplaceReportOutcomes(workflows);
-  return outcomes.length === 0 ? null : { fileName: pluginId, outcomes };
+  const unresolved = workflows.flatMap((outcome) =>
+    outcome.state === "skipped_conflict"
+      ? [
+          {
+            pluginId: outcome.pluginId,
+            sourceFile: outcome.sourceFile,
+            name: outcome.name,
+            knownConflict: outcome.knownConflict,
+          },
+        ]
+      : [],
+  );
+  const opensForConflict =
+    trigger === "update"
+      ? unresolved.some((entry) => !entry.knownConflict)
+      : unresolved.length > 0;
+  // An upgrade keeps deleted copies in its neutral summary only, even when the report opens for
+  // another reason; card retries still list them with the reinstall recovery hint.
+  const deletedCopies =
+    trigger === "update"
+      ? []
+      : workflows.flatMap((outcome) =>
+          outcome.state === "skipped_deleted_copy"
+            ? [{ pluginId: outcome.pluginId, sourceFile: outcome.sourceFile }]
+            : [],
+        );
+  if (outcomes.length === 0 && !opensForConflict) return null;
+  return {
+    fileName: pluginId,
+    outcomes,
+    unresolved,
+    deletedCopies,
+  };
 }
 
 /**

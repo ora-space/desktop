@@ -63,11 +63,12 @@ pub(crate) enum RuntimeCommand {
     /// The provider answered a direct configuration call with its options after the change.
     ///
     /// Some agents say so nowhere else. The answer is for one provider session, which may have been
-    /// replaced while it was on its way. Replied to once the options are what a load answers with.
+    /// replaced while it was on its way. Replies with what a load answers with from here on, which
+    /// is then the replacement's options rather than that answer.
     AdoptConfigOptions {
         agent_session_id: String,
         config_options: Vec<SessionConfigOption>,
-        response: oneshot::Sender<()>,
+        response: oneshot::Sender<Vec<SessionConfigOption>>,
     },
     AdoptUserTitle {
         title: SessionTitle,
