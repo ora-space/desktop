@@ -1,7 +1,7 @@
 //! Node allowlists must survive actual ACP creation, restore, rebuild, and plugin wakeups.
 
 use super::{
-    agent_ref, current_thread_runtime, drain_prompt, install_fake_opencode_plugin,
+    acp_calls, agent_ref, current_thread_runtime, drain_prompt, install_fake_opencode_plugin,
     install_mcp_plugin, open_ready_backend, seed_workspace,
 };
 use crate::setup::DesktopTestSetup;
@@ -11,11 +11,46 @@ use ora_contracts::*;
 use pretty_assertions::assert_eq;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+/// Gives workflow checkpoints a real checkout with both tracked edits and untracked work.
+fn dirty_worktree(setup: &DesktopTestSetup) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let worktree = setup.root().join("workspace");
+    let tracked = worktree.join("tracked.txt");
+    fs::write(&tracked, "committed contents")?;
+    for args in [
+        vec!["init"],
+        vec!["add", "tracked.txt"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.test",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    ] {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&worktree)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::write(tracked, "unsaved tracked edit")?;
+    fs::write(worktree.join("untracked.txt"), "unsaved untracked work")?;
+    Ok(worktree)
+}
 
 /// Produces two independent nodes, one with a mixed allowlist and one with no MCP bindings.
 fn graph() -> String {
@@ -396,12 +431,51 @@ async fn uninstall_mcp(backend: &Backend, plugin_id: &str) -> TestResult {
     Ok(())
 }
 
-/// Observations at the scheduler, persistence and ACP boundaries of a dispatch.
+#[derive(Debug, PartialEq, Eq)]
+enum WorktreeEntry {
+    Directory,
+    File(Vec<u8>),
+    Symlink(PathBuf),
+}
+
+/// Captures workspace paths and bytes independently of Git's index and ignore rules.
+fn worktree_contents(worktree: &Path) -> std::io::Result<BTreeMap<PathBuf, WorktreeEntry>> {
+    let mut contents = BTreeMap::new();
+    let mut directories = vec![PathBuf::new()];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(worktree.join(&directory))? {
+            let entry = entry?;
+            let relative = directory.join(entry.file_name());
+            if relative == Path::new(".git") {
+                continue;
+            }
+            let file_type = entry.file_type()?;
+            let content = if file_type.is_dir() {
+                directories.push(relative.clone());
+                WorktreeEntry::Directory
+            } else if file_type.is_symlink() {
+                WorktreeEntry::Symlink(fs::read_link(entry.path())?)
+            } else if file_type.is_file() {
+                WorktreeEntry::File(fs::read(entry.path())?)
+            } else {
+                return Err(std::io::Error::other(format!(
+                    "unexpected worktree entry: {}",
+                    relative.display()
+                )));
+            };
+            contents.insert(relative, content);
+        }
+    }
+    Ok(contents)
+}
+
+/// Observations at the scheduler, persistence, ACP and filesystem boundaries of a dispatch.
 #[derive(Debug, PartialEq, Eq)]
 struct DispatchSnapshot {
     detail: GetWorkflowRunResponse,
     session_ids: Vec<String>,
-    acp_calls: Vec<Value>,
+    acp_calls: Vec<String>,
+    worktree: BTreeMap<PathBuf, WorktreeEntry>,
 }
 
 impl DispatchSnapshot {
@@ -410,6 +484,7 @@ impl DispatchSnapshot {
         backend: &Backend,
         database: &Connection,
         package_root: &Path,
+        worktree: &Path,
         run_id: &str,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let detail = backend.workflow_runs().get(GetWorkflowRunRequest {
@@ -422,7 +497,8 @@ impl DispatchSnapshot {
         Ok(Self {
             detail,
             session_ids,
-            acp_calls: mcp_calls(package_root)?,
+            acp_calls: acp_calls(package_root),
+            worktree: worktree_contents(worktree)?,
         })
     }
 }
@@ -435,18 +511,24 @@ fn session_database(setup: &DesktopTestSetup) -> rusqlite::Result<Connection> {
     )
 }
 
-/// Gives a leaked spawned dispatch time to reach Session/ACP, while checking the run and node
-/// rows throughout the observation window.
+/// Gives a spawned dispatch one second to reach Session/ACP or change the worktree.
 async fn assert_dispatch_unchanged(
     backend: &Backend,
     database: &Connection,
     package_root: &Path,
+    worktree: &Path,
     before: &DispatchSnapshot,
 ) -> TestResult {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
     loop {
         assert_eq!(
-            &DispatchSnapshot::capture(backend, database, package_root, &before.detail.run.id)?,
+            &DispatchSnapshot::capture(
+                backend,
+                database,
+                package_root,
+                worktree,
+                &before.detail.run.id,
+            )?,
             before
         );
         if tokio::time::Instant::now() >= deadline {
@@ -530,9 +612,11 @@ fn a_rejected_start_leaves_no_node_run_session_or_acp_call() -> TestResult {
         let backend = open_ready_backend(&setup)?;
         let database = session_database(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
+        let worktree = dirty_worktree(&setup)?;
         let run = pending_run(&backend, &workspace_id, &graph_with_unbound_entry())?;
         uninstall_mcp(&backend, "official/first").await?;
-        let before = DispatchSnapshot::capture(&backend, &database, &package_root, &run.id)?;
+        let before =
+            DispatchSnapshot::capture(&backend, &database, &package_root, &worktree, &run.id)?;
         assert!(before.detail.nodes.is_empty());
         assert!(before.session_ids.is_empty());
         assert!(before.acp_calls.is_empty());
@@ -540,7 +624,7 @@ fn a_rejected_start_leaves_no_node_run_session_or_acp_call() -> TestResult {
         let result = backend
             .workflow_runs()
             .start(StartWorkflowRunRequest { run_id: run.id });
-        assert_dispatch_unchanged(&backend, &database, &package_root, &before).await?;
+        assert_dispatch_unchanged(&backend, &database, &package_root, &worktree, &before).await?;
         let error = result.err().ok_or("missing MCP must prevent start")?;
         assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
         Ok(())
@@ -558,6 +642,7 @@ fn a_succeeded_run_cannot_restart_after_its_mcp_plugin_is_gone() -> TestResult {
         let backend = open_ready_backend(&setup)?;
         let database = session_database(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
+        let worktree = dirty_worktree(&setup)?;
         let run = pending_run(&backend, &workspace_id, &graph_with_unbound_entry())?;
         backend.workflow_runs().start(StartWorkflowRunRequest {
             run_id: run.id.clone(),
@@ -576,14 +661,20 @@ fn a_succeeded_run_cannot_restart_after_its_mcp_plugin_is_gone() -> TestResult {
         );
 
         uninstall_mcp(&backend, "official/first").await?;
-        let before = DispatchSnapshot::capture(&backend, &database, &package_root, &run.id)?;
+        let before =
+            DispatchSnapshot::capture(&backend, &database, &package_root, &worktree, &run.id)?;
         assert!(!before.session_ids.is_empty());
-        assert!(!before.acp_calls.is_empty());
+        assert!(
+            before
+                .acp_calls
+                .iter()
+                .any(|call| call.starts_with("session/prompt "))
+        );
 
         let result = backend
             .workflow_runs()
             .restart(RestartWorkflowRunRequest { run_id: run.id });
-        assert_dispatch_unchanged(&backend, &database, &package_root, &before).await?;
+        assert_dispatch_unchanged(&backend, &database, &package_root, &worktree, &before).await?;
         let error = result
             .err()
             .ok_or("a restart of a finished run must be refused")?;
@@ -604,6 +695,7 @@ fn a_failed_run_cannot_resume_around_a_succeeded_nodes_mcp() -> TestResult {
         let backend = open_ready_backend(&setup)?;
         let database = session_database(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
+        let worktree = dirty_worktree(&setup)?;
         let run = pending_run(&backend, &workspace_id, &failing_chain())?;
         backend.workflow_runs().start(StartWorkflowRunRequest {
             run_id: run.id.clone(),
@@ -620,9 +712,15 @@ fn a_failed_run_cannot_resume_around_a_succeeded_nodes_mcp() -> TestResult {
         );
 
         uninstall_mcp(&backend, "official/first").await?;
-        let before = DispatchSnapshot::capture(&backend, &database, &package_root, &run.id)?;
+        let before =
+            DispatchSnapshot::capture(&backend, &database, &package_root, &worktree, &run.id)?;
         assert!(!before.session_ids.is_empty());
-        assert!(!before.acp_calls.is_empty());
+        assert!(
+            before
+                .acp_calls
+                .iter()
+                .any(|call| call.starts_with("session/prompt "))
+        );
 
         let result = backend
             .workflow_runs()
@@ -631,7 +729,7 @@ fn a_failed_run_cannot_resume_around_a_succeeded_nodes_mcp() -> TestResult {
                 rollback: None,
                 snapshot_id: None,
             });
-        assert_dispatch_unchanged(&backend, &database, &package_root, &before).await?;
+        assert_dispatch_unchanged(&backend, &database, &package_root, &worktree, &before).await?;
         let error = result
             .err()
             .ok_or("a resume must not route around a removed MCP")?;
