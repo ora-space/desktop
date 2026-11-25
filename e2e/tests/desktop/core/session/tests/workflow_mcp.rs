@@ -9,10 +9,12 @@ use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use ora_backend::{Backend, BackendError};
 use ora_contracts::*;
 use pretty_assertions::assert_eq;
+use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -21,15 +23,35 @@ mod recovery;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Isolates the fixture from user rules such as global ignores and commit signing.
+fn fixture_git(worktree: &Path, args: &[&str]) -> io::Result<String> {
+    let config = worktree.with_file_name("gitconfig");
+    let output = Command::new("git")
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", &config)
+        .env("GIT_CONFIG_SYSTEM", &config)
+        .current_dir(worktree)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    String::from_utf8(output.stdout).map_err(io::Error::other)
+}
+
 /// Gives workflow checkpoints a real checkout with both tracked edits and untracked work.
 fn dirty_worktree(setup: &DesktopTestSetup) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let worktree = setup.root().join("workspace");
     let tracked = worktree.join("tracked.txt");
+    fs::write(worktree.with_file_name("gitconfig"), "")?;
     fs::write(&tracked, "committed contents")?;
-    for args in [
-        vec!["init"],
-        vec!["add", "tracked.txt"],
-        vec![
+    fixture_git(&worktree, &["init"])?;
+    fixture_git(&worktree, &["add", "tracked.txt"])?;
+    fixture_git(
+        &worktree,
+        &[
             "-c",
             "user.name=Test",
             "-c",
@@ -38,17 +60,7 @@ fn dirty_worktree(setup: &DesktopTestSetup) -> Result<PathBuf, Box<dyn std::erro
             "-m",
             "initial",
         ],
-    ] {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&worktree)
-            .output()?;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    )?;
     fs::write(tracked, "unsaved tracked edit")?;
     fs::write(worktree.join("untracked.txt"), "unsaved untracked work")?;
     Ok(worktree)
@@ -441,6 +453,7 @@ enum WorktreeEntry {
 }
 
 /// Captures workspace paths and bytes independently of Git's index and ignore rules.
+/// Git refs are captured separately so changes to a checkpoint cannot hide inside `.git`.
 fn worktree_contents(worktree: &Path) -> std::io::Result<BTreeMap<PathBuf, WorktreeEntry>> {
     let mut contents = BTreeMap::new();
     let mut directories = vec![PathBuf::new()];
@@ -472,12 +485,13 @@ fn worktree_contents(worktree: &Path) -> std::io::Result<BTreeMap<PathBuf, Workt
 }
 
 /// Observations at the scheduler, persistence, ACP and filesystem boundaries of a dispatch.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 struct DispatchSnapshot {
     detail: GetWorkflowRunResponse,
-    session_ids: Vec<String>,
+    sessions: Vec<Vec<SqlValue>>,
     acp_calls: Vec<String>,
     worktree: BTreeMap<PathBuf, WorktreeEntry>,
+    git_refs: String,
 }
 
 impl DispatchSnapshot {
@@ -492,15 +506,26 @@ impl DispatchSnapshot {
         let detail = backend.workflow_runs().get(GetWorkflowRunRequest {
             run_id: run_id.to_string(),
         })?;
-        let session_ids = database
-            .prepare("SELECT id FROM sessions ORDER BY id")?
-            .query_map([], |row| row.get(0))?
+        let sessions = database
+            .prepare("SELECT * FROM sessions ORDER BY id")?
+            .query_map([], |row| {
+                (0..row.as_ref().column_count())
+                    .map(|column| row.get(column))
+                    .collect()
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(Self {
             detail,
-            session_ids,
+            sessions,
             acp_calls: acp_calls(package_root),
             worktree: worktree_contents(worktree)?,
+            git_refs: fixture_git(
+                worktree,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname) %(symref)",
+                ],
+            )?,
         })
     }
 }
@@ -620,7 +645,7 @@ fn a_rejected_start_leaves_no_node_run_session_or_acp_call() -> TestResult {
         let before =
             DispatchSnapshot::capture(&backend, &database, &package_root, &worktree, &run.id)?;
         assert!(before.detail.nodes.is_empty());
-        assert!(before.session_ids.is_empty());
+        assert!(before.sessions.is_empty());
         assert!(before.acp_calls.is_empty());
 
         let result = backend
@@ -665,7 +690,7 @@ fn a_succeeded_run_cannot_restart_after_its_mcp_plugin_is_gone() -> TestResult {
         uninstall_mcp(&backend, "official/first").await?;
         let before =
             DispatchSnapshot::capture(&backend, &database, &package_root, &worktree, &run.id)?;
-        assert!(!before.session_ids.is_empty());
+        assert!(!before.sessions.is_empty());
         assert!(
             before
                 .acp_calls
@@ -716,7 +741,7 @@ fn a_failed_run_cannot_resume_around_a_succeeded_nodes_mcp() -> TestResult {
         uninstall_mcp(&backend, "official/first").await?;
         let before =
             DispatchSnapshot::capture(&backend, &database, &package_root, &worktree, &run.id)?;
-        assert!(!before.session_ids.is_empty());
+        assert!(!before.sessions.is_empty());
         assert!(
             before
                 .acp_calls
