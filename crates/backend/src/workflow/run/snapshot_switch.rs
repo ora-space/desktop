@@ -133,12 +133,16 @@ pub(super) fn prepare_resume(
     pool: &RepositoryPool,
     run_id: &WorkflowRunId,
     snapshot_id: Option<&str>,
-    resolve: impl FnOnce(&WorkflowGraph) -> Result<SkillMaterializationReceipt, BackendError>,
+    resolve: impl FnOnce(
+        &WorkflowGraph,
+        Option<&SkillMaterializationReceipt>,
+    ) -> Result<SkillMaterializationReceipt, BackendError>,
 ) -> Result<Option<PreparedSwitch>, BackendError> {
     let context = load_context(pool, run_id)?;
     let Some(snapshot_id) = snapshot_id.filter(|id| *id != context.run.snapshot_id.as_ref()) else {
         let graph = WorkflowGraph::parse(&context.current.graph).map_err(ApplicationError::from)?;
-        resolve(&graph)?;
+        let frozen = parsed_payload(context.run.payload.as_deref()).skill_materialization;
+        resolve(&graph, Some(&frozen))?;
         return Ok(None);
     };
     let target = SqliteWorkflowRepository::new(pool.clone())
@@ -157,7 +161,7 @@ pub(super) fn prepare_resume(
     }
     let plan = check_switch(pool, &context, &target)?;
     let new_graph = WorkflowGraph::parse(&target.graph).map_err(ApplicationError::from)?;
-    let receipt = resolve(&new_graph)?;
+    let receipt = resolve(&new_graph, /*frozen_receipt*/ None)?;
     let mut payload = parsed_payload(context.run.payload.as_deref());
     payload.skill_materialization = receipt;
     payload.variable_pool = plan.variable_pool;

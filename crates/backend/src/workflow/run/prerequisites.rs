@@ -8,12 +8,14 @@ use ora_application::{
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository};
 use ora_domain::{AgentDefinitionId, Namespace, Skill, SkillId, SkillOrigin};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Live Skill catalog resolution shared between precheck/start freezing and node dispatch.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ResolvedCatalogSkill {
+    pub(super) catalog_skill_id: String,
+    pub(super) catalog_name: String,
     pub(super) invocation_name: String,
     pub(super) skill_md_path: PathBuf,
 }
@@ -42,6 +44,24 @@ impl SkillRoleWorkspaceInitializer {
         &self,
         graph: &WorkflowGraph,
     ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
+        self.resolve_graph_with_frozen(graph, /*frozen_receipt*/ None)
+    }
+
+    /// Re-validates a frozen run's graph while enforcing any already-frozen exact catalog IDs so
+    /// start, restart, and same-snapshot resume never silently switch to another same-named skill.
+    pub(super) fn validate_frozen_graph(
+        &self,
+        graph: &WorkflowGraph,
+        frozen_receipt: &SkillMaterializationReceipt,
+    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
+        self.resolve_graph_with_frozen(graph, Some(frozen_receipt))
+    }
+
+    fn resolve_graph_with_frozen(
+        &self,
+        graph: &WorkflowGraph,
+        frozen_receipt: Option<&SkillMaterializationReceipt>,
+    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
         let roles = collect_roles(graph);
         let agent_repository = SqliteAgentDefinitionRepository::new(self.pool.clone());
         for role_id in &roles {
@@ -52,7 +72,7 @@ impl SkillRoleWorkspaceInitializer {
             }
         }
         let skill_repository = SqliteSkillRepository::new(self.pool.clone());
-        resolve_graph_skill_bindings(&self.skills_root, &skill_repository, graph)
+        resolve_graph_skill_bindings(&self.skills_root, &skill_repository, graph, frozen_receipt)
     }
 }
 
@@ -98,13 +118,15 @@ fn collect_roles(graph: &WorkflowGraph) -> Vec<String> {
 }
 
 /// Validates every enabled skill in reachable agent nodes against the live catalog and freezes
-/// immutable `{ node_id, skill_id, invocation_name }` bindings.
+/// immutable `{ node_id, skill_id, catalog_skill_id, invocation_name }` bindings.
 fn resolve_graph_skill_bindings(
     skills_root: &Path,
     skill_repository: &SqliteSkillRepository,
     graph: &WorkflowGraph,
+    frozen_receipt: Option<&SkillMaterializationReceipt>,
 ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
     let mut receipt = SkillMaterializationReceipt::default();
+    let mut resolved_invocations = HashMap::<String, (String, String)>::new();
     for node in graph
         .execution_scopes()
         .into_iter()
@@ -114,6 +136,8 @@ fn resolve_graph_skill_bindings(
         let Some(config) = &node.agent_config else {
             continue;
         };
+        let frozen_node_bindings =
+            frozen_receipt.map(|existing| existing.bindings_for_node(&node.id));
         let mut seen_skill_ids = HashSet::new();
         for skill in config.skills.iter().filter(|skill| skill.enabled) {
             if !seen_skill_ids.insert(skill.skill_id.clone()) {
@@ -126,18 +150,52 @@ fn resolve_graph_skill_bindings(
                     skill_id: skill.skill_id.clone(),
                 });
             }
-            let Some(resolved) =
-                resolve_live_skill_entry(skills_root, skill_repository, &skill.skill_id)?
-            else {
+            let frozen_catalog_id = frozen_node_bindings.as_ref().and_then(|bindings| {
+                bindings
+                    .iter()
+                    .find(|binding| binding.skill_id == skill.skill_id)
+                    .and_then(|binding| binding.catalog_skill_id.as_deref())
+            });
+            let resolved = match frozen_catalog_id {
+                Some(catalog_skill_id) => resolve_exact_catalog_skill_entry(
+                    skills_root,
+                    skill_repository,
+                    catalog_skill_id,
+                )?,
+                None => {
+                    resolve_graph_ref_skill_entry(skills_root, skill_repository, &skill.skill_id)?
+                }
+            };
+            let Some(resolved) = resolved else {
                 return Err(StartPrerequisitesError::WorkflowSkillNotFound {
                     node_id: node.id.clone(),
                     node_title: node_display_name(node),
                     skill_id: skill.skill_id.clone(),
                 });
             };
+            if let Some((existing_id, existing_name)) =
+                resolved_invocations.get(&resolved.invocation_name)
+                && existing_id != &resolved.catalog_skill_id
+            {
+                return Err(StartPrerequisitesError::SkillMaterializationError {
+                    message: format!(
+                        "skills {existing_name} ({existing_id}) and {} ({}) resolve to the same prompt invocation /{}",
+                        resolved.catalog_name, resolved.catalog_skill_id, resolved.invocation_name
+                    ),
+                });
+            }
+            resolved_invocations
+                .entry(resolved.invocation_name.clone())
+                .or_insert_with(|| {
+                    (
+                        resolved.catalog_skill_id.clone(),
+                        resolved.catalog_name.clone(),
+                    )
+                });
             receipt.bindings.push(MaterializedSkillBinding {
                 node_id: node.id.clone(),
                 skill_id: skill.skill_id.clone(),
+                catalog_skill_id: Some(resolved.catalog_skill_id),
                 invocation_name: resolved.invocation_name,
             });
         }
@@ -145,25 +203,66 @@ fn resolve_graph_skill_bindings(
     Ok(receipt)
 }
 
-/// Resolves one skill reference against Ora's live catalog and verifies its `SKILL.md` is usable.
+/// Resolves one frozen `MaterializedSkillBinding` for node dispatch.
 ///
-/// Exact catalog `id` matches take precedence and are never shadowed or fallen back from when the
-/// owned package is deleted or corrupt. When no row has that exact `id`, legacy bare/namespaced
-/// suffixes match active catalog rows by name for compatibility with older graph snapshots.
-pub(super) fn resolve_live_skill_entry(
+/// Bindings that froze `catalog_skill_id` resolve strictly by that exact ID so an uninstalled
+/// skill never falls back to a same-named skill. Legacy pre-Effect-retirement receipts without
+/// `catalog_skill_id` resolve through the graph-reference compatibility path.
+pub(super) fn resolve_binding_skill_entry(
+    skills_root: &Path,
+    skill_repository: &SqliteSkillRepository,
+    binding: &MaterializedSkillBinding,
+) -> Result<Option<ResolvedCatalogSkill>, StartPrerequisitesError> {
+    match binding.catalog_skill_id.as_deref() {
+        Some(catalog_skill_id) => {
+            resolve_exact_catalog_skill_entry(skills_root, skill_repository, catalog_skill_id)
+        }
+        None => resolve_graph_ref_skill_entry(skills_root, skill_repository, &binding.skill_id),
+    }
+}
+
+/// Resolves one frozen catalog skill strictly by its exact catalog ID without name fallback.
+///
+/// Uninstalled, soft-deleted, or corrupt catalog entries return `Ok(None)` even if another active
+/// skill shares the same name.
+pub(super) fn resolve_exact_catalog_skill_entry(
+    skills_root: &Path,
+    skill_repository: &SqliteSkillRepository,
+    catalog_skill_id: &str,
+) -> Result<Option<ResolvedCatalogSkill>, StartPrerequisitesError> {
+    let storage = FilesystemSkillStorage::new(skills_root.to_path_buf());
+    let Some(exact) = skill_repository
+        .find_skill(&SkillId::new(catalog_skill_id))
+        .map_err(StartPrerequisitesError::Repository)?
+    else {
+        return Ok(None);
+    };
+    usable_entry(&storage, skills_root, &exact)
+}
+
+/// Resolves a graph-declared skill reference or legacy binding lacking `catalog_skill_id`.
+///
+/// Exact catalog `id` matches (including soft-deleted rows) and `plugin:` canonical IDs never fall
+/// back to matching another skill by name. Only portable bare names written by the editor or
+/// historical non-plugin `ns:name` suffixes match active catalog rows by name.
+pub(super) fn resolve_graph_ref_skill_entry(
     skills_root: &Path,
     skill_repository: &SqliteSkillRepository,
     skill_id: &str,
 ) -> Result<Option<ResolvedCatalogSkill>, StartPrerequisitesError> {
     let storage = FilesystemSkillStorage::new(skills_root.to_path_buf());
     if let Some(exact) = skill_repository
-        .find_skill(&SkillId::new(skill_id))
+        .find_skill_including_deleted(&SkillId::new(skill_id))
         .map_err(StartPrerequisitesError::Repository)?
     {
         if exact.audit_fields.is_deleted {
             return Ok(None);
         }
         return usable_entry(&storage, skills_root, &exact);
+    }
+
+    if skill_id.starts_with("plugin:") {
+        return Ok(None);
     }
 
     let candidate = skill_id.rsplit(':').next().unwrap_or(skill_id);
@@ -195,6 +294,8 @@ fn usable_entry(
         return Ok(None);
     }
     Ok(Some(ResolvedCatalogSkill {
+        catalog_skill_id: skill.id.to_string(),
+        catalog_name: skill.name.clone(),
         invocation_name: normalize_skill_name(&skill.name),
         skill_md_path: storage_package_dir(skills_root, skill).join("SKILL.md"),
     }))

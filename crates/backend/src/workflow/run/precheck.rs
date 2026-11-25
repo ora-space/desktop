@@ -22,7 +22,7 @@ use super::prerequisites::SkillRoleWorkspaceInitializer;
 use crate::error::BackendError;
 use ora_application::{
     ApplicationError, ExecutionContext, NodeType, SkillMaterializationReceipt,
-    StartPrerequisitesError, WorkflowGraph, WorkflowRunEngineRepository,
+    StartPrerequisitesError, WorkflowGraph, WorkflowRunEngineRepository, WorkflowRunPayload,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_domain::{WorkflowRunId, WorkflowRunStatus};
@@ -94,7 +94,20 @@ pub(super) fn ensure_dependencies_available(
         return Ok(());
     }
     let graph = WorkflowGraph::parse(&context.graph_json).map_err(ApplicationError::from)?;
-    dependencies.resolve_graph(&graph)?;
+    let frozen = context
+        .run
+        .payload
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<WorkflowRunPayload>(raw).ok())
+        .map(|payload| payload.skill_materialization);
+    match frozen.as_ref() {
+        Some(receipt) => {
+            dependencies.validate_frozen_graph(&graph, receipt)?;
+        }
+        None => {
+            dependencies.resolve_graph(&graph)?;
+        }
+    }
     Ok(())
 }
 
@@ -107,6 +120,21 @@ impl DependencySources<'_> {
         let receipt =
             SkillRoleWorkspaceInitializer::new(self.skills_root.to_path_buf(), self.pool.clone())
                 .resolve_graph(graph)
+                .map_err(ApplicationError::from_start_prerequisites_error)?;
+        validate_mcp_bindings(self.plugin_api, graph)
+            .map_err(ApplicationError::from_start_prerequisites_error)?;
+        Ok(receipt)
+    }
+
+    /// Re-validates a frozen run's dependencies against any already-frozen exact catalog skill IDs.
+    pub(super) fn validate_frozen_graph(
+        &self,
+        graph: &WorkflowGraph,
+        frozen_receipt: &SkillMaterializationReceipt,
+    ) -> Result<SkillMaterializationReceipt, BackendError> {
+        let receipt =
+            SkillRoleWorkspaceInitializer::new(self.skills_root.to_path_buf(), self.pool.clone())
+                .validate_frozen_graph(graph, frozen_receipt)
                 .map_err(ApplicationError::from_start_prerequisites_error)?;
         validate_mcp_bindings(self.plugin_api, graph)
             .map_err(ApplicationError::from_start_prerequisites_error)?;

@@ -764,10 +764,10 @@ fn resolve_required_skills(
                 node_id: node_id.to_string(),
                 skill_id: skill.skill_id.clone(),
             })?;
-        let resolved = super::prerequisites::resolve_live_skill_entry(
+        let resolved = super::prerequisites::resolve_binding_skill_entry(
             skills_root,
             &skill_repository,
-            &binding.skill_id,
+            binding,
         )
         .map_err(|error| match error {
             StartPrerequisitesError::Repository(source) => NodeExecutionError::Repository(source),
@@ -960,6 +960,7 @@ mod tests {
                 bindings: vec![ora_application::MaterializedSkillBinding {
                     node_id: "review-node".to_string(),
                     skill_id: "catalog-id".to_string(),
+                    catalog_skill_id: Some("catalog-id".to_string()),
                     invocation_name: "review".to_string(),
                 }],
             },
@@ -989,5 +990,144 @@ mod tests {
             Err(NodeExecutionError::MissingSkillMaterialization { node_id, skill_id })
                 if node_id == "review-node" && skill_id == "catalog-id"
         ));
+    }
+
+    /// Uninstalling a plugin skill frozen on a node must fail dispatch even when a same-named
+    /// local skill is installed, both for bare-name bindings (carrying `catalog_skill_id`) and
+    /// for legacy receipts storing the exact `plugin:` ID without `catalog_skill_id`.
+    #[test]
+    fn uninstalled_plugin_skill_never_falls_back_to_same_named_local_skill_at_dispatch() {
+        let temp = TempDir::new().unwrap();
+        let pool = test_pool(&temp);
+        let skills_root = temp.path().join("atoms").join("skills");
+        let local_dir = skills_root.join("review");
+        std::fs::create_dir_all(&local_dir).unwrap();
+        std::fs::write(
+            local_dir.join("SKILL.md"),
+            "---\nname: review\ndescription: Local review\n---\nLocal instructions\n",
+        )
+        .unwrap();
+        let plugin_dir = temp
+            .path()
+            .join("plugins/installed/official/review-pack/1.0.0/assets/review");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("SKILL.md"),
+            "---\nname: review\ndescription: Plugin review\n---\nPlugin instructions\n",
+        )
+        .unwrap();
+
+        let repo = SqliteSkillRepository::new(pool.clone());
+        let plugin_id = ora_domain::PluginId::new("official", "review-pack").unwrap();
+        repo.create_skill(
+            Skill::new(
+                SkillId::new("local-uuid"),
+                Namespace::local(),
+                "review",
+                "Local review",
+                AuditFields::new(1, 1, /*is_deleted*/ false),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        repo.replace_plugin_skills(
+            &plugin_id,
+            "1.0.0",
+            &[ora_db::PluginSkillProjection {
+                name: "review".to_string(),
+                description: "Plugin review".to_string(),
+                package_root: plugin_dir.clone(),
+            }],
+            2,
+        )
+        .unwrap();
+
+        let frozen_plugin_id = "plugin:official/review-pack:review";
+        let payload = WorkflowRunPayload::new(
+            WorkflowRunLocale::EnUs,
+            ora_application::SkillMaterializationReceipt {
+                bindings: vec![ora_application::MaterializedSkillBinding {
+                    node_id: "review-node".to_string(),
+                    skill_id: "review".to_string(),
+                    catalog_skill_id: Some(frozen_plugin_id.to_string()),
+                    invocation_name: "review".to_string(),
+                }],
+            },
+        );
+        let bare_skills = vec![AgentSkill {
+            skill_id: "review".to_string(),
+            enabled: true,
+        }];
+        assert_eq!(
+            resolve_required_skills(&pool, &skills_root, &payload, "review-node", &bare_skills)
+                .unwrap(),
+            vec![RequiredWorkflowSkill {
+                invocation_name: "review".to_string(),
+                skill_md_path: plugin_dir.join("SKILL.md"),
+            }]
+        );
+
+        // Uninstall plugin while same-named local skill remains active.
+        repo.remove_plugin_skills(&plugin_id, 3).unwrap();
+        assert!(matches!(
+            resolve_required_skills(&pool, &skills_root, &payload, "review-node", &bare_skills),
+            Err(NodeExecutionError::MissingSkillMaterialization { node_id, skill_id })
+                if node_id == "review-node" && skill_id == "review"
+        ));
+
+        // Legacy receipt without `catalog_skill_id` holding a `plugin:` ID must also fail closed.
+        let legacy_plugin_payload = WorkflowRunPayload::new(
+            WorkflowRunLocale::EnUs,
+            ora_application::SkillMaterializationReceipt {
+                bindings: vec![ora_application::MaterializedSkillBinding {
+                    node_id: "review-node".to_string(),
+                    skill_id: frozen_plugin_id.to_string(),
+                    catalog_skill_id: None,
+                    invocation_name: "review".to_string(),
+                }],
+            },
+        );
+        let plugin_skills = vec![AgentSkill {
+            skill_id: frozen_plugin_id.to_string(),
+            enabled: true,
+        }];
+        assert!(matches!(
+            resolve_required_skills(
+                &pool,
+                &skills_root,
+                &legacy_plugin_payload,
+                "review-node",
+                &plugin_skills,
+            ),
+            Err(NodeExecutionError::MissingSkillMaterialization { node_id, skill_id })
+                if node_id == "review-node" && skill_id == frozen_plugin_id
+        ));
+
+        // Legacy receipt without `catalog_skill_id` holding a bare name still resolves local skill.
+        let legacy_bare_payload = WorkflowRunPayload::new(
+            WorkflowRunLocale::EnUs,
+            ora_application::SkillMaterializationReceipt {
+                bindings: vec![ora_application::MaterializedSkillBinding {
+                    node_id: "review-node".to_string(),
+                    skill_id: "review".to_string(),
+                    catalog_skill_id: None,
+                    invocation_name: "review".to_string(),
+                }],
+            },
+        );
+        assert_eq!(
+            resolve_required_skills(
+                &pool,
+                &skills_root,
+                &legacy_bare_payload,
+                "review-node",
+                &bare_skills,
+            )
+            .unwrap(),
+            vec![RequiredWorkflowSkill {
+                invocation_name: "review".to_string(),
+                skill_md_path: local_dir.join("SKILL.md"),
+            }]
+        );
     }
 }

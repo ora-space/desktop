@@ -578,7 +578,72 @@ async fn switched_receipt_freezes_catalog_skill_bindings_without_workspace_paths
     let bindings = payload.skill_materialization.bindings_for_node("reviewer");
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].skill_id, "code_review");
+    assert_eq!(
+        bindings[0].catalog_skill_id.as_deref(),
+        Some("plugin:local/review-pack:code_review")
+    );
     assert_eq!(bindings[0].invocation_name, "code-review");
+}
+
+/// Uninstalling the Skill plugin a run froze must block start, restart, and same-snapshot resume
+/// even when a same-named local Skill is created afterwards.
+#[tokio::test]
+async fn removed_plugin_skill_does_not_fall_back_to_same_named_local_skill() {
+    let fixture = Fixture::open(SKILL_GRAPH);
+    fixture
+        .install_skill_plugin("review-pack", "code_review")
+        .await;
+    let run_id = fixture.create_run();
+    fixture.start_and_settle(&run_id).await;
+    fixture.uninstall_plugin("local/review-pack").await;
+
+    fixture
+        .backend
+        .skills()
+        .create(ora_contracts::CreateSkillRequest {
+            name: "code_review".to_string(),
+            description: "Local impostor".to_string(),
+            content: Some("Local instructions".to_string()),
+        })
+        .expect("create same-named local skill");
+
+    let restart_error = fixture
+        .runs
+        .restart(RestartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .expect_err(
+            "restart must reject missing frozen plugin skill despite same-named local skill",
+        );
+    assert_eq!(
+        restart_error.public_error(),
+        &PublicError::WorkflowSkillNotFound(Box::new(WorkflowSkillNotFoundParams {
+            node_id: "reviewer".to_string(),
+            node_title: "Code review".to_string(),
+            skill_id: "code_review".to_string(),
+        }))
+    );
+
+    let resume_error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: run_id.clone(),
+            rollback: None,
+            snapshot_id: None,
+        })
+        .expect_err(
+            "resume must reject missing frozen plugin skill despite same-named local skill",
+        );
+    assert_eq!(resume_error.public_error(), restart_error.public_error());
+
+    // Re-installing the frozen plugin restores the exact catalog ID and allows restart again.
+    fixture
+        .install_skill_plugin("review-pack", "code_review")
+        .await;
+    fixture
+        .runs
+        .restart(RestartWorkflowRunRequest { run_id })
+        .expect("restart succeeds once original plugin skill returns");
 }
 
 /// Scheduling accepts an installed, unconfigured MCP and keeps a running start idempotent

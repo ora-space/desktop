@@ -117,11 +117,13 @@ fn freezes_catalog_bindings_for_local_and_plugin_skills_without_writing_workspac
                 MaterializedSkillBinding {
                     node_id: "agent".to_string(),
                     skill_id: "uuid-local-1".to_string(),
+                    catalog_skill_id: Some("uuid-local-1".to_string()),
                     invocation_name: "sfmea-review".to_string(),
                 },
                 MaterializedSkillBinding {
                     node_id: "agent".to_string(),
                     skill_id: "plugin:official/review-pack:audit_code".to_string(),
+                    catalog_skill_id: Some("plugin:official/review-pack:audit_code".to_string()),
                     invocation_name: "audit-code".to_string(),
                 },
             ],
@@ -134,20 +136,24 @@ fn freezes_catalog_bindings_for_local_and_plugin_skills_without_writing_workspac
 
     let repo = SqliteSkillRepository::new(pool);
     assert_eq!(
-        resolve_live_skill_entry(&skills_root, &repo, "uuid-local-1").unwrap(),
+        resolve_exact_catalog_skill_entry(&skills_root, &repo, "uuid-local-1").unwrap(),
         Some(ResolvedCatalogSkill {
+            catalog_skill_id: "uuid-local-1".to_string(),
+            catalog_name: "SfMeA_Review".to_string(),
             invocation_name: "sfmea-review".to_string(),
             skill_md_path: skills_root.join("SfMeA_Review").join("SKILL.md"),
         })
     );
     assert_eq!(
-        resolve_live_skill_entry(
+        resolve_exact_catalog_skill_entry(
             &skills_root,
             &repo,
             "plugin:official/review-pack:audit_code"
         )
         .unwrap(),
         Some(ResolvedCatalogSkill {
+            catalog_skill_id: "plugin:official/review-pack:audit_code".to_string(),
+            catalog_name: "audit_code".to_string(),
             invocation_name: "audit-code".to_string(),
             skill_md_path: plugin_pkg.join("SKILL.md"),
         })
@@ -247,8 +253,188 @@ fn initialize_workspace_records_child_loop_skills_without_copying_packages() {
             bindings: vec![MaterializedSkillBinding {
                 node_id: "inner".to_string(),
                 skill_id: "review".to_string(),
+                catalog_skill_id: Some("review".to_string()),
                 invocation_name: "review".to_string(),
             }],
         }
+    );
+}
+
+/// Covers D8 item 3: an uninstalled plugin skill or soft-deleted exact ID must never silently
+/// fall back to a same-named active skill during graph resolution or frozen-receipt validation.
+#[test]
+fn uninstalled_plugin_or_deleted_id_never_falls_back_to_same_named_skill() {
+    let temp = TempDir::new().unwrap();
+    let pool = test_pool(&temp);
+    let skills_root = temp.path().join("atoms").join("skills");
+    let plugin_pkg = temp
+        .path()
+        .join("plugins/installed/official/review-pack/1.0.0/assets/review");
+    install_plugin_skill(&pool, &plugin_pkg, "review");
+
+    // Editor-authored bare name freezes the exact plugin catalog ID.
+    let bare_graph = WorkflowGraph::parse(
+        r#"{
+            "nodes":[
+                {"id":"start","data":{"kind":"start"}},
+                {"id":"agent","data":{"kind":"agent","agentConfig":{
+                    "executor":{"agentCli":"opencode","modelId":"m"},
+                    "prompt":"run",
+                    "skills":[{"skillId":"review","enabled":true}]
+                }}},
+                {"id":"out","data":{"kind":"output"}}
+            ],
+            "edges":[
+                {"source":"start","target":"agent"},
+                {"source":"agent","target":"out"}
+            ]
+        }"#,
+    )
+    .unwrap();
+    let initializer = SkillRoleWorkspaceInitializer::new(skills_root.clone(), pool.clone());
+    let receipt = initializer.resolve_graph(&bare_graph).unwrap();
+    assert_eq!(
+        receipt.bindings[0].catalog_skill_id.as_deref(),
+        Some("plugin:official/review-pack:review")
+    );
+
+    // Uninstall the plugin and install a same-named local skill.
+    let repo = SqliteSkillRepository::new(pool.clone());
+    repo.remove_plugin_skills(&PluginId::new("official", "review-pack").unwrap(), 2)
+        .unwrap();
+    install_local_skill(&pool, &skills_root, "uuid-local-review", "review");
+
+    // Re-validating the frozen receipt must reject instead of switching to the local skill.
+    assert!(matches!(
+        initializer.validate_frozen_graph(&bare_graph, &receipt),
+        Err(StartPrerequisitesError::WorkflowSkillNotFound { skill_id, .. })
+            if skill_id == "review"
+    ));
+
+    // Direct plugin ID reference must also reject rather than stripping after `:` to match local.
+    let plugin_id_graph = WorkflowGraph::parse(
+        r#"{
+            "nodes":[
+                {"id":"start","data":{"kind":"start"}},
+                {"id":"agent","data":{"kind":"agent","agentConfig":{
+                    "executor":{"agentCli":"opencode","modelId":"m"},
+                    "prompt":"run",
+                    "skills":[{"skillId":"plugin:official/review-pack:review","enabled":true}]
+                }}},
+                {"id":"out","data":{"kind":"output"}}
+            ],
+            "edges":[
+                {"source":"start","target":"agent"},
+                {"source":"agent","target":"out"}
+            ]
+        }"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        initializer.resolve_graph(&plugin_id_graph),
+        Err(StartPrerequisitesError::WorkflowSkillNotFound { skill_id, .. })
+            if skill_id == "plugin:official/review-pack:review"
+    ));
+
+    // A never-installed plugin ID must likewise never strip to match a same-named local skill.
+    assert_eq!(
+        resolve_graph_ref_skill_entry(&skills_root, &repo, "plugin:official/other-pack:review")
+            .unwrap(),
+        None
+    );
+
+    // Soft-deleting a local skill whose ID equals its name must not fall back to another skill.
+    let other_plugin_pkg = temp
+        .path()
+        .join("plugins/installed/official/review-pack/1.0.0/assets/other");
+    install_plugin_skill(&pool, &other_plugin_pkg, "review");
+    repo.soft_delete_skill(&SkillId::new("uuid-local-review"), 3)
+        .unwrap();
+    assert_eq!(
+        resolve_graph_ref_skill_entry(&skills_root, &repo, "uuid-local-review").unwrap(),
+        None
+    );
+}
+
+/// Covers D8 item 6: two distinct skills that normalize to the same `/invocation` within one run
+/// are rejected at precheck, while reusing the same skill across nodes is permitted.
+#[test]
+fn rejects_conflicting_invocation_names_across_distinct_skills_and_allows_reuse() {
+    let temp = TempDir::new().unwrap();
+    let pool = test_pool(&temp);
+    let skills_root = temp.path().join("atoms").join("skills");
+    install_local_skill(&pool, &skills_root, "uuid-underscore", "qa_review");
+    install_local_skill(&pool, &skills_root, "uuid-hyphen", "qa-review");
+
+    let initializer = SkillRoleWorkspaceInitializer::new(skills_root.clone(), pool.clone());
+
+    let conflicting = WorkflowGraph::parse(
+        r#"{
+            "nodes":[
+                {"id":"start","data":{"kind":"start"}},
+                {"id":"a","data":{"kind":"agent","agentConfig":{
+                    "executor":{"agentCli":"opencode","modelId":"m"},
+                    "prompt":"run a",
+                    "skills":[{"skillId":"uuid-underscore","enabled":true}]
+                }}},
+                {"id":"b","data":{"kind":"agent","agentConfig":{
+                    "executor":{"agentCli":"opencode","modelId":"m"},
+                    "prompt":"run b",
+                    "skills":[{"skillId":"uuid-hyphen","enabled":true}]
+                }}},
+                {"id":"out","data":{"kind":"output"}}
+            ],
+            "edges":[
+                {"source":"start","target":"a"},
+                {"source":"a","target":"b"},
+                {"source":"b","target":"out"}
+            ]
+        }"#,
+    )
+    .unwrap();
+    let error = initializer.resolve_graph(&conflicting).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            StartPrerequisitesError::SkillMaterializationError { message }
+                if message.contains("/qa-review")
+        ),
+        "expected invocation collision error, got: {error:?}"
+    );
+
+    // Reusing the exact same skill across two nodes is allowed.
+    let reused = WorkflowGraph::parse(
+        r#"{
+            "nodes":[
+                {"id":"start","data":{"kind":"start"}},
+                {"id":"a","data":{"kind":"agent","agentConfig":{
+                    "executor":{"agentCli":"opencode","modelId":"m"},
+                    "prompt":"run a",
+                    "skills":[{"skillId":"uuid-underscore","enabled":true}]
+                }}},
+                {"id":"b","data":{"kind":"agent","agentConfig":{
+                    "executor":{"agentCli":"opencode","modelId":"m"},
+                    "prompt":"run b",
+                    "skills":[{"skillId":"qa_review","enabled":true}]
+                }}},
+                {"id":"out","data":{"kind":"output"}}
+            ],
+            "edges":[
+                {"source":"start","target":"a"},
+                {"source":"a","target":"b"},
+                {"source":"b","target":"out"}
+            ]
+        }"#,
+    )
+    .unwrap();
+    let receipt = initializer.resolve_graph(&reused).unwrap();
+    assert_eq!(receipt.bindings.len(), 2);
+    assert_eq!(
+        receipt.bindings[0].catalog_skill_id.as_deref(),
+        Some("uuid-underscore")
+    );
+    assert_eq!(
+        receipt.bindings[1].catalog_skill_id.as_deref(),
+        Some("uuid-underscore")
     );
 }

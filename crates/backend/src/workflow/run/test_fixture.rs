@@ -520,11 +520,17 @@ pub(super) fn switch_if_requested(
     use super::prerequisites::SkillRoleWorkspaceInitializer;
     use ora_application::{ApplicationError, WorkflowRunWorkspaceInitializer};
     let initializer = SkillRoleWorkspaceInitializer::new(skills_root.to_path_buf(), pool.clone());
-    let switch = super::snapshot_switch::prepare_resume(pool, run_id, snapshot_id, |graph| {
-        Ok(initializer
-            .initialize_workspace(graph, workspace_root)
-            .map_err(ApplicationError::from_start_prerequisites_error)?)
-    })?;
+    let switch =
+        super::snapshot_switch::prepare_resume(pool, run_id, snapshot_id, |graph, frozen| {
+            match frozen {
+                Some(receipt) => Ok(initializer
+                    .validate_frozen_graph(graph, receipt)
+                    .map_err(ApplicationError::from_start_prerequisites_error)?),
+                None => Ok(initializer
+                    .initialize_workspace(graph, workspace_root)
+                    .map_err(ApplicationError::from_start_prerequisites_error)?),
+            }
+        })?;
     if let Some(switch) = switch {
         switch.apply(pool, now)?;
         Ok(true)

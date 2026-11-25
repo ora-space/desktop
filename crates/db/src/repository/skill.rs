@@ -92,6 +92,27 @@ impl SqliteSkillRepository {
             Ok(())
         })
     }
+
+    /// Looks up one skill row by exact catalog ID regardless of soft-deletion state.
+    ///
+    /// Callers resolving graph references use this so a deleted exact ID is recognized as a
+    /// removed catalog entry rather than falling through to a same-named skill.
+    pub fn find_skill_including_deleted(
+        &self,
+        skill_id: &SkillId,
+    ) -> Result<Option<Skill>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT id, namespace, name, description, package_root, created_at, updated_at, is_deleted
+                     FROM skills
+                     WHERE id = ?1",
+                )?;
+                let mut rows = statement.query(params![skill_id.to_string()])?;
+                rows.next()?.map(map_skill_row).transpose()
+            })
+            .map_err(skill_repository_error_from_database)
+    }
 }
 
 impl SkillRepository for SqliteSkillRepository {

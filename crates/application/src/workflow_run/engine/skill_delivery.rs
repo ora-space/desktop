@@ -22,12 +22,19 @@ impl SkillMaterializationReceipt {
     }
 }
 
-/// Binds one graph node's declared skill to its catalog identifier and invocation name.
+/// Binds one graph node's declared skill to its frozen catalog identifier and invocation name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MaterializedSkillBinding {
     pub node_id: String,
     pub skill_id: String,
+    /// Exact catalog row identifier resolved when the run or snapshot was frozen.
+    ///
+    /// Legacy pre-Effect-retirement receipts deserialize with `None` and fall back to resolving
+    /// `skill_id`; every newly frozen receipt records the concrete catalog ID so dispatch and
+    /// prechecks resolve strictly by ID and never switch to another same-named skill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_skill_id: Option<String>,
     pub invocation_name: String,
 }
 
@@ -203,7 +210,8 @@ mod tests {
             SkillMaterializationReceipt {
                 bindings: vec![MaterializedSkillBinding {
                     node_id: "review".to_string(),
-                    skill_id: "catalog-id".to_string(),
+                    skill_id: "review".to_string(),
+                    catalog_skill_id: Some("plugin:official/review-pack:review".to_string()),
                     invocation_name: "review".to_string(),
                 }],
             },
@@ -216,7 +224,8 @@ mod tests {
         );
     }
 
-    /// Legacy payloads recorded before Effect retirement still carry `packagePaths`; ignore it cleanly.
+    /// Legacy payloads recorded before Effect retirement still carry `packagePaths` and omit
+    /// `catalogSkillId`; ignore `packagePaths` and default `catalog_skill_id` to `None`.
     #[test]
     fn workflow_run_payload_ignores_legacy_package_paths() {
         let encoded = r#"{"locale":"en-US","skillMaterialization":{"bindings":[{"nodeId":"review","skillId":"catalog-id","invocationName":"review","packagePaths":[".claude/skills/review"]}]}}"#;
@@ -229,6 +238,7 @@ mod tests {
                     bindings: vec![MaterializedSkillBinding {
                         node_id: "review".to_string(),
                         skill_id: "catalog-id".to_string(),
+                        catalog_skill_id: None,
                         invocation_name: "review".to_string(),
                     }],
                 },
