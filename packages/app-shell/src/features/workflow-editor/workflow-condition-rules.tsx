@@ -121,9 +121,6 @@ export function WorkflowConditionRules({
                 </div>
                 <div className="flex min-w-0 items-center">
                   <Select
-                    disabled={
-                      fixedRules !== undefined && fixedRules.logic === undefined
-                    }
                     value={logic}
                     onValueChange={(nextLogic) => {
                       if (nextLogic === "and" || nextLogic === "or") {
@@ -356,9 +353,14 @@ export function WorkflowConditionRules({
               {invalid && (
                 <span id={errorId} className="sr-only">
                   {t("settings.workflow.debug.invalid", {
-                    field: t(`settings.workflow.field.${invalid}`, {
-                      index: comparisonIndex + 1,
-                    }),
+                    field: [
+                      branchLabel,
+                      t(`settings.workflow.field.${invalid}`, {
+                        index: comparisonIndex + 1,
+                      }),
+                    ]
+                      .filter(Boolean)
+                      .join(" · "),
                   })}
                 </span>
               )}

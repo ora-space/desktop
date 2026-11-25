@@ -105,6 +105,9 @@ it("blocks a model edit with an out-of-scope prompt token, then emits the correc
   );
   await user.click(await screen.findByRole("option", { name: "Two" }));
   await user.click(submit());
+  expect(
+    screen.getByLabelText("Custom prompt").closest('[aria-invalid="true"]'),
+  ).not.toBeNull();
   expect(screen.getByRole("alert")).toHaveTextContent("Custom prompt");
   expect(input.onSubmit).not.toHaveBeenCalled();
   const prompt = screen.getByLabelText("Custom prompt");
@@ -425,7 +428,13 @@ it("keeps the rule structure fixed and emits only the existing case logic leaf",
       }}
     />,
   );
-  expect(screen.getByLabelText(/Branch 1 logic/)).toBeDisabled();
+  expect(submit()).toBeDisabled();
+  await user.click(screen.getByLabelText(/Branch 1 logic/));
+  await user.click(await screen.findByRole("option", { name: /OR/ }));
+  await user.click(submit());
+  expect(input.onSubmit.mock.calls[1]?.[0].patch).toEqual([
+    { op: "replace", path: "/cases/0/logic", value: "or" },
+  ]);
 });
 
 it("edits an existing carried variable's type-compatible feedback", async () => {
@@ -473,7 +482,6 @@ it("filters nested arrays and edits the iteration failure strategy", async () =>
     config: {
       iteratorSelector: ["start", "items"],
       collectSelector: ["member", "output"],
-      errorStrategy: "fail",
     },
   });
   input.variables.push({
@@ -655,3 +663,111 @@ it("blocks a preview with incompatible existing feedback", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent("Feedback for count");
   expect(input.onSubmit).not.toHaveBeenCalled();
 });
+
+it("describes the invalid field in the second branch by its displayed position", async () => {
+  const rule = { variableSelector: ["missing", "item"], operator: "empty" };
+  const input = props({
+    kind: "condition",
+    config: {
+      cases: [
+        { id: "internal-if", conditions: [] },
+        { id: "internal-other", conditions: [rule] },
+      ],
+    },
+  });
+  render(<RunNodeConfigForm {...input} />);
+  const field = screen.getByLabelText("Variable 1");
+  expect(field).toHaveAttribute("aria-invalid", "true");
+  expect(field).toHaveAccessibleDescription(/ELIF 1 · Variable 1/);
+  const user = userEvent.setup();
+  await user.click(screen.getByLabelText("Condition 1"));
+  await user.click(await screen.findByRole("option", { name: "Is not empty" }));
+  await user.click(submit());
+  expect(screen.getByRole("alert")).toHaveTextContent("ELIF 1 · Variable 1");
+  expect(input.onSubmit).not.toHaveBeenCalled();
+});
+
+it("blocks a strategy edit when the iteration source is unavailable", async () => {
+  const input = props({
+    kind: "iteration",
+    config: {
+      iteratorSelector: ["outside", "items"],
+      collectSelector: ["member", "output"],
+    },
+  });
+  render(<RunNodeConfigForm {...input} />);
+  expect(screen.getByLabelText("Iterator source")).toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByLabelText(
+      appI18n.t("settings.workflow.field.iterationErrorStrategy"),
+    ),
+  );
+  await user.click(
+    await screen.findByRole("option", {
+      name: appI18n.t("settings.workflow.iteration.continueStrategy"),
+    }),
+  );
+  await user.click(submit());
+  expect(screen.getByRole("alert")).toHaveTextContent("Iterator source");
+  expect(input.onSubmit).not.toHaveBeenCalled();
+});
+
+it("accepts file-array feedback for object arrays and only previews the changed limit", async () => {
+  const input = props({
+    kind: "loop",
+    config: {
+      maxIterations: 5,
+      until: { logic: "and", conditions: [] },
+      variables: [
+        {
+          name: "refs",
+          valueType: "array[object]",
+          initial: { kind: "constant", value: [] },
+          feedback: ["start", "files"],
+        },
+      ],
+    },
+  });
+  input.variables.push(variable("start", "files", "array[file]"));
+  render(<RunNodeConfigForm {...input} />);
+  fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "7" } });
+  await userEvent.setup().click(submit());
+  expect(input.onSubmit.mock.calls[0]?.[0].patch).toEqual([
+    { op: "replace", path: "/loopConfig/maxIterations", value: 7 },
+  ]);
+});
+
+it.each([0, 101, 1.5])(
+  "rejects a changed exit rule when the effective limit is %s",
+  async (maxIterations) => {
+    const input = props({
+      kind: "loop",
+      config: {
+        maxIterations,
+        until: {
+          logic: "and",
+          conditions: [
+            { variableSelector: ["start", "items"], operator: "empty" },
+          ],
+        },
+      },
+    });
+    render(<RunNodeConfigForm {...input} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Condition 1"));
+    await user.click(
+      await screen.findByRole("option", { name: "Is not empty" }),
+    );
+    expect(screen.getByRole("spinbutton")).toBeInvalid();
+    // Exercise the form's own submit guard independently of native number constraints.
+    fireEvent.submit(submit().closest("form")!);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      appI18n.t("settings.workflow.field.maxIterations"),
+    );
+    expect(input.onSubmit).not.toHaveBeenCalled();
+  },
+);

@@ -288,14 +288,13 @@ function Draft({
               setDraft({ ...draft, config: { ...config, ...patch } })
             }
           />
-          {config.errorStrategy !== undefined && (
-            <IterationErrorStrategy
-              value={config.errorStrategy}
-              onChange={(errorStrategy) =>
-                setDraft({ ...draft, config: { ...config, errorStrategy } })
-              }
-            />
-          )}
+
+          <IterationErrorStrategy
+            value={config.errorStrategy ?? "fail"}
+            onChange={(errorStrategy) =>
+              setDraft({ ...draft, config: { ...config, errorStrategy } })
+            }
+          />
         </>
       );
       break;
@@ -362,8 +361,8 @@ function configPatch(
   } else if (base.kind === "iteration" && draft.kind === "iteration") {
     replace(
       "/iterationConfig/errorStrategy",
-      base.config.errorStrategy,
-      draft.config.errorStrategy,
+      base.config.errorStrategy ?? "fail",
+      draft.config.errorStrategy ?? "fail",
     );
     replace(
       "/iterationConfig/iteratorSelector",

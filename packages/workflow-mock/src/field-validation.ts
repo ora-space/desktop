@@ -27,6 +27,7 @@ export function supportsFeedback(
     (["string", "secret"].includes(target) &&
       ["string", "secret"].includes(source)) ||
     (target === "object" && source === "file") ||
+    (target === "array[object]" && source === "array[file]") ||
     target === "any" ||
     source === "any" ||
     (target === "number" && source === "integer") ||
