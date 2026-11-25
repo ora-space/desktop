@@ -360,7 +360,8 @@ describe("RunNodeSessionChat", () => {
     expect(
       discover.mock.calls.map(([request]) => request.includeCommands),
     ).toEqual([false]);
-    useWorkspaceSelectionStore.getState().clearSelection();
+    // The surface is still mounted and follows the selection.
+    act(() => useWorkspaceSelectionStore.getState().clearSelection());
   });
 
   it("keeps the node session's authoritative model visible", async () => {
