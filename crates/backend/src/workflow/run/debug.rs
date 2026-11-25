@@ -93,6 +93,19 @@ impl WorkflowDebugCoordinator {
             .map_err(store_error)
     }
 
+    /// Refuses a normal scheduling entry point while a debug confirmation holds the fence (ADR D5.1):
+    /// failure recovery, restart and snapshot switch must not write, re-root or dispatch under an
+    /// active stopping or unreleased failed stop.
+    pub(crate) fn ensure_no_fence(&self, run_id: &str) -> Result<(), BackendError> {
+        let store = WorkflowDebugStore::new(self.pool.clone());
+        if store.dispatch_fence(run_id).map_err(store_error)?.is_some() {
+            return Err(store_error(ora_db::DatabaseError::WorkflowDebug(
+                ora_db::workflow_debug::DebugRejection::OperationInProgress,
+            )));
+        }
+        Ok(())
+    }
+
     /// Confirms a preview and carries it to the new dispatch, or returns the durable operation.
     ///
     /// Only the client whose claim is `Claimed` drives stopping; a reconnect or duplicate reads the

@@ -566,6 +566,7 @@ impl WorkflowRuns {
         request: RestartWorkflowRunRequest,
     ) -> Result<RestartWorkflowRunResponse, BackendError> {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        self.debug.ensure_no_fence(&request.run_id)?;
         self.precheck_dependencies(&request.run_id, StartOperation::Restart)?;
         self.engine.restart(request).map_err(BackendError::from)
     }
@@ -576,6 +577,7 @@ impl WorkflowRuns {
         request: ResumeWorkflowRunRequest,
     ) -> Result<ResumeWorkflowRunResponse, BackendError> {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        self.debug.ensure_no_fence(&request.run_id)?;
         super::rollback::resume_from_failure(
             self.dependency_sources(),
             &self.agent_runtime,

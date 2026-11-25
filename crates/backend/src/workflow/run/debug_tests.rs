@@ -460,5 +460,13 @@ fn an_unprovable_stop_records_stop_failed_and_keeps_the_fence_while_the_sibling_
             history[0].operation.phase,
             WorkflowDebugPhase::StopFailed { .. }
         ));
+
+        // Normal scheduling entry points are refused while the fence holds, and admitted once the
+        // failed stop is released after isolation is independently proven.
+        assert!(f.coordinator.ensure_no_fence(f.run_id.as_ref()).is_err());
+        f.store
+            .release_failed_stop(f.run_id.as_ref(), "fail-stop")
+            .unwrap();
+        assert!(f.coordinator.ensure_no_fence(f.run_id.as_ref()).is_ok());
     });
 }
