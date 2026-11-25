@@ -25,10 +25,8 @@ mod schema_v0022;
 mod schema_v0023;
 mod schema_v0024;
 
-/// Distribution-specific initialization applied only to a brand-new database.
-///
-/// Public builds intentionally ship no data initialization. Internal distributions may patch this
-/// list without changing versioned migration snapshots or the runner.
+/// Distribution-specific data initialization, separate from durable bootstrap bookkeeping.
+/// Public builds ship no distribution data. Replacing this list cannot disable source seeding.
 pub(super) const FIRST_INSTALL_SQL: &[&str] = &[];
 
 /// Returns the ordered schema migrations shipped with the database crate.

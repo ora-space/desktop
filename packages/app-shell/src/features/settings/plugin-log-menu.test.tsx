@@ -217,3 +217,28 @@ it("omits the download item when the host cannot export logs", async () => {
     screen.queryByRole("menuitem", { name: /下载日志|Download log/ }),
   ).toBeNull();
 });
+
+it("shows the protected file path and disables level edits", async () => {
+  const user = userEvent.setup({ pointerEventsCheck: 0 });
+  const { client, state, handlers, plugin } = fixture(true);
+  handlers.getPluginLogLevel = async (req) => ({
+    pluginId: req.pluginId,
+    level: "debug",
+    configured: true,
+    readOnlyPath: "C:/Ora/plugins/log-levels.json",
+  });
+  const setSpy = vi.spyOn(handlers, "setPluginLogLevel");
+  renderManager(client, state.installedPlugins);
+  await openRowMenu(user, plugin.displayName);
+  const trigger = await findLogLevelTrigger();
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() => expect(trigger).toHaveAttribute("data-highlighted"));
+  await user.keyboard("{ArrowRight}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "C:/Ora/plugins/log-levels.json",
+  );
+  const items = await screen.findAllByRole("menuitemradio");
+  for (const item of items)
+    expect(item).toHaveAttribute("aria-disabled", "true");
+  expect(setSpy).not.toHaveBeenCalled();
+});

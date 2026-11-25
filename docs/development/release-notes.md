@@ -64,6 +64,10 @@ Without a record, `is_new_installation` separates a fresh installation from an u
 this process opened a database that had no applied migration. An upgrade without a record lists every
 applicable version.
 
+This startup-origin flag is independent of the durable first-install data journal. If a first
+launch commits migrations and then stops before data initialization, restarting resumes the data
+but reports an existing database. Without a prior display record, release notes can appear once.
+
 The card only lists versions above v0.6.0, the last release without this feature, and a build of v0.6.0 or
 earlier neither shows it nor remembers its version. The notes of v0.3.0 to v0.6.0 were written afterwards
 for the history: their `date` is when the release was published, and v0.1.0 and earlier have none.

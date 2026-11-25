@@ -65,6 +65,14 @@ pub struct SkillFolderConflictParams {
     pub name: String,
 }
 
+/// Host configuration path that needs repair; excludes the stored configuration contents.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct PluginLogLevelsFileParams {
+    pub path: String,
+}
+
 /// Explains why a published snapshot cannot take over an existing run on resume.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -310,6 +318,8 @@ pub enum PublicError {
     AgentNameConflict(EmptyErrorParams),
     AgentNotFound(EmptyErrorParams),
     PluginNotFound(EmptyErrorParams),
+    PluginLogLevelsReadOnly(PluginLogLevelsFileParams),
+    PluginLogLevelsWriteFailed(PluginLogLevelsFileParams),
     PluginHostIncompatible(EmptyErrorParams),
     EffectTargetNotFound(EmptyErrorParams),
     EffectTargetNotRecoverable(EmptyErrorParams),
@@ -449,6 +459,8 @@ impl PublicError {
             Self::AgentNameConflict(_) => "agent_name_conflict",
             Self::AgentNotFound(_) => "agent_not_found",
             Self::PluginNotFound(_) => "plugin_not_found",
+            Self::PluginLogLevelsReadOnly(_) => "plugin_log_levels_read_only",
+            Self::PluginLogLevelsWriteFailed(_) => "plugin_log_levels_write_failed",
             Self::PluginHostIncompatible(_) => "plugin_host_incompatible",
             Self::PluginPackageInvalid(_) => "plugin_package_invalid",
             Self::PackMemberDuplicate(_) => "pack_member_duplicate",
@@ -600,6 +612,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     OpenLocationTarget::export_all(config)?;
     OpenLocationFailedParams::export_all(config)?;
     SkillFolderConflictParams::export_all(config)?;
+    PluginLogLevelsFileParams::export_all(config)?;
     WorkflowSnapshotIncompatibleWithResumeParams::export_all(config)?;
     WorkflowRunInputInvalidParams::export_all(config)?;
     TaskBaseBranchNotFoundParams::export_all(config)?;
@@ -618,9 +631,9 @@ mod tests {
     use super::{
         ContractError, EmptyErrorParams, MarketplaceArtifactRetrievalFieldInvalidParams,
         OpenLocationFailedParams, OpenLocationTarget, PackMemberParams,
-        PluginConfigurationValidationParams, PluginPackageInvalidParams, PublicError, RequestId,
-        SessionMcpSetupFailedParams, SkillFolderConflictParams, TaskBaseBranchNotFoundParams,
-        WorkflowMcpNotFoundParams, WorkflowNodeCompletionBlocker,
+        PluginConfigurationValidationParams, PluginLogLevelsFileParams, PluginPackageInvalidParams,
+        PublicError, RequestId, SessionMcpSetupFailedParams, SkillFolderConflictParams,
+        TaskBaseBranchNotFoundParams, WorkflowMcpNotFoundParams, WorkflowNodeCompletionBlocker,
         WorkflowNodeCompletionBlockerKind, WorkflowNodeCompletionBlockerParams,
         WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams,
         WorkflowNodeSignalChangedParams, WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
@@ -669,6 +682,12 @@ mod tests {
             PublicError::AgentNameConflict(empty),
             PublicError::AgentNotFound(empty),
             PublicError::PluginNotFound(empty),
+            PublicError::PluginLogLevelsReadOnly(PluginLogLevelsFileParams {
+                path: "plugins/log-levels.json".to_owned(),
+            }),
+            PublicError::PluginLogLevelsWriteFailed(PluginLogLevelsFileParams {
+                path: "plugins/log-levels.json".to_owned(),
+            }),
             PublicError::PluginHostIncompatible(empty),
             PublicError::PluginPackageInvalid(PluginPackageInvalidParams {
                 field: "description".to_owned(),
@@ -867,6 +886,8 @@ mod tests {
                 | PublicError::AgentNameConflict(_)
                 | PublicError::AgentNotFound(_)
                 | PublicError::PluginNotFound(_)
+                | PublicError::PluginLogLevelsReadOnly(_)
+                | PublicError::PluginLogLevelsWriteFailed(_)
                 | PublicError::PluginHostIncompatible(_)
                 | PublicError::PluginPackageInvalid(_)
                 | PublicError::PackMemberDuplicate(_)
@@ -997,7 +1018,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 127);
+        assert_eq!(samples.len(), 129);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

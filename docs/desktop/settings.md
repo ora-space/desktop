@@ -14,6 +14,7 @@ preference.
 | `developer_mode` | Reveals developer-only controls | `getDeveloperMode`, `setDeveloperMode` |
 | `log_level` | Process-wide runtime log level | `getRuntimeLogLevel`, `setRuntimeLogLevel` |
 | `network_proxy_settings` | Optional host-level HTTP proxy | `getProxySettings`, `setProxySettings`, `clearProxySettings`, `checkProxySettings` |
+| `network_proxy_check_url` | Last explicitly confirmed HTTP(S) probe URL | `getProxyCheckUrl`, `setProxyCheckUrl` |
 | `worktree_root` | Creation root for new task worktrees | Native `get_worktree_root`, `set_worktree_root` |
 
 ## Developer mode and developer options
@@ -64,3 +65,26 @@ directory and defaults to `~/.ora/worktrees`. It is a creation target only, see
 
 Marketplace sources are managed in Settings → Plugins → Manage marketplace. The dialog's behavior
 and the source fields are described in [Marketplace](../plugins/marketplace.md#sources).
+
+## Upgrades and read failures
+
+When the initial proxy read fails, Settings shows an error and retry action instead of an empty editor that could overwrite the saved value. A background read failure keeps the current draft visible and disables save, clear and connection checks until retry succeeds.
+
+Preference migration retains legacy agent selections. A legacy package name is resolved to its full namespaced identity only when exactly one installed agent matches; ambiguous or absent selections remain unchanged.
+
+Only a newly created database requests default marketplace source seeding. Existing empty lists, including those created by older releases without a deletion marker, survive upgrades and restarts. First-install initialization also respects sources supplied by a distributor.
+
+Fresh-install provenance is committed with migration bookkeeping before schema steps. Interrupted
+migrations or distribution initialization resume their pending work on restart; source seeding
+does not depend on the distribution's optional first-install SQL.
+
+Connection checks default to `https://google.com`, with an editable URL. A failed check describes
+reachability of that URL, which can depend on the site or network; it does not invalidate or change
+saved proxy settings. Background read failures keep an open check dialog and its URL draft while
+blocking checks until recovery.
+
+Confirming a check saves its HTTP(S) URL separately in `user_config` before probing, even if the
+target is unreachable. Cancelling discards the current draft and reopening restores the saved URL;
+restarts and upgrades retain it. Only a missing preference uses the Google default. Read failures
+remain errors, and a failed URL save keeps the draft and skips the probe. Confirming a URL does not
+save or clear proxy credentials.

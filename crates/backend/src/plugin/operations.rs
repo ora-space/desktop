@@ -37,6 +37,9 @@ fn plugin_log_level_response(
             ora_logging::LogLevel::Error => RuntimeLogLevel::Error,
         },
         configured: state.configured,
+        read_only_path: state
+            .read_only_path
+            .map(|path| path.to_string_lossy().into_owned()),
     }
 }
 

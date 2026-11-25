@@ -5,6 +5,10 @@ export const requestIdSchema = z.string();
 
 export const emptyErrorParamsSchema = z.record(z.string(), z.never());
 
+export const pluginLogLevelsFileParamsSchema = z.object({
+    path: z.string()
+});
+
 export const pluginPackageInvalidParamsSchema = z.object({
     field: z.string(),
     message: z.string()
@@ -148,6 +152,12 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("plugin_not_found"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("plugin_log_levels_read_only"),
+        "params": pluginLogLevelsFileParamsSchema
+    }), z.object({
+        "code": z.literal("plugin_log_levels_write_failed"),
+        "params": pluginLogLevelsFileParamsSchema
     }), z.object({
         "code": z.literal("plugin_host_incompatible"),
         "params": emptyErrorParamsSchema
@@ -551,6 +561,12 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("plugin_not_found"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("plugin_log_levels_read_only"),
+        "params": pluginLogLevelsFileParamsSchema
+    }), z.object({
+        "code": z.literal("plugin_log_levels_write_failed"),
+        "params": pluginLogLevelsFileParamsSchema
     }), z.object({
         "code": z.literal("plugin_host_incompatible"),
         "params": emptyErrorParamsSchema

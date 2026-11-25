@@ -20,8 +20,6 @@ import {
 } from "../../state/hooks/use-proxy-settings";
 import { SettingsHeading } from "./settings-heading";
 
-const DEFAULT_CHECK_URL = "https://example.com/";
-
 interface ProxySettingsEditorProps {
   initialSettings: ProxySettings | null;
   controller: ProxySettingsController;
@@ -48,10 +46,19 @@ export function ProxySettings() {
         description={t("settings.proxy.description")}
       />
 
-      {controller.isLoading ? (
+      {!controller.hasLoaded && controller.isLoading ? (
         <span role="status" className="text-xs text-muted-foreground">
           {t("settings.proxy.loading")}
         </span>
+      ) : !controller.hasLoaded && controller.loadError !== null ? (
+        <div className="space-y-3">
+          <p role="alert" className="text-sm text-destructive">
+            {t("settings.proxy.loadError")}
+          </p>
+          <Button variant="outline" onClick={() => void controller.retry()}>
+            {t("common.retry")}
+          </Button>
+        </div>
       ) : (
         <ProxySettingsEditor
           key={settingsKey}
@@ -99,6 +106,7 @@ function ProxySettingsEditor({
   const [username, setUsername] = useState(initialSettings?.username ?? "");
   const [password, setPassword] = useState(initialSettings?.password ?? "");
   const [checkOpen, setCheckOpen] = useState(false);
+  const [checkUrl, setCheckUrl] = useState(controller.checkUrl);
 
   const parsed = parsedProxySettings(host, port, username, password);
   const hasFormValues =
@@ -106,7 +114,12 @@ function ProxySettingsEditor({
     port.trim() !== "" ||
     username.trim() !== "" ||
     password !== "";
-  const busy = controller.isLoading || controller.isSaving;
+  const busy =
+    controller.isLoading ||
+    controller.isSaving ||
+    controller.loadError !== null;
+  const checkBlocked =
+    busy || controller.isCheckUrlLoading || controller.checkUrlError !== null;
 
   const save = async () => {
     if (parsed === null) {
@@ -213,15 +226,39 @@ function ProxySettingsEditor({
             </Button>
             <Button
               variant="outline"
-              disabled={busy || parsed === null}
-              onClick={() => setCheckOpen(true)}
+              disabled={checkBlocked || parsed === null}
+              onClick={() => {
+                setCheckUrl(controller.checkUrl);
+                setCheckOpen(true);
+              }}
             >
               {t("settings.proxy.check")}
             </Button>
+            {controller.checkUrlError !== null && (
+              <>
+                <span role="alert" className="text-xs text-destructive">
+                  {t("settings.proxy.checkUrlLoadError")}
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={() => void controller.retry()}
+                >
+                  {t("common.retry")}
+                </Button>
+              </>
+            )}
             {controller.loadError !== null && (
-              <span role="alert" className="text-xs text-destructive">
-                {t("settings.proxy.loadError")}
-              </span>
+              <>
+                <span role="alert" className="text-xs text-destructive">
+                  {t("settings.proxy.loadError")}
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={() => void controller.retry()}
+                >
+                  {t("common.retry")}
+                </Button>
+              </>
             )}
             {controller.updateError !== null && (
               <span role="alert" className="text-xs text-destructive">
@@ -234,7 +271,22 @@ function ProxySettingsEditor({
       {checkOpen && parsed !== null && (
         <CheckProxyDialog
           checking={controller.isChecking}
-          onOpenChange={setCheckOpen}
+          blocked={checkBlocked}
+          readError={
+            controller.loadError !== null
+              ? t("settings.proxy.loadError")
+              : controller.checkUrlError !== null
+                ? t("settings.proxy.checkUrlLoadError")
+                : null
+          }
+          onRetry={() => void controller.retry()}
+          url={checkUrl}
+          onUrlChange={setCheckUrl}
+          onOpenChange={(open) => {
+            setCheckOpen(open);
+            if (!open) setCheckUrl(controller.checkUrl);
+          }}
+          onSaveUrl={controller.saveCheckUrl}
           onCheck={(url) => controller.check(url, parsed)}
         />
       )}
@@ -244,23 +296,43 @@ function ProxySettingsEditor({
 
 interface CheckProxyDialogProps {
   checking: boolean;
+  blocked: boolean;
+  readError: string | null;
+  onRetry: () => void;
+  url: string;
+  onUrlChange: (url: string) => void;
   onOpenChange: (open: boolean) => void;
   onCheck: (url: string) => Promise<CheckProxySettingsResponse>;
+  onSaveUrl: (url: string) => Promise<unknown>;
 }
 
 /** Prompts for a URL and reports whether the current form proxy can reach it. */
 function CheckProxyDialog({
   checking,
+  blocked,
+  readError,
+  onRetry,
+  url,
+  onUrlChange,
   onOpenChange,
   onCheck,
+  onSaveUrl,
 }: CheckProxyDialogProps) {
   const { t } = useTranslation();
-  const [url, setUrl] = useState(DEFAULT_CHECK_URL);
 
   const verify = async () => {
+    if (blocked || checking) return;
     const nextUrl = url.trim();
     if (nextUrl === "") {
       toast.error(t("settings.proxy.checkUrlRequired"));
+      return;
+    }
+    try {
+      await onSaveUrl(nextUrl);
+    } catch (cause) {
+      toast.error(t("settings.proxy.checkUrlSaveError"), {
+        description: localizeContractError(cause, t),
+      });
       return;
     }
     try {
@@ -299,7 +371,7 @@ function CheckProxyDialog({
           </span>
           <Input
             value={url}
-            onChange={(event) => setUrl(event.target.value)}
+            onChange={(event) => onUrlChange(event.target.value)}
             aria-label={t("settings.proxy.checkUrl")}
             autoComplete="off"
             onKeyDown={(event) => {
@@ -310,6 +382,14 @@ function CheckProxyDialog({
             }}
           />
         </label>
+        {readError !== null && (
+          <div className="space-y-2">
+            <p role="alert">{readError}</p>
+            <Button variant="outline" onClick={onRetry}>
+              {t("common.retry")}
+            </Button>
+          </div>
+        )}
         <DialogFooter>
           <Button
             variant="outline"
@@ -319,7 +399,7 @@ function CheckProxyDialog({
             {t("common.cancel")}
           </Button>
           <Button
-            disabled={checking || url.trim() === ""}
+            disabled={blocked || checking || url.trim() === ""}
             onClick={() => void verify()}
           >
             {checking

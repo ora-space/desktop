@@ -1,13 +1,8 @@
-//! Host-owned, persisted Plugin log level per canonical Plugin ID.
-//!
-//! The setting decides the lowest level the host persists for one plugin's diagnostics. It is
-//! keyed by identity rather than by version so upgrades keep it, it lives in a host file outside
-//! every plugin data directory so `ora/storage/*` can never reach it, and it is published to
-//! running generations through a `watch` channel so a change applies to the next record the
-//! reader filters — no restart, no SDK involvement.
+//! Host-owned log levels preserve unknown persisted entries and expose write protection.
 
 use ora_domain::PluginId;
 use ora_logging::{LogLevel, ora_warn};
+use serde_json::value::RawValue;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -15,29 +10,34 @@ use std::sync::{Arc, Mutex, PoisonError};
 use thiserror::Error;
 use tokio::sync::watch;
 
-/// Level applied to every plugin without an explicit setting.
+/// Level used when this plugin has no readable explicit preference.
 pub const DEFAULT_PLUGIN_LOG_LEVEL: LogLevel = LogLevel::Info;
+type RawLevels = BTreeMap<String, Box<RawValue>>;
 
-const PLUGINS_DIRECTORY: &str = "plugins";
-const LOG_LEVELS_FILE_NAME: &str = "log-levels.json";
-
-/// The effective level of one plugin and whether it came from an explicit setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The effective value plus the file that needs repair before ordinary edits are safe.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginLogLevelState {
     pub level: LogLevel,
     pub configured: bool,
+    pub read_only_path: Option<PathBuf>,
 }
 
-/// Why a level could not be persisted or cleared; the in-memory level is untouched on error.
+/// Distinguishes protected old data from an ordinary filesystem write failure.
 #[derive(Debug, Error)]
-#[error("failed to persist plugin log levels at `{path}`")]
-pub struct PluginLogLevelPersistError {
-    pub path: PathBuf,
-    #[source]
-    pub source: io::Error,
+pub enum PluginLogLevelPersistError {
+    #[error(
+        "plugin log levels at `{path}` are read-only; repair the file and restart before editing"
+    )]
+    ReadOnly { path: PathBuf },
+    #[error("failed to persist plugin log levels at `{path}`: {source}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
 }
 
-/// Registry of per-plugin log levels with atomic persistence and live subscriptions.
+/// Registry of persisted Plugin log levels and live subscriptions, keyed by canonical identity.
 #[derive(Clone)]
 pub struct PluginLogLevels {
     inner: Arc<Mutex<Inner>>,
@@ -45,81 +45,92 @@ pub struct PluginLogLevels {
 }
 
 struct Inner {
-    /// The persisted settings; absence means the default applies.
     configured: BTreeMap<PluginId, LogLevel>,
-    /// One publisher per plugin that has ever been subscribed to or configured.
+    // Raw values keep even future JSON numbers/objects byte-for-byte when an explicit uninstall
+    // removes one key. None means the file could not be parsed, so no destructive edit is safe.
+    raw: Option<RawLevels>,
+    persisted: Option<Vec<u8>>,
+    writable: bool,
     publishers: BTreeMap<PluginId, watch::Sender<LogLevel>>,
 }
 
-impl PluginLogLevels {
-    /// Loads `<data-dir>/plugins/log-levels.json`, treating an absent file as "nothing set".
-    ///
-    /// An unreadable or unparsable file is reported and treated as empty: starting with every
-    /// plugin at the default is a safe state, and the next successful write replaces the file.
-    pub fn open(data_directory: &Path) -> Self {
-        let path = data_directory
-            .join(PLUGINS_DIRECTORY)
-            .join(LOG_LEVELS_FILE_NAME);
-        let configured = match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<BTreeMap<String, LogLevel>>(&bytes) {
-                Ok(raw) => raw
-                    .into_iter()
-                    .filter_map(|(id, level)| match PluginId::parse(&id) {
-                        Ok(id) => Some((id, level)),
-                        Err(_) => {
-                            ora_warn!(
-                                path = %path.display(),
-                                plugin_id = %id,
-                                "ignoring plugin log level entry with an invalid plugin id"
-                            );
-                            None
-                        }
-                    })
-                    .collect(),
-                Err(error) => {
-                    ora_warn!(
-                        path = %path.display(),
-                        %error,
-                        "plugin log levels file is unreadable; every plugin uses the default"
-                    );
-                    BTreeMap::new()
-                }
-            },
-            Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
-            Err(error) => {
-                ora_warn!(
-                    path = %path.display(),
-                    %error,
-                    "plugin log levels file could not be read; every plugin uses the default"
-                );
-                BTreeMap::new()
+/// Projects known levels without discarding the original JSON or silently hiding protection.
+fn known_levels(path: &Path, raw: &RawLevels) -> (BTreeMap<PluginId, LogLevel>, bool) {
+    let mut writable = true;
+    let configured = raw.iter().filter_map(|(key, value)| {
+        let id = match PluginId::parse(key) {
+            Ok(id) => id,
+            Err(_) => {
+                writable = false;
+                ora_warn!(path = %path.display(), plugin_id = %key, "plugin log level identity is invalid; settings are read-only");
+                return None;
             }
         };
+        match serde_json::from_str::<LogLevel>(value.get()) {
+            Ok(level) => Some((id, level)),
+            Err(_) => {
+                writable = false;
+                ora_warn!(path = %path.display(), plugin_id = %id, "plugin log level is unsupported; settings are read-only");
+                None
+            }
+        }
+    }).collect();
+    (configured, writable)
+}
+
+impl PluginLogLevels {
+    /// Missing is unset; unreadable or unsupported persisted data remains protected until repair.
+    pub fn open(data_directory: &Path) -> Self {
+        let path = data_directory.join("plugins").join("log-levels.json");
+        let mut persisted = None;
+        let raw = match std::fs::read(&path) {
+            Ok(bytes) => {
+                persisted = Some(bytes.clone());
+                match serde_json::from_slice::<RawLevels>(&bytes) {
+                    Ok(raw) => Some(raw),
+                    Err(error) => {
+                        ora_warn!(path = %path.display(), %error, "plugin log levels file is invalid; settings are read-only");
+                        None
+                    }
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Some(BTreeMap::new()),
+            Err(error) => {
+                ora_warn!(path = %path.display(), %error, "plugin log levels file could not be read; settings are read-only");
+                None
+            }
+        };
+        let (configured, writable) = raw
+            .as_ref()
+            .map(|raw| known_levels(&path, raw))
+            .unwrap_or_default();
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 configured,
+                raw,
+                persisted,
+                writable,
                 publishers: BTreeMap::new(),
             })),
             path,
         }
     }
 
-    /// Returns the effective level of one plugin and whether it is explicitly configured.
+    /// Reports the effective level and a repair path whenever writes would destroy old data.
     pub fn state(&self, plugin_id: &PluginId) -> PluginLogLevelState {
         let inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        match inner.configured.get(plugin_id) {
-            Some(level) => PluginLogLevelState {
-                level: *level,
-                configured: true,
-            },
-            None => PluginLogLevelState {
-                level: DEFAULT_PLUGIN_LOG_LEVEL,
-                configured: false,
-            },
+        PluginLogLevelState {
+            level: inner
+                .configured
+                .get(plugin_id)
+                .copied()
+                .unwrap_or(DEFAULT_PLUGIN_LOG_LEVEL),
+            configured: inner.configured.contains_key(plugin_id),
+            read_only_path: (!inner.writable).then(|| self.path.clone()),
         }
     }
 
-    /// Subscribes a process generation to the plugin's live effective level.
+    /// Subscribes a generation to its next effective log level without exposing host settings.
     pub fn subscribe(&self, plugin_id: &PluginId) -> watch::Receiver<LogLevel> {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let level = inner
@@ -134,184 +145,101 @@ impl PluginLogLevels {
             .subscribe()
     }
 
-    /// Persists a new level and only then publishes it to running generations.
-    ///
-    /// Persist-then-apply keeps the two views consistent: a failed write leaves both the file
-    /// and the effective level as they were, so the caller can truthfully report failure.
+    /// Persists first, then publishes; failed or protected writes leave every view unchanged.
     pub fn set(
         &self,
         plugin_id: &PluginId,
         level: LogLevel,
     ) -> Result<PluginLogLevelState, PluginLogLevelPersistError> {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut next = inner.configured.clone();
-        next.insert(plugin_id.clone(), level);
-        self.persist(&next)?;
-        inner.configured = next;
+        if !inner.writable {
+            return Err(PluginLogLevelPersistError::ReadOnly {
+                path: self.path.clone(),
+            });
+        }
+        let mut next = inner
+            .raw
+            .clone()
+            .ok_or_else(|| PluginLogLevelPersistError::ReadOnly {
+                path: self.path.clone(),
+            })?;
+        next.insert(
+            plugin_id.to_string(),
+            serde_json::value::to_raw_value(&level).map_err(|error| {
+                PluginLogLevelPersistError::Write {
+                    path: self.path.clone(),
+                    source: io::Error::other(error),
+                }
+            })?,
+        );
+        self.persist(&mut inner, &next)?;
+        inner.raw = Some(next);
+        inner.configured.insert(plugin_id.clone(), level);
         if let Some(publisher) = inner.publishers.get(plugin_id) {
             publisher.send_replace(level);
         }
         Ok(PluginLogLevelState {
             level,
             configured: true,
+            read_only_path: None,
         })
     }
 
-    /// Removes the plugin's setting so a reinstall under the same identity starts at default.
+    /// Explicit delete-data uninstall removes only this identity, preserving all other raw values.
+    /// Malformed or unreadable files cannot be safely edited, even for a currently unknown key.
     pub fn clear(&self, plugin_id: &PluginId) -> Result<(), PluginLogLevelPersistError> {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if !inner.configured.contains_key(plugin_id) {
+        let mut next = inner
+            .raw
+            .clone()
+            .ok_or_else(|| PluginLogLevelPersistError::ReadOnly {
+                path: self.path.clone(),
+            })?;
+        if next.remove(&plugin_id.to_string()).is_none() {
             return Ok(());
         }
-        let mut next = inner.configured.clone();
-        next.remove(plugin_id);
-        self.persist(&next)?;
-        inner.configured = next;
+        self.persist(&mut inner, &next)?;
+        let (configured, writable) = known_levels(&self.path, &next);
+        inner.configured = configured;
+        inner.writable = writable;
+        inner.raw = Some(next);
         if let Some(publisher) = inner.publishers.get(plugin_id) {
             publisher.send_replace(DEFAULT_PLUGIN_LOG_LEVEL);
         }
         Ok(())
     }
 
-    /// Atomically replaces the settings file with the given map.
+    /// Atomically replaces the map while retaining unsupported JSON values verbatim.
     fn persist(
         &self,
-        configured: &BTreeMap<PluginId, LogLevel>,
+        inner: &mut Inner,
+        raw: &RawLevels,
     ) -> Result<(), PluginLogLevelPersistError> {
-        let raw = configured
-            .iter()
-            .map(|(id, level)| (id.to_string(), *level))
-            .collect::<BTreeMap<_, _>>();
-        let bytes =
-            serde_json::to_vec_pretty(&raw).map_err(|error| PluginLogLevelPersistError {
-                path: self.path.clone(),
-                source: io::Error::other(error),
-            })?;
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| PluginLogLevelPersistError {
-                path: self.path.clone(),
-                source,
-            })?;
-        }
-        ora_utils::atomic::write(&self.path, &bytes).map_err(|source| PluginLogLevelPersistError {
+        let write_error = |source| PluginLogLevelPersistError::Write {
             path: self.path.clone(),
             source,
-        })
+        };
+        let bytes =
+            serde_json::to_vec_pretty(raw).map_err(|error| write_error(io::Error::other(error)))?;
+        let current = match std::fs::read(&self.path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(write_error(error)),
+        };
+        if current != inner.persisted {
+            inner.writable = false;
+            return Err(PluginLogLevelPersistError::ReadOnly {
+                path: self.path.clone(),
+            });
+        }
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(write_error)?;
+        }
+        ora_utils::atomic::write(&self.path, &bytes).map_err(write_error)?;
+        inner.persisted = Some(bytes);
+        Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{DEFAULT_PLUGIN_LOG_LEVEL, PluginLogLevelState, PluginLogLevels};
-    use ora_domain::PluginId;
-    use ora_logging::LogLevel;
-    use pretty_assertions::assert_eq;
-    use tempfile::TempDir;
-
-    fn id(name: &str) -> PluginId {
-        PluginId::new("official", name).expect("plugin id")
-    }
-
-    /// Unset plugins report the default; a set level persists across reopen, publishes to live
-    /// subscribers, and leaves other plugins untouched.
-    #[test]
-    fn levels_are_per_plugin_persisted_and_published_live() {
-        let temp = TempDir::new().expect("temp dir");
-        let levels = PluginLogLevels::open(temp.path());
-        let a_live = levels.subscribe(&id("a"));
-        let b_live = levels.subscribe(&id("b"));
-        assert_eq!(
-            (levels.state(&id("a")), *a_live.borrow()),
-            (
-                PluginLogLevelState {
-                    level: DEFAULT_PLUGIN_LOG_LEVEL,
-                    configured: false
-                },
-                LogLevel::Info
-            )
-        );
-
-        levels.set(&id("a"), LogLevel::Debug).expect("set a");
-
-        let reopened = PluginLogLevels::open(temp.path());
-        assert_eq!(
-            (
-                *a_live.borrow(),
-                *b_live.borrow(),
-                levels.state(&id("b")),
-                reopened.state(&id("a")),
-                reopened.state(&id("b")),
-            ),
-            (
-                LogLevel::Debug,
-                LogLevel::Info,
-                PluginLogLevelState {
-                    level: LogLevel::Info,
-                    configured: false
-                },
-                PluginLogLevelState {
-                    level: LogLevel::Debug,
-                    configured: true
-                },
-                PluginLogLevelState {
-                    level: LogLevel::Info,
-                    configured: false
-                },
-            )
-        );
-    }
-
-    /// A failed persist reports an error and changes neither the effective nor the stored level.
-    #[test]
-    fn a_failed_persist_changes_nothing() {
-        let temp = TempDir::new().expect("temp dir");
-        let levels = PluginLogLevels::open(temp.path());
-        levels.set(&id("a"), LogLevel::Warn).expect("initial set");
-        let live = levels.subscribe(&id("a"));
-        // Occupying the parent path with a file makes the atomic replace fail.
-        let plugins_dir = temp.path().join("plugins");
-        std::fs::remove_dir_all(&plugins_dir).expect("remove plugins dir");
-        std::fs::write(&plugins_dir, "not a directory").expect("occupy path");
-
-        let error = levels
-            .set(&id("a"), LogLevel::Trace)
-            .err()
-            .expect("persist fails");
-
-        assert_eq!(
-            (error.path, levels.state(&id("a")), *live.borrow(),),
-            (
-                plugins_dir.join("log-levels.json"),
-                PluginLogLevelState {
-                    level: LogLevel::Warn,
-                    configured: true
-                },
-                LogLevel::Warn,
-            )
-        );
-    }
-
-    /// Clearing removes the entry, publishes the default, and is a no-op for unset plugins.
-    #[test]
-    fn clear_restores_the_default_and_tolerates_unset_plugins() {
-        let temp = TempDir::new().expect("temp dir");
-        let levels = PluginLogLevels::open(temp.path());
-        let live = levels.subscribe(&id("a"));
-        levels.set(&id("a"), LogLevel::Error).expect("set");
-        levels.clear(&id("a")).expect("clear");
-        levels.clear(&id("never-set")).expect("clear unset");
-        assert_eq!(
-            (
-                *live.borrow(),
-                PluginLogLevels::open(temp.path()).state(&id("a")),
-            ),
-            (
-                LogLevel::Info,
-                PluginLogLevelState {
-                    level: LogLevel::Info,
-                    configured: false
-                }
-            )
-        );
-    }
-}
+mod tests;

@@ -6,6 +6,22 @@ const NAMESPACE: &str = "proxy";
 
 pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
     FrontendEndpoint {
+        operation_name: "getProxyCheckUrl",
+        namespace: NAMESPACE,
+        member_name: "getCheckUrl",
+        request_type: "GetProxyCheckUrlRequest",
+        response_type: "ProxyCheckUrlResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "setProxyCheckUrl",
+        namespace: NAMESPACE,
+        member_name: "setCheckUrl",
+        request_type: "SetProxyCheckUrlRequest",
+        response_type: "ProxyCheckUrlResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "getProxySettings",
         namespace: NAMESPACE,
         member_name: "get",
