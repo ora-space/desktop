@@ -464,10 +464,23 @@ where
             let (_, condition_decisions) = execution_state_from(context.run.payload.as_deref());
             let node_runs = self.repository.list_node_runs(run_id)?;
             let projection = BranchProjection::new(&graph, &node_runs, &condition_decisions);
-            let ready: Vec<&WorkflowGraphNode> = projection.ready_nodes();
+            // A stopping debug confirmation holds its affected scope: filter the fenced positions
+            // out of the ready set so the coordinator can quiesce and apply before any re-dispatch.
+            let fence = self.repository.debug_dispatch_fence(run_id)?;
+            let ready: Vec<&WorkflowGraphNode> = projection
+                .ready_nodes()
+                .into_iter()
+                .filter(|node| {
+                    !fence
+                        .as_ref()
+                        .is_some_and(|fence| fence.blocked_nodes.contains(&node.id))
+                })
+                .collect();
 
             if ready.is_empty() {
-                if !projection.has_in_flight() {
+                // The run must not finish while a debug fence is pending: the affected scope still
+                // owes a re-dispatch under the new revision once the coordinator applies it.
+                if !projection.has_in_flight() && fence.is_none() {
                     let output = self.runtimes.compute_run_output(&node_runs);
                     self.repository.finish_run(run_id, output, now)?;
                     self.run_events.publish_run_invalidated(run_id);

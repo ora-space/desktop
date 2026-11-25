@@ -136,6 +136,48 @@ impl WorkflowDebugStore {
         })
     }
 
+    /// Reads the active dispatch fence: the newest stopping or unreleased failed operation's
+    /// stop-set and schedule scope. The scheduler holds these positions until the operation
+    /// applies (or the failed fence is released); independent branches are not listed.
+    pub fn dispatch_fence(
+        &self,
+        run: &str,
+    ) -> Result<Option<ora_application::DebugDispatchFence>, DatabaseError> {
+        self.pool.with_connection(|db| {
+            let plan: Option<String> = db
+                .query_row(
+                    "SELECT p.plan FROM workflow_debug_operations o
+                     JOIN workflow_debug_previews p ON p.id=o.preview_id
+                     WHERE o.run_id=?1 AND (o.state='stopping' OR (o.state='stop_failed' AND o.released=0))
+                     ORDER BY o.id DESC LIMIT 1",
+                    [run],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(plan) = plan else { return Ok(None) };
+            let plan: Value = serde_json::from_str(&plan)?;
+            let strings = |key: &str| -> Vec<String> {
+                plan.get(key)
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            Ok(Some(ora_application::DebugDispatchFence {
+                blocked_nodes: strings("schedule"),
+                stopped_attempts: strings("stop")
+                    .into_iter()
+                    .map(ora_domain::WorkflowNodeRunId::new)
+                    .collect(),
+            }))
+        })
+    }
+
     /// Lists accepted operations, their original preview and patch in durable acceptance order.
     pub fn history(&self, run: &str) -> Result<Vec<WorkflowDebugHistoryEntry>, DatabaseError> {
         self.pool.with_connection(|db| {

@@ -149,6 +149,15 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .map_err(RepositoryError::new)
     }
 
+    fn debug_dispatch_fence(
+        &self,
+        run_id: &WorkflowRunId,
+    ) -> Result<Option<ora_application::DebugDispatchFence>, RepositoryError> {
+        crate::workflow_debug::WorkflowDebugStore::new(self.pool.clone())
+            .dispatch_fence(run_id.as_ref())
+            .map_err(RepositoryError::new)
+    }
+
     fn find_execution_context(
         &self,
         run_id: &WorkflowRunId,

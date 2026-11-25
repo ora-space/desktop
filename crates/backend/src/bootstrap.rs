@@ -263,6 +263,7 @@ impl Backend {
             baselines_root,
             agent_runtime: agent_runtime.clone(),
             engine: workflow_run_engine,
+            raw_engine: workflow_engine.clone(),
             run_locks,
             transitions: workflow_transitions,
             plugin_api: plugin.clone(),

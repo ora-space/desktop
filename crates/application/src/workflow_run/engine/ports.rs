@@ -115,6 +115,18 @@ pub enum LoopRoundAdvance {
     Fail { error: String },
 }
 
+/// The active debug dispatch fence for a run whose confirmation is still stopping (or failed and
+/// unreleased). While present, the scheduler must not dispatch the fenced positions or finish the
+/// run, so the coordinator can quiesce the affected scope and apply the new revision atomically.
+/// Independent branches outside the fence keep scheduling and committing normally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugDispatchFence {
+    /// Root-scope node ids whose new dispatch is blocked until the operation applies.
+    pub blocked_nodes: Vec<String>,
+    /// Attempts being stopped; a retry wake for one of them must not start while fenced.
+    pub stopped_attempts: Vec<WorkflowNodeRunId>,
+}
+
 /// Supplies new node-run identifiers for the engine's scheduling waves.
 pub trait WorkflowNodeRunIdGenerator {
     /// Produces the identifier for a newly created node run.
@@ -328,6 +340,16 @@ pub trait WorkflowRunEngineRepository: WorkflowRetryRepository {
         _run_id: &WorkflowRunId,
         _attempt: &WorkflowNodeRunId,
     ) -> Result<Option<WorkflowGraph>, RepositoryError> {
+        Ok(None)
+    }
+
+    /// Returns the active debug dispatch fence while a confirmation is stopping or failed and
+    /// unreleased. The scheduler consults it to hold the affected scope's new dispatch and the
+    /// run's finish until the coordinator applies the revision; `None` means normal scheduling.
+    fn debug_dispatch_fence(
+        &self,
+        _run_id: &WorkflowRunId,
+    ) -> Result<Option<DebugDispatchFence>, RepositoryError> {
         Ok(None)
     }
 

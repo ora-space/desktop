@@ -1,7 +1,8 @@
 //! Workflow-run use cases own scheduling gates, manual completion, and session cleanup.
 
 use super::api::WorkflowRunApi;
-use super::engine::ConcreteWorkflowRunControl;
+use super::debug::WorkflowDebugCoordinator;
+use super::engine::{ConcreteWorkflowRunControl, ConcreteWorkflowRunEngine};
 use super::interactive::{
     AgentSignalStore, CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns,
     merge_completion_patch, signal_fingerprint,
@@ -35,6 +36,8 @@ pub(crate) struct WorkflowRunSetup {
     pub baselines_root: PathBuf,
     pub agent_runtime: Arc<AgentRuntimeManager>,
     pub engine: Arc<ConcreteWorkflowRunControl>,
+    /// The raw engine, used by the debug coordinator to re-dispatch after a revision applies.
+    pub raw_engine: Arc<ConcreteWorkflowRunEngine>,
     pub run_locks: Arc<KeyedResourceLocks>,
     pub transitions: Arc<WorkflowRunTransitions>,
     pub plugin_api: Arc<crate::plugin::PluginApi>,
@@ -60,6 +63,8 @@ pub struct WorkflowRuns {
     plugin_api: Arc<crate::plugin::PluginApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     engine: Arc<ConcreteWorkflowRunControl>,
+    /// Execution coordination for run-local debugging (fence → quiesce → apply → re-dispatch).
+    debug: WorkflowDebugCoordinator,
     run_locks: Arc<KeyedResourceLocks>,
     completing_node_runs: Arc<CompletingNodeRuns>,
     transitions: Arc<WorkflowRunTransitions>,
@@ -103,8 +108,32 @@ impl WorkflowRuns {
             })
     }
 
+    /// Plans a read-only debug preview of an edit from a selected execution position.
+    pub fn debug_preview(
+        &self,
+        request: PreviewWorkflowDebugRequest,
+    ) -> Result<WorkflowDebugPreview, BackendError> {
+        self.debug.preview(request)
+    }
+
+    /// Confirms a debug preview and carries it through quiescence to the new dispatch.
+    pub async fn debug_commit(
+        &self,
+        request: CommitWorkflowDebugRequest,
+    ) -> Result<WorkflowDebugOperation, BackendError> {
+        self.debug.commit(request).await
+    }
+
     /// Captures the instances composed at startup; no lock, worker, or supervisor is restarted.
     pub(crate) fn new(setup: WorkflowRunSetup) -> Self {
+        let debug = WorkflowDebugCoordinator::new(
+            setup.pool.clone(),
+            setup.run_locks.clone(),
+            setup.agent_runtime.clone(),
+            setup.raw_engine,
+            setup.transitions.clone(),
+            setup.clock,
+        );
         Self {
             records: WorkflowRunApi::new(
                 setup.pool.clone(),
@@ -119,6 +148,7 @@ impl WorkflowRuns {
             plugin_api: setup.plugin_api,
             agent_runtime: setup.agent_runtime,
             engine: setup.engine,
+            debug,
             run_locks: setup.run_locks,
             completing_node_runs: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             transitions: setup.transitions,
