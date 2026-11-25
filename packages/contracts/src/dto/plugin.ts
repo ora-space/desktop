@@ -562,10 +562,12 @@ export type MarketplaceSourceSyncFailure = {
  * considered.
  *
  * The marketplace imports documents by the same rules as a local `.orax` package, but it also
- * keeps a durable record per source path. A path that already reached a terminal state is skipped
- * without touching the user's copy, the first name conflict is reported once and then remembered
- * as terminal, and only a genuine failure stays retryable. Every arm names the member plugin that
- * carried the document, because one pack install can carry documents from several members.
+ * keeps a durable record per source path, and what that record means depends on the current copy
+ * and the operation: an install opens a new cycle and may recover a copy the user deleted, while
+ * an update or a retry keeps respecting that deletion. A surviving copy stays skipped, a name
+ * conflict stays retryable by fixing the name and asking again, and only a genuine failure keeps
+ * no record at all. Every arm names the member plugin that carried the document, because one pack
+ * install can carry documents from several members.
  */
 export type MarketplaceWorkflowOutcome = {
   "state": "imported";
@@ -596,7 +598,17 @@ export type MarketplaceWorkflowOutcome = {
    */
   pluginId: string;
   /**
-   * Package-relative path that already reached a terminal state.
+   * Package-relative path whose copy is still alive.
+   */
+  sourceFile: string;
+} | {
+  "state": "skipped_deleted_copy";
+  /**
+   * Canonical identifier of the member plugin that carried the document.
+   */
+  pluginId: string;
+  /**
+   * Package-relative path whose copy the user deleted.
    */
   sourceFile: string;
 } | {
@@ -609,6 +621,14 @@ export type MarketplaceWorkflowOutcome = {
    * Package-relative path whose document name collided with an existing workflow.
    */
   sourceFile: string;
+  /**
+   * Name the document declares, which is also the name the library already uses.
+   */
+  name: string;
+  /**
+   * Whether the record already held this conflict before the operation ran.
+   */
+  knownConflict: boolean;
 } | {
   "state": "failed";
   /**

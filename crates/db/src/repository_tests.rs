@@ -1,9 +1,9 @@
 use ora_application::{
     BindWorkflowNodeSessionResult, CancelWorkflowRunResult, FileChange, NewImportedWorkflow,
     NodeFailure, NodeFailureKind, NodeRunToStart, ProjectRepository, RestartWorkflowRunResult,
-    ResumeWorkflowRunResult, SessionRepository, SkillRepository, StartWorkflowRunResult,
-    WorkflowDocumentSource, WorkflowDocumentSourceRepository, WorkflowRepository,
-    WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
+    ResumeWorkflowRunResult, SessionRepository, SkillRepository, SourcePrecondition,
+    StartWorkflowRunResult, WorkflowDocumentSource, WorkflowDocumentSourceRepository,
+    WorkflowRepository, WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
     WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
@@ -2194,39 +2194,42 @@ fn list_workflows_derives_source_plugin_id_from_imported_records() {
         let wf_id_obj = WorkflowId::new(wf_id);
         let pub_id = WorkflowSnapshotId::new(format!("pub-{wf_id}"));
         source_repository
-            .commit_import(NewImportedWorkflow {
-                source: WorkflowDocumentSource {
-                    namespace: "official".to_string(),
-                    identifier: "ora.cdase-workflow".to_string(),
-                    document_path: path.to_string(),
+            .commit_import(
+                NewImportedWorkflow {
+                    source: WorkflowDocumentSource {
+                        namespace: "official".to_string(),
+                        identifier: "ora.cdase-workflow".to_string(),
+                        document_path: path.to_string(),
+                    },
+                    workflow: Workflow::new(
+                        wf_id_obj.clone(),
+                        Namespace::local(),
+                        name,
+                        Some(pub_id.clone()),
+                        AuditFields::new(created_at, created_at, false),
+                    )
+                    .unwrap(),
+                    draft: WorkflowSnapshot::new(
+                        WorkflowSnapshotId::new(format!("draft-{wf_id}")),
+                        wf_id_obj.clone(),
+                        "draft",
+                        "{}",
+                        created_at,
+                        Some(created_at),
+                        false,
+                    ),
+                    published: WorkflowSnapshot::new(
+                        pub_id,
+                        wf_id_obj,
+                        "1.0.0",
+                        "{}",
+                        created_at,
+                        Some(created_at),
+                        false,
+                    ),
                 },
-                workflow: Workflow::new(
-                    wf_id_obj.clone(),
-                    Namespace::local(),
-                    name,
-                    Some(pub_id.clone()),
-                    AuditFields::new(created_at, created_at, false),
-                )
-                .unwrap(),
-                draft: WorkflowSnapshot::new(
-                    WorkflowSnapshotId::new(format!("draft-{wf_id}")),
-                    wf_id_obj.clone(),
-                    "draft",
-                    "{}",
-                    created_at,
-                    Some(created_at),
-                    false,
-                ),
-                published: WorkflowSnapshot::new(
-                    pub_id,
-                    wf_id_obj,
-                    "1.0.0",
-                    "{}",
-                    created_at,
-                    Some(created_at),
-                    false,
-                ),
-            })
+                SourcePrecondition::Unrecorded,
+            )
             .unwrap();
     }
 

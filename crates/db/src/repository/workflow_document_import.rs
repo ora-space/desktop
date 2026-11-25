@@ -1,12 +1,16 @@
-//! Persists the terminal outcomes of the workflow documents a marketplace package delivered.
+//! Persists the outcomes of the workflow documents a marketplace package delivered.
 //!
 //! The record is owned by the marketplace import, not by the workflow aggregate: it has to outlive
 //! the copy it describes so upgrading, reinstalling, or deleting the workflow cannot make the same
 //! source path look new again. For that reason nothing here cascades a delete from `workflows`.
+//!
+//! Every write states the source state the caller read, and a write whose expectation no longer
+//! holds is refused instead of applied. That is what keeps a losing writer from overwriting the
+//! winner and from reporting a name the library already uses as an import failure.
 
 use ora_application::{
-    NewImportedWorkflow, RepositoryError, WorkflowDocumentSource, WorkflowDocumentSourceRepository,
-    WorkflowDocumentSourceState,
+    ImportCommit, NewImportedWorkflow, RepositoryError, SourcePrecondition, WorkflowDocumentSource,
+    WorkflowDocumentSourceRecord, WorkflowDocumentSourceRepository,
 };
 use rusqlite::{Transaction, TransactionBehavior, params};
 
@@ -14,7 +18,7 @@ use crate::DatabaseError;
 use crate::repository::RepositoryPool;
 use crate::repository::connection::bool_to_sqlite;
 
-/// Stores one terminal state per marketplace workflow document source path.
+/// Stores one state per marketplace workflow document source path.
 #[derive(Clone, Debug)]
 pub struct SqliteWorkflowDocumentSourceRepository {
     pool: RepositoryPool,
@@ -28,15 +32,19 @@ impl SqliteWorkflowDocumentSourceRepository {
 }
 
 impl WorkflowDocumentSourceRepository for SqliteWorkflowDocumentSourceRepository {
-    fn find_state(
+    fn find_record(
         &self,
         source: &WorkflowDocumentSource,
-    ) -> Result<Option<WorkflowDocumentSourceState>, RepositoryError> {
+    ) -> Result<Option<WorkflowDocumentSourceRecord>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
+                // Liveness is resolved on every read rather than stored, so deleting or restoring
+                // the copy beside the record needs no write here.
                 let mut statement = connection.prepare(
-                    "SELECT state FROM workflow_document_imports
-                     WHERE source_namespace = ?1 AND identifier = ?2 AND document_path = ?3",
+                    "SELECT wdi.state, (w.id IS NOT NULL AND w.is_deleted = 0) AS copy_alive
+                     FROM workflow_document_imports wdi
+                     LEFT JOIN workflows w ON w.id = wdi.workflow_id
+                     WHERE wdi.source_namespace = ?1 AND wdi.identifier = ?2 AND wdi.document_path = ?3",
                 )?;
                 let mut rows = statement.query(params![
                     source.namespace,
@@ -45,9 +53,13 @@ impl WorkflowDocumentSourceRepository for SqliteWorkflowDocumentSourceRepository
                 ])?;
                 let recorded = rows
                     .next()?
-                    .map(|row| row.get::<_, String>(0))
+                    .map(|row| {
+                        Ok::<_, DatabaseError>((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+                    })
                     .transpose()?;
-                recorded.map(|state| parse_state(&state)).transpose()
+                recorded
+                    .map(|(state, copy_alive)| record_from_state(&state, copy_alive))
+                    .transpose()
             })
             .map_err(RepositoryError::new)
     }
@@ -59,10 +71,15 @@ impl WorkflowDocumentSourceRepository for SqliteWorkflowDocumentSourceRepository
     ) -> Result<(), RepositoryError> {
         self.pool
             .with_connection(|connection| {
+                // The upsert keeps a conflict record current without ever taking an `imported` row
+                // away from the copy it names: a path that delivered a copy stays delivered.
                 connection.execute(
                     "INSERT INTO workflow_document_imports
                          (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
-                     VALUES (?1, ?2, ?3, 'conflict_skipped', NULL, ?4)",
+                     VALUES (?1, ?2, ?3, 'conflict_skipped', NULL, ?4)
+                     ON CONFLICT (source_namespace, identifier, document_path) DO UPDATE
+                         SET state = 'conflict_skipped', workflow_id = NULL, recorded_at = excluded.recorded_at
+                         WHERE workflow_document_imports.state = 'conflict_skipped'",
                     params![
                         source.namespace,
                         source.identifier,
@@ -75,14 +92,82 @@ impl WorkflowDocumentSourceRepository for SqliteWorkflowDocumentSourceRepository
             .map_err(RepositoryError::new)
     }
 
-    fn commit_import(&self, imported: NewImportedWorkflow) -> Result<(), RepositoryError> {
+    fn commit_import(
+        &self,
+        imported: NewImportedWorkflow,
+        precondition: SourcePrecondition,
+    ) -> Result<ImportCommit, RepositoryError> {
         self.pool
             .with_connection_mut(|connection| {
-                // One transaction covers the copy, its two snapshots, the published pointer, and
-                // the terminal record. A failure therefore rolls all of them back, so a retry can
+                // One transaction covers the source transition, the copy, its two snapshots, and
+                // the published pointer. A failure therefore rolls all of them back, so a retry can
                 // never find a copy without its record, or a record without its copy.
-                let transaction =
-                    Transaction::new(connection, TransactionBehavior::Immediate)?;
+                let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
+                // The name is checked inside the transaction with the same case-insensitive rule
+                // as the active-name index, so a name taken after the caller looked is reported as
+                // the conflict it is instead of surfacing as an import failure.
+                let name_taken: bool = transaction.query_row(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM workflows
+                         WHERE namespace = ?1 COLLATE NOCASE AND name = ?2 COLLATE NOCASE AND is_deleted = 0
+                     )",
+                    params![
+                        imported.workflow.namespace.as_ref(),
+                        &imported.workflow.name
+                    ],
+                    |row| row.get(0),
+                )?;
+                if name_taken {
+                    return Ok(ImportCommit::NameTaken);
+                }
+                let transitioned = match precondition {
+                    SourcePrecondition::Unrecorded => transaction.execute(
+                        "INSERT INTO workflow_document_imports
+                             (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
+                         VALUES (?1, ?2, ?3, 'imported', ?4, ?5)
+                         ON CONFLICT (source_namespace, identifier, document_path) DO NOTHING",
+                        params![
+                            imported.source.namespace,
+                            imported.source.identifier,
+                            imported.source.document_path,
+                            imported.workflow.id.as_ref(),
+                            imported.workflow.audit_fields.created_at,
+                        ],
+                    )? == 1,
+                    SourcePrecondition::ConflictSkipped => transaction.execute(
+                        "UPDATE workflow_document_imports
+                             SET state = 'imported', workflow_id = ?4, recorded_at = ?5
+                         WHERE source_namespace = ?1 AND identifier = ?2 AND document_path = ?3
+                             AND state = 'conflict_skipped'",
+                        params![
+                            imported.source.namespace,
+                            imported.source.identifier,
+                            imported.source.document_path,
+                            imported.workflow.id.as_ref(),
+                            imported.workflow.audit_fields.created_at,
+                        ],
+                    )? == 1,
+                    SourcePrecondition::DeletedCopy => transaction.execute(
+                        "UPDATE workflow_document_imports
+                             SET state = 'imported', workflow_id = ?4, recorded_at = ?5
+                         WHERE source_namespace = ?1 AND identifier = ?2 AND document_path = ?3
+                             AND state = 'imported'
+                             AND NOT EXISTS(
+                                 SELECT 1 FROM workflows w
+                                 WHERE w.id = workflow_document_imports.workflow_id AND w.is_deleted = 0
+                             )",
+                        params![
+                            imported.source.namespace,
+                            imported.source.identifier,
+                            imported.source.document_path,
+                            imported.workflow.id.as_ref(),
+                            imported.workflow.audit_fields.created_at,
+                        ],
+                    )? == 1,
+                };
+                if !transitioned {
+                    return Ok(ImportCommit::SourceChanged);
+                }
                 transaction.execute(
                     "INSERT INTO workflows (id, namespace, name, published_snapshot_id, created_at, updated_at, is_deleted)
                      VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6)",
@@ -117,35 +202,50 @@ impl WorkflowDocumentSourceRepository for SqliteWorkflowDocumentSourceRepository
                         imported.published.id.as_ref()
                     ],
                 )?;
-                transaction.execute(
-                    "INSERT INTO workflow_document_imports
-                         (source_namespace, identifier, document_path, state, workflow_id, recorded_at)
-                     VALUES (?1, ?2, ?3, 'imported', ?4, ?5)",
-                    params![
-                        imported.source.namespace,
-                        imported.source.identifier,
-                        imported.source.document_path,
-                        imported.workflow.id.as_ref(),
-                        imported.workflow.audit_fields.created_at,
-                    ],
-                )?;
                 transaction.commit()?;
-                Ok(())
+                Ok(ImportCommit::Committed)
+            })
+            .map_err(RepositoryError::new)
+    }
+
+    fn forget_deleted_copy(
+        &self,
+        source: &WorkflowDocumentSource,
+    ) -> Result<bool, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                // Only a record whose copy is really gone is cleared; a record another operation
+                // already refreshed stays, and the caller re-judges the document against it.
+                let cleared = connection.execute(
+                    "DELETE FROM workflow_document_imports
+                     WHERE source_namespace = ?1 AND identifier = ?2 AND document_path = ?3
+                         AND state = 'imported'
+                         AND NOT EXISTS(
+                             SELECT 1 FROM workflows w
+                             WHERE w.id = workflow_document_imports.workflow_id AND w.is_deleted = 0
+                         )",
+                    params![source.namespace, source.identifier, source.document_path],
+                )?;
+                Ok(cleared == 1)
             })
             .map_err(RepositoryError::new)
     }
 }
 
-/// Reads back the state spelling the schema's closed vocabulary stores.
+/// Turns the stored state and the resolved copy liveness into the record the caller acts on.
 ///
-/// The column is constrained to these two spellings, so an unrecognized value means the row was
-/// written by something other than this adapter; reporting it as corrupt keeps that visible
+/// The column is constrained to the two stored spellings, so an unrecognized value means the row
+/// was written by something other than this adapter; reporting it as corrupt keeps that visible
 /// instead of silently treating a damaged record as absent and re-importing the path.
-fn parse_state(state: &str) -> Result<WorkflowDocumentSourceState, DatabaseError> {
-    match state {
-        "imported" => Ok(WorkflowDocumentSourceState::Imported),
-        "conflict_skipped" => Ok(WorkflowDocumentSourceState::ConflictSkipped),
-        other => Err(DatabaseError::CorruptWorkflowDocumentSourceState(
+fn record_from_state(
+    state: &str,
+    copy_alive: bool,
+) -> Result<WorkflowDocumentSourceRecord, DatabaseError> {
+    match (state, copy_alive) {
+        ("imported", true) => Ok(WorkflowDocumentSourceRecord::ImportedAlive),
+        ("imported", false) => Ok(WorkflowDocumentSourceRecord::ImportedDeleted),
+        ("conflict_skipped", _) => Ok(WorkflowDocumentSourceRecord::ConflictSkipped),
+        (other, _) => Err(DatabaseError::CorruptWorkflowDocumentSourceState(
             other.to_string(),
         )),
     }
@@ -154,8 +254,8 @@ fn parse_state(state: &str) -> Result<WorkflowDocumentSourceState, DatabaseError
 #[cfg(test)]
 mod tests {
     use ora_application::{
-        NewImportedWorkflow, WorkflowDocumentSource, WorkflowDocumentSourceRepository,
-        WorkflowDocumentSourceState,
+        ImportCommit, NewImportedWorkflow, SourcePrecondition, WorkflowDocumentSource,
+        WorkflowDocumentSourceRecord, WorkflowDocumentSourceRepository,
     };
     use ora_domain::{
         AuditFields, Namespace, Workflow, WorkflowId, WorkflowSnapshot, WorkflowSnapshotId,
@@ -225,12 +325,22 @@ mod tests {
         }
     }
 
+    /// Soft-deletes every workflow in the pool, as deleting the imported copy does.
+    fn delete_copies(pool: &RepositoryPool) {
+        pool.with_connection(|connection| {
+            connection.execute("UPDATE workflows SET is_deleted = 1", [])?;
+            connection.execute("UPDATE workflow_snapshots SET is_deleted = 1", [])?;
+            Ok(())
+        })
+        .expect("delete copies");
+    }
+
     #[test]
-    fn records_a_conflict_skip_as_a_terminal_state() {
+    fn records_a_conflict_skip_for_an_unrecorded_path() {
         let repository = SqliteWorkflowDocumentSourceRepository::new(test_pool());
         let source = source("assets/workflows/1.0.0.json");
         assert_eq!(
-            repository.find_state(&source).expect("lookup"),
+            repository.find_record(&source).expect("lookup"),
             None,
             "a path starts unrecorded"
         );
@@ -238,23 +348,121 @@ mod tests {
         repository.record_conflict_skip(&source, 7).expect("record");
 
         assert_eq!(
-            repository.find_state(&source).expect("lookup"),
-            Some(WorkflowDocumentSourceState::ConflictSkipped)
+            repository.find_record(&source).expect("lookup"),
+            Some(WorkflowDocumentSourceRecord::ConflictSkipped)
+        );
+    }
+
+    #[test]
+    fn keeps_a_conflict_record_current_without_erasing_an_import() {
+        let pool = test_pool();
+        let repository = SqliteWorkflowDocumentSourceRepository::new(pool);
+        let source = source("assets/workflows/1.0.0.json");
+        repository.record_conflict_skip(&source, 7).expect("record");
+        repository
+            .record_conflict_skip(&source, 9)
+            .expect("re-record");
+
+        assert_eq!(
+            repository.find_record(&source).expect("lookup"),
+            Some(WorkflowDocumentSourceRecord::ConflictSkipped),
+            "a repeated conflict stays one record"
+        );
+
+        repository
+            .commit_import(
+                imported_workflow("assets/workflows/1.0.0.json", "发布流程"),
+                SourcePrecondition::ConflictSkipped,
+            )
+            .expect("commit import");
+        repository
+            .record_conflict_skip(&source, 11)
+            .expect("record a late conflict");
+
+        assert_eq!(
+            repository.find_record(&source).expect("lookup"),
+            Some(WorkflowDocumentSourceRecord::ImportedAlive),
+            "a late conflict must not take the delivered copy's record away"
         );
     }
 
     #[test]
     fn commits_the_copy_and_its_record_together() {
         let repository = SqliteWorkflowDocumentSourceRepository::new(test_pool());
-        repository
-            .commit_import(imported_workflow("assets/workflows/1.0.0.json", "发布流程"))
-            .expect("commit import");
+        assert_eq!(
+            repository
+                .commit_import(
+                    imported_workflow("assets/workflows/1.0.0.json", "发布流程"),
+                    SourcePrecondition::Unrecorded,
+                )
+                .expect("commit import"),
+            ImportCommit::Committed
+        );
 
         assert_eq!(
             repository
-                .find_state(&source("assets/workflows/1.0.0.json"))
+                .find_record(&source("assets/workflows/1.0.0.json"))
                 .expect("lookup"),
-            Some(WorkflowDocumentSourceState::Imported)
+            Some(WorkflowDocumentSourceRecord::ImportedAlive)
+        );
+    }
+
+    #[test]
+    fn refuses_a_transition_whose_precondition_no_longer_holds() {
+        let pool = test_pool();
+        let repository = SqliteWorkflowDocumentSourceRepository::new(pool.clone());
+        repository
+            .commit_import(
+                imported_workflow("assets/workflows/1.0.0.json", "发布流程"),
+                SourcePrecondition::Unrecorded,
+            )
+            .expect("commit import");
+        let mut second = imported_workflow("assets/workflows/1.0.0.json", "另一份");
+        second.workflow.id = WorkflowId::new("workflow-second");
+
+        assert_eq!(
+            repository
+                .commit_import(second, SourcePrecondition::Unrecorded)
+                .expect("second commit"),
+            ImportCommit::SourceChanged,
+            "another write already claimed the path"
+        );
+        let copies: i64 = pool
+            .with_connection(|connection| {
+                Ok(connection.query_row("SELECT COUNT(*) FROM workflows", [], |row| row.get(0))?)
+            })
+            .expect("count workflows");
+        assert_eq!(copies, 1, "the refused commit leaves no second copy");
+    }
+
+    #[test]
+    fn reports_a_name_the_library_already_uses_instead_of_a_failure() {
+        let pool = test_pool();
+        let repository = SqliteWorkflowDocumentSourceRepository::new(pool.clone());
+        repository
+            .commit_import(
+                imported_workflow("assets/workflows/1.0.0.json", "发布流程"),
+                SourcePrecondition::Unrecorded,
+            )
+            .expect("commit import");
+        let mut clash = imported_workflow("assets/workflows/2.0.0.json", "发布流程");
+        clash.workflow.id = WorkflowId::new("workflow-clash");
+        clash.draft.workflow_id = clash.workflow.id.clone();
+        clash.published.workflow_id = clash.workflow.id.clone();
+
+        assert_eq!(
+            repository
+                .commit_import(clash, SourcePrecondition::Unrecorded)
+                .expect("commit the clashing document"),
+            ImportCommit::NameTaken,
+            "the name is compared case-insensitively, as the active-name index does"
+        );
+        assert_eq!(
+            repository
+                .find_record(&source("assets/workflows/2.0.0.json"))
+                .expect("lookup"),
+            None,
+            "a refused name leaves the path retryable"
         );
     }
 
@@ -267,11 +475,15 @@ mod tests {
         // the version index and the whole transaction has to roll back.
         imported.published.version = "draft".to_string();
 
-        assert!(repository.commit_import(imported).is_err());
+        assert!(
+            repository
+                .commit_import(imported, SourcePrecondition::Unrecorded)
+                .is_err()
+        );
 
         assert_eq!(
             repository
-                .find_state(&source("assets/workflows/1.0.0.json"))
+                .find_record(&source("assets/workflows/1.0.0.json"))
                 .expect("lookup"),
             None,
             "a rolled-back import records nothing"
@@ -289,23 +501,55 @@ mod tests {
         let pool = test_pool();
         let repository = SqliteWorkflowDocumentSourceRepository::new(pool.clone());
         repository
-            .commit_import(imported_workflow("assets/workflows/1.0.0.json", "发布流程"))
+            .commit_import(
+                imported_workflow("assets/workflows/1.0.0.json", "发布流程"),
+                SourcePrecondition::Unrecorded,
+            )
             .expect("commit import");
         // Deleting the workflow is a soft delete of the copy; the source record deliberately has
-        // no foreign key, so the path stays terminal.
-        pool.with_connection(|connection| {
-            connection.execute("UPDATE workflows SET is_deleted = 1", [])?;
-            connection.execute("UPDATE workflow_snapshots SET is_deleted = 1", [])?;
-            Ok(())
-        })
-        .expect("delete copies");
+        // no foreign key, so the path stays recorded and only its liveness changes.
+        delete_copies(&pool);
 
         assert_eq!(
             repository
-                .find_state(&source("assets/workflows/1.0.0.json"))
+                .find_record(&source("assets/workflows/1.0.0.json"))
                 .expect("lookup"),
-            Some(WorkflowDocumentSourceState::Imported),
-            "deleting the copy must not free the source path"
+            Some(WorkflowDocumentSourceRecord::ImportedDeleted),
+            "deleting the copy must turn the record into one a reinstall can recover"
+        );
+    }
+
+    #[test]
+    fn forgets_a_deleted_copies_record_only_while_the_copy_stays_deleted() {
+        let pool = test_pool();
+        let repository = SqliteWorkflowDocumentSourceRepository::new(pool.clone());
+        repository
+            .commit_import(
+                imported_workflow("assets/workflows/1.0.0.json", "发布流程"),
+                SourcePrecondition::Unrecorded,
+            )
+            .expect("commit import");
+        assert_eq!(
+            repository
+                .forget_deleted_copy(&source("assets/workflows/1.0.0.json"))
+                .expect("forget against a surviving copy"),
+            false,
+            "a surviving copy keeps its record"
+        );
+
+        delete_copies(&pool);
+        assert_eq!(
+            repository
+                .forget_deleted_copy(&source("assets/workflows/1.0.0.json"))
+                .expect("forget against a deleted copy"),
+            true
+        );
+        assert_eq!(
+            repository
+                .find_record(&source("assets/workflows/1.0.0.json"))
+                .expect("lookup"),
+            None,
+            "a forgotten path is importable again"
         );
     }
 }

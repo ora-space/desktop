@@ -7,7 +7,9 @@ use crate::error::ErrorClassification;
 use crate::plugin_gateway::PluginGateway;
 use crate::session_setup::SessionMcpHost;
 use crate::workflow::{MarketplaceWorkflowImport, WorkflowImport};
-use ora_application::{MarketplaceWorkflowDocument, WorkflowDocumentSource};
+use ora_application::{
+    MarketplaceImportOperation, MarketplaceWorkflowDocument, WorkflowDocumentSource,
+};
 use ora_contracts::*;
 use ora_domain::PluginId;
 use ora_plugin_asset::LogoAssetRoot;
@@ -467,11 +469,14 @@ impl Plugins {
     ///
     /// The installation outcome and the per-document outcomes stay separate on purpose: a
     /// document that could not be imported must never turn a successful installation into a failed
-    /// one, and a successful installation must never claim every document was imported.
+    /// one, and a successful installation must never claim every document was imported. The
+    /// installation is what opens a new cycle, so a copy the user deleted in an earlier cycle is
+    /// considered for recovery here rather than in the upgrade or retry responses.
     fn installed_package_response(&self, installed: InstalledPackage) -> InstallPluginResponse {
-        let workflows = self
-            .marketplace_workflow_import
-            .handle(marketplace_documents(installed.workflow_documents));
+        let workflows = self.marketplace_workflow_import.handle(
+            MarketplaceImportOperation::Install,
+            marketplace_documents(installed.workflow_documents),
+        );
         InstallPluginResponse {
             plugin_id: installed.plugin_id,
             outcome: installed.outcome,
@@ -480,10 +485,14 @@ impl Plugins {
     }
 
     /// Builds an update response that reports the new version's document outcomes.
+    ///
+    /// An upgrade stays inside the running install cycle: it re-judges unrecorded paths and name
+    /// conflicts, but it keeps every copy the user deleted rather than restoring it here.
     fn updated_package_response(&self, updated: UpdatedPackage) -> UpdatePluginResponse {
-        let workflows = self
-            .marketplace_workflow_import
-            .handle(marketplace_documents(updated.workflow_documents));
+        let workflows = self.marketplace_workflow_import.handle(
+            MarketplaceImportOperation::Update,
+            marketplace_documents(updated.workflow_documents),
+        );
         UpdatePluginResponse {
             plugin_id: updated.plugin_id,
             workflows,
@@ -493,9 +502,11 @@ impl Plugins {
     /// Retries the workflow document import of one installed plugin.
     ///
     /// This is the explicit action on an installed plugin card, not a second installation: it
-    /// reconsiders only the document paths without a terminal source record, so already imported
-    /// and conflict-skipped paths stay untouched and no package is downloaded or replaced. A pack's
-    /// workflow member is retried through its own card, which is why the request names a member.
+    /// reconsiders the document paths without a surviving copy, so unrecorded and conflict-skipped
+    /// paths are tried again while a surviving copy stays skipped. A copy the user deleted during
+    /// the running cycle keeps its deletion and is reported as such; uninstall and install is the
+    /// recovery for it. A pack's workflow member is retried through its own card, which is why the
+    /// request names a member.
     pub fn retry_workflow_import(
         &self,
         request: RetryWorkflowImportRequest,
@@ -518,9 +529,10 @@ impl Plugins {
             .contributed_workflow_documents(std::slice::from_ref(&request.plugin_id))?;
         Ok(RetryWorkflowImportResponse {
             plugin_id: request.plugin_id,
-            workflows: self
-                .marketplace_workflow_import
-                .handle(marketplace_documents(documents)),
+            workflows: self.marketplace_workflow_import.handle(
+                MarketplaceImportOperation::Retry,
+                marketplace_documents(documents),
+            ),
         })
     }
 

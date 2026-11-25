@@ -2,9 +2,11 @@
 //!
 //! The marketplace differs from a local `.orax` import in one way that shapes this whole module:
 //! an install and every later upgrade see the same package paths again. The import therefore
-//! needs a durable, terminal record per source path, so a path is never imported twice and a
-//! conflict with the user's own workflow is reported once instead of on every upgrade. See the
-//! `20261109-marketplace-workflow-import` decision for the rules this implements.
+//! needs a durable record per source path, and what that record allows depends on the current copy
+//! and on the operation that is asking. A successful install opens an install cycle and may recover
+//! a copy the user deleted; an upgrade and the explicit card retry stay inside the cycle and keep
+//! respecting that deletion, while a name conflict stays retryable by freeing the name. See the
+//! `20261124-marketplace-workflow-conflict-recovery` decision for the rules this implements.
 
 use std::sync::Arc;
 
@@ -16,6 +18,13 @@ use crate::workflow::import::{derive_publish_version, parse_workflow_document};
 use crate::workflow::ports::{WorkflowIdGenerator, WorkflowRepository};
 use crate::workflow::version::DRAFT_VERSION;
 use crate::{Clock, workflow::version::is_publishable_version};
+
+/// How many times one document re-reads its source record before it reports a failure.
+///
+/// A conditional write that finds another operation already moved the record is not an error: the
+/// document is judged again against what that operation left behind. The bound only exists so a
+/// pathological writer loop cannot spin forever.
+const SOURCE_REREAD_LIMIT: u8 = 3;
 
 /// Identifies one workflow document inside one marketplace package.
 ///
@@ -40,19 +49,61 @@ impl WorkflowDocumentSource {
     }
 }
 
-/// The terminal states a source path can reach.
+/// Which marketplace operation is asking the import to consider the documents.
 ///
-/// A path in one of these states is finished forever: the marketplace never imports it again,
-/// even after the package is upgraded, reinstalled, or the user deletes the copy it produced.
-/// A failure is deliberately not representable here, which is what keeps failed documents
-/// retryable without a second "failed" record to clean up.
+/// The operation decides whether a copy the user deleted may come back; it never decides whether a
+/// conflict is reported, because that is read from the record the operation found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkflowDocumentSourceState {
-    /// The document became a workflow with one published snapshot.
-    Imported,
-    /// A workflow of the same name already existed; the user's copy was kept and the conflict must
-    /// never be reported again.
+pub enum MarketplaceImportOperation {
+    /// A successful marketplace install opens a new install cycle, so a copy deleted in an earlier
+    /// cycle is recoverable while a copy deleted inside the running cycle is not.
+    Install,
+    /// An automatic upgrade stays inside the current cycle and keeps respecting every deletion the
+    /// cycle saw, while still re-judging unrecorded paths and name conflicts.
+    Update,
+    /// The explicit retry on the installed card stays inside the current cycle on the same terms as
+    /// an upgrade.
+    Retry,
+}
+
+/// What one source path's durable record says, together with the copy it points at.
+///
+/// Liveness is resolved by the store on every read rather than stored, because the record has to
+/// stay valid while the user deletes or restores the copy beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowDocumentSourceRecord {
+    /// The path produced a copy the user still has, possibly renamed or edited since.
+    ImportedAlive,
+    /// The path produced a copy the user has since deleted.
+    ImportedDeleted,
+    /// The path collided with a workflow the user already had, so nothing was created.
     ConflictSkipped,
+}
+
+/// The record state an import read before writing, so the write can be made conditional on it.
+///
+/// Carrying the expectation into the store is what keeps two operations from both claiming one
+/// source path: a write whose expectation no longer holds is refused instead of overwriting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourcePrecondition {
+    /// The path had no record at all.
+    Unrecorded,
+    /// The record pointed at a copy the user deleted, and the path is being recovered.
+    DeletedCopy,
+    /// The record held a name conflict that is no longer present in the library.
+    ConflictSkipped,
+}
+
+/// The result of committing one import against a source precondition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportCommit {
+    /// The copy, its two snapshots, and the `imported` record are committed together.
+    Committed,
+    /// Another write occupied the document's name first, so this copy was rolled back.
+    NameTaken,
+    /// Another write changed the source record first, so this copy was rolled back and the caller
+    /// has to judge the document again against the state that write left behind.
+    SourceChanged,
 }
 
 /// A workflow, its draft, its first published snapshot, and the source record that must commit
@@ -73,20 +124,24 @@ pub struct NewImportedWorkflow {
     pub published: WorkflowSnapshot,
 }
 
-/// Persists terminal marketplace workflow document outcomes.
+/// Persists marketplace workflow document records and the copies they describe.
 ///
 /// The record outlives the copy it describes: it must survive uninstalling and reinstalling the
-/// package, and deleting the workflow itself, because it is the only thing that stops an upgrade
-/// from bringing a deleted workflow back. Implementations therefore store it independently of the
+/// package, and deleting the workflow itself, because it is what tells a later operation whether
+/// the path already delivered a copy. Implementations therefore store it independently of the
 /// workflow aggregate and never cascade a software delete from it.
+///
+/// Every write here is conditional: the caller passes the state it read, and a write that no longer
+/// matches is refused rather than applied. That keeps a losing writer from overwriting the winner
+/// and from reporting a plain conflict as a failure.
 pub trait WorkflowDocumentSourceRepository {
-    /// Returns the terminal state recorded for one source path, if any.
-    fn find_state(
+    /// Returns the record for one source path and whether the copy it points at still exists.
+    fn find_record(
         &self,
         source: &WorkflowDocumentSource,
-    ) -> Result<Option<WorkflowDocumentSourceState>, RepositoryError>;
+    ) -> Result<Option<WorkflowDocumentSourceRecord>, RepositoryError>;
 
-    /// Records the first name conflict for one source path so later upgrades stay quiet.
+    /// Records a name conflict for one source path, leaving an `imported` record untouched.
     fn record_conflict_skip(
         &self,
         source: &WorkflowDocumentSource,
@@ -94,8 +149,20 @@ pub trait WorkflowDocumentSourceRepository {
     ) -> Result<(), RepositoryError>;
 
     /// Commits the created workflow, its draft, its published snapshot, and the `imported` record
-    /// together, so a partial state can never be observed by a later install or retry.
-    fn commit_import(&self, imported: NewImportedWorkflow) -> Result<(), RepositoryError>;
+    /// together, conditional on the source state the caller read and on the document's name still
+    /// being free.
+    fn commit_import(
+        &self,
+        imported: NewImportedWorkflow,
+        precondition: SourcePrecondition,
+    ) -> Result<ImportCommit, RepositoryError>;
+
+    /// Clears an `imported` record whose copy the user deleted, so the path is treated as one the
+    /// package never delivered and the document becomes retryable again.
+    ///
+    /// Returns whether the record was cleared; `false` means the expectation no longer held.
+    fn forget_deleted_copy(&self, source: &WorkflowDocumentSource)
+    -> Result<bool, RepositoryError>;
 }
 
 /// One workflow document a marketplace package contributed, attributed to its member plugin.
@@ -107,12 +174,21 @@ pub struct MarketplaceWorkflowDocument {
     pub contents: String,
 }
 
+/// Whether one document's attempt settled on an outcome or has to be judged again.
+enum DocumentAttempt {
+    /// The document reached the outcome it reports.
+    Resolved(MarketplaceWorkflowOutcome),
+    /// Another operation moved the source record first, so the document is judged again.
+    SourceChanged,
+}
+
 /// Imports marketplace workflow documents under their durable source records.
 ///
 /// It reuses the local import's document rules (JSON, workflow name, executable graph, version
 /// derivation) so a document the marketplace refuses fails for the same reason it would fail when
-/// dragged in from a local package. What it adds is the record: a terminal path is skipped, a
-/// first name conflict is recorded and reported once, and only a genuine failure stays retryable.
+/// dragged in from a local package. What it adds is the record and the cycle: a surviving copy is
+/// skipped, a deleted copy is recovered only by a fresh install, a name conflict is reported until
+/// the name is free, and only a genuine failure leaves the path retryable.
 pub struct ImportMarketplaceWorkflowsHandler<WorkflowStore, SourceStore, IdGenerator, ClockSource> {
     workflows: Arc<WorkflowStore>,
     sources: SourceStore,
@@ -151,85 +227,116 @@ where
     /// Imports every document, returning one outcome per document in the order given.
     ///
     /// Documents are independent: one refused document reports as that document's outcome and
-    /// never aborts the batch or rolls back the documents beside it.
+    /// never aborts the batch or rolls back the documents beside it. The operation decides whether
+    /// this run may recover copies deleted in an earlier install cycle.
     pub fn handle(
         &self,
+        operation: MarketplaceImportOperation,
         documents: Vec<MarketplaceWorkflowDocument>,
     ) -> Vec<MarketplaceWorkflowOutcome> {
         documents
             .into_iter()
-            .map(|document| self.import_one(document))
+            .map(|document| self.import_one(operation, document))
             .collect()
     }
 
-    /// Imports one document, turning every failure into that document's own outcome.
-    fn import_one(&self, document: MarketplaceWorkflowDocument) -> MarketplaceWorkflowOutcome {
-        let plugin_id = document.source.plugin_id();
-        let source_file = document.source.document_path.clone();
-        match self.sources.find_state(&document.source) {
-            Ok(Some(_)) => {
-                return MarketplaceWorkflowOutcome::SkippedProcessed {
-                    plugin_id,
-                    source_file,
-                };
-            }
-            Ok(None) => {}
-            Err(error) => {
-                return MarketplaceWorkflowOutcome::Failed {
-                    plugin_id,
-                    source_file,
+    /// Judges one document against its record and imports it when the record allows that.
+    fn import_one(
+        &self,
+        operation: MarketplaceImportOperation,
+        document: MarketplaceWorkflowDocument,
+    ) -> MarketplaceWorkflowOutcome {
+        let mut rereads = 0;
+        loop {
+            let attempt = match self.sources.find_record(&document.source) {
+                Ok(None) => self.import_document(&document, SourcePrecondition::Unrecorded, false),
+                Ok(Some(WorkflowDocumentSourceRecord::ConflictSkipped)) => self.import_document(
+                    &document,
+                    SourcePrecondition::ConflictSkipped,
+                    /*known_conflict*/ true,
+                ),
+                Ok(Some(WorkflowDocumentSourceRecord::ImportedAlive)) => {
+                    DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::SkippedProcessed {
+                        plugin_id: document.source.plugin_id(),
+                        source_file: document.source.document_path.clone(),
+                    })
+                }
+                // Only a new install cycle may reconsider a copy the user deleted; an upgrade and
+                // the card retry stay inside the cycle and keep the deletion.
+                Ok(Some(WorkflowDocumentSourceRecord::ImportedDeleted))
+                    if operation == MarketplaceImportOperation::Install =>
+                {
+                    self.import_document(&document, SourcePrecondition::DeletedCopy, false)
+                }
+                Ok(Some(WorkflowDocumentSourceRecord::ImportedDeleted)) => {
+                    DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::SkippedDeletedCopy {
+                        plugin_id: document.source.plugin_id(),
+                        source_file: document.source.document_path.clone(),
+                    })
+                }
+                Err(error) => DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::Failed {
+                    plugin_id: document.source.plugin_id(),
+                    source_file: document.source.document_path.clone(),
                     reason: error.to_string(),
-                };
+                }),
+            };
+            match attempt {
+                DocumentAttempt::Resolved(outcome) => return outcome,
+                DocumentAttempt::SourceChanged if rereads < SOURCE_REREAD_LIMIT => rereads += 1,
+                DocumentAttempt::SourceChanged => {
+                    return MarketplaceWorkflowOutcome::Failed {
+                        plugin_id: document.source.plugin_id(),
+                        source_file: document.source.document_path,
+                        reason: "the workflow document source kept changing while it was imported"
+                            .to_string(),
+                    };
+                }
             }
-        }
-        match self.try_import(&document) {
-            Ok(outcome) => outcome,
-            Err(reason) => MarketplaceWorkflowOutcome::Failed {
-                plugin_id: document.source.plugin_id(),
-                source_file: document.source.document_path,
-                reason,
-            },
         }
     }
 
     /// Creates the workflow one document describes and records its source path.
     ///
     /// A name the library already uses is a conflict, not a failure: the user's workflow keeps its
-    /// name and the source path becomes terminal so the same conflict is reported once. Every other
-    /// error leaves no record, so a retry can try the path again after the cause is fixed.
-    fn try_import(
+    /// name and the path keeps a `conflict_skipped` record that a later operation re-checks. Every
+    /// other error leaves no record, so a retry can try the path again after the cause is fixed,
+    /// and a failed recovery of a deleted copy returns the path to that state.
+    fn import_document(
         &self,
         document: &MarketplaceWorkflowDocument,
-    ) -> Result<MarketplaceWorkflowOutcome, String> {
-        let parsed = parse_workflow_document(&document.contents)?;
+        precondition: SourcePrecondition,
+        known_conflict: bool,
+    ) -> DocumentAttempt {
+        let parsed = match parse_workflow_document(&document.contents) {
+            Ok(parsed) => parsed,
+            Err(reason) => return self.attempt_failed(document, precondition, reason),
+        };
         let namespace = Namespace::local();
-        let plugin_id = document.source.plugin_id();
-        let source_file = document.source.document_path.clone();
-        let already_taken = self
+        let name_taken = match self
             .workflows
             .find_workflow_by_name(&namespace, &parsed.name)
-            .map_err(|error| error.to_string())?
-            .is_some();
-        if already_taken {
-            self.sources
-                .record_conflict_skip(&document.source, self.clock.now_timestamp_millis())
-                .map_err(|error| error.to_string())?;
-            return Ok(MarketplaceWorkflowOutcome::SkippedConflict {
-                plugin_id,
-                source_file,
-            });
+        {
+            Ok(found) => found.is_some(),
+            Err(error) => {
+                return self.attempt_failed(document, precondition, error.to_string());
+            }
+        };
+        if name_taken {
+            return self.attempt_conflict(document, &parsed.name, known_conflict);
         }
 
         let now = self.clock.now_timestamp_millis();
         let workflow_id = self.id_generator.generate_workflow_id();
-        let workflow = Workflow::new(
+        let workflow = match Workflow::new(
             workflow_id.clone(),
             namespace,
             parsed.name.clone(),
             /*published_snapshot_id*/ None,
             AuditFields::new(now, now, /*is_deleted*/ false),
-        )
-        .map_err(|error| error.to_string())?;
+        ) {
+            Ok(workflow) => workflow,
+            Err(error) => return self.attempt_failed(document, precondition, error.to_string()),
+        };
         let draft = WorkflowSnapshot::new(
             self.id_generator.generate_snapshot_id(),
             workflow_id.clone(),
@@ -256,21 +363,80 @@ where
             Some(now),
             /*is_deleted*/ false,
         );
-        self.sources
-            .commit_import(NewImportedWorkflow {
+        match self.sources.commit_import(
+            NewImportedWorkflow {
                 source: document.source.clone(),
                 workflow,
                 draft,
                 published,
-            })
-            .map_err(|error| error.to_string())?;
+            },
+            precondition,
+        ) {
+            Ok(ImportCommit::Committed) => {
+                DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::Imported {
+                    plugin_id: document.source.plugin_id(),
+                    source_file: document.source.document_path.clone(),
+                    workflow_id: workflow_id.to_string(),
+                    name: parsed.name,
+                    version,
+                })
+            }
+            // The name was free when it was checked and taken before the commit landed: the copy
+            // is rolled back and reported as the conflict it is, never as a failure.
+            Ok(ImportCommit::NameTaken) => {
+                self.attempt_conflict(document, &parsed.name, known_conflict)
+            }
+            // Another operation claimed the path first. The copy never lands, so judging the
+            // document again against the record that operation left cannot create a second one.
+            Ok(ImportCommit::SourceChanged) => DocumentAttempt::SourceChanged,
+            Err(error) => self.attempt_failed(document, precondition, error.to_string()),
+        }
+    }
 
-        Ok(MarketplaceWorkflowOutcome::Imported {
-            plugin_id,
-            source_file,
-            workflow_id: workflow_id.to_string(),
-            name: parsed.name,
-            version,
+    /// Records the name conflict the document hit and reports it with the name it collided on.
+    fn attempt_conflict(
+        &self,
+        document: &MarketplaceWorkflowDocument,
+        name: &str,
+        known_conflict: bool,
+    ) -> DocumentAttempt {
+        match self
+            .sources
+            .record_conflict_skip(&document.source, self.clock.now_timestamp_millis())
+        {
+            Ok(()) => DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::SkippedConflict {
+                plugin_id: document.source.plugin_id(),
+                source_file: document.source.document_path.clone(),
+                name: name.to_string(),
+                known_conflict,
+            }),
+            Err(error) => DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::Failed {
+                plugin_id: document.source.plugin_id(),
+                source_file: document.source.document_path.clone(),
+                reason: error.to_string(),
+            }),
+        }
+    }
+
+    /// Reports a refusal, first handing a deleted copy's path back so the rest of the cycle can
+    /// retry instead of waiting for another uninstall and install.
+    ///
+    /// A failure while clearing the record is deliberately not turned into a second outcome: the
+    /// refusal itself is what the user has to fix, and keeping the record leaves the copy on the
+    /// fallback path, where fixing the cause and reinstalling recovers it.
+    fn attempt_failed(
+        &self,
+        document: &MarketplaceWorkflowDocument,
+        precondition: SourcePrecondition,
+        reason: String,
+    ) -> DocumentAttempt {
+        if precondition == SourcePrecondition::DeletedCopy {
+            let _cleared = self.sources.forget_deleted_copy(&document.source);
+        }
+        DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::Failed {
+            plugin_id: document.source.plugin_id(),
+            source_file: document.source.document_path.clone(),
+            reason,
         })
     }
 }
