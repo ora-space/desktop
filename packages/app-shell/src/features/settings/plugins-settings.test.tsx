@@ -3990,6 +3990,54 @@ it("attributes Pack workflow conflicts to each member and navigates to its insta
 });
 
 /**
+ * A Pack has no InstalledPlugin, so its detail page stays on the install branch after the
+ * install; the report and its member navigation must render there too, not only on the
+ * installed branches a single plugin reaches.
+ */
+it("opens the member conflict report after installing a Pack from its detail page", async () => {
+  const user = userEvent.setup();
+  const { state, client } = packClientWithWorkflowPackage();
+  const WORKFLOW_MEMBER_ID = "official/ora-space.workflow-a";
+  state.pluginReadmes.set(PACK_ID, "# Python Extension Pack");
+  state.packMemberPlugins.set(PACK_ID, [
+    { ...packMember(WORKFLOW_MEMBER_ID), kind: "workflow" },
+  ]);
+  state.installedWorkflows = [
+    {
+      state: "skipped_conflict",
+      pluginId: WORKFLOW_MEMBER_ID,
+      sourceFile: "assets/workflows/1.0.0.json",
+      name: "发布流程",
+      knownConflict: false,
+    },
+  ];
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Python Extension Pack"));
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText("1 份未导入")).toBeVisible();
+  expect(within(report).getByText(WORKFLOW_MEMBER_ID)).toBeVisible();
+  expect(within(report).getByText(/发布流程/)).toBeVisible();
+
+  await user.click(
+    within(report).getByRole("button", {
+      name: `查看 ${WORKFLOW_MEMBER_ID} 的已安装卡片`,
+    }),
+  );
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("textbox", { name: "搜索插件" })).toHaveValue(
+    WORKFLOW_MEMBER_ID,
+  );
+  expect(screen.getByText(WORKFLOW_MEMBER_ID)).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "重试导入未导入的文档" }),
+  ).toBeVisible();
+});
+
+/**
  * When an upgrade opens the report for a first conflict, sibling known conflicts are listed as
  * still unresolved while deleted copies stay out of the "not imported" section and its count.
  */
