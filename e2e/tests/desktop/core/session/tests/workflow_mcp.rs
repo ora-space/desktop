@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+mod recovery;
+
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 /// Gives workflow checkpoints a real checkout with both tracked edits and untracked work.
