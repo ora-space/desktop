@@ -1,3 +1,4 @@
+import type { PreviewWorkflowDebugRequest } from "@ora/contracts";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@ora/ui";
@@ -52,18 +53,15 @@ type PatchPath =
   | "/iterationConfig/collectSelector"
   | "/iterationConfig/errorStrategy";
 
-export interface RunNodeConfigEdit {
-  runId: string;
-  /** Physical node execution selected by the run page. */
-  nodeRunId: string;
-  baseRevision: number;
-  patch: { op: "replace"; path: PatchPath; value: unknown }[];
-}
+export type RunNodeConfigEdit = PreviewWorkflowDebugRequest;
 
-export interface RunNodeConfigFormProps extends Pick<
-  RunNodeConfigEdit,
-  "runId" | "nodeRunId" | "baseRevision"
-> {
+// Preserve both arms of the generated preview request when removing the form-owned fields.
+type PreviewTarget<Request = PreviewWorkflowDebugRequest> =
+  Request extends unknown ? Omit<Request, "baseRevision" | "patch"> : never;
+
+export interface RunNodeConfigFormProps {
+  target: PreviewTarget;
+  baseRevision: PreviewWorkflowDebugRequest["baseRevision"];
   /** Changing the effective config discards local edits, including rich text, even at the same revision. */
   effective: RunNodeConfig;
   variables: WorkflowVariableCatalogEntry[];
@@ -82,8 +80,7 @@ export function RunNodeConfigForm(props: RunNodeConfigFormProps) {
   return (
     <Draft
       key={JSON.stringify([
-        props.runId,
-        props.nodeRunId,
+        props.target,
         props.baseRevision,
         props.effective,
         generation,
@@ -98,8 +95,7 @@ export function RunNodeConfigForm(props: RunNodeConfigFormProps) {
 }
 
 function Draft({
-  runId,
-  nodeRunId,
+  target,
   baseRevision,
   effective,
   variables,
@@ -308,7 +304,7 @@ function Draft({
         event.preventDefault();
         setAttempted(true);
         if (invalidField === undefined && patch.length)
-          onSubmit({ runId, nodeRunId, baseRevision, patch });
+          onSubmit({ ...target, baseRevision, patch });
       }}
     >
       {fields}

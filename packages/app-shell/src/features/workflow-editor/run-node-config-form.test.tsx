@@ -27,8 +27,7 @@ function variable(
 }
 function props(effective: RunNodeConfig) {
   return {
-    runId: "run-7",
-    nodeRunId: "attempt-3",
+    target: { runId: "run-7", nodeRunId: "attempt-3" },
     baseRevision: 2,
     effective,
     capabilities: createMockWorkflowCapabilities("en-US", [
@@ -343,7 +342,9 @@ it.each(["nodeRunId", "baseRevision"] as const)(
     });
     expect(submit()).toBeEnabled();
     const next =
-      field === "nodeRunId" ? { nodeRunId: "attempt-4" } : { baseRevision: 3 };
+      field === "nodeRunId"
+        ? { target: { ...input.target, nodeRunId: "attempt-4" } }
+        : { baseRevision: 3 };
     view.rerender(<RunNodeConfigForm {...input} {...next} />);
     expect(screen.getByRole("spinbutton")).toHaveValue(5);
     expect(submit()).toBeDisabled();
@@ -771,3 +772,41 @@ it.each([0, 101, 1.5])(
     expect(input.onSubmit).not.toHaveBeenCalled();
   },
 );
+
+it("submits the selected undispatched logical position from the preview contract", async () => {
+  const input = props({
+    kind: "agent",
+    config: { prompt: "old", executor: { agentCli: "cli", modelId: "one" } },
+  });
+  const pendingTarget = { rootScopeId: "rootP", scopeId: "rootP", nodeId: "X" };
+  render(
+    <RunNodeConfigForm
+      {...input}
+      target={{ runId: "P", pendingTarget }}
+      baseRevision={0}
+      variables={[variable("start", "text", "string")]}
+    />,
+  );
+  const user = userEvent.setup();
+  const prompt = screen.getByLabelText("Custom prompt");
+  await user.clear(prompt);
+  await user.click(prompt);
+  await user.paste("复述 {{#start.text#}}");
+  await user.click(submit());
+  expect(input.onSubmit.mock.calls).toEqual([
+    [
+      {
+        runId: "P",
+        pendingTarget,
+        baseRevision: 0,
+        patch: [
+          {
+            op: "replace",
+            path: "/agentConfig/prompt",
+            value: "复述 {{#start.text#}}",
+          },
+        ],
+      },
+    ],
+  ]);
+});
