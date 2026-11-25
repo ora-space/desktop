@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 mod attempts;
 mod configuration;
+pub(crate) mod fence;
 mod normalize;
 mod operations;
 mod pending;
@@ -26,8 +27,8 @@ pub enum DebugRejection {
     StalePreview,
     #[error("request_conflict")]
     RequestConflict,
-    #[error("operation_in_progress")]
-    OperationInProgress,
+    #[error("debug_operation_active")]
+    OperationActive,
     #[error("missing_input_evidence: {0}")]
     MissingFact(String),
     #[error("invalid_target")]
@@ -72,9 +73,7 @@ impl WorkflowDebugStore {
     ) -> Result<WorkflowDebugPreview, DatabaseError> {
         self.pool.with_connection_mut(|connection| {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            if operations::blocked(&tx, &request.run_id)? {
-                return Err(DebugRejection::OperationInProgress.into());
-            }
+            fence::ensure_inactive(&tx, &request.run_id)?;
             let revision = run_version(&tx, &request.run_id)?;
             if revision != request.base_revision {
                 return Err(DebugRejection::StalePreview.into());

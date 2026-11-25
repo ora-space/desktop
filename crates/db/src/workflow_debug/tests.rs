@@ -1,5 +1,6 @@
 use super::*;
 use crate::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
+use ora_application::WorkflowRunEngineRepository;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -387,7 +388,7 @@ fn double_click_has_one_owner_and_failed_stop_stays_fenced() {
     assert!(matches!(
         store.preview(&edit("next", 0), impact),
         Err(DatabaseError::WorkflowDebug(
-            DebugRejection::OperationInProgress
+            DebugRejection::OperationActive
         ))
     ));
     let DebugClaim::Existing(failed) = store.claim(&commit).unwrap() else {
@@ -401,6 +402,102 @@ fn double_click_has_one_owner_and_failed_stop_stays_fenced() {
     );
     store.release_failed_stop("F", "key").unwrap();
     assert!(store.preview(&edit("next", 0), impact).is_ok());
+}
+
+/// The fence outranks every other entry: a new confirmation learns about it before its own read
+/// set, and recovery, restart and snapshot switching leave the run untouched until it lifts.
+#[test]
+fn active_operation_fences_new_confirmations_and_recovery_entries() {
+    let (_temp, _path, store) = fixture();
+    store
+        .record_agent_dispatch(
+            "F",
+            "t3",
+            &json!({"variablePool":WorkflowVariablePool::default()}),
+        )
+        .unwrap();
+    let held = store.preview(&edit("one", 0), impact).unwrap();
+    let stale = store.preview(&edit("two", 0), impact).unwrap();
+    let commit = |preview: &WorkflowDebugPreview, key: &str| CommitWorkflowDebugRequest {
+        run_id: "F".into(),
+        preview_id: preview.preview_id.clone(),
+        request_id: key.into(),
+    };
+    assert!(matches!(
+        store.claim(&commit(&held, "key")),
+        Ok(DebugClaim::Claimed(_))
+    ));
+    // The target settled by itself, which is enough to make the second preview stale.
+    store
+        .pool
+        .with_connection(|db| {
+            Ok(db
+                .execute("UPDATE workflow_node_runs SET status=2 WHERE id='t3'", [])
+                .map(|_| ())?)
+        })
+        .unwrap();
+    fn active<T>(result: Result<T, DatabaseError>) -> bool {
+        matches!(
+            result,
+            Err(DatabaseError::WorkflowDebug(
+                DebugRejection::OperationActive
+            ))
+        )
+    }
+    assert!(active(store.claim(&commit(&stale, "other"))));
+    assert!(active(store.ensure_debug_operation_inactive("F")));
+    let repository = crate::SqliteWorkflowRunEngineRepository::new(store.pool.clone());
+    let run = ora_domain::WorkflowRunId::new("F");
+    fn fenced<T: std::fmt::Debug>(result: Result<T, ora_application::RepositoryError>) -> bool {
+        matches!(
+            std::error::Error::source(&result.unwrap_err())
+                .and_then(|source| source.downcast_ref::<DatabaseError>()),
+            Some(DatabaseError::WorkflowDebug(
+                DebugRejection::OperationActive
+            ))
+        )
+    }
+    let snapshot = || ora_domain::WorkflowSnapshotId::new("snap");
+    assert!(fenced(repository.restart_run(&run, 2)));
+    assert!(fenced(repository.resume_from_failure(
+        &run,
+        &["agent".into()],
+        2
+    )));
+    assert!(fenced(repository.switch_run_snapshot(
+        &run,
+        &snapshot(),
+        "{}",
+        2
+    )));
+    // A failed stop keeps the same fence until the coordinator releases it.
+    store
+        .record_stop_failure("F", "key", "still running")
+        .unwrap();
+    assert!(fenced(repository.restart_run(&run, 3)));
+    store.release_failed_stop("F", "key").unwrap();
+    assert!(store.ensure_debug_operation_inactive("F").is_ok());
+    assert!(store.ensure_debug_operation_inactive("other").is_ok());
+    // Without the fence the second preview fails on its own facts again.
+    assert!(matches!(
+        store.claim(&commit(&stale, "other")),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::StalePreview))
+    ));
+    assert_eq!(
+        repository.restart_run(&run, 4).unwrap(),
+        ora_application::RestartWorkflowRunResult::NotRestartable
+    );
+    assert_eq!(
+        repository
+            .resume_from_failure(&run, &["agent".into()], 4)
+            .unwrap(),
+        ora_application::ResumeWorkflowRunResult::NotResumable
+    );
+    assert!(
+        !repository
+            .switch_run_snapshot(&run, &snapshot(), "{}", 4)
+            .unwrap()
+    );
 }
 
 /// The frozen boolean selects ELSE after replacing a comparison, without changing case identity.

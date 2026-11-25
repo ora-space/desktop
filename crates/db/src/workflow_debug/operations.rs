@@ -33,6 +33,10 @@ impl WorkflowDebugStore {
                 }
                 return Ok(DebugClaim::Existing(entry));
             }
+            // A new request meets the fence before its read set is revalidated: the page must
+            // learn that the run is still settling an earlier confirmation, not that this
+            // particular preview went stale.
+            fence::ensure_inactive(&tx, &request.run_id)?;
             let revision = run_version(&tx, &request.run_id)?;
             let receipt = tx.query_row(
                 "SELECT p.read_nodes,p.read_facts FROM workflow_debug_previews p
@@ -43,9 +47,6 @@ impl WorkflowDebugStore {
             ).optional()?.ok_or(DebugRejection::StalePreview)?;
             if read_set::facts(&tx,&request.run_id,&receipt.0)? != serde_json::from_str::<Value>(&receipt.1)? {
                 return Err(DebugRejection::StalePreview.into());
-            }
-            if blocked(&tx, &request.run_id)? {
-                return Err(DebugRejection::OperationInProgress.into());
             }
             tx.execute(
                 "INSERT INTO workflow_debug_operations(run_id,request_id,preview_id,state)
@@ -145,16 +146,6 @@ impl WorkflowDebugStore {
                 .collect::<Result<Vec<_>, _>>()?)
         })
     }
-}
-
-/// Reads the partial unique index's live-fence condition.
-pub(super) fn blocked(db: &Connection, run: &str) -> Result<bool, rusqlite::Error> {
-    db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM workflow_debug_operations WHERE run_id=?1
-        AND (state='stopping' OR (state='stop_failed' AND released=0)))",
-        [run],
-        |r| r.get(0),
-    )
 }
 
 /// Maps the persisted operation to the same receipt used for confirmation and history.

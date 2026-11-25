@@ -16,6 +16,9 @@ pub(super) fn switch_run_snapshot(
 ) -> Result<bool, RepositoryError> {
     pool.with_connection_mut(|connection| {
         let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
+        // A switch starts a new configuration baseline; it must not overtake a confirmation that
+        // is still stopping or holds an unreleased fence.
+        crate::workflow_debug::fence::ensure_inactive(&transaction, run_id.as_ref())?;
         let updated = transaction.execute(
             "UPDATE workflow_runs SET snapshot_id = ?2, payload = ?3, updated_at = ?4
              WHERE id = ?1 AND is_deleted = 0 AND run_status IN (?5, ?6)",
