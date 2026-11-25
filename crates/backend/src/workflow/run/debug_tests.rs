@@ -25,6 +25,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 mod lifecycle;
 
+mod foreach;
+
 /// start → x → out, with an independent leaf branch start → s.
 const GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},

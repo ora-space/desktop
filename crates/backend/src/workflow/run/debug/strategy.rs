@@ -10,10 +10,15 @@ use ora_contracts::{WorkflowDebugImpact, WorkflowDebugPreview};
 use ora_db::workflow_debug::{DebugPlanningInput, DebugRejection, Transaction};
 use ora_domain::WorkflowNodeStatus;
 
+mod foreach;
+
 /// Plans a top-level edit: the target plus its transitive successors are the recompute scope.
 pub(in crate::workflow::run) fn plan(
     input: &DebugPlanningInput,
 ) -> Result<WorkflowDebugImpact, DebugRejection> {
+    if input.target.index.is_some() || input.candidate.region(&input.target.node_id).is_some() {
+        return foreach::plan(input);
+    }
     // Container members are scoped by their round/item, not the root DAG; the container strategies
     // (#1431/#1432) own them. Refuse here rather than mis-scope a member as a top-level node.
     if input.target.container_node_run_id.is_some() {
@@ -69,6 +74,25 @@ pub(in crate::workflow::run) fn settle(
     transaction: &Transaction<'_>,
     preview: &WorkflowDebugPreview,
 ) -> Result<(), ora_db::DatabaseError> {
+    if preview.target.index.is_some()
+        || preview.member_configurations.is_some()
+            && transaction.query_row(
+                "SELECT node_type='iteration' FROM workflow_debug_previews WHERE id=?1",
+                [&preview.preview_id],
+                |r| r.get::<_, bool>(0),
+            )?
+    {
+        // The store reactivates runs accepted in a terminal state. If the run instead
+        // finished while stopping, keep its final projection and do not schedule new work.
+        let running: bool = transaction.query_row(
+            "SELECT r.run_status=1 FROM workflow_debug_previews p JOIN workflow_runs r ON r.id=p.run_id WHERE p.id=?1",
+            [&preview.preview_id], |row| row.get(0),
+        )?;
+        if !running {
+            return Ok(());
+        }
+        foreach::restore(transaction, preview)?;
+    }
     for id in &preview.impact.invalidate {
         transaction.execute(
             "UPDATE workflow_node_runs SET is_deleted=1 WHERE id=?1 AND is_deleted=0",

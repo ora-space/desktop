@@ -86,6 +86,43 @@ pub struct WorkflowDebugStore {
 }
 
 impl WorkflowDebugStore {
+    /// Resolves the confirmed foreach position under the apply transaction, before its old
+    /// rows are retired. The patch and selection come from the server-issued receipt.
+    pub fn confirmed_foreach_input(
+        tx: &Transaction<'_>,
+        preview: &WorkflowDebugPreview,
+    ) -> Result<(String, DebugPlanningInput), DatabaseError> {
+        let (run_id, patch): (String, String) = tx.query_row(
+            "SELECT run_id, patch FROM workflow_debug_previews WHERE id=?1",
+            [&preview.preview_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let target = &preview.target;
+        let selection = match &target.node_run_id {
+            Some(id) => WorkflowDebugSelection::NodeRunId(id.clone()),
+            None => WorkflowDebugSelection::PendingTarget(PendingWorkflowDebugTarget {
+                root_scope_id: target
+                    .root_scope_id
+                    .clone()
+                    .ok_or(DebugRejection::InvalidTarget)?,
+                scope_id: target.scope_id.clone(),
+                node_id: target.node_id.clone(),
+                container_node_run_id: target.container_node_run_id.clone(),
+                index: target.index,
+            }),
+        };
+        let input = configuration::prepare(
+            tx,
+            &PreviewWorkflowDebugRequest {
+                run_id: run_id.clone(),
+                selection,
+                base_revision: preview.base_revision,
+                patch: serde_json::from_str(&patch)?,
+            },
+        )?;
+        Ok((run_id, input))
+    }
+
     /// Uses the same database pool as workflow scheduling.
     pub fn new(pool: RepositoryPool) -> Self {
         Self { pool }
