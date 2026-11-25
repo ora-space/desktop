@@ -631,6 +631,95 @@ mod tests {
         });
     }
 
+    /// Verifies `Backend::open` surfaces a failed pre-`0025` backup instead of migrating a database
+    /// whose recovery copy could not be written.
+    #[test]
+    fn fails_open_without_migrating_when_pre_0025_backup_fails() {
+        ora_logging::with_trace_logging(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(async {
+                    let temporary = TempDir::new().expect("create temporary backend directory");
+                    let app_data_directory = temporary.path().join("app-data");
+                    let home_directory = temporary.path().join("ora-home");
+                    fs::create_dir_all(&app_data_directory).expect("create app-data");
+                    let database_path = app_data_directory.join("ora.sqlite3");
+
+                    let latest = ora_db::default_migration_catalog().expect("latest catalog");
+                    let pre_0025 = ora_db::MigrationCatalog::new(
+                        latest
+                            .target_versions()
+                            .iter()
+                            .filter(|version| **version < "0025")
+                            .map(|version| latest.migration(version).expect("migration").clone())
+                            .collect(),
+                    )
+                    .expect("pre-0025 catalog");
+                    let pool = ora_db::DatabaseBootstrapper::system()
+                        .bootstrap_repository_pool(
+                            &ora_db::DatabaseLocation::path(&database_path),
+                            &pre_0025,
+                        )
+                        .expect("bootstrap pre-0025 db");
+                    drop(pool);
+
+                    // A non-empty directory at the temporary backup path keeps the stale temp file
+                    // from being cleared, so the backup cannot be written.
+                    let blocked_temp = app_data_directory.join("ora.sqlite3.pre-0025.bak.tmp");
+                    fs::create_dir(&blocked_temp).expect("create blocking temp directory");
+                    fs::write(blocked_temp.join("occupied"), b"keep").expect("fill temp dir");
+
+                    let error = Backend::open(backend_paths(&app_data_directory, &home_directory))
+                        .err()
+                        .expect("open must fail when the pre-0025 backup cannot be written");
+                    let message = match &error {
+                        super::BackendBootstrapError::Database(
+                            ora_db::DatabaseError::PreMigrationBackupFailed {
+                                version: "0025",
+                                message,
+                                ..
+                            },
+                        ) => message.clone(),
+                        other => panic!("unexpected bootstrap error: {other:?}"),
+                    };
+                    assert!(
+                        message.contains("failed to clear stale temporary backup"),
+                        "unexpected backup failure: {message}"
+                    );
+                    assert!(
+                        !ora_db::pre_0025_backup_path(&database_path).exists(),
+                        "a failed backup must not leave a backup file behind"
+                    );
+
+                    let verify = rusqlite::Connection::open(&database_path).expect("reopen sqlite");
+                    let applied_0025: i64 = verify
+                        .query_row(
+                            "SELECT COUNT(*) FROM migrations WHERE version = '0025'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        applied_0025, 0,
+                        "failed pre-0025 backup must abort startup before migration 0025 runs"
+                    );
+                    let effect_tables: i64 = verify
+                        .query_row(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'effect\\_%' ESCAPE '\\'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap();
+                    assert!(
+                        effect_tables > 0,
+                        "legacy Effect tables must survive a failed pre-0025 backup"
+                    );
+                });
+        });
+    }
+
     /// Verifies `Backend::open` creates the pre-`0025` SQLite backup and removes unedited legacy
     /// Effect-managed skill directories before migration `0025` drops Effect tables, while keeping
     /// user-modified skill directories intact.
