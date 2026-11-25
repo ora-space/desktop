@@ -54,8 +54,7 @@ pub enum ImportedWorkflowOutcome {
 )]
 #[ts(export_to = "plugin.ts")]
 pub enum MarketplaceWorkflowOutcome {
-    /// The document became a workflow with one published snapshot, and the source path is now
-    /// terminal.
+    /// The document became a workflow with one published snapshot, and its copy is recorded.
     Imported {
         /// Canonical identifier of the member plugin that carried the document.
         plugin_id: String,
@@ -103,12 +102,12 @@ pub enum MarketplaceWorkflowOutcome {
         plugin_id: String,
         /// Package-relative path whose document name collided with an existing workflow.
         source_file: String,
-        /// Name the document declares, which is also the name the library already uses.
+        /// Name of the surviving workflow in the library that blocks this document's import.
         name: String,
         /// Whether the record already held this conflict before the operation ran.
         known_conflict: bool,
     },
-    /// The document was refused and no terminal record was written, so a retry can try it again.
+    /// The document was refused and no record was created, so a retry can try it again.
     Failed {
         /// Canonical identifier of the member plugin that carried the document.
         plugin_id: String,
@@ -122,8 +121,8 @@ pub enum MarketplaceWorkflowOutcome {
 /// Requests a retry of the workflow document import for one installed plugin.
 ///
 /// The retry is an explicit action on an installed plugin card rather than a second install, so it
-/// never downloads or replaces a package; it reconsiders only the documents whose source paths do
-/// not have a terminal record yet.
+/// never downloads or replaces a package; it reconsiders paths without a surviving copy, including
+/// unrecorded documents and name conflicts, while keeping copies deleted during the running cycle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]

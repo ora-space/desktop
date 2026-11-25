@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use ora_contracts::MarketplaceWorkflowOutcome;
-use ora_domain::{AuditFields, Namespace, Workflow, WorkflowSnapshot};
+use ora_domain::{AuditFields, Namespace, Workflow, WorkflowId, WorkflowSnapshot};
 
 use crate::RepositoryError;
 use crate::workflow::import::{derive_publish_version, parse_workflow_document};
@@ -55,8 +55,8 @@ impl WorkflowDocumentSource {
 /// conflict is reported, because that is read from the record the operation found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarketplaceImportOperation {
-    /// A successful marketplace install opens a new install cycle, so a copy deleted in an earlier
-    /// cycle is recoverable while a copy deleted inside the running cycle is not.
+    /// A successful marketplace install opens a new install cycle, so any `imported` record whose
+    /// copy is no longer alive is reconsidered for recovery while surviving copies stay untouched.
     Install,
     /// An automatic upgrade stays inside the current cycle and keeps respecting every deletion the
     /// cycle saw, while still re-judging unrecorded paths and name conflicts.
@@ -70,12 +70,12 @@ pub enum MarketplaceImportOperation {
 ///
 /// Liveness is resolved by the store on every read rather than stored, because the record has to
 /// stay valid while the user deletes or restores the copy beside it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkflowDocumentSourceRecord {
     /// The path produced a copy the user still has, possibly renamed or edited since.
     ImportedAlive,
-    /// The path produced a copy the user has since deleted.
-    ImportedDeleted,
+    /// The path produced the identified copy, which the user has since deleted.
+    ImportedDeleted(WorkflowId),
     /// The path collided with a workflow the user already had, so nothing was created.
     ConflictSkipped,
 }
@@ -84,23 +84,35 @@ pub enum WorkflowDocumentSourceRecord {
 ///
 /// Carrying the expectation into the store is what keeps two operations from both claiming one
 /// source path: a write whose expectation no longer holds is refused instead of overwriting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourcePrecondition {
     /// The path had no record at all.
     Unrecorded,
-    /// The record pointed at a copy the user deleted, and the path is being recovered.
-    DeletedCopy,
+    /// The record pointed at the identified copy the user deleted, and the path is being
+    /// recovered.
+    DeletedCopy(WorkflowId),
     /// The record held a name conflict that is no longer present in the library.
     ConflictSkipped,
 }
 
-/// The result of committing one import against a source precondition.
+/// The result of recording a name conflict against a source precondition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictSkipCommit {
+    /// The `conflict_skipped` record was written or refreshed under the precondition.
+    Recorded,
+    /// Another write changed the source record first, so the caller must re-judge the document
+    /// against what that write left behind.
+    SourceChanged,
+}
+
+/// The result of committing one import against a source precondition.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportCommit {
     /// The copy, its two snapshots, and the `imported` record are committed together.
     Committed,
-    /// Another write occupied the document's name first, so this copy was rolled back.
-    NameTaken,
+    /// Another write occupied the document's name first (carrying that surviving workflow's name),
+    /// so this copy was rolled back.
+    NameTaken { blocking_name: String },
     /// Another write changed the source record first, so this copy was rolled back and the caller
     /// has to judge the document again against the state that write left behind.
     SourceChanged,
@@ -141,12 +153,13 @@ pub trait WorkflowDocumentSourceRepository {
         source: &WorkflowDocumentSource,
     ) -> Result<Option<WorkflowDocumentSourceRecord>, RepositoryError>;
 
-    /// Records a name conflict for one source path, leaving an `imported` record untouched.
+    /// Records a name conflict for one source path conditional on the state the caller read.
     fn record_conflict_skip(
         &self,
         source: &WorkflowDocumentSource,
+        precondition: &SourcePrecondition,
         recorded_at: i64,
-    ) -> Result<(), RepositoryError>;
+    ) -> Result<ConflictSkipCommit, RepositoryError>;
 
     /// Commits the created workflow, its draft, its published snapshot, and the `imported` record
     /// together, conditional on the source state the caller read and on the document's name still
@@ -154,15 +167,18 @@ pub trait WorkflowDocumentSourceRepository {
     fn commit_import(
         &self,
         imported: NewImportedWorkflow,
-        precondition: SourcePrecondition,
+        precondition: &SourcePrecondition,
     ) -> Result<ImportCommit, RepositoryError>;
 
-    /// Clears an `imported` record whose copy the user deleted, so the path is treated as one the
-    /// package never delivered and the document becomes retryable again.
+    /// Clears an `imported` record whose identified copy the user deleted, so the path is treated
+    /// as one the package never delivered and the document becomes retryable again.
     ///
     /// Returns whether the record was cleared; `false` means the expectation no longer held.
-    fn forget_deleted_copy(&self, source: &WorkflowDocumentSource)
-    -> Result<bool, RepositoryError>;
+    fn forget_deleted_copy(
+        &self,
+        source: &WorkflowDocumentSource,
+        expected_workflow_id: &WorkflowId,
+    ) -> Result<bool, RepositoryError>;
 }
 
 /// One workflow document a marketplace package contributed, attributed to its member plugin.
@@ -249,12 +265,10 @@ where
         let mut rereads = 0;
         loop {
             let attempt = match self.sources.find_record(&document.source) {
-                Ok(None) => self.import_document(&document, SourcePrecondition::Unrecorded, false),
-                Ok(Some(WorkflowDocumentSourceRecord::ConflictSkipped)) => self.import_document(
-                    &document,
-                    SourcePrecondition::ConflictSkipped,
-                    /*known_conflict*/ true,
-                ),
+                Ok(None) => self.import_document(&document, &SourcePrecondition::Unrecorded),
+                Ok(Some(WorkflowDocumentSourceRecord::ConflictSkipped)) => {
+                    self.import_document(&document, &SourcePrecondition::ConflictSkipped)
+                }
                 Ok(Some(WorkflowDocumentSourceRecord::ImportedAlive)) => {
                     DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::SkippedProcessed {
                         plugin_id: document.source.plugin_id(),
@@ -263,12 +277,12 @@ where
                 }
                 // Only a new install cycle may reconsider a copy the user deleted; an upgrade and
                 // the card retry stay inside the cycle and keep the deletion.
-                Ok(Some(WorkflowDocumentSourceRecord::ImportedDeleted))
+                Ok(Some(WorkflowDocumentSourceRecord::ImportedDeleted(workflow_id)))
                     if operation == MarketplaceImportOperation::Install =>
                 {
-                    self.import_document(&document, SourcePrecondition::DeletedCopy, false)
+                    self.import_document(&document, &SourcePrecondition::DeletedCopy(workflow_id))
                 }
-                Ok(Some(WorkflowDocumentSourceRecord::ImportedDeleted)) => {
+                Ok(Some(WorkflowDocumentSourceRecord::ImportedDeleted(_))) => {
                     DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::SkippedDeletedCopy {
                         plugin_id: document.source.plugin_id(),
                         source_file: document.source.document_path.clone(),
@@ -304,25 +318,24 @@ where
     fn import_document(
         &self,
         document: &MarketplaceWorkflowDocument,
-        precondition: SourcePrecondition,
-        known_conflict: bool,
+        precondition: &SourcePrecondition,
     ) -> DocumentAttempt {
         let parsed = match parse_workflow_document(&document.contents) {
             Ok(parsed) => parsed,
             Err(reason) => return self.attempt_failed(document, precondition, reason),
         };
         let namespace = Namespace::local();
-        let name_taken = match self
+        let blocking_name = match self
             .workflows
             .find_workflow_by_name(&namespace, &parsed.name)
         {
-            Ok(found) => found.is_some(),
+            Ok(found) => found.map(|workflow| workflow.name),
             Err(error) => {
                 return self.attempt_failed(document, precondition, error.to_string());
             }
         };
-        if name_taken {
-            return self.attempt_conflict(document, &parsed.name, known_conflict);
+        if let Some(blocking_name) = blocking_name {
+            return self.attempt_conflict(document, precondition, &blocking_name);
         }
 
         let now = self.clock.now_timestamp_millis();
@@ -383,8 +396,8 @@ where
             }
             // The name was free when it was checked and taken before the commit landed: the copy
             // is rolled back and reported as the conflict it is, never as a failure.
-            Ok(ImportCommit::NameTaken) => {
-                self.attempt_conflict(document, &parsed.name, known_conflict)
+            Ok(ImportCommit::NameTaken { blocking_name }) => {
+                self.attempt_conflict(document, precondition, &blocking_name)
             }
             // Another operation claimed the path first. The copy never lands, so judging the
             // document again against the record that operation left cannot create a second one.
@@ -393,23 +406,28 @@ where
         }
     }
 
-    /// Records the name conflict the document hit and reports it with the name it collided on.
+    /// Records the name conflict the document hit and reports it with the surviving workflow name
+    /// that blocked it.
     fn attempt_conflict(
         &self,
         document: &MarketplaceWorkflowDocument,
-        name: &str,
-        known_conflict: bool,
+        precondition: &SourcePrecondition,
+        blocking_name: &str,
     ) -> DocumentAttempt {
-        match self
-            .sources
-            .record_conflict_skip(&document.source, self.clock.now_timestamp_millis())
-        {
-            Ok(()) => DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::SkippedConflict {
-                plugin_id: document.source.plugin_id(),
-                source_file: document.source.document_path.clone(),
-                name: name.to_string(),
-                known_conflict,
-            }),
+        match self.sources.record_conflict_skip(
+            &document.source,
+            precondition,
+            self.clock.now_timestamp_millis(),
+        ) {
+            Ok(ConflictSkipCommit::Recorded) => {
+                DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::SkippedConflict {
+                    plugin_id: document.source.plugin_id(),
+                    source_file: document.source.document_path.clone(),
+                    name: blocking_name.to_string(),
+                    known_conflict: matches!(precondition, SourcePrecondition::ConflictSkipped),
+                })
+            }
+            Ok(ConflictSkipCommit::SourceChanged) => DocumentAttempt::SourceChanged,
             Err(error) => DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::Failed {
                 plugin_id: document.source.plugin_id(),
                 source_file: document.source.document_path.clone(),
@@ -427,11 +445,13 @@ where
     fn attempt_failed(
         &self,
         document: &MarketplaceWorkflowDocument,
-        precondition: SourcePrecondition,
+        precondition: &SourcePrecondition,
         reason: String,
     ) -> DocumentAttempt {
-        if precondition == SourcePrecondition::DeletedCopy {
-            let _cleared = self.sources.forget_deleted_copy(&document.source);
+        if let SourcePrecondition::DeletedCopy(expected_workflow_id) = precondition {
+            let _cleared = self
+                .sources
+                .forget_deleted_copy(&document.source, expected_workflow_id);
         }
         DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::Failed {
             plugin_id: document.source.plugin_id(),
@@ -449,4 +469,480 @@ fn automatic_version(now: i64) -> String {
     let version = format!("v{now}");
     debug_assert!(is_publishable_version(&version));
     version
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    use ora_contracts::MarketplaceWorkflowOutcome;
+    use ora_domain::{
+        AuditFields, CreatedWorkflow, Namespace, Workflow, WorkflowDetail, WorkflowId,
+        WorkflowSnapshot, WorkflowSnapshotId, WorkflowSummary, WorkflowVersion,
+    };
+    use pretty_assertions::assert_eq;
+
+    use super::{
+        ConflictSkipCommit, ImportCommit, ImportMarketplaceWorkflowsHandler,
+        MarketplaceImportOperation, MarketplaceWorkflowDocument, NewImportedWorkflow,
+        SourcePrecondition, WorkflowDocumentSource, WorkflowDocumentSourceRecord,
+        WorkflowDocumentSourceRepository,
+    };
+    use crate::workflow::ports::{
+        ActivateVersionResult, DeleteSnapshotResult, DeleteWorkflowResult, PublishSnapshotResult,
+        RollbackDraftResult, UpdateDraftResult, UpdateWorkflowResult, WorkflowIdGenerator,
+        WorkflowRepository,
+    };
+    use crate::{Clock, RepositoryError};
+
+    const VALID_DOCUMENT_LOWER: &str = r#"{"name":"release flow","version":"1.0.0","viewport":{"x":0,"y":0,"zoom":1},"nodes":[{"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","title":"开始"}}],"edges":[]}"#;
+
+    #[derive(Clone, Copy, Debug)]
+    struct FixedClock(i64);
+
+    impl Clock for FixedClock {
+        fn now_timestamp_millis(&self) -> i64 {
+            self.0
+        }
+    }
+
+    #[derive(Debug, Default, Clone)]
+    struct CountingIdGenerator {
+        next: Arc<Mutex<u64>>,
+    }
+
+    impl WorkflowIdGenerator for CountingIdGenerator {
+        fn generate_workflow_id(&self) -> WorkflowId {
+            let mut next = self.next.lock().expect("id generator lock");
+            *next += 1;
+            WorkflowId::new(format!("workflow-{next}"))
+        }
+
+        fn generate_snapshot_id(&self) -> WorkflowSnapshotId {
+            let mut next = self.next.lock().expect("id generator lock");
+            *next += 1;
+            WorkflowSnapshotId::new(format!("snapshot-{next}"))
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct FakeWorkflowRepository {
+        existing_by_name: Option<Workflow>,
+    }
+
+    impl WorkflowRepository for FakeWorkflowRepository {
+        fn create_workflow(
+            &self,
+            _workflow: Workflow,
+            _draft: WorkflowSnapshot,
+        ) -> Result<CreatedWorkflow, RepositoryError> {
+            unreachable!("marketplace import commits through the source repository")
+        }
+
+        fn find_workflow(
+            &self,
+            _workflow_id: &WorkflowId,
+        ) -> Result<Option<Workflow>, RepositoryError> {
+            unreachable!("marketplace import never looks up a workflow by id")
+        }
+
+        fn find_workflow_by_name(
+            &self,
+            _namespace: &Namespace,
+            _name: &str,
+        ) -> Result<Option<Workflow>, RepositoryError> {
+            Ok(self.existing_by_name.clone())
+        }
+
+        fn get_workflow_detail(
+            &self,
+            _workflow_id: &WorkflowId,
+        ) -> Result<Option<WorkflowDetail>, RepositoryError> {
+            unreachable!("marketplace import never loads workflow details")
+        }
+
+        fn list_workflows(&self) -> Result<Vec<WorkflowSummary>, RepositoryError> {
+            unreachable!("marketplace import never lists workflows")
+        }
+
+        fn update_workflow(
+            &self,
+            _workflow_id: &WorkflowId,
+            _name: String,
+            _updated_at: i64,
+        ) -> Result<UpdateWorkflowResult, RepositoryError> {
+            unreachable!("marketplace import never updates workflows")
+        }
+
+        fn soft_delete_workflow(
+            &self,
+            _workflow_id: &WorkflowId,
+            _deleted_at: i64,
+        ) -> Result<DeleteWorkflowResult, RepositoryError> {
+            unreachable!("marketplace import never deletes workflows")
+        }
+
+        fn find_snapshot_by_version(
+            &self,
+            _workflow_id: &WorkflowId,
+            _version: &str,
+        ) -> Result<Option<WorkflowSnapshot>, RepositoryError> {
+            unreachable!("marketplace import never loads snapshots")
+        }
+
+        fn find_snapshot_by_id(
+            &self,
+            _workflow_id: &WorkflowId,
+            _snapshot_id: &WorkflowSnapshotId,
+        ) -> Result<Option<WorkflowSnapshot>, RepositoryError> {
+            unreachable!("marketplace import never loads snapshots by id")
+        }
+
+        fn find_snapshot_any_workflow(
+            &self,
+            _snapshot_id: &WorkflowSnapshotId,
+        ) -> Result<Option<WorkflowSnapshot>, RepositoryError> {
+            unreachable!("marketplace import never loads snapshots across workflows")
+        }
+
+        fn list_versions(
+            &self,
+            _workflow_id: &WorkflowId,
+        ) -> Result<Vec<WorkflowVersion>, RepositoryError> {
+            unreachable!("marketplace import never lists versions")
+        }
+
+        fn update_draft(
+            &self,
+            _workflow_id: &WorkflowId,
+            _graph: String,
+            _updated_at: i64,
+        ) -> Result<UpdateDraftResult, RepositoryError> {
+            unreachable!("marketplace import never edits drafts")
+        }
+
+        fn publish_snapshot(
+            &self,
+            _workflow_id: &WorkflowId,
+            _snapshot_id: WorkflowSnapshotId,
+            _version: String,
+            _created_at: i64,
+        ) -> Result<PublishSnapshotResult, RepositoryError> {
+            unreachable!("marketplace import never publishes drafts")
+        }
+
+        fn rollback_draft(
+            &self,
+            _workflow_id: &WorkflowId,
+            _snapshot_id: &WorkflowSnapshotId,
+            _updated_at: i64,
+        ) -> Result<RollbackDraftResult, RepositoryError> {
+            unreachable!("marketplace import never rolls back drafts")
+        }
+
+        fn activate_version(
+            &self,
+            _workflow_id: &WorkflowId,
+            _snapshot_id: &WorkflowSnapshotId,
+            _updated_at: i64,
+        ) -> Result<ActivateVersionResult, RepositoryError> {
+            unreachable!("marketplace import never activates versions")
+        }
+
+        fn soft_delete_snapshot(
+            &self,
+            _workflow_id: &WorkflowId,
+            _snapshot_id: &WorkflowSnapshotId,
+            _deleted_at: i64,
+        ) -> Result<DeleteSnapshotResult, RepositoryError> {
+            unreachable!("marketplace import never deletes snapshots")
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct ScriptedSourceRepository {
+        records: Mutex<VecDeque<Option<WorkflowDocumentSourceRecord>>>,
+        commits: Mutex<VecDeque<ImportCommit>>,
+        conflict_commits: Mutex<VecDeque<ConflictSkipCommit>>,
+        recorded_conflict_preconditions: Mutex<Vec<SourcePrecondition>>,
+        commit_count: Mutex<usize>,
+    }
+
+    impl WorkflowDocumentSourceRepository for &ScriptedSourceRepository {
+        fn find_record(
+            &self,
+            _source: &WorkflowDocumentSource,
+        ) -> Result<Option<WorkflowDocumentSourceRecord>, RepositoryError> {
+            Ok(self
+                .records
+                .lock()
+                .expect("records lock")
+                .pop_front()
+                .expect("scripted find_record result"))
+        }
+
+        fn record_conflict_skip(
+            &self,
+            _source: &WorkflowDocumentSource,
+            precondition: &SourcePrecondition,
+            _recorded_at: i64,
+        ) -> Result<ConflictSkipCommit, RepositoryError> {
+            self.recorded_conflict_preconditions
+                .lock()
+                .expect("preconditions lock")
+                .push(precondition.clone());
+            Ok(self
+                .conflict_commits
+                .lock()
+                .expect("conflict_commits lock")
+                .pop_front()
+                .expect("scripted record_conflict_skip result"))
+        }
+
+        fn commit_import(
+            &self,
+            _imported: NewImportedWorkflow,
+            _precondition: &SourcePrecondition,
+        ) -> Result<ImportCommit, RepositoryError> {
+            *self.commit_count.lock().expect("commit_count lock") += 1;
+            Ok(self
+                .commits
+                .lock()
+                .expect("commits lock")
+                .pop_front()
+                .expect("scripted commit_import result"))
+        }
+
+        fn forget_deleted_copy(
+            &self,
+            _source: &WorkflowDocumentSource,
+            _expected_workflow_id: &WorkflowId,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
+    }
+
+    fn document(contents: &str) -> MarketplaceWorkflowDocument {
+        MarketplaceWorkflowDocument {
+            source: WorkflowDocumentSource {
+                namespace: "official".to_string(),
+                identifier: "ora.cdase-workflow".to_string(),
+                document_path: "assets/workflows/1.0.0.json".to_string(),
+            },
+            contents: contents.to_string(),
+        }
+    }
+
+    fn surviving_workflow(name: &str) -> Workflow {
+        Workflow::new(
+            WorkflowId::new("workflow-existing"),
+            Namespace::local(),
+            name,
+            /*published_snapshot_id*/ None,
+            AuditFields::new(1, 1, /*is_deleted*/ false),
+        )
+        .expect("valid workflow")
+    }
+
+    #[test]
+    fn reports_a_commit_time_name_collision_as_skipped_conflict_with_the_blocking_name() {
+        let sources = ScriptedSourceRepository {
+            records: Mutex::new(VecDeque::from([
+                None,
+                Some(WorkflowDocumentSourceRecord::ConflictSkipped),
+            ])),
+            commits: Mutex::new(VecDeque::from([
+                ImportCommit::NameTaken {
+                    blocking_name: "Release Flow".to_string(),
+                },
+                ImportCommit::NameTaken {
+                    blocking_name: "Release Flow".to_string(),
+                },
+            ])),
+            conflict_commits: Mutex::new(VecDeque::from([
+                ConflictSkipCommit::Recorded,
+                ConflictSkipCommit::Recorded,
+            ])),
+            ..Default::default()
+        };
+        let handler = ImportMarketplaceWorkflowsHandler::new(
+            Arc::new(FakeWorkflowRepository::default()),
+            &sources,
+            CountingIdGenerator::default(),
+            FixedClock(42),
+        );
+
+        let first = handler.handle(
+            MarketplaceImportOperation::Install,
+            vec![document(VALID_DOCUMENT_LOWER)],
+        );
+        let second = handler.handle(
+            MarketplaceImportOperation::Update,
+            vec![document(VALID_DOCUMENT_LOWER)],
+        );
+
+        assert_eq!(
+            first,
+            vec![MarketplaceWorkflowOutcome::SkippedConflict {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+                name: "Release Flow".to_string(),
+                known_conflict: false,
+            }]
+        );
+        assert_eq!(
+            second,
+            vec![MarketplaceWorkflowOutcome::SkippedConflict {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+                name: "Release Flow".to_string(),
+                known_conflict: true,
+            }]
+        );
+        assert_eq!(
+            *sources
+                .recorded_conflict_preconditions
+                .lock()
+                .expect("preconditions lock"),
+            vec![
+                SourcePrecondition::Unrecorded,
+                SourcePrecondition::ConflictSkipped,
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_the_blocking_workflow_name_for_a_precheck_case_variant() {
+        let sources = ScriptedSourceRepository {
+            records: Mutex::new(VecDeque::from([None])),
+            conflict_commits: Mutex::new(VecDeque::from([ConflictSkipCommit::Recorded])),
+            ..Default::default()
+        };
+        let handler = ImportMarketplaceWorkflowsHandler::new(
+            Arc::new(FakeWorkflowRepository {
+                existing_by_name: Some(surviving_workflow("Release Flow")),
+            }),
+            &sources,
+            CountingIdGenerator::default(),
+            FixedClock(42),
+        );
+
+        let outcomes = handler.handle(
+            MarketplaceImportOperation::Install,
+            vec![document(VALID_DOCUMENT_LOWER)],
+        );
+
+        assert_eq!(
+            outcomes,
+            vec![MarketplaceWorkflowOutcome::SkippedConflict {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+                name: "Release Flow".to_string(),
+                known_conflict: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn rejudges_the_document_when_commit_reports_source_changed() {
+        let sources = ScriptedSourceRepository {
+            records: Mutex::new(VecDeque::from([
+                None,
+                Some(WorkflowDocumentSourceRecord::ImportedAlive),
+            ])),
+            commits: Mutex::new(VecDeque::from([ImportCommit::SourceChanged])),
+            ..Default::default()
+        };
+        let handler = ImportMarketplaceWorkflowsHandler::new(
+            Arc::new(FakeWorkflowRepository::default()),
+            &sources,
+            CountingIdGenerator::default(),
+            FixedClock(42),
+        );
+
+        let outcomes = handler.handle(
+            MarketplaceImportOperation::Install,
+            vec![document(VALID_DOCUMENT_LOWER)],
+        );
+
+        assert_eq!(
+            outcomes,
+            vec![MarketplaceWorkflowOutcome::SkippedProcessed {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn rejudges_the_document_when_record_conflict_skip_reports_source_changed() {
+        let sources = ScriptedSourceRepository {
+            records: Mutex::new(VecDeque::from([
+                None,
+                Some(WorkflowDocumentSourceRecord::ImportedDeleted(
+                    WorkflowId::new("workflow-1"),
+                )),
+            ])),
+            conflict_commits: Mutex::new(VecDeque::from([ConflictSkipCommit::SourceChanged])),
+            ..Default::default()
+        };
+        let handler = ImportMarketplaceWorkflowsHandler::new(
+            Arc::new(FakeWorkflowRepository {
+                existing_by_name: Some(surviving_workflow("Release Flow")),
+            }),
+            &sources,
+            CountingIdGenerator::default(),
+            FixedClock(42),
+        );
+
+        let outcomes = handler.handle(
+            MarketplaceImportOperation::Retry,
+            vec![document(VALID_DOCUMENT_LOWER)],
+        );
+
+        assert_eq!(
+            outcomes,
+            vec![MarketplaceWorkflowOutcome::SkippedDeletedCopy {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn reports_a_failure_when_source_keeps_changing_past_the_reread_limit() {
+        let sources = ScriptedSourceRepository {
+            records: Mutex::new(VecDeque::from([None, None, None, None])),
+            commits: Mutex::new(VecDeque::from([
+                ImportCommit::SourceChanged,
+                ImportCommit::SourceChanged,
+                ImportCommit::SourceChanged,
+                ImportCommit::SourceChanged,
+            ])),
+            ..Default::default()
+        };
+        let handler = ImportMarketplaceWorkflowsHandler::new(
+            Arc::new(FakeWorkflowRepository::default()),
+            &sources,
+            CountingIdGenerator::default(),
+            FixedClock(42),
+        );
+
+        let outcomes = handler.handle(
+            MarketplaceImportOperation::Install,
+            vec![document(VALID_DOCUMENT_LOWER)],
+        );
+
+        assert_eq!(*sources.commit_count.lock().expect("commit_count lock"), 4);
+        assert_eq!(
+            outcomes,
+            vec![MarketplaceWorkflowOutcome::Failed {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+                reason: "the workflow document source kept changing while it was imported"
+                    .to_string(),
+            }]
+        );
+    }
 }

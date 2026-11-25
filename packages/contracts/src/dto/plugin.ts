@@ -622,7 +622,7 @@ export type MarketplaceWorkflowOutcome = {
    */
   sourceFile: string;
   /**
-   * Name the document declares, which is also the name the library already uses.
+   * Name of the surviving workflow in the library that blocks this document's import.
    */
   name: string;
   /**
@@ -923,8 +923,8 @@ export type ResetPluginConfigurationResponse = {
  * Requests a retry of the workflow document import for one installed plugin.
  *
  * The retry is an explicit action on an installed plugin card rather than a second install, so it
- * never downloads or replaces a package; it reconsiders only the documents whose source paths do
- * not have a terminal record yet.
+ * never downloads or replaces a package; it reconsiders paths without a surviving copy, including
+ * unrecorded documents and name conflicts, while keeping copies deleted during the running cycle.
  */
 export type RetryWorkflowImportRequest = {
   /**

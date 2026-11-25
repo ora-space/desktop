@@ -1,10 +1,10 @@
 use ora_application::{
-    BindWorkflowNodeSessionResult, CancelWorkflowRunResult, FileChange, NewImportedWorkflow,
-    NodeFailure, NodeFailureKind, NodeRunToStart, ProjectRepository, RestartWorkflowRunResult,
-    ResumeWorkflowRunResult, SessionRepository, SkillRepository, SourcePrecondition,
-    StartWorkflowRunResult, WorkflowDocumentSource, WorkflowDocumentSourceRepository,
-    WorkflowRepository, WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
-    WorkflowRunRepository, WorkflowVariablePool,
+    BindWorkflowNodeSessionResult, CancelWorkflowRunResult, ConflictSkipCommit, FileChange,
+    NewImportedWorkflow, NodeFailure, NodeFailureKind, NodeRunToStart, ProjectRepository,
+    RestartWorkflowRunResult, ResumeWorkflowRunResult, SessionRepository, SkillRepository,
+    SourcePrecondition, StartWorkflowRunResult, WorkflowDocumentSource,
+    WorkflowDocumentSourceRepository, WorkflowRepository, WorkflowRunCreateOutcome,
+    WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::{
@@ -2166,16 +2166,20 @@ fn list_workflows_derives_source_plugin_id_from_imported_records() {
         .unwrap();
     // Conflict-skipped records store `workflow_id = NULL` and must never attribute the existing
     // user workflow to the marketplace package.
-    source_repository
-        .record_conflict_skip(
-            &WorkflowDocumentSource {
-                namespace: "official".to_string(),
-                identifier: "ora.conflict-pack".to_string(),
-                document_path: "assets/workflows/manual.json".to_string(),
-            },
-            15,
-        )
-        .unwrap();
+    assert_eq!(
+        source_repository
+            .record_conflict_skip(
+                &WorkflowDocumentSource {
+                    namespace: "official".to_string(),
+                    identifier: "ora.conflict-pack".to_string(),
+                    document_path: "assets/workflows/manual.json".to_string(),
+                },
+                &SourcePrecondition::Unrecorded,
+                15,
+            )
+            .unwrap(),
+        ConflictSkipCommit::Recorded
+    );
 
     for (wf_id, name, created_at, path) in [
         (
@@ -2228,7 +2232,7 @@ fn list_workflows_derives_source_plugin_id_from_imported_records() {
                         false,
                     ),
                 },
-                SourcePrecondition::Unrecorded,
+                &SourcePrecondition::Unrecorded,
             )
             .unwrap();
     }

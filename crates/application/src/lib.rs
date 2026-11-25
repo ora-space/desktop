@@ -74,10 +74,10 @@ pub use task::{
 pub use task::{PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, TaskWorkspaceCommit};
 pub use user_config::{DeveloperMode, NetworkProxySettings, UserConfigService};
 pub use workflow::{
-    ActivateVersionResult, ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler,
-    DeleteSnapshotResult, DeleteWorkflowHandler, DeleteWorkflowResult, GetDraftHandler,
-    GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler, ImportCommit,
-    ImportMarketplaceWorkflowsHandler, ImportWorkflowsHandler, ListVersionsHandler,
+    ActivateVersionResult, ActivateWorkflowHandler, ConflictSkipCommit, CreateWorkflowHandler,
+    DeleteSnapshotHandler, DeleteSnapshotResult, DeleteWorkflowHandler, DeleteWorkflowResult,
+    GetDraftHandler, GetVersionHandler, GetWorkflowHandler, GetWorkflowSnapshotHandler,
+    ImportCommit, ImportMarketplaceWorkflowsHandler, ImportWorkflowsHandler, ListVersionsHandler,
     ListWorkflowsHandler, MarketplaceImportOperation, MarketplaceWorkflowDocument,
     NewImportedWorkflow, PublishSnapshotResult, PublishWorkflowHandler, RollbackDraftResult,
     RollbackWorkflowHandler, SourcePrecondition, UpdateDraftHandler, UpdateDraftResult,
