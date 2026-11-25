@@ -66,7 +66,7 @@ Plugin refreshes are scoped deliberately:
 | Agent stop or removal | Runtime availability, not discovery against the stopped runtime |
 | Settled plugin mutation | Installed and available plugins, and this session's Hook lifecycle results |
 | `PluginStatusChanged` | Installed plugins, runtime availability and Skills; not available plugins or models |
-| `AgentModelsInvalidated` | Only that agent's discovery-query prefix, cancelling requests in flight first |
+| `AgentModelsInvalidated` | Only that agent's discovery-query prefix, cancelling requests in flight first (currently has no backend emitter) |
 | Explicit Hook initialization | Only the Hook lifecycle results |
 
 Data tests use real `QueryClient` caches and observers to verify exact invalidation and refetch
