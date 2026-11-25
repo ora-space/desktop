@@ -545,7 +545,31 @@ mod tests {
         );
         assert_eq!(
             repository.find_record(&source).expect("lookup"),
-            Some(WorkflowDocumentSourceRecord::ImportedDeleted(wf_id))
+            Some(WorkflowDocumentSourceRecord::ImportedDeleted(wf_id.clone()))
+        );
+
+        // Recovering the deleted copy turns the row imported again; a conflict refresh read as
+        // ConflictSkipped must refuse it instead of rewriting the delivered copy's record.
+        repository
+            .commit_import(
+                imported_workflow_with_id(
+                    "assets/workflows/1.0.0.json",
+                    "发布流程二号",
+                    "workflow-recovered",
+                ),
+                &SourcePrecondition::DeletedCopy(wf_id),
+            )
+            .expect("recover the deleted copy");
+        assert_eq!(
+            repository
+                .record_conflict_skip(&source, &SourcePrecondition::ConflictSkipped, 11)
+                .expect("stale conflict precondition on imported record"),
+            ConflictSkipCommit::SourceChanged,
+            "a conflict refresh must not rewrite a record that became imported"
+        );
+        assert_eq!(
+            repository.find_record(&source).expect("lookup"),
+            Some(WorkflowDocumentSourceRecord::ImportedAlive)
         );
     }
 
@@ -651,7 +675,7 @@ mod tests {
         let pool = test_pool();
         let repository = SqliteWorkflowDocumentSourceRepository::new(pool.clone());
         let path = "assets/workflows/1.0.0.json";
-        let source = source(path);
+        let record_source = source(path);
 
         assert_eq!(
             repository
@@ -693,13 +717,13 @@ mod tests {
             ImportCommit::SourceChanged
         );
         assert_eq!(
-            repository.find_record(&source).expect("lookup"),
+            repository.find_record(&record_source).expect("lookup"),
             Some(WorkflowDocumentSourceRecord::ImportedDeleted(
                 WorkflowId::new("wf-2")
             ))
         );
 
-        let conflict_source = source_with_path("assets/workflows/conflict.json");
+        let conflict_source = source("assets/workflows/conflict.json");
         assert_eq!(
             repository
                 .record_conflict_skip(&conflict_source, &SourcePrecondition::Unrecorded, 5)
@@ -715,10 +739,6 @@ mod tests {
                 .expect("deleted copy precondition on conflict record"),
             ImportCommit::SourceChanged
         );
-    }
-
-    fn source_with_path(path: &str) -> WorkflowDocumentSource {
-        source(path)
     }
 
     #[test]
