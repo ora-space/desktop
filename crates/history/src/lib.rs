@@ -27,6 +27,8 @@ mod handoff_tests;
 #[cfg(test)]
 mod projection_tests;
 #[cfg(test)]
+mod record_tests;
+#[cfg(test)]
 mod store_tests;
 
 pub use assembler::{AssembledRecord, HistoryAssembler};
