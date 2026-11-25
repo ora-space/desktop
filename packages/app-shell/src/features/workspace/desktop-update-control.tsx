@@ -1,5 +1,10 @@
 import { useTranslation } from "react-i18next";
-import { IconDownload, IconLoader2, IconRefresh } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconDownload,
+  IconLoader2,
+  IconRefresh,
+} from "@tabler/icons-react";
 import { Button, cn } from "@ora/ui";
 import { appVersion } from "../../lib/app-version";
 import type { DesktopUpdateStatus } from "../../platform/types";
@@ -20,7 +25,7 @@ function VersionStamp() {
   );
 }
 
-/** Renders the version stamp and leads to the release an update would bring once there is one. */
+/** Renders the version stamp and leads to the offered release, or to why the last check failed. */
 export function DesktopUpdateControl({ onReview }: { onReview: () => void }) {
   const { t } = useTranslation();
   const { updates, status } = useDesktopUpdate();
@@ -30,55 +35,69 @@ export function DesktopUpdateControl({ onReview }: { onReview: () => void }) {
 
   // A manual update is reviewed like an installable one; only its install action is withheld.
   const reviewable = status.kind === "ready" || status.kind === "manual_update";
+  const failed = status.kind === "failed";
   const busy =
     status.kind === "checking" ||
     status.kind === "downloading" ||
     status.kind === "installing";
 
   return (
-    <div className="flex items-center gap-1">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="relative h-7 flex-1 justify-start px-2 text-xs text-muted-foreground"
-        disabled={!reviewable}
-        title={describeStatus(status, t)}
-        aria-label={describeStatus(status, t)}
-        onClick={onReview}
-      >
-        {busy ? (
-          <IconLoader2 className="mr-1.5 size-3.5 animate-spin" />
-        ) : (
-          <IconDownload className="mr-1.5 size-3.5" />
-        )}
-        <span className="truncate">
-          {t("update.currentVersion", { version: appVersion })}
-        </span>
-        {reviewable && (
-          <span
-            data-testid="desktop-update-badge"
-            className="absolute right-2 top-1/2 size-2 -translate-y-1/2 rounded-full bg-destructive"
-          />
-        )}
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-7 shrink-0 text-muted-foreground"
-        disabled={busy}
-        title={t("update.checkNow")}
-        aria-label={t("update.checkNow")}
-        onClick={() => void updates.check()}
-      >
-        <IconRefresh
-          className={cn(
-            "size-3.5",
-            status.kind === "checking" && "animate-spin",
+    <div>
+      {/* A tooltip alone would leave a check the user asked for looking like it did nothing. */}
+      {failed && (
+        <p
+          role="status"
+          className="px-2 pb-1 text-xs leading-5 text-destructive"
+        >
+          {t("update.failedTitle")}
+        </p>
+      )}
+      <div className="flex items-center gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="relative h-7 flex-1 justify-start px-2 text-xs text-muted-foreground"
+          disabled={!reviewable && !failed}
+          title={describeStatus(status, t)}
+          aria-label={describeStatus(status, t)}
+          onClick={onReview}
+        >
+          {busy ? (
+            <IconLoader2 className="mr-1.5 size-3.5 animate-spin" />
+          ) : failed ? (
+            <IconAlertTriangle className="mr-1.5 size-3.5 text-destructive" />
+          ) : (
+            <IconDownload className="mr-1.5 size-3.5" />
           )}
-        />
-      </Button>
+          <span className="truncate">
+            {t("update.currentVersion", { version: appVersion })}
+          </span>
+          {reviewable && (
+            <span
+              data-testid="desktop-update-badge"
+              className="absolute right-2 top-1/2 size-2 -translate-y-1/2 rounded-full bg-destructive"
+            />
+          )}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0 text-muted-foreground"
+          disabled={busy}
+          title={t("update.checkNow")}
+          aria-label={t("update.checkNow")}
+          onClick={() => void updates.check()}
+        >
+          <IconRefresh
+            className={cn(
+              "size-3.5",
+              status.kind === "checking" && "animate-spin",
+            )}
+          />
+        </Button>
+      </div>
     </div>
   );
 }

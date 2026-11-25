@@ -11,6 +11,7 @@ pub mod atomic;
 pub mod clock;
 #[cfg(feature = "validation")]
 pub mod directory;
+pub mod error;
 pub mod fs;
 mod git_branch;
 #[cfg(feature = "hash")]

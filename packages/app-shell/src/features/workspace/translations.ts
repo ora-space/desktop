@@ -102,6 +102,11 @@ export const workspaceTranslations = {
     "update.ready": "发现新版本 {{version}}，点击查看",
     "update.installing": "正在安装 Ora {{version}}…",
     "update.failed": "检查更新失败：{{message}}",
+    "update.failedTitle": "检查更新失败",
+    "update.failedReason": "原因：{{reason}}",
+    "update.installFailed": "安装 Ora {{version}} 失败",
+    "update.installFailedRetry":
+      "安装 Ora {{version}} 失败，可以重试。原因记录在诊断日志中。",
     "update.manual.system_package":
       "发现新版本 {{version}}。当前通过系统软件包安装，请用软件包管理器更新。",
     "update.manual.unpackaged_binary":
@@ -226,6 +231,11 @@ export const workspaceTranslations = {
     "update.ready": "Ora {{version}} is available. Click to review it.",
     "update.installing": "Installing Ora {{version}}…",
     "update.failed": "Could not check for updates: {{message}}",
+    "update.failedTitle": "Could not check for updates",
+    "update.failedReason": "Reason: {{reason}}",
+    "update.installFailed": "Could not install Ora {{version}}",
+    "update.installFailedRetry":
+      "Could not install Ora {{version}}. You can try again; the diagnostic log records the reason.",
     "update.manual.system_package":
       "Ora {{version}} is available. This installation came from a system package, so update it with your package manager.",
     "update.manual.unpackaged_binary":
