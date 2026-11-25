@@ -21,11 +21,11 @@
 
 访问权限按 Webview label 通过 `capabilities/` 授予：
 
-| Label | 可以调用 |
-|---|---|
-| `main` | 所有已注册的命令 |
+| Label              | 可以调用                                                              |
+| ------------------ | --------------------------------------------------------------------- |
+| `main`             | 所有已注册的命令                                                      |
 | `plugin-webview:*` | 只有 `plugin_webview_invoke`，见 [Surface](../plugins/surfaces.zh.md) |
-| `remote-webview:*` | 什么都不能：没有任何 capability 针对这个 label，页面没有 Tauri IPC |
+| `remote-webview:*` | 什么都不能：没有任何 capability 针对这个 label，页面没有 Tauri IPC    |
 
 `build.rs` 会把注册表和 `permissions/main-commands.toml` 对照检查，因此注册过的命令不可能绕开 ACL。
 
@@ -41,32 +41,32 @@
 
 除了生成的契约命令，Desktop 还注册了一些没有 SDK 操作的原生命令：
 
-| 命令 | 用途 |
-|---|---|
-| `stream_contract`、`cancel_contract_stream` | 共享的流传输 |
-| `get_worktree_root`、`set_worktree_root` | 新任务 worktree 的创建位置 |
-| `resolve_task_cwd`、`resolve_workspace_cwd` | 任务或 Workspace 当前的工作目录 |
-| `open_location` | 在系统文件管理器中定位路径（`explorer /select,`、`open -R`），而不是用默认编辑器打开；目录以文件夹窗口打开 |
-| `open_external_url` | 在系统浏览器中打开 `http(s)`/`mailto` URL；其他 scheme 返回 `InvalidRequest` |
-| `write_workflow_export`、`read_workflow_import` | 工作流文件的导出和导入 |
-| `download_today_log`、`download_plugin_log` | 把诊断日志复制到保存对话框选定的位置 |
-| `surface_*`、`plugin_webview_invoke` | 插件 surface，见 [Surface](../plugins/surfaces.zh.md) |
-| `is_new_installation` | 数据库是否由本次启动新建，见[更新日志](../development/release-notes.zh.md#展示) |
-| `get_desktop_update_status`、`check_desktop_update`、`install_desktop_update` | 见 [Desktop 更新](#desktop-更新) |
+| 命令                                                                          | 用途                                                                                                       |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `stream_contract`、`cancel_contract_stream`                                   | 共享的流传输                                                                                               |
+| `get_worktree_root`、`set_worktree_root`                                      | 新任务 worktree 的创建位置                                                                                 |
+| `resolve_task_cwd`、`resolve_workspace_cwd`                                   | 任务或 Workspace 当前的工作目录                                                                            |
+| `open_location`                                                               | 在系统文件管理器中定位路径（`explorer /select,`、`open -R`），而不是用默认编辑器打开；目录以文件夹窗口打开 |
+| `open_external_url`                                                           | 在系统浏览器中打开 `http(s)`/`mailto` URL；其他 scheme 返回 `InvalidRequest`                               |
+| `write_workflow_export`、`read_workflow_import`                               | 工作流文件的导出和导入                                                                                     |
+| `download_today_log`、`download_plugin_log`                                   | 把诊断日志复制到保存对话框选定的位置                                                                       |
+| `surface_*`、`plugin_webview_invoke`                                          | 插件 surface，见 [Surface](../plugins/surfaces.zh.md)                                                      |
+| `is_new_installation`                                                         | 数据库是否由本次启动新建，见[更新日志](../development/release-notes.zh.md#展示)                            |
+| `get_desktop_update_status`、`check_desktop_update`、`install_desktop_update` | 见 [Desktop 更新](#desktop-更新)                                                                           |
 
 ## 持久化路径
 
-| 数据 | 位置 |
-|---|---|
-| SQLite 数据库（包括 `user_config`） | `<数据根目录>/ora.sqlite3` |
-| 日志 | `<数据根目录>/logs/ora.log` |
-| 会话历史 | `<数据根目录>/sessions/` |
-| 定时运行产物 | `<数据根目录>/scheduled-artifacts/<run id>/` |
-| Skill 包 | `<数据根目录>/atoms/skills/` |
-| 实例锁 | `<数据根目录>/instance.lock` |
-| 插件、marketplace 源、插件数据和日志 | `~/.ora/plugins/` |
-| 默认 worktree 根目录 | `~/.ora/worktrees` |
-| 已下载的更新包 | `~/.ora/cache/desktop-updates/v2/` |
+| 数据                                 | 位置                                         |
+| ------------------------------------ | -------------------------------------------- |
+| SQLite 数据库（包括 `user_config`）  | `<数据根目录>/ora.sqlite3`                   |
+| 日志                                 | `<数据根目录>/logs/ora.log`                  |
+| 会话历史                             | `<数据根目录>/sessions/`                     |
+| 定时运行产物                         | `<数据根目录>/scheduled-artifacts/<run id>/` |
+| Skill 包                             | `<数据根目录>/atoms/skills/`                 |
+| 实例锁                               | `<数据根目录>/instance.lock`                 |
+| 插件、marketplace 源、插件数据和日志 | `~/.ora/plugins/`                            |
+| 默认 worktree 根目录                 | `~/.ora/worktrees`                           |
+| 已下载的更新包                       | `~/.ora/cache/desktop-updates/v2/`           |
 
 worktree 根目录是非敏感配置，在 设置 → 数据与隐私 中选择，必须是一个已存在目录的绝对路径。它只是创建目标：新值只影响之后开始的任务创建，已有的 worktree 从不移动，也从不根据它重新拼路径，见[任务与 worktree](../workspaces/tasks-and-worktrees.zh.md)。
 
