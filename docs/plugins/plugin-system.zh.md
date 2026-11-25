@@ -81,7 +81,7 @@ stdout 只承载协议帧：四字节大端长度（含类型字节）、一字�
 
 宿主只能调用列出的 `methods`；`emits` 之外的通知会让连接作废。插件发给宿主的请求不需要声明。仍在 `ora/register` 中附带 `effectResources` 的旧版 Agent 插件仍可连接成功：宿主忽略该遗留字段，且从不调用 `effect/*`。
 
-`agent/discover` 接收 `AgentDiscoverParams { cwd, includeCommands, deadline }`：这次发现针对的 Workspace，调用方是否需要 Agent 的命令，以及宿主等到哪一刻（Unix 毫秒）。宿主的超时是同一时刻，排队写出的时间也算在内；等待和清理都以它为准。它返回模型，知道时还返回命令；命令列表缺省表示不知道，空列表表示 Agent 没有命令。格式错误的命令逐条丢弃。宿主按需调用它，预算比普通控制调用更长。
+`agent/discover` 接收 `AgentDiscoverParams { cwd, includeCommands, deadline, skills? }`：这次发现针对的 Workspace，调用方是否需要 Agent 的命令，以及宿主等到哪一刻（Unix 毫秒）。`skills` 只在需要命令时带，内容是此刻建立的会话会得到的值：`readRoots`（会话的 `additionalDirectories`）、`directories`（会话的 `_meta["ora/skillDirectories"]`）和不透明的 `revision`，每次 Skill 变化后都不同。宿主的超时是同一时刻，排队写出的时间也算在内；等待和清理都以它为准。它返回模型，知道时还返回命令；命令列表缺省表示不知道，空列表表示 Agent 没有命令。格式错误的命令逐条丢弃。宿主按需调用它，预算比普通控制调用更长。
 
 `agent/list_models` 是只返回模型的旧名。Agent 插件至少要注册两者之一；注册了 `agent/discover` 时宿主只调用它，不会两个都调，失败也不退回。SDK 两个都注册，所以旧宿主仍能列出模型。
 

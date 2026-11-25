@@ -164,6 +164,13 @@ answers without commands when none arrived. Callers that only need models (the w
 workflow node's model picker, scheduled-task validation) do not ask, so they never wait. They have
 their own frontend cache entry: an answer without commands must not hide them from the chat composer.
 
+Commands may come from Skills, so a discovery that wants them carries the Skill roots and directories a
+session set up now would be given, and a revision. The Desktop host advances the revision with every
+committed Skill catalog change (installing, removing, renaming, upgrading or editing in place) and when
+it notices another set of available Skills, and publishes `AgentModelsInvalidated` for every agent at
+the same time. It only grows and lives in memory. Agents are not restarted, nothing is discovered that
+no surface shows, and answers given for models alone stand.
+
 The composer shows the commands the session reported; before any report, and while a move onto another
 agent is pending, it shows the discovered commands of the agent the next message goes to. Only a
 session's own report decides whether a typed command is unsupported, because discovery runs without MCP
