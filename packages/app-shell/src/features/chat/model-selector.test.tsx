@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@ora/ui";
+import type { AgentDiscoveryScope } from "../../state/data/agent-runtime";
 import { PlatformProvider } from "../../platform";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -93,6 +94,7 @@ function reportOpenCode(status: AgentStatus) {
 function renderModelSelector(
   seed: (state: FixtureState) => void = () => {},
   sessionId?: string,
+  discoveryScope: AgentDiscoveryScope = "modelsAndCommands",
 ) {
   const state = createFixtureState();
   state.tasks = [
@@ -129,7 +131,10 @@ function renderModelSelector(
       <AppI18nProvider>
         <PlatformProvider adapter={createStubPlatform()}>
           <TooltipProvider>
-            <ModelSelector sessionId={sessionId} />
+            <ModelSelector
+              discoveryScope={discoveryScope}
+              sessionId={sessionId}
+            />
           </TooltipProvider>
         </PlatformProvider>
       </AppI18nProvider>
@@ -191,20 +196,25 @@ async function openDetachedConversation(
 }
 
 describe("ModelSelector for a session that has not attached", () => {
-  it("asks for commands only where a surface shows them", async () => {
-    const asked = async (sessionId?: string) => {
-      const { discover, chatStore } = renderModelSelector((state) => {
-        selectPersistedSession(state);
-      }, sessionId);
+  it("asks for what its surface declares, whichever session it reads", async () => {
+    const asked = async (scope: AgentDiscoveryScope, sessionId?: string) => {
+      const { discover, chatStore } = renderModelSelector(
+        (state) => {
+          selectPersistedSession(state);
+        },
+        sessionId,
+        scope,
+      );
       await act(() => chatStore.getState().loadSession("s1"));
       await waitFor(() => expect(discover).toHaveBeenCalledOnce());
       cleanup();
       return discover.mock.calls[0]?.[0].includeCommands;
     };
 
-    expect(await asked()).toBe(true);
-    // A workflow node's conversation names its session and shows no discovered commands.
-    expect(await asked("s1")).toBe(false);
+    for (const sessionId of [undefined, "s1"]) {
+      expect(await asked("modelsAndCommands", sessionId)).toBe(true);
+      expect(await asked("models", sessionId)).toBe(false);
+    }
   });
 
   /**

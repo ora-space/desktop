@@ -19,6 +19,7 @@ import {
   IconRobot,
   IconSearch,
 } from "@tabler/icons-react";
+import type { AgentDiscoveryScope } from "../../state/data/agent-runtime";
 import { useChatStore } from "../../chat-store-context";
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
@@ -71,9 +72,12 @@ import { missingWorkspaceDirectory } from "../../state/hooks/use-missing-workspa
  */
 export function ModelSelector({
   disabled = false,
+  discoveryScope,
   sessionId,
 }: {
   disabled?: boolean;
+  /** What the surface around the picker shows of a discovery, so both ask for it once. */
+  discoveryScope: AgentDiscoveryScope;
   /** Session whose model configuration should be displayed instead of workspace selection. */
   sessionId?: string;
 }) {
@@ -199,8 +203,7 @@ export function ModelSelector({
   const discovered = useAgentDiscovery(
     usesSessionOptions || directoryMissing ? null : agentCli,
     usesSessionOptions || directoryMissing ? null : workspaceId,
-    // A workflow node's conversation shows no discovered commands, so nothing waits for them.
-    sessionId === undefined ? "modelsAndCommands" : "models",
+    discoveryScope,
   );
   const activeSessionId = usesSessionOptions ? optionsSessionId : null;
   // A session can retain the last options reported before its plugin stopped.

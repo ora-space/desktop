@@ -17,6 +17,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { Button, cn, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
+import type { AgentDiscoveryScope } from "../../state/data/agent-runtime";
 import {
   ComposerEditor,
   type ComposerEditorHandle,
@@ -98,6 +99,8 @@ interface ComposerProps {
   modelSelectorDisabled?: boolean;
   /** Session whose model configuration the selector should display. */
   modelSelectorSessionId?: string;
+  /** Keeps the selector from waiting for commands this surface never shows. */
+  discoveryScope?: AgentDiscoveryScope;
   placeholder?: string;
   autoFocus?: boolean;
   skills?: Skill[];
@@ -144,6 +147,7 @@ export function Composer({
   sendDisabledHint,
   modelSelectorDisabled = disabled,
   modelSelectorSessionId,
+  discoveryScope = "modelsAndCommands",
   placeholder,
   autoFocus = false,
   skills = [],
@@ -1119,6 +1123,7 @@ export function Composer({
               <>
                 <ModelSelector
                   disabled={modelSelectorDisabled}
+                  discoveryScope={discoveryScope}
                   sessionId={modelSelectorSessionId}
                 />
                 {/* Shares the model picker's overflow gate: both describe the
