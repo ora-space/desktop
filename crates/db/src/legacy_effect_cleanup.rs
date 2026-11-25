@@ -17,6 +17,7 @@ mod tests;
 use crate::DatabaseError;
 use ora_logging::{ora_info, ora_warn};
 use ora_utils::directory::fingerprint_directory;
+use ora_utils::fs::rename_with_retry;
 use ora_utils::path::{PortableRelativePath, StrictRelativePath};
 use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
@@ -36,15 +37,25 @@ pub fn pre_0025_backup_path(database_path: &Path) -> PathBuf {
     append_path_suffix(database_path, PRE_0025_BACKUP_SUFFIX)
 }
 
-/// Creates a self-contained SQLite backup beside `database_path` before irreversible migration
-/// `0025` runs on an existing pre-`0025` database.
+/// Creates or refreshes a self-contained SQLite backup beside `database_path` before irreversible
+/// migration `0025` runs on an existing pre-`0025` database.
 ///
-/// Uses `VACUUM INTO` to fold committed WAL frames into a standalone sibling file and atomically
-/// renames it into place so partial backups are never left behind. Missing databases,
-/// uninitialized empty files, and databases that already applied `0025` return `Ok(None)`. If the
-/// version-marked backup already exists (for example after an interrupted prior upgrade attempt),
-/// it is preserved untouched and returned as `Ok(Some(path))`.
+/// Uses `VACUUM INTO` to fold committed WAL frames into a standalone sibling temporary file and
+/// atomically replaces `<db>.pre-0025.bak` so partial backups are never left behind. Missing
+/// databases, uninitialized empty files, and databases that already applied `0025` return
+/// `Ok(None)`. While the database is still pre-`0025`, every run refreshes the backup so a
+/// zero-byte leftover or a backup from an earlier downgrade-and-reupgrade cycle never goes stale.
 pub fn backup_database_before_0025(database_path: &Path) -> Result<Option<PathBuf>, DatabaseError> {
+    let backup_path = pre_0025_backup_path(database_path);
+    let temp_path = append_path_suffix(database_path, PRE_0025_BACKUP_TEMP_SUFFIX);
+    backup_database_before_0025_into(database_path, &backup_path, &temp_path)
+}
+
+fn backup_database_before_0025_into(
+    database_path: &Path,
+    backup_path: &Path,
+    temp_path: &Path,
+) -> Result<Option<PathBuf>, DatabaseError> {
     if !database_path.exists() {
         return Ok(None);
     }
@@ -54,18 +65,12 @@ pub fn backup_database_before_0025(database_path: &Path) -> Result<Option<PathBu
         return Ok(None);
     }
 
-    let backup_path = pre_0025_backup_path(database_path);
-    if backup_path.exists() {
-        return Ok(Some(backup_path));
-    }
-
-    let temp_path = append_path_suffix(database_path, PRE_0025_BACKUP_TEMP_SUFFIX);
-    if let Err(error) = fs::remove_file(&temp_path)
+    if let Err(error) = fs::remove_file(temp_path)
         && error.kind() != ErrorKind::NotFound
     {
         return Err(DatabaseError::PreMigrationBackupFailed {
             version: "0025",
-            path: temp_path,
+            path: temp_path.to_path_buf(),
             message: format!("failed to clear stale temporary backup: {error}"),
         });
     }
@@ -74,24 +79,24 @@ pub fn backup_database_before_0025(database_path: &Path) -> Result<Option<PathBu
             .to_str()
             .ok_or_else(|| DatabaseError::PreMigrationBackupFailed {
                 version: "0025",
-                path: temp_path.clone(),
+                path: temp_path.to_path_buf(),
                 message: "backup path is not valid UTF-8".to_string(),
             })?;
     if let Err(error) = connection.execute("VACUUM INTO ?1", [temp_path_str]) {
-        let _ = fs::remove_file(&temp_path);
+        let _ = fs::remove_file(temp_path);
         return Err(DatabaseError::PreMigrationBackupFailed {
             version: "0025",
-            path: backup_path,
+            path: backup_path.to_path_buf(),
             message: format!("SQLite VACUUM INTO failed: {error}"),
         });
     }
     drop(connection);
 
-    if let Err(error) = fs::rename(&temp_path, &backup_path) {
-        let _ = fs::remove_file(&temp_path);
+    if let Err(error) = rename_with_retry(temp_path, backup_path) {
+        let _ = fs::remove_file(temp_path);
         return Err(DatabaseError::PreMigrationBackupFailed {
             version: "0025",
-            path: backup_path,
+            path: backup_path.to_path_buf(),
             message: format!("failed to finalize backup file: {error}"),
         });
     }
@@ -100,7 +105,7 @@ pub fn backup_database_before_0025(database_path: &Path) -> Result<Option<PathBu
         backup_path = %backup_path.display(),
         "created pre-0025 SQLite backup before irreversible Effect retirement migration"
     );
-    Ok(Some(backup_path))
+    Ok(Some(backup_path.to_path_buf()))
 }
 
 fn needs_pre_0025_backup(connection: &Connection) -> Result<bool, DatabaseError> {

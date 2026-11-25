@@ -1,4 +1,7 @@
-use super::{backup_database_before_0025, cleanup_legacy_managed_skills, pre_0025_backup_path};
+use super::{
+    backup_database_before_0025, backup_database_before_0025_into, cleanup_legacy_managed_skills,
+    pre_0025_backup_path,
+};
 use crate::{DatabaseBootstrapper, DatabaseLocation, MigrationCatalog, default_migration_catalog};
 use ora_logging::with_trace_logging;
 use ora_utils::directory::fingerprint_directory;
@@ -570,12 +573,13 @@ fn preserves_managed_skill_when_ancestor_directory_is_a_link() {
     });
 }
 
-/// Verifies Owner Decision B: an existing pre-`0025` database (including WAL-mode writes) is
-/// backed up to `ora.sqlite3.pre-0025.bak` before `0025` runs, the backup opens cleanly under a
-/// pre-`0025` catalog with all data intact, retries preserve an existing backup untouched, and
-/// missing, empty, or post-`0025` databases create no backup.
+/// Verifies Owner Decision B and N8: an existing pre-`0025` database (including WAL-mode writes)
+/// is backed up to `ora.sqlite3.pre-0025.bak` before `0025` runs, the backup opens cleanly under a
+/// pre-`0025` catalog with all data intact, subsequent starts while still pre-`0025` refresh any
+/// existing or zero-byte backup atomically (preventing data loss across restore -> work ->
+/// re-upgrade cycles), and missing, empty, or post-`0025` databases create or touch no backup.
 #[test]
-fn creates_self_contained_pre_0025_backup_once_and_skips_fresh_or_post_0025_databases() {
+fn refreshes_self_contained_pre_0025_backup_and_skips_fresh_or_post_0025_databases() {
     with_trace_logging(|| {
         let temp = TempDir::new().expect("temp dir");
         let missing = temp.path().join("missing.sqlite3");
@@ -642,8 +646,8 @@ fn creates_self_contained_pre_0025_backup_once_and_skips_fresh_or_post_0025_data
         assert_eq!(effect_scope_count, 1);
         drop(verify_backup);
 
-        // Calling backup again while still pre-0025 preserves the existing backup untouched.
-        let original_bytes = fs::read(&expected_backup).expect("read original backup");
+        // Simulate restore -> work in the older build -> re-upgrade: while the database is still
+        // pre-0025, backup must refresh `.pre-0025.bak` so newer old-build rows are not lost.
         let mutator = Connection::open(&database_path).expect("reopen pre-0025 db");
         mutator
             .execute(
@@ -657,10 +661,42 @@ fn creates_self_contained_pre_0025_backup_once_and_skips_fresh_or_post_0025_data
             backup_database_before_0025(&database_path).unwrap(),
             Some(expected_backup.clone())
         );
+        let refreshed_copy = temp.path().join("restored-refreshed.sqlite3");
+        fs::copy(&expected_backup, &refreshed_copy).expect("copy refreshed backup");
+        let refreshed_conn = Connection::open(&refreshed_copy).expect("open refreshed backup");
+        let refreshed_count: i64 = refreshed_conn
+            .query_row(
+                "SELECT COUNT(*) FROM projects WHERE id = 'proj-after-backup'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(
-            fs::read(&expected_backup).expect("re-read original backup"),
-            original_bytes
+            refreshed_count, 1,
+            "pre-0025 re-run must refresh existing backup with newly written rows"
         );
+        drop(refreshed_conn);
+
+        // A zero-byte leftover `.pre-0025.bak` must never be trusted while still pre-0025.
+        fs::write(&expected_backup, b"").expect("truncate existing backup to zero bytes");
+        assert_eq!(
+            backup_database_before_0025(&database_path).unwrap(),
+            Some(expected_backup.clone())
+        );
+        assert!(
+            fs::metadata(&expected_backup).unwrap().len() > 0,
+            "zero-byte pre-0025 backup must be replaced with a valid SQLite backup"
+        );
+        let zero_replaced = Connection::open(&expected_backup).expect("open replaced backup");
+        let replaced_count: i64 = zero_replaced
+            .query_row(
+                "SELECT COUNT(*) FROM projects WHERE id = 'proj-after-backup'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(replaced_count, 1);
+        drop(zero_replaced);
 
         // Upgrade to latest (applies 0025), remove the backup, and verify post-0025 runs do NOT
         // create another pre-0025 backup.
@@ -674,5 +710,116 @@ fn creates_self_contained_pre_0025_backup_once_and_skips_fresh_or_post_0025_data
         fs::remove_file(&expected_backup).expect("remove backup after upgrade");
         assert_eq!(backup_database_before_0025(&database_path).unwrap(), None);
         assert!(!expected_backup.exists());
+    });
+}
+
+#[test]
+fn clears_stale_temp_file_and_replaces_existing_backup() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let database_path = temp.path().join("ora.sqlite3");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        setup_pre_0025_database(&database_path, &workspace);
+
+        let backup_path = pre_0025_backup_path(&database_path);
+        let stale_temp = temp.path().join("ora.sqlite3.pre-0025.bak.tmp");
+        fs::write(&backup_path, b"outdated-backup").expect("seed outdated backup");
+        fs::write(&stale_temp, b"stale-partial-temp").expect("seed stale temp file");
+
+        let created = backup_database_before_0025(&database_path)
+            .expect("stale temp file must be cleared before VACUUM INTO")
+            .expect("backup path returned");
+        assert_eq!(created, backup_path);
+        assert!(!stale_temp.exists(), "temp file must be moved into place");
+
+        let conn = Connection::open(&backup_path).expect("open valid refreshed backup");
+        let effect_scopes: i64 = conn
+            .query_row("SELECT COUNT(*) FROM effect_scopes", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(effect_scopes, 1);
+    });
+}
+
+#[test]
+fn preserves_existing_backup_when_stale_temp_cleanup_or_vacuum_fails() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let database_path = temp.path().join("ora.sqlite3");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        setup_pre_0025_database(&database_path, &workspace);
+
+        let backup_path = pre_0025_backup_path(&database_path);
+        fs::write(&backup_path, b"previous-valid-backup").expect("seed existing backup");
+
+        // 1. Stale temp path blocked by a directory fails before touching the existing backup.
+        let blocked_temp = temp.path().join("ora.sqlite3.pre-0025.bak.tmp");
+        fs::create_dir(&blocked_temp).expect("create blocking directory at temp path");
+        let stale_error = backup_database_before_0025(&database_path)
+            .expect_err("unremovable stale temp obstacle must fail backup");
+        assert!(
+            matches!(
+                &stale_error,
+                crate::DatabaseError::PreMigrationBackupFailed { version: "0025", message, .. }
+                    if message.contains("failed to clear stale temporary backup")
+            ),
+            "unexpected stale-temp error: {stale_error:?}"
+        );
+        assert_eq!(fs::read(&backup_path).unwrap(), b"previous-valid-backup");
+        fs::remove_dir(&blocked_temp).expect("remove blocking temp dir");
+
+        // 2. Real SQLite `VACUUM INTO` failure (target temp under missing directory) fails cleanly
+        // and leaves any existing backup intact.
+        let missing_dir_temp = temp
+            .path()
+            .join("missing-parent")
+            .join("ora.sqlite3.pre-0025.bak.tmp");
+        let vacuum_error =
+            backup_database_before_0025_into(&database_path, &backup_path, &missing_dir_temp)
+                .expect_err("VACUUM INTO a nonexistent parent directory must fail");
+        assert!(
+            matches!(
+                &vacuum_error,
+                crate::DatabaseError::PreMigrationBackupFailed { version: "0025", message, .. }
+                    if message.contains("SQLite VACUUM INTO failed")
+            ),
+            "unexpected vacuum error: {vacuum_error:?}"
+        );
+        assert!(!missing_dir_temp.exists());
+        assert_eq!(fs::read(&backup_path).unwrap(), b"previous-valid-backup");
+    });
+}
+
+#[test]
+fn removes_temp_file_when_final_backup_rename_fails() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let database_path = temp.path().join("ora.sqlite3");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        setup_pre_0025_database(&database_path, &workspace);
+
+        // Placing a directory at the backup destination forces atomic file replacement to fail on
+        // both Unix (EISDIR) and Windows (access denied), after `VACUUM INTO` succeeds.
+        let backup_path = pre_0025_backup_path(&database_path);
+        fs::create_dir(&backup_path).expect("create directory blocking backup destination");
+        let temp_path = temp.path().join("ora.sqlite3.pre-0025.bak.tmp");
+
+        let rename_error = backup_database_before_0025(&database_path)
+            .expect_err("renaming temp backup over a directory must fail");
+        assert!(
+            matches!(
+                &rename_error,
+                crate::DatabaseError::PreMigrationBackupFailed { version: "0025", message, .. }
+                    if message.contains("failed to finalize backup file")
+            ),
+            "unexpected rename error: {rename_error:?}"
+        );
+        assert!(
+            !temp_path.exists(),
+            "failed rename must clean up the temporary backup file"
+        );
+        assert!(backup_path.is_dir());
     });
 }
