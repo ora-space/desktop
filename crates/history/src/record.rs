@@ -129,6 +129,9 @@ pub enum TurnEndedBy {
 ///
 /// It belongs to this turn and is distinct from the session-terminal detail code; the two only
 /// share `agent_unavailable` and `agent_authentication_required` because they name the same fact.
+///
+/// A reader must treat an unknown `code` as `internal` (D4), so a value added by a later decision
+/// never breaks an older reader; `#[serde(other)]` folds those into [`TurnFailureCode::Internal`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnFailureCode {
@@ -136,6 +139,7 @@ pub enum TurnFailureCode {
     AgentError,
     NoProgress,
     AgentUnavailable,
+    #[serde(other)]
     Internal,
 }
 
