@@ -91,7 +91,8 @@ pub enum SourcePrecondition {
     /// The record pointed at the identified copy the user deleted, and the path is being
     /// recovered.
     DeletedCopy(WorkflowId),
-    /// The record held a name conflict that is no longer present in the library.
+    /// The record held a name conflict; the operation re-judges the name against the current
+    /// library, so the conflict may still block the import or may already be free.
     ConflictSkipped,
 }
 
@@ -439,8 +440,9 @@ where
     /// Reports a refusal, first handing a deleted copy's path back so the rest of the cycle can
     /// retry instead of waiting for another uninstall and install.
     ///
-    /// A failure while clearing the record is deliberately not turned into a second outcome: the
-    /// refusal itself is what the user has to fix, and keeping the record leaves the copy on the
+    /// A clear that finds the record already changed re-judges the document against what won the
+    /// race. A failure while clearing the record is deliberately not turned into a second outcome:
+    /// the refusal itself is what the user has to fix, and keeping the record leaves the copy on the
     /// fallback path, where fixing the cause and reinstalling recovers it.
     fn attempt_failed(
         &self,
@@ -449,9 +451,15 @@ where
         reason: String,
     ) -> DocumentAttempt {
         if let SourcePrecondition::DeletedCopy(expected_workflow_id) = precondition {
-            let _cleared = self
-                .sources
-                .forget_deleted_copy(&document.source, expected_workflow_id);
+            // `false` means another write moved the record first, so the document is judged again
+            // against what that write left behind; an error keeps the record on the fallback path.
+            if matches!(
+                self.sources
+                    .forget_deleted_copy(&document.source, expected_workflow_id),
+                Ok(false)
+            ) {
+                return DocumentAttempt::SourceChanged;
+            }
         }
         DocumentAttempt::Resolved(MarketplaceWorkflowOutcome::Failed {
             plugin_id: document.source.plugin_id(),
@@ -667,6 +675,8 @@ mod tests {
         conflict_commits: Mutex<VecDeque<ConflictSkipCommit>>,
         recorded_conflict_preconditions: Mutex<Vec<SourcePrecondition>>,
         commit_count: Mutex<usize>,
+        forgets: Mutex<VecDeque<Result<bool, RepositoryError>>>,
+        forget_calls: Mutex<usize>,
     }
 
     impl WorkflowDocumentSourceRepository for &ScriptedSourceRepository {
@@ -719,7 +729,12 @@ mod tests {
             _source: &WorkflowDocumentSource,
             _expected_workflow_id: &WorkflowId,
         ) -> Result<bool, RepositoryError> {
-            Ok(true)
+            *self.forget_calls.lock().expect("forget_calls lock") += 1;
+            self.forgets
+                .lock()
+                .expect("forgets lock")
+                .pop_front()
+                .unwrap_or(Ok(true))
         }
     }
 
@@ -944,5 +959,81 @@ mod tests {
                     .to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn rejudges_a_failed_recovery_whose_deleted_copy_record_changed() {
+        let sources = ScriptedSourceRepository {
+            records: Mutex::new(VecDeque::from([
+                Some(WorkflowDocumentSourceRecord::ImportedDeleted(
+                    WorkflowId::new("workflow-1"),
+                )),
+                Some(WorkflowDocumentSourceRecord::ImportedAlive),
+            ])),
+            forgets: Mutex::new(VecDeque::from([Ok(false)])),
+            ..Default::default()
+        };
+        let handler = ImportMarketplaceWorkflowsHandler::new(
+            Arc::new(FakeWorkflowRepository::default()),
+            &sources,
+            CountingIdGenerator::default(),
+            FixedClock(42),
+        );
+
+        let outcomes = handler.handle(
+            MarketplaceImportOperation::Install,
+            vec![document("not a workflow document")],
+        );
+
+        assert_eq!(
+            outcomes,
+            vec![MarketplaceWorkflowOutcome::SkippedProcessed {
+                plugin_id: "official/ora.cdase-workflow".to_string(),
+                source_file: "assets/workflows/1.0.0.json".to_string(),
+            }],
+            "a record another write moved is re-judged, not reported as the stale refusal"
+        );
+        assert_eq!(*sources.forget_calls.lock().expect("forget_calls lock"), 1);
+    }
+
+    #[test]
+    fn keeps_the_record_on_the_fallback_path_when_clearing_it_fails() {
+        // Exactly one scripted read: a re-judge here would pop an empty queue and panic, so the
+        // test also proves the error path reports the refusal instead of looping.
+        let sources = ScriptedSourceRepository {
+            records: Mutex::new(VecDeque::from([Some(
+                WorkflowDocumentSourceRecord::ImportedDeleted(WorkflowId::new("workflow-1")),
+            )])),
+            forgets: Mutex::new(VecDeque::from([Err(RepositoryError::from_message(
+                "clear failed",
+            ))])),
+            ..Default::default()
+        };
+        let handler = ImportMarketplaceWorkflowsHandler::new(
+            Arc::new(FakeWorkflowRepository::default()),
+            &sources,
+            CountingIdGenerator::default(),
+            FixedClock(42),
+        );
+
+        let outcomes = handler.handle(
+            MarketplaceImportOperation::Install,
+            vec![document("not a workflow document")],
+        );
+
+        assert!(
+            matches!(
+                outcomes.as_slice(),
+                [MarketplaceWorkflowOutcome::Failed {
+                    plugin_id,
+                    source_file,
+                    reason
+                }] if plugin_id == "official/ora.cdase-workflow"
+                    && source_file == "assets/workflows/1.0.0.json"
+                    && reason.starts_with("document is not valid JSON")
+            ),
+            "the refusal is reported while the record stays on the fallback path: {outcomes:?}"
+        );
+        assert_eq!(*sources.forget_calls.lock().expect("forget_calls lock"), 1);
     }
 }
