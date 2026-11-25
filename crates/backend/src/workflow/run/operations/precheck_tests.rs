@@ -12,10 +12,11 @@ use crate::test_backend::backend_paths;
 use crate::workflow::run::test_fixture::{SeededWorkflow, seeded_workflow};
 use ora_application::{WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunRepository};
 use ora_contracts::{
-    CancelWorkflowRunRequest, CreateWorkflowRunRequest, ImportPluginRequest, PluginDataDisposition,
-    PublicError, RestartWorkflowRunRequest, ResumeWorkflowRunRequest, StartWorkflowRunRequest,
-    UninstallPluginRequest, WorkflowMcpNotFoundParams, WorkflowRunLocale, WorkflowRunStatus,
-    WorkflowSkillNotFoundParams,
+    CancelWorkflowRunRequest, CreateWorkflowRunRequest, GetPluginConfigurationRequest,
+    ImportPluginRequest, PluginDataDisposition, PluginSettingValue, PluginSettingValueSource,
+    PublicError, RestartWorkflowRunRequest, ResumeWorkflowRunRequest,
+    SavePluginConfigurationRequest, StartWorkflowRunRequest, UninstallPluginRequest,
+    WorkflowMcpNotFoundParams, WorkflowRunLocale, WorkflowRunStatus, WorkflowSkillNotFoundParams,
 };
 use pretty_assertions::assert_eq;
 use std::fs::File;
@@ -714,6 +715,67 @@ async fn a_blank_node_title_falls_back_to_the_node_id() {
         })
     );
     assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
+}
+
+/// Retained Setting values must stay out of the rejection sent to the client after uninstall.
+#[tokio::test]
+async fn a_missing_mcp_diagnostic_does_not_expose_retained_settings() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    let plugins = fixture.backend.plugins();
+    let request = GetPluginConfigurationRequest {
+        plugin_id: "local/github".into(),
+    };
+    let configuration = plugins
+        .get_configuration(request.clone())
+        .unwrap()
+        .configuration;
+    let saved = plugins
+        .save_configuration(SavePluginConfigurationRequest {
+            plugin_id: request.plugin_id.clone(),
+            expected_revision: configuration.revision,
+            declaration_fingerprint: configuration.declaration_fingerprint,
+            values: [(
+                "apiKey".into(),
+                PluginSettingValue::String("synthetic-mcp-setting-value".into()),
+            )]
+            .into(),
+            preserve_setting_ids: vec![],
+        })
+        .unwrap()
+        .configuration;
+    assert_eq!(saved.settings[0].source, PluginSettingValueSource::Stored);
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: request.plugin_id.clone(),
+            data_disposition: PluginDataDisposition::Retain,
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .unwrap();
+
+    let error = fixture
+        .runs
+        .start(StartWorkflowRunRequest { run_id })
+        .unwrap_err();
+    assert_eq!(
+        serde_json::to_value(error.public_error()).unwrap(),
+        serde_json::json!({
+            "code": "workflow_mcp_not_found",
+            "params": {
+                "nodeId": "reviewer",
+                "nodeTitle": "Code review",
+                "mcpId": "local/github",
+            },
+        })
+    );
+
+    install_mcp_package(&fixture).await;
+    assert_eq!(
+        plugins.get_configuration(request).unwrap().configuration,
+        saved
+    );
 }
 
 /// A run that cannot be resumed keeps its original rejection even when a dependency is also
