@@ -464,6 +464,112 @@ fn skips_unix_symlink_targets_without_deleting_link_or_target() {
     });
 }
 
+/// Verifies marker `resource` validation independently of `managed_identity` and fingerprint:
+/// a directory whose `.ora-managed.json` has the matching `managed_identity` and valid content
+/// fingerprint, but a different `resource` ID, must be preserved.
+#[test]
+fn preserves_managed_skill_when_marker_resource_differs() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let database_path = temp.path().join("ora.sqlite3");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        setup_pre_0025_database(&database_path, &workspace);
+
+        let (dir, fingerprint) = write_managed_skill_dir(
+            &workspace,
+            ".claude/skills",
+            "wrong-resource",
+            "res-other",
+            "mi-same-identity",
+        );
+        insert_managed_skill_row(
+            &database_path,
+            "res-1",
+            "mi-same-identity",
+            &workspace,
+            ".claude/skills",
+            "wrong-resource",
+            &fingerprint,
+        );
+
+        cleanup_legacy_managed_skills(&database_path);
+
+        assert!(
+            dir.exists(),
+            "directory with mismatched marker resource ID must be preserved"
+        );
+        assert!(dir.join("SKILL.md").is_file());
+    });
+}
+
+/// Verifies ancestor-link rejection independently of workspace containment: when a resource
+/// ancestor (`.claude/skills`) is a junction/symlink pointing to another directory *inside* the
+/// same workspace, canonical containment still holds so ONLY the explicit ancestor-link check
+/// preserves the linked target directory.
+#[test]
+fn preserves_managed_skill_when_ancestor_directory_is_a_link() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let database_path = temp.path().join("ora.sqlite3");
+        let workspace = temp.path().join("workspace");
+        let real_skills_parent = workspace.join("real-skills");
+        fs::create_dir_all(workspace.join(".claude")).expect("create .claude");
+        fs::create_dir_all(&real_skills_parent).expect("create in-workspace target");
+
+        let (target_skill_dir, fingerprint) = write_managed_skill_dir(
+            &workspace,
+            "real-skills",
+            "ancestor-linked",
+            "res-1",
+            "mi-ancestor",
+        );
+
+        let linked_ancestor = workspace.join(".claude").join("skills");
+        #[cfg(windows)]
+        {
+            let output = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&linked_ancestor)
+                .arg(&real_skills_parent)
+                .output()
+                .expect("run mklink /J for ancestor");
+            assert!(
+                output.status.success(),
+                "mklink /J failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&real_skills_parent, &linked_ancestor)
+                .expect("create ancestor symlink");
+        }
+
+        setup_pre_0025_database(&database_path, &workspace);
+        insert_managed_skill_row(
+            &database_path,
+            "res-1",
+            "mi-ancestor",
+            &workspace,
+            ".claude/skills",
+            "ancestor-linked",
+            &fingerprint,
+        );
+
+        cleanup_legacy_managed_skills(&database_path);
+
+        assert!(
+            fs::symlink_metadata(&linked_ancestor).is_ok(),
+            "ancestor link must be preserved"
+        );
+        assert!(
+            target_skill_dir.join("SKILL.md").is_file(),
+            "skill directory reached through an ancestor link must be preserved"
+        );
+    });
+}
+
 /// Verifies Owner Decision B: an existing pre-`0025` database (including WAL-mode writes) is
 /// backed up to `ora.sqlite3.pre-0025.bak` before `0025` runs, the backup opens cleanly under a
 /// pre-`0025` catalog with all data intact, retries preserve an existing backup untouched, and

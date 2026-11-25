@@ -178,6 +178,7 @@ impl MockAgentAttach {
         recorded_frames: Arc<Mutex<Vec<Value>>>,
         fail_next_prompt: Arc<AtomicBool>,
         next_prompt_updates: Arc<Mutex<Vec<Value>>>,
+        next_load_updates: Arc<Mutex<Vec<Value>>>,
     ) {
         let entrypoint = root.join("agent.ts");
         std::fs::write(&entrypoint, "").unwrap();
@@ -199,6 +200,7 @@ impl MockAgentAttach {
             recorded_frames,
             fail_next_prompt,
             next_prompt_updates,
+            next_load_updates,
         ));
         let (_level, level) = watch::channel(ora_logging::LogLevel::Info);
         let (runtime, mut notifications) = PluginRuntime::launch(
@@ -291,6 +293,7 @@ async fn serve_skill_plugin(
     recorded_frames: Arc<Mutex<Vec<Value>>>,
     fail_next_prompt: Arc<AtomicBool>,
     next_prompt_updates: Arc<Mutex<Vec<Value>>>,
+    next_load_updates: Arc<Mutex<Vec<Value>>>,
 ) {
     let mut register = json!({
         "jsonrpc": "2.0",
@@ -370,15 +373,41 @@ async fn serve_skill_plugin(
                             }
                         })
                     }
-                    "session/load" => json!({
-                        "jsonrpc": "2.0",
-                        "method": "agent/acp",
-                        "params": {
-                            "jsonrpc": "2.0",
-                            "id": frame["id"],
-                            "result": {}
+                    "session/load" => {
+                        let sid = frame["params"]["sessionId"].as_str().unwrap();
+                        let replay_updates: Vec<Value> = {
+                            let mut queued = next_load_updates.lock().unwrap();
+                            std::mem::take(&mut *queued)
+                        };
+                        for update in replay_updates {
+                            write_message(
+                                &mut writer,
+                                &json!({
+                                    "jsonrpc": "2.0",
+                                    "method": "agent/acp",
+                                    "params": {
+                                        "jsonrpc": "2.0",
+                                        "method": "session/update",
+                                        "params": {
+                                            "sessionId": sid,
+                                            "update": update
+                                        }
+                                    }
+                                }),
+                            )
+                            .await
+                            .unwrap();
                         }
-                    }),
+                        json!({
+                            "jsonrpc": "2.0",
+                            "method": "agent/acp",
+                            "params": {
+                                "jsonrpc": "2.0",
+                                "id": frame["id"],
+                                "result": {}
+                            }
+                        })
+                    }
                     "session/prompt" => {
                         if fail_next_prompt.swap(false, Ordering::AcqRel) {
                             json!({
@@ -514,6 +543,7 @@ async fn run_skill_catalog_e2e_scenario() {
     let frames = Arc::new(Mutex::new(Vec::new()));
     let fail_next_prompt = Arc::new(AtomicBool::new(false));
     let next_prompt_updates = Arc::new(Mutex::new(Vec::new()));
+    let next_load_updates = Arc::new(Mutex::new(Vec::new()));
     let attach = Arc::new(MockAgentAttach::default());
     attach
         .install(
@@ -524,6 +554,7 @@ async fn run_skill_catalog_e2e_scenario() {
             frames.clone(),
             fail_next_prompt.clone(),
             next_prompt_updates.clone(),
+            next_load_updates.clone(),
         )
         .await;
 
@@ -696,6 +727,7 @@ async fn run_skill_catalog_e2e_scenario() {
             frames.clone(),
             fail_next_prompt.clone(),
             next_prompt_updates.clone(),
+            next_load_updates.clone(),
         )
         .await;
     let restarted = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
@@ -803,7 +835,7 @@ async fn run_skill_catalog_e2e_scenario() {
         assert!(wf_texts[1].starts_with("<available_skills>\n"));
     }
 
-    // `commit_admission` failure AND wire `session/prompt` failure must keep delta pending.
+    // `commit_admission` failure must keep the pending delta unconsumed for the next turn.
     let skill_c = entry(
         "gamma",
         "Gamma skill.",
@@ -857,6 +889,7 @@ async fn run_empty_init_and_compaction_reset_scenario() {
     let frames = Arc::new(Mutex::new(Vec::new()));
     let fail_next_prompt = Arc::new(AtomicBool::new(false));
     let next_prompt_updates = Arc::new(Mutex::new(Vec::new()));
+    let next_load_updates = Arc::new(Mutex::new(Vec::new()));
     let attach = Arc::new(MockAgentAttach::default());
     attach
         .install(
@@ -867,6 +900,7 @@ async fn run_empty_init_and_compaction_reset_scenario() {
             frames.clone(),
             fail_next_prompt,
             next_prompt_updates.clone(),
+            next_load_updates,
         )
         .await;
 
@@ -992,6 +1026,7 @@ async fn run_catalog_read_failure_scenario() {
     let frames = Arc::new(Mutex::new(Vec::new()));
     let fail_next_prompt = Arc::new(AtomicBool::new(false));
     let next_prompt_updates = Arc::new(Mutex::new(Vec::new()));
+    let next_load_updates = Arc::new(Mutex::new(Vec::new()));
     let attach = Arc::new(MockAgentAttach::default());
     attach
         .install(
@@ -1002,6 +1037,7 @@ async fn run_catalog_read_failure_scenario() {
             frames.clone(),
             fail_next_prompt,
             next_prompt_updates,
+            next_load_updates,
         )
         .await;
 
@@ -1155,4 +1191,347 @@ async fn catalog_read_failure_skips_injection_and_preserves_announced_skills() {
     tokio::time::timeout(Duration::from_secs(10), run_catalog_read_failure_scenario())
         .await
         .expect("catalog read failure scenario timed out");
+}
+
+/// Verifies that an in-session MCP refresh `session/load` replaying a historical parent
+/// `opencode/compaction` completion notification does NOT reset `announced_skills`.
+async fn run_mcp_refresh_replay_compaction_scenario() {
+    ora_logging::initialize_test_clock();
+    let dir = TempDir::new().unwrap();
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    let fail_next_prompt = Arc::new(AtomicBool::new(false));
+    let next_prompt_updates = Arc::new(Mutex::new(Vec::new()));
+    let next_load_updates = Arc::new(Mutex::new(Vec::new()));
+    let attach = Arc::new(MockAgentAttach::default());
+    attach
+        .install(
+            dir.path(),
+            /*provider_prefix*/ "mcpreplay",
+            /*additional_directories_supported*/ true,
+            /*legacy_effect_resources*/ false,
+            frames.clone(),
+            fail_next_prompt,
+            next_prompt_updates,
+            next_load_updates.clone(),
+        )
+        .await;
+
+    let skills = DynamicSkillCatalog::default();
+    let skill_a = entry(
+        "alpha",
+        "Alpha skill.",
+        &dir.path()
+            .join("atoms/skills/alpha/SKILL.md")
+            .to_string_lossy(),
+        &dir.path().join("atoms/skills/alpha").to_string_lossy(),
+    );
+    skills.set_entries(vec![skill_a]);
+
+    let mcp = ControllableMcpSetup::default();
+    let store = MemorySessionStore::default();
+    let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
+    let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        attach,
+        store,
+        directory: FixedDir(dir.path().to_path_buf()),
+        session_setup: mcp.clone(),
+        skill_catalog: skills,
+        events: RecordedEvents::default(),
+        home_directory: dir.path().to_path_buf(),
+        sessions_root: dir.path().join("sessions"),
+        scheduler: scheduler.clone(),
+    })
+    .unwrap();
+    manager
+        .wait_for_agent(&AgentRef::parse(PLUGIN_ID).unwrap())
+        .await
+        .unwrap();
+
+    let session = manager
+        .start_session(StartSessionRequest {
+            workspace_id: "ws-1".into(),
+            agent_ref: PLUGIN_ID.into(),
+            model: None,
+        })
+        .await
+        .unwrap()
+        .session;
+
+    // Turn 1 announces `alpha`.
+    send_prompt(&manager, &session.id, "turn 1").await;
+
+    // Queue a historical parent compaction completion to be replayed during MCP refresh `session/load`.
+    *next_load_updates.lock().unwrap() = vec![json!({
+        "sessionUpdate": "session_info_update",
+        "_meta": { "opencode/compaction": { "status": "completed" } }
+    })];
+    mcp.bump();
+
+    // Turn 2 refreshes MCP via `session/load`, receives the replayed compaction notice, and must
+    // NOT treat that historical replay as a live compaction reset.
+    send_prompt(&manager, &session.id, "turn 2 unchanged").await;
+    {
+        let recorded = frames.lock().unwrap();
+        assert_eq!(
+            acp_methods(&recorded, "session/load").len(),
+            1,
+            "MCP refresh must have executed session/load"
+        );
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(
+            prompt_texts(prompts[1]),
+            vec!["turn 2 unchanged".to_string()],
+            "replayed compaction during MCP refresh must not re-inject the full skill catalog"
+        );
+    }
+
+    scheduler.shutdown().await;
+}
+
+/// Verifies that when the first prompt after `session/load` fails before producing output
+/// (`fail_next_prompt = true`), the actor rebuilds the provider session and re-emits the full
+/// `<available_skills>` catalog on the retry prompt.
+async fn run_stale_load_rebuild_scenario() {
+    ora_logging::initialize_test_clock();
+    let dir = TempDir::new().unwrap();
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    let fail_next_prompt = Arc::new(AtomicBool::new(false));
+    let next_prompt_updates = Arc::new(Mutex::new(Vec::new()));
+    let next_load_updates = Arc::new(Mutex::new(Vec::new()));
+    let attach = Arc::new(MockAgentAttach::default());
+    attach
+        .install(
+            dir.path(),
+            /*provider_prefix*/ "stale",
+            /*additional_directories_supported*/ true,
+            /*legacy_effect_resources*/ false,
+            frames.clone(),
+            fail_next_prompt.clone(),
+            next_prompt_updates,
+            next_load_updates,
+        )
+        .await;
+
+    let skills = DynamicSkillCatalog::default();
+    let skill_a = entry(
+        "alpha",
+        "Alpha skill.",
+        &dir.path()
+            .join("atoms/skills/alpha/SKILL.md")
+            .to_string_lossy(),
+        &dir.path().join("atoms/skills/alpha").to_string_lossy(),
+    );
+    skills.set_entries(vec![skill_a]);
+
+    let mcp = ControllableMcpSetup::default();
+    let store = MemorySessionStore::default();
+    let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
+    let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        attach,
+        store,
+        directory: FixedDir(dir.path().to_path_buf()),
+        session_setup: mcp,
+        skill_catalog: skills,
+        events: RecordedEvents::default(),
+        home_directory: dir.path().to_path_buf(),
+        sessions_root: dir.path().join("sessions"),
+        scheduler: scheduler.clone(),
+    })
+    .unwrap();
+    manager
+        .wait_for_agent(&AgentRef::parse(PLUGIN_ID).unwrap())
+        .await
+        .unwrap();
+
+    let session = manager
+        .start_session(StartSessionRequest {
+            workspace_id: "ws-1".into(),
+            agent_ref: PLUGIN_ID.into(),
+            model: None,
+        })
+        .await
+        .unwrap()
+        .session;
+
+    send_prompt(&manager, &session.id, "turn 1").await;
+    manager
+        .stop_session(StopSessionRequest {
+            session_id: session.id.clone(),
+        })
+        .await
+        .unwrap();
+
+    // Force the first prompt on the restored provider session to fail with no output, triggering
+    // `replace_stale_session` -> `rebuild_provider_session` and a single automatic retry.
+    fail_next_prompt.store(true, Ordering::Release);
+    send_prompt(&manager, &session.id, "turn 2 after stale load").await;
+
+    {
+        let recorded = frames.lock().unwrap();
+        assert_eq!(
+            acp_methods(&recorded, "session/new").len(),
+            2,
+            "stale load failure must rebuild a replacement provider session via session/new"
+        );
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(prompts.len(), 3);
+        let retry_texts = prompt_texts(prompts[2]);
+        assert!(
+            retry_texts
+                .iter()
+                .any(|text| text.starts_with("<available_skills>\n") && text.contains("alpha")),
+            "rebuilt retry prompt must re-emit full <available_skills> catalog: {retry_texts:?}"
+        );
+        assert!(
+            retry_texts
+                .iter()
+                .any(|text| text == "turn 2 after stale load"),
+            "rebuilt retry prompt must carry the original user prompt: {retry_texts:?}"
+        );
+    }
+
+    scheduler.shutdown().await;
+}
+
+/// Independently verifies `restore_provider_session` and `rebuild_provider_session` each clear
+/// `actor.announced_skills` even when neither `mark_stopped` nor `unload` ran beforehand.
+async fn run_direct_attach_reset_scenario() {
+    ora_logging::initialize_test_clock();
+    let dir = TempDir::new().unwrap();
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    let fail_next_prompt = Arc::new(AtomicBool::new(false));
+    let next_prompt_updates = Arc::new(Mutex::new(Vec::new()));
+    let next_load_updates = Arc::new(Mutex::new(Vec::new()));
+    let attach = Arc::new(MockAgentAttach::default());
+    attach
+        .install(
+            dir.path(),
+            /*provider_prefix*/ "direct",
+            /*additional_directories_supported*/ true,
+            /*legacy_effect_resources*/ false,
+            frames,
+            fail_next_prompt,
+            next_prompt_updates,
+            next_load_updates,
+        )
+        .await;
+
+    let store = MemorySessionStore::default();
+    let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
+    let agent_ref = AgentRef::parse(PLUGIN_ID).unwrap();
+    let connections = crate::connection::ConnectionSupervisors::<SkillTestHost>::start(
+        attach,
+        store.clone(),
+        dir.path().to_path_buf(),
+        crate::clock::SystemClock,
+    );
+    let connection = connections.for_agent(&agent_ref).unwrap();
+    connection.ready().await.unwrap();
+
+    let session = ora_domain::Session::new(
+        ora_domain::SessionId::new("session-direct"),
+        WorkspaceId::new("ws-1"),
+        agent_ref,
+        "provider-direct-existing",
+        ora_domain::SessionStatus::Running,
+        SessionMcpSelection::Automatic,
+        ora_domain::AuditFields::new(1, 1, /*is_deleted*/ false),
+    );
+    crate::host::SessionStore::create_session(&store, session.clone()).unwrap();
+    let recorder = crate::history::SessionRecorder::open(
+        &dir.path().join("sessions"),
+        "session-direct",
+        0,
+        &ora_domain::HistoryState::Writable,
+        RecordedEvents::default(),
+        crate::history::LocalHistoryClock,
+    )
+    .unwrap();
+    let (commands, command_receiver) = mpsc::unbounded_channel();
+    let command_sender = commands.downgrade();
+    let mut actor = crate::RuntimeActor::<SkillTestHost> {
+        cleanup_outcomes: std::collections::HashMap::new(),
+        session,
+        cwd: dir.path().to_path_buf(),
+        repository: store,
+        clock: crate::clock::SystemClock,
+        connection: connection.clone(),
+        channel: None,
+        commands: command_receiver,
+        recorder,
+        sessions_root: dir.path().join("sessions"),
+        connections,
+        handoff: crate::HandoffDebt::Settled,
+        rebuilt_binding: None,
+        load_restoration: Default::default(),
+        reported_config_options: Vec::new(),
+        commands_exceed_limit: false,
+        scheduler: scheduler.clone(),
+        events: RecordedEvents::default(),
+        title_acquisition: crate::TitleAcquisition::disabled(),
+        command_sender,
+        session_mcp: ControllableMcpSetup::default(),
+        skill_catalog: DynamicSkillCatalog::default(),
+        announced_skills: Some(crate::skill_catalog::AnnouncedSkills::default()),
+        barriers: Arc::new(crate::session_setup::AgentSessionBarriers::new()),
+        live_mcp: crate::session_setup::LiveMcpState::Inactive,
+        turn_cancel: Default::default(),
+        #[cfg(feature = "test-support")]
+        test_prompt_inactivity_windows: None,
+        exit_probe: None,
+    };
+
+    // 1. Direct `restore_provider_session` clears `announced_skills` without `mark_stopped`.
+    let channel = connection
+        .open_session_channel("provider-direct-existing", "session-direct")
+        .unwrap();
+    let snapshot = SessionMcpSnapshot::new(Vec::new(), SessionMcpRevision::default());
+    actor
+        .restore_provider_session(channel, &snapshot)
+        .await
+        .expect("restore_provider_session succeeds");
+    assert_eq!(
+        actor.announced_skills, None,
+        "restore_provider_session must clear announced_skills directly"
+    );
+
+    // 2. Direct `rebuild_provider_session` clears `announced_skills` without `mark_stopped`.
+    actor.announced_skills = Some(crate::skill_catalog::AnnouncedSkills::default());
+    actor
+        .rebuild_provider_session(None)
+        .await
+        .expect("rebuild_provider_session succeeds");
+    assert_eq!(
+        actor.announced_skills, None,
+        "rebuild_provider_session must clear announced_skills directly"
+    );
+
+    drop(commands);
+    drop(actor);
+    scheduler.shutdown().await;
+}
+
+#[tokio::test]
+async fn mcp_refresh_replay_compaction_does_not_reset_announced_skills() {
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        run_mcp_refresh_replay_compaction_scenario(),
+    )
+    .await
+    .expect("mcp refresh replay compaction scenario timed out");
+}
+
+#[tokio::test]
+async fn stale_load_prompt_failure_rebuilds_and_resends_full_catalog() {
+    tokio::time::timeout(Duration::from_secs(10), run_stale_load_rebuild_scenario())
+        .await
+        .expect("stale load rebuild scenario timed out");
+}
+
+#[tokio::test]
+async fn restore_and_rebuild_provider_session_independently_clear_announced_skills() {
+    tokio::time::timeout(Duration::from_secs(10), run_direct_attach_reset_scenario())
+        .await
+        .expect("direct attach reset scenario timed out");
 }

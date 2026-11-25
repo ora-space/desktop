@@ -196,3 +196,21 @@ impl SkillCatalogSource for NoSkillCatalog {
         Vec::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn no_skill_catalog_returns_empty_entries_and_roots() {
+        let catalog = NoSkillCatalog;
+        assert_eq!(
+            catalog
+                .skill_catalog(&WorkspaceId::new("workspace-1"))
+                .expect("NoSkillCatalog never fails"),
+            Vec::<SkillCatalogEntry>::new()
+        );
+        assert_eq!(catalog.extra_read_roots(), Vec::<PathBuf>::new());
+    }
+}

@@ -573,6 +573,101 @@ mod tests {
         drop(actor);
         scheduler.shutdown().await;
     }
+
+    /// Independently verifies `mark_stopped` and `unload` each clear in-memory `announced_skills`
+    /// without relying on a subsequent `session/load` to mask a missing reset.
+    #[tokio::test]
+    async fn mark_stopped_and_unload_independently_clear_announced_skills() {
+        let temporary = TempDir::new().expect("create actor test directory");
+        let store = MemorySessionStore::default();
+        let scheduler = Scheduler::new(chrono_tz::UTC);
+        let (agent_ref, agent_source) = test_agent_source();
+        let plugin_host = test_plugin_host();
+        let connections = ConnectionSupervisors::<TestHost>::start(
+            plugin_host.clone(),
+            store.clone(),
+            temporary.path().to_path_buf(),
+            SystemClock,
+        );
+        let connection = ConnectionSupervisor::start::<TestHost>(
+            agent_ref.clone(),
+            agent_source,
+            Arc::new(Mutex::new(BTreeSet::new())),
+            plugin_host.clone(),
+            store.clone(),
+            temporary.path().to_path_buf(),
+            SystemClock,
+        );
+        let recorder = crate::history::SessionRecorder::open(
+            &temporary.path().join("sessions"),
+            "session-1",
+            0,
+            &ora_domain::HistoryState::Writable,
+            crate::test_host::RecordedEvents::default(),
+            crate::history::LocalHistoryClock,
+        )
+        .expect("open actor recorder");
+        let session = ora_domain::Session::new(
+            SessionId::new("session-1"),
+            WorkspaceId::new("workspace-1"),
+            agent_ref,
+            "provider-session-1",
+            SessionStatus::Running,
+            ora_domain::SessionMcpSelection::Automatic,
+            AuditFields::new(0, 0, false),
+        );
+        store.create_session(session.clone()).unwrap();
+        let (commands, command_receiver) = mpsc::unbounded_channel();
+        let command_sender = commands.downgrade();
+        let mut actor = RuntimeActor {
+            cleanup_outcomes: HashMap::new(),
+            session,
+            cwd: temporary.path().to_path_buf(),
+            repository: store,
+            clock: SystemClock,
+            connection,
+            channel: None,
+            commands: command_receiver,
+            recorder,
+            sessions_root: temporary.path().join("sessions"),
+            connections,
+            handoff: HandoffDebt::Settled,
+            rebuilt_binding: None,
+            load_restoration: Default::default(),
+            reported_config_options: Vec::new(),
+            commands_exceed_limit: false,
+            scheduler: scheduler.clone(),
+            events: RecordedEvents::default(),
+            title_acquisition: TitleAcquisition::disabled(),
+            command_sender,
+            session_mcp: NoSessionMcp::default(),
+            skill_catalog: NoSkillCatalog,
+            announced_skills: Some(crate::skill_catalog::AnnouncedSkills::default()),
+            barriers: Arc::new(AgentSessionBarriers::new()),
+            live_mcp: LiveMcpState::Inactive,
+            turn_cancel: Default::default(),
+            #[cfg(feature = "test-support")]
+            test_prompt_inactivity_windows: None,
+            exit_probe: None,
+        };
+
+        actor.mark_stopped();
+        assert_eq!(
+            actor.announced_skills, None,
+            "mark_stopped must clear announced_skills directly"
+        );
+
+        actor.announced_skills = Some(crate::skill_catalog::AnnouncedSkills::default());
+        actor.unload().await;
+        assert_eq!(
+            actor.announced_skills, None,
+            "unload must clear announced_skills directly"
+        );
+
+        drop(commands);
+        drop(actor);
+        scheduler.shutdown().await;
+    }
 }
 
 /// Sends one attach's setup updates ahead of its turn, reporting whether a client is still there.

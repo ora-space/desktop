@@ -203,7 +203,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// `session/load` is sent so the agent recovers the context it needs to answer the next
     /// prompt. Everything it recites on the way is discarded: what the user is shown came from
     /// Ora's record when the conversation was opened.
-    async fn restore_provider_session(
+    pub(crate) async fn restore_provider_session(
         &mut self,
         mut channel: SessionChannel,
         snapshot: &SessionMcpSnapshot,
@@ -311,7 +311,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     ///
     /// The debt is only raised when none is outstanding: a switch that has not delivered its
     /// transcript yet already owes the same conversation and already keeps its own books.
-    pub(super) async fn rebuild_provider_session(
+    pub(crate) async fn rebuild_provider_session(
         &mut self,
         model: Option<&str>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {

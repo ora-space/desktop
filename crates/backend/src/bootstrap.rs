@@ -630,4 +630,184 @@ mod tests {
             );
         });
     }
+
+    /// Verifies `Backend::open` creates the pre-`0025` SQLite backup and removes unedited legacy
+    /// Effect-managed skill directories before migration `0025` drops Effect tables, while keeping
+    /// user-modified skill directories intact.
+    #[test]
+    fn opens_pre_0025_database_backs_up_and_cleans_legacy_managed_skills() {
+        ora_logging::with_trace_logging(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(async {
+                    let temporary = TempDir::new().expect("create temporary backend directory");
+                    let app_data_directory = temporary.path().join("app-data");
+                    let home_directory = temporary.path().join("ora-home");
+                    let workspace = temporary.path().join("workspace");
+                    fs::create_dir_all(&app_data_directory).expect("create app-data");
+                    fs::create_dir_all(&workspace).expect("create workspace");
+                    let database_path = app_data_directory.join("ora.sqlite3");
+
+                    let latest = ora_db::default_migration_catalog().expect("latest catalog");
+                    let pre_0025 = ora_db::MigrationCatalog::new(
+                        latest
+                            .target_versions()
+                            .iter()
+                            .filter(|version| **version < "0025")
+                            .map(|version| latest.migration(version).expect("migration").clone())
+                            .collect(),
+                    )
+                    .expect("pre-0025 catalog");
+                    let pool = ora_db::DatabaseBootstrapper::system()
+                        .bootstrap_repository_pool(
+                            &ora_db::DatabaseLocation::path(&database_path),
+                            &pre_0025,
+                        )
+                        .expect("bootstrap pre-0025 db");
+                    drop(pool);
+
+                    let clean_dir = workspace.join(".claude/skills/clean-skill");
+                    fs::create_dir_all(&clean_dir).expect("create clean skill dir");
+                    fs::write(clean_dir.join("SKILL.md"), "---\nname: clean-skill\n---\n")
+                        .expect("write clean SKILL.md");
+                    let clean_fp = ora_utils::directory::fingerprint_directory(
+                        &clean_dir,
+                        &[std::ffi::OsStr::new(".ora-managed.json")],
+                    )
+                    .expect("fingerprint clean dir")
+                    .to_string();
+                    fs::write(
+                        clean_dir.join(".ora-managed.json"),
+                        r#"{"schema_version":1,"resource":"res-1","managed_identity":"mi-clean"}"#,
+                    )
+                    .expect("write clean marker");
+
+                    let drifted_dir = workspace.join(".claude/skills/drifted-skill");
+                    fs::create_dir_all(&drifted_dir).expect("create drifted skill dir");
+                    fs::write(
+                        drifted_dir.join("SKILL.md"),
+                        "---\nname: drifted-skill\n---\n",
+                    )
+                    .expect("write drifted SKILL.md");
+                    let drifted_fp = ora_utils::directory::fingerprint_directory(
+                        &drifted_dir,
+                        &[std::ffi::OsStr::new(".ora-managed.json")],
+                    )
+                    .expect("fingerprint drifted dir")
+                    .to_string();
+                    fs::write(
+                        drifted_dir.join(".ora-managed.json"),
+                        r#"{"schema_version":1,"resource":"res-1","managed_identity":"mi-drift"}"#,
+                    )
+                    .expect("write drifted marker");
+                    fs::write(drifted_dir.join("user-edit.txt"), "keep me")
+                        .expect("mutate drifted dir");
+
+                    let conn = rusqlite::Connection::open(&database_path).expect("open sqlite");
+                    let locator_json = serde_json::json!({ "path": workspace }).to_string();
+                    let descriptor_json = serde_json::json!({
+                        "kind": "filesystem_directory_v1",
+                        "descriptor": {
+                            "workspace_root": workspace,
+                            "relative_path": ".claude/skills",
+                        }
+                    })
+                    .to_string();
+                    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+                    conn.execute(
+                        "INSERT INTO projects (id, name, created_at, updated_at, is_deleted)
+                         VALUES ('p1', 'Proj', 1, 1, 0)",
+                        [],
+                    )
+                    .unwrap();
+                    conn.execute(
+                        "INSERT INTO workspace_locations (id, location_kind, locator_version, locator_json, created_at, updated_at)
+                         VALUES ('l1', 'local_filesystem', 1, ?1, 1, 1)",
+                        [&locator_json],
+                    )
+                    .unwrap();
+                    conn.execute(
+                        "INSERT INTO workspaces (id, project_id, workspace_kind, location_id, lifecycle, created_at, updated_at, is_deleted)
+                         VALUES ('w1', 'p1', 'main', 'l1', 'active', 1, 1, 0)",
+                        [],
+                    )
+                    .unwrap();
+                    conn.execute(
+                        "INSERT INTO effect_scopes (id, scope_kind, workspace_id, lifecycle, generation, created_at, updated_at)
+                         VALUES ('scope-1', 'workspace', 'w1', 'active', 1, 1, 1)",
+                        [],
+                    )
+                    .unwrap();
+                    conn.execute(
+                        "INSERT INTO effect_sources (id, effect_kind, source_kind, namespace, identifier, lifecycle, publication_state, created_at, updated_at)
+                         VALUES ('src-1', 'ora/skill', 'local', 'local', 'clean-skill', 'active', 'unpublished', 1, 1)",
+                        [],
+                    )
+                    .unwrap();
+                    conn.execute(
+                        "INSERT INTO effect_revisions (id, source_id, revision_key, definition_kind, definition_version, definition_json, digest, availability, created_at, updated_at)
+                         VALUES ('rev-1', 'src-1', 'v1', 'ora/skill.v1', 1, '{}', 'sha256:rev1', 'available', 1, 1)",
+                        [],
+                    )
+                    .unwrap();
+                    conn.execute(
+                        "INSERT INTO effect_desired_effects (id, scope_id, revision_id, parameters_kind, parameters_version, parameters_json, selector_version, selector_json, created_at, updated_at)
+                         VALUES ('desired-1', 'scope-1', 'rev-1', 'ora/skill', 1, '{}', 1, '{}', 1, 1)",
+                        [],
+                    )
+                    .unwrap();
+                    conn.execute(
+                        "INSERT INTO effect_resources (
+                            id, scope_id, resource_key, adapter_id, descriptor_version, descriptor_json,
+                            materialization_format, lifecycle, claim_fence, created_at, updated_at
+                         ) VALUES (
+                            'res-1', 'scope-1', 'filesystem-directory:.claude/skills', 'ora/filesystem-directory', 1, ?1,
+                            'ora/skill-directory.v1', 'active', 0, 1, 1
+                         )",
+                        [&descriptor_json],
+                    )
+                    .unwrap();
+                    conn.execute(
+                        "INSERT INTO effect_managed_items (
+                            id, scope_id, resource_id, desired_effect_id, applied_revision_id,
+                            native_identity, fingerprint, applied_generation, created_at, updated_at
+                         ) VALUES
+                            ('mi-clean', 'scope-1', 'res-1', 'desired-1', 'rev-1', 'clean-skill', ?1, 1, 1, 1),
+                            ('mi-drift', 'scope-1', 'res-1', 'desired-1', 'rev-1', 'drifted-skill', ?2, 1, 1, 1)",
+                        rusqlite::params![clean_fp, drifted_fp],
+                    )
+                    .unwrap();
+                    drop(conn);
+
+                    let backend = Backend::open(backend_paths(&app_data_directory, &home_directory))
+                        .expect("open backend against pre-0025 database");
+                    assert_eq!(backend.database_origin(), DatabaseOrigin::Existing);
+                    drop(backend);
+
+                    assert!(
+                        ora_db::pre_0025_backup_path(&database_path).is_file(),
+                        "Backend::open must create pre-0025 SQLite backup before migrating"
+                    );
+                    assert!(
+                        !clean_dir.exists(),
+                        "Backend::open must clean exact legacy Effect-managed skill directories before 0025 drops the ledger"
+                    );
+                    assert!(
+                        drifted_dir.exists(),
+                        "Backend::open must preserve user-modified skill directories"
+                    );
+                    let verify = rusqlite::Connection::open(&database_path).expect("reopen sqlite");
+                    let effect_tables: i64 = verify
+                        .query_row(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'effect\\_%' ESCAPE '\\'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap();
+                    assert_eq!(effect_tables, 0);
+                });
+        });
+    }
 }
