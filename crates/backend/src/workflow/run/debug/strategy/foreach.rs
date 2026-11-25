@@ -74,7 +74,9 @@ pub(super) fn plan(input: &DebugPlanningInput) -> Result<WorkflowDebugImpact, De
         };
         if affected {
             invalidate.push(row.id.to_string());
-            if row.status == WorkflowNodeStatus::Running {
+            // Only agents have an external session. Composite and swift rows are
+            // retired under the run gate, not sent to the session stopper.
+            if row.status == WorkflowNodeStatus::Running && row.node_type == "agent" {
                 stop.push(row.id.to_string());
             }
         } else {

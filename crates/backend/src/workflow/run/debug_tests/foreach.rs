@@ -2,6 +2,92 @@ use super::*;
 use ora_application::WorkflowRunPayload;
 use pretty_assertions::assert_eq;
 
+/// A container edit stops its active member's session, not the sessionless container.
+/// An unrelated failure delivered while that stop is pending wins over redispatch.
+#[test]
+fn foreach_debug_preserves_a_run_that_failed_while_the_member_was_stopping() {
+    run_test(async {
+        let (temp, pool) = bootstrap();
+        let config = json!({"executor":{"agentCli":"c","modelId":"m"},"prompt":"run","retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0}});
+        let graph=json!({"nodes":[{"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
+            {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["member","output"],"errorStrategy":"continue"}}},
+            {"id":"member","parentId":"iter","data":{"kind":"agent","agentConfig":config}},
+            {"id":"sibling","data":{"kind":"agent","agentConfig":config}}],"edges":[{"source":"start","target":"iter"},{"source":"start","target":"sibling"},{"source":"iter","target":"member"}]}).to_string();
+        let run = seeded_pending_run(&temp, &pool, &graph);
+        let repo = SqliteWorkflowRunEngineRepository::new(pool.clone());
+        repo.update_run_input(
+            &run,
+            None,
+            [("items".into(), json!(["one", "two"]))].into(),
+            35,
+        )
+        .unwrap();
+        let exec = RecordingExecutor::default();
+        let engine = Arc::new(WorkflowRunEngine::new(
+            repo.clone(),
+            exec.clone(),
+            UuidWorkflowNodeRunIdGenerator::new(),
+            SystemClock,
+        ));
+        let gate = KeyedResourceLocks::new();
+        let barrier = Arc::new(super::lifecycle::StopBarrier::default());
+        let transitions = Arc::new(WorkflowRunTransitions::new(
+            pool.clone(),
+            Arc::new(Invalidations::default()),
+            gate.clone(),
+        ));
+        let coordinator = WorkflowDebugCoordinator::new(
+            pool.clone(),
+            gate,
+            barrier.clone(),
+            engine.clone(),
+            transitions,
+            SystemClock,
+        );
+        engine.start(&run).unwrap();
+        let rows = node_runs(&pool, &run);
+        let id = |name| &rows.iter().find(|r| r.node_id == name).unwrap().id;
+        repo.bind_node_run_session(id("member"), &SessionId::new("session-1"), 50)
+            .unwrap();
+        let preview=coordinator.preview(serde_json::from_value(json!({"runId":run.as_ref(),"nodeRunId":id("iter").as_ref(),"baseRevision":0,"patch":[{"op":"replace","path":"/iterationConfig/errorStrategy","value":"fail"}]})).unwrap()).unwrap();
+        assert_eq!(preview.impact.stop, vec![id("member").to_string()]);
+        let request = CommitWorkflowDebugRequest {
+            run_id: run.to_string(),
+            preview_id: preview.preview_id,
+            request_id: "finish-while-stopping".into(),
+        };
+        let load = || repo.find_execution_context(&run).unwrap().unwrap().run;
+        let (operation, failure) = tokio::join!(coordinator.commit(request), async {
+            barrier.entered.notified().await;
+            engine
+                .fail_node(
+                    &run,
+                    id("sibling"),
+                    ora_application::NodeFailure::new(
+                        ora_application::NodeFailureKind::Session,
+                        "sibling failed",
+                    ),
+                )
+                .unwrap();
+            let failure = load();
+            barrier.release.notify_one();
+            failure
+        });
+        assert_eq!(
+            operation.unwrap().phase,
+            WorkflowDebugPhase::Applied { revision: 1 }
+        );
+        let after = load();
+        assert_eq!(after.status, WorkflowRunStatus::Failed);
+        assert_eq!(
+            (after.error, after.finished_at, after.payload),
+            (failure.error, failure.finished_at, failure.payload)
+        );
+        assert_eq!(node_runs(&pool, &run).len(), rows.len());
+        assert_eq!(dispatched(&exec, "member"), 1);
+    });
+}
+
 /// Re-evaluate a previously skipped branch from its selected item: the old Condition row
 /// remains historical while the new per-item decisions determine the collected outputs.
 #[test]
@@ -65,6 +151,21 @@ fn foreach_debug_condition_uses_the_selected_item_and_preserves_the_previous_rou
             .into_iter()
             .find(|r| r.node_id == "gate" && r.iteration == Some(1))
             .unwrap();
+        let sibling = node_runs(&pool, &run)
+            .into_iter()
+            .find(|row| row.node_id == "sibling")
+            .unwrap();
+        engine
+            .complete_node(&run, &sibling.id, Some("done".into()), None, None, vec![])
+            .unwrap();
+        assert_eq!(
+            repo.find_execution_context(&run)
+                .unwrap()
+                .unwrap()
+                .run
+                .status,
+            WorkflowRunStatus::Succeeded
+        );
         let preview=coordinator.preview(serde_json::from_value(json!({"runId":run.as_ref(),"nodeRunId":target.id.as_ref(),"baseRevision":0,"patch":[{"op":"replace","path":"/cases/0/conditions/0/value","value":"b"}]})).unwrap()).unwrap();
         assert_eq!(preview.impact.predicted_branch.as_deref(), Some("match"));
         coordinator
@@ -76,11 +177,20 @@ fn foreach_debug_condition_uses_the_selected_item_and_preserves_the_previous_rou
             .await
             .unwrap();
         let f = running();
+        assert_eq!(
+            repo.find_execution_context(&run)
+                .unwrap()
+                .unwrap()
+                .run
+                .status,
+            WorkflowRunStatus::Running
+        );
         assert_eq!(f.iteration, Some(1));
         engine
             .complete_node(&run, &f.id, Some("second".to_owned()), None, None, vec![])
             .unwrap();
         let ctx = repo.find_execution_context(&run).unwrap().unwrap();
+        assert_eq!(ctx.run.status, WorkflowRunStatus::Succeeded);
         let payload: WorkflowRunPayload =
             serde_json::from_str(ctx.run.payload.as_deref().unwrap()).unwrap();
         assert_eq!(
@@ -89,7 +199,7 @@ fn foreach_debug_condition_uses_the_selected_item_and_preserves_the_previous_rou
         );
         assert_eq!(payload.variable_pool.values["iter.failed_count"], json!(1));
         assert_eq!(dispatched(&exec, "fix"), 2);
-        let historical = WorkflowDebugStore::new(pool)
+        let historical = WorkflowDebugStore::new(pool.clone())
             .attempt(&ora_contracts::GetWorkflowDebugAttemptRequest {
                 run_id: run.to_string(),
                 node_run_id: target.id.to_string(),
@@ -97,6 +207,42 @@ fn foreach_debug_condition_uses_the_selected_item_and_preserves_the_previous_rou
             .unwrap();
         assert!(historical.superseded);
         assert_eq!(historical.selected_branch.as_deref(), Some("else"));
+        // Re-edit the same effective item. The second revision replaces the suffix;
+        // the newly skipped item must not retain its previous collected output.
+        let current = node_runs(&pool, &run)
+            .into_iter()
+            .find(|r| r.node_id == "gate" && r.iteration == Some(1))
+            .unwrap();
+        let next=coordinator.preview(serde_json::from_value(json!({"runId":run.as_ref(),"nodeRunId":current.id.as_ref(),"baseRevision":1,"patch":[{"op":"replace","path":"/cases/0/conditions/0/value","value":"c"}]})).unwrap()).unwrap();
+        coordinator
+            .commit(CommitWorkflowDebugRequest {
+                run_id: run.to_string(),
+                preview_id: next.preview_id,
+                request_id: "route-again".into(),
+            })
+            .await
+            .unwrap();
+        let f = running();
+        assert_eq!(f.iteration, Some(2));
+        engine
+            .complete_node(&run, &f.id, Some("third".into()), None, None, vec![])
+            .unwrap();
+        let ctx = repo.find_execution_context(&run).unwrap().unwrap();
+        let payload: WorkflowRunPayload =
+            serde_json::from_str(ctx.run.payload.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            payload.variable_pool.values["iter.output"],
+            json!(["first", "third"])
+        );
+        assert_eq!(
+            payload.variable_pool.values["iter.entries"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(payload.variable_pool.values["iter.failed_count"], json!(1));
+        assert_eq!(dispatched(&exec, "fix"), 3);
     });
 }
 
@@ -206,6 +352,8 @@ fn foreach_debug_replays_from_the_selected_member_without_repeating_its_predeces
                     .unwrap();
             }
         }
+        repo.bind_node_run_session(&active().id, &SessionId::new("session-1"), 50)
+            .unwrap();
         let preview = coordinator.preview(serde_json::from_value(json!({"runId":run.as_ref(),"nodeRunId":selected.unwrap().as_ref(),"baseRevision":0,"patch":[{"op":"replace","path":"/agentConfig/prompt","value":"new {{#prep.output#}}"}]})).unwrap()).unwrap();
         assert_eq!(preview.impact.stop, vec![active().id.to_string()]);
         coordinator
