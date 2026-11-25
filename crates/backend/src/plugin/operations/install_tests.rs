@@ -5342,7 +5342,9 @@ async fn workflow_summary_tracks_marketplace_source_across_uninstall_and_reinsta
 }
 
 /// A Pack install opens a new cycle only for the members that the Pack run itself installed;
-/// an already-installed member is skipped and keeps any deletion from its active cycle.
+/// an already-installed member is skipped and keeps any deletion from its active cycle. Both
+/// members start with a deleted copy, so the reinstalled member's recovery proves the Pack used
+/// a new install cycle rather than an in-cycle retry, which would leave the copy deleted.
 #[tokio::test]
 async fn pack_install_opens_a_new_cycle_only_for_members_installed_by_that_run() {
     let _trace = trace_guard();
@@ -5387,23 +5389,38 @@ async fn pack_install_opens_a_new_cycle_only_for_members_installed_by_that_run()
     host.use_local_marketplace_release(MEMBER_SKIPPED_ID, skipped_artifact);
     host.use_local_marketplace_release(MEMBER_NEW_ID, new_artifact);
 
-    // Pre-install the first member and delete its imported workflow inside its own install cycle.
-    plugins
-        .install(InstallPluginRequest {
-            hook_execution_acknowledged: false,
-            plugin_id: MEMBER_SKIPPED_ID.to_owned(),
-        })
-        .await
-        .expect("pre-install the first member");
+    // Give both members a deleted copy, then uninstall only the member the Pack run will
+    // install: the skipped member keeps its deletion inside its own cycle, while the reinstalled
+    // member's surviving record must be recovered by the Pack's new cycle.
+    for plugin_id in [MEMBER_SKIPPED_ID, MEMBER_NEW_ID] {
+        plugins
+            .install(InstallPluginRequest {
+                hook_execution_acknowledged: false,
+                plugin_id: plugin_id.to_owned(),
+            })
+            .await
+            .expect("pre-install the member");
+    }
     let workflows = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock);
     let listed = workflows
         .list(ora_contracts::ListWorkflowsRequest {})
         .expect("list workflows");
-    workflows
-        .delete(ora_contracts::DeleteWorkflowRequest {
-            workflow_id: listed.workflows[0].id.clone(),
+    assert_eq!(listed.workflows.len(), 2);
+    for workflow in listed.workflows {
+        workflows
+            .delete(ora_contracts::DeleteWorkflowRequest {
+                workflow_id: workflow.id,
+            })
+            .expect("delete the member's imported workflow");
+    }
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: MEMBER_NEW_ID.to_owned(),
+            data_disposition: PluginDataDisposition::Retain,
+            hook_execution_acknowledged: false,
         })
-        .expect("delete the pre-installed member's workflow");
+        .await
+        .expect("uninstall the member the Pack will reinstall");
     assert_eq!(listed_workflow_names(&pool), Vec::<String>::new());
 
     let installed = plugins
@@ -5434,7 +5451,7 @@ async fn pack_install_opens_a_new_cycle_only_for_members_installed_by_that_run()
                 && source_file == "assets/workflows/2.0.0.json"
                 && name == "发布流程"
         ),
-        "only the member installed by this pack run opens a new cycle: {:?}",
+        "only the member installed by this pack run opens a new cycle and recovers its deleted copy: {:?}",
         installed.workflows
     );
     assert_eq!(
