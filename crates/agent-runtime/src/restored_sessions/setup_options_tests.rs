@@ -12,8 +12,14 @@ use pretty_assertions::assert_eq;
 enum Intent {
     /// It applies model `a`.
     Applied,
+    /// The same, after pushing a last snapshot on model `b`.
+    AppliedAfterPush,
+    /// It applies model `a` too late for setup, with the first prompt.
+    AppliedLate,
     /// It offers model `a` and then refuses it.
     Refused,
+    /// The same, after moving to model `a` on its own.
+    RefusedAfterPush,
     /// The user asked for a model it does not offer.
     NotOffered,
     /// The user asked for none.
@@ -47,6 +53,7 @@ async fn pushing_agent(
     let registration = json!({"jsonrpc":"2.0","method":"ora/register",
         "params":{"methods":[],"emits":["agent/acp"]}});
     write_message(&mut writer, &registration).await.unwrap();
+    let mut late = Vec::new();
     while let Ok(Some(envelope)) = read_message(&mut reader).await {
         if envelope["method"] == "ora/shutdown" {
             break;
@@ -63,15 +70,33 @@ async fn pushing_agent(
             ],
             Some("session/load") => vec![answer(json!({"configOptions":model("b")}))],
             Some("session/set_config_option") => match intent {
-                Intent::Refused => vec![json!({"jsonrpc":"2.0", "id":id,
-                    "error":{"code":-32000, "message":"refused"}})],
+                Intent::AppliedLate => {
+                    late = vec![answer(json!({"configOptions":model("a")}))];
+                    Vec::new()
+                }
+                Intent::Refused | Intent::RefusedAfterPush => {
+                    let session = frame["params"]["sessionId"].as_str().unwrap();
+                    let push =
+                        matches!(intent, Intent::RefusedAfterPush).then(|| options(session, "a"));
+                    let refusal = json!({"jsonrpc":"2.0", "id":id,
+                        "error":{"code":-32000, "message":"refused"}});
+                    push.into_iter().chain([refusal]).collect()
+                }
+                Intent::AppliedAfterPush => {
+                    let session = frame["params"]["sessionId"].as_str().unwrap();
+                    vec![
+                        options(session, "b"),
+                        answer(json!({"configOptions":model("a")})),
+                    ]
+                }
                 Intent::Applied | Intent::NotOffered | Intent::Absent => {
                     vec![answer(json!({"configOptions":model("a")}))]
                 }
             },
-            Some("session/prompt") => {
-                vec![answer(json!(PromptResponse::new(StopReason::EndTurn)))]
-            }
+            Some("session/prompt") => std::mem::take(&mut late)
+                .into_iter()
+                .chain([answer(json!(PromptResponse::new(StopReason::EndTurn)))])
+                .collect(),
             _ => continue,
         };
         for reply in replies {
@@ -89,7 +114,11 @@ async fn views(acquired: Acquired, intent: Intent) -> (Vec<State>, Vec<State>, V
     })
     .await;
     let model = match intent {
-        Intent::Applied | Intent::Refused => Some("a".to_string()),
+        Intent::Applied
+        | Intent::AppliedAfterPush
+        | Intent::AppliedLate
+        | Intent::Refused
+        | Intent::RefusedAfterPush => Some("a".to_string()),
         Intent::NotOffered => Some("z".to_string()),
         Intent::Absent => None,
     };
@@ -166,19 +195,25 @@ async fn views(acquired: Acquired, intent: Intent) -> (Vec<State>, Vec<State>, V
 }
 
 /// A snapshot pushed before the model was applied is outdated by the answer that applied it, and
-/// must not undo it. Without such an answer the snapshot is the newest thing the agent said.
+/// must not undo it. Without such an answer the snapshot is the newest thing the agent said. Either
+/// way setup reports it, so that the first prompt has no options left to deliver.
 #[test]
 fn a_snapshot_older_than_the_applied_model_does_not_undo_it() {
     let on = |model: &str| vec![State::Model(model.to_string())];
     // What else was collected before the model was applied is as current as ever.
     let mode = || State::Mode("plan".to_string());
-    let with_mode = |options: Vec<State>| [options, vec![mode()]].concat();
     for acquired in [Acquired::Started, Acquired::Switched] {
         for (intent, expected) in [
-            (Intent::Applied, (on("a"), with_mode(Vec::new()), on("a"))),
-            (Intent::Refused, (on("b"), with_mode(on("b")), on("b"))),
-            (Intent::NotOffered, (on("b"), with_mode(on("b")), on("b"))),
-            (Intent::Absent, (on("b"), with_mode(on("b")), on("b"))),
+            (Intent::Applied, (on("a"), vec![mode()], on("a"))),
+            (Intent::AppliedAfterPush, (on("a"), vec![mode()], on("a"))),
+            (
+                Intent::AppliedLate,
+                (on("b"), [vec![mode()], on("a")].concat(), on("a")),
+            ),
+            (Intent::Refused, (on("b"), vec![mode()], on("b"))),
+            (Intent::RefusedAfterPush, (on("a"), vec![mode()], on("a"))),
+            (Intent::NotOffered, (on("b"), vec![mode()], on("b"))),
+            (Intent::Absent, (on("b"), vec![mode()], on("b"))),
         ] {
             run_case(async move {
                 assert_eq!(views(acquired, intent).await, expected);
@@ -191,16 +226,19 @@ fn a_snapshot_older_than_the_applied_model_does_not_undo_it() {
 #[test]
 fn a_restored_session_is_on_the_model_its_agent_accepted() {
     let on = |model: &str| vec![State::Model(model.to_string())];
-    for (intent, expected) in [
-        (Intent::Applied, "a"),
-        (Intent::Refused, "b"),
-        (Intent::NotOffered, "b"),
-        (Intent::Absent, "b"),
+    for (intent, prompted, expected) in [
+        (Intent::Applied, on("a"), "a"),
+        (Intent::AppliedAfterPush, on("a"), "a"),
+        (Intent::AppliedLate, [on("b"), on("a")].concat(), "a"),
+        (Intent::Refused, on("b"), "b"),
+        (Intent::RefusedAfterPush, on("a"), "a"),
+        (Intent::NotOffered, on("b"), "b"),
+        (Intent::Absent, on("b"), "b"),
     ] {
         run_case(async move {
             assert_eq!(
                 views(Acquired::Restored, intent).await,
-                (vec![State::NoOptions], on(expected), on(expected))
+                (vec![State::NoOptions], prompted, on(expected))
             );
         });
     }

@@ -123,7 +123,7 @@ turn locally until `startSession` returns.
   reports its commands only after answering setup, so a command catalog that arrives while no prompt
   runs is kept, newest only, and delivered at the start of the next prompt. Draining an idle session
   discards its other updates, so they do not cross into that prompt; updates that arrive while a
-  title poll borrows the session are queued for it instead, again with only the newest catalog.
+  title poll borrows the session are queued for it instead, again with only the newest catalog, and options as they are by then.
   Admission waits for the attach and the MCP check, so a send that cannot reach an agent fails as a send.
 - **Rebuild.** An agent that cannot load the session, or fails to restore it, gets a replacement
   provider session from `session/new` with the same snapshot, and the next prompt carries the
@@ -139,10 +139,19 @@ turn locally until `startSession` returns.
   had reported are withdrawn until the replacement reports its own, and so are its options when the
   replacement offers none.
 - **Configure.** A session that holds a provider reports its own options and is configured through
-  `setSessionConfig`. The actor takes the agent's answer before the caller gets it, so a view opened
-  later sees the options after the change; an answer for a provider session that was replaced
-  meanwhile is ignored, and the caller gets the replacement's options. A model chosen while a session
-  held no provider is an intent applied at the next attach. Reasoning effort is read only from the
+  `setSessionConfig`. The actor asks the agent itself and is the only holder of the session's options:
+  answers and the agent's own `config_option_update`s are taken in the order their frames were read
+  from the connection, whether a turn, a title poll, an MCP refresh or session setup reads them, or
+  none of these. It takes the answer before the caller gets it, so a view opened later sees the
+  options after the change. A caller stops waiting after 30 seconds; a later answer is still taken
+  while the provider session lasts, and shown by the turn that is running. An agent that does not read
+  holds up the caller, not the actor. Changes in flight do not wait for each other. A change whose
+  provider session goes before answering is settled then: it succeeds when the host gave the session
+  up (`Stop`, which is also how a switch or a deletion reaches the actor, a turn whose owner stopped
+  reading, or a rebuild, which leaves the caller on the replacement's options) and fails when the
+  agent was lost. A session that holds no provider is asked directly, and attaching waits for that.
+  A model chosen while a session held no provider is an intent applied at the next
+  attach. Reasoning effort is read only from the
   `thought_level` option a live session reports; there is no pre-session effort catalog.
 - **Stop and delete.** Explicit stop calls `session/close` when advertised, unloads the route and
   keeps provider history. Deletion is described in [Session history](session-history.md#deletion).

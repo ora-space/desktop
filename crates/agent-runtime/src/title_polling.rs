@@ -11,8 +11,7 @@ use crate::host::SessionStore;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{
-    ConfigOptionUpdate, ListSessionsRequest, ListSessionsResponse, SessionConfigOption,
-    SessionInfoUpdate, SessionUpdate,
+    ListSessionsRequest, ListSessionsResponse, SessionInfoUpdate, SessionUpdate,
 };
 use ora_contracts::StopSessionResponse;
 use ora_domain::SessionTitle;
@@ -99,7 +98,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         RuntimeCommand::Stop { response } => {
                             self.channel = Some(channel);
                             self.title_acquisition.close();
-                            self.unload().await;
+                            self.stop_unload().await;
                             let _ = response.send(Ok(StopSessionResponse {
                                 session: contract_session(self.session.clone()),
                             }));
@@ -126,9 +125,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         RuntimeCommand::TakeIdleTurnTraffic { response } => {
                             // A title poll only borrows the idle channel; hand it back and drain
                             // as an idle actor would, so the answer is not lost to the poll.
-                            if super::events::drain_idle_events(&mut channel, &self.command_sender)
-                            .await
-                            {
+                            if super::events::drain_idle_events(self, &mut channel).await {
                                 self.turn_cancel.note_idle_traffic();
                             }
                             self.channel = Some(channel);
@@ -136,15 +133,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             let _ = response.send(self.turn_cancel.take_idle_traffic());
                             return;
                         }
-                        RuntimeCommand::ClaimDirectProviderCall { response } => {
+                        RuntimeCommand::ChangeConfig(request) => {
+                            self.change_config(Some(&mut channel), request).await;
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
-                            let _ = response.send(self.provider_session_id().to_string());
                             return;
-                        }
-                        RuntimeCommand::AdoptConfigOptions { agent_session_id, config_options, response } => {
-                            let current = self.adopt_config_options(&agent_session_id, config_options);
-                            let _ = response.send(current);
                         }
                         RuntimeCommand::AdoptUserTitle { title, response } => {
                             self.channel = Some(channel);
@@ -241,6 +234,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             } else {
                                 channel.pending_updates.push_back(update);
                             }
+                        }
+                        Some(SessionEvent::Response(response)) => {
+                            let _ = self.settle_config_change(&mut channel, response);
                         }
                         Some(event) => {
                             settle_idle_event(&client, event).await;
@@ -353,21 +349,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
             _ => {}
         }
-    }
-
-    /// Takes the options a direct configuration call was answered with, as if they were reported,
-    /// and returns those the session is on.
-    pub(super) fn adopt_config_options(
-        &mut self,
-        agent_session_id: &str,
-        config_options: Vec<SessionConfigOption>,
-    ) -> Vec<SessionConfigOption> {
-        if agent_session_id == self.provider_session_id() {
-            self.observe_session_update(&SessionUpdate::ConfigOptionUpdate(
-                ConfigOptionUpdate::new(config_options),
-            ));
-        }
-        self.reported_config_options.clone()
     }
 
     /// Locks acquisition and records the user-chosen title so later agent titles cannot win.

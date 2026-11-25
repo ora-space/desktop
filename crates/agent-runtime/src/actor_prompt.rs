@@ -110,7 +110,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let client = channel.connection.client.clone();
         // Catch events that arrived after the previous operation ended but before this command
         // was accepted. Setup updates in `pending_updates` are intentional and stay separate.
-        drain_idle_events(&mut channel, &self.command_sender).await;
+        drain_idle_events(self, &mut channel).await;
         if let Ok(control) = channel.controls.try_recv() {
             match control {
                 SessionControl::QueueOverflow => {
@@ -137,19 +137,29 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         }
         while let Some(notification) = channel.pending_updates.pop_front() {
-            self.observe_session_update(&notification.update);
+            let update = match notification.update {
+                // What was queued may have been replaced since, and is not to be taken again.
+                SessionUpdate::ConfigOptionUpdate(_) => SessionUpdate::ConfigOptionUpdate(
+                    ConfigOptionUpdate::new(self.reported_config_options.clone()),
+                ),
+                update => {
+                    self.observe_session_update(&update);
+                    update
+                }
+            };
             // Only a retry already has followers here, and they joined on the session it replaced.
-            if describes_provider(&notification.update) {
-                followers.send_update(&notification.update, None);
+            if describes_provider(&update) {
+                followers.send_update(&update, None);
             }
             if events
                 .try_send(Ok(PromptSessionEvent::SessionUpdate {
-                    update: notification.update,
+                    update,
                     tool_timing: None,
                 }))
                 .is_err()
             {
                 end_report.record(PromptEndCause::StreamDropped);
+                self.accept_changes_on(&mut channel);
                 self.isolate_channel(channel).await;
                 if attempt.skip_record {
                     self.end_turn(StopReason::Cancelled);
@@ -400,6 +410,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             {
                                 self.channel = Some(channel);
                             } else {
+                                if !session_invalid {
+                                    self.accept_changes_on(&mut channel);
+                                }
                                 self.isolate_channel(channel).await;
                             }
                         } else {
@@ -454,6 +467,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         end_report.record(PromptEndCause::StreamDropped);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
+                        self.accept_changes_on(&mut channel);
                         self.cancel(&client, &permissions.pending).await;
                         self.isolate_channel(channel).await;
                         return;
@@ -481,6 +495,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {
+                        if let Some(update) = self.settle_config_change(&mut channel, response) {
+                            followers.send_update(&update, None);
+                            let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                                update,
+                                tool_timing: None,
+                            }));
+                        }
                         continue;
                     }
                     if !permissions.pending.is_empty() {
@@ -594,6 +615,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             if reusable && delivered && !session_invalid {
                                 self.channel = Some(channel);
                             } else {
+                                if reusable && !session_invalid {
+                                    self.accept_changes_on(&mut channel);
+                                }
                                 self.isolate_channel(channel).await;
                             }
                         }
@@ -678,6 +702,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Command(RuntimeCommand::Stop { response }) => {
                     end_report.record(PromptEndCause::Unknown);
+                    self.accept_changes_on(&mut channel);
                     self.cancel(&client, &permissions.pending).await;
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
@@ -707,16 +732,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         accepted,
                     );
                 }
-                ActiveInput::Command(RuntimeCommand::ClaimDirectProviderCall { response }) => {
-                    let _ = response.send(self.provider_session_id().to_string());
-                }
-                ActiveInput::Command(RuntimeCommand::AdoptConfigOptions {
-                    agent_session_id,
-                    config_options,
-                    response,
-                }) => {
-                    let current = self.adopt_config_options(&agent_session_id, config_options);
-                    let _ = response.send(current);
+                ActiveInput::Command(RuntimeCommand::ChangeConfig(request)) => {
+                    self.change_config(Some(&mut channel), request).await;
                 }
                 ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
                     self.adopt_user_title(title);

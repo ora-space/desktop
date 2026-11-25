@@ -53,6 +53,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
     }
 
+    /// Unloads on request, which is no failure of the changes still on their way to the provider.
+    pub(super) async fn stop_unload(&mut self) {
+        if let Some(mut channel) = self.channel.take() {
+            self.accept_changes_on(&mut channel);
+            self.channel = Some(channel);
+        }
+        self.unload().await;
+    }
+
     /// Detaches from the provider without recording any lifecycle change.
     ///
     /// Used only when the manager retires this actor, because it owns the row's

@@ -371,10 +371,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {
+                        let _ = self.settle_config_change(&mut channel, response);
                         continue;
                     }
                     return match pending.finish(response) {
-                        Ok(_) => {
+                        Ok(answer) => {
+                            if let Some(config_options) = answer.config_options {
+                                self.adopt_config_options(config_options);
+                            }
                             ora_debug!(session_id = %self.session.id, "session/load MCP refresh completed");
                             self.channel = Some(channel);
                             Ok(())
@@ -406,6 +410,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Command(RuntimeCommand::Stop { response }) => {
                     self.cancel(&client, &HashMap::new()).await;
+                    self.accept_changes_on(&mut channel);
                     self.isolate_channel(channel).await;
                     let _ = response.send(Ok(StopSessionResponse {
                         session: contract_session(self.session.clone()),
@@ -415,16 +420,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 ActiveInput::Command(RuntimeCommand::RespondToPermission { response, .. }) => {
                     let _ = response.send(Err(permission_not_pending()));
                 }
-                ActiveInput::Command(RuntimeCommand::ClaimDirectProviderCall { response }) => {
-                    let _ = response.send(self.provider_session_id().to_string());
-                }
-                ActiveInput::Command(RuntimeCommand::AdoptConfigOptions {
-                    agent_session_id,
-                    config_options,
-                    response,
-                }) => {
-                    let current = self.adopt_config_options(&agent_session_id, config_options);
-                    let _ = response.send(current);
+                ActiveInput::Command(RuntimeCommand::ChangeConfig(request)) => {
+                    self.change_config(Some(&mut channel), request).await;
                 }
                 ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
                     self.adopt_user_title(title);

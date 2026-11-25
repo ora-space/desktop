@@ -43,15 +43,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Serializes operations for one logical session while the shared connection remains concurrent.
     pub(super) async fn run(mut self) {
         loop {
-            let command_sender = self.command_sender.clone();
+            // Residual events belong to the previous provider turn. Consume the current queue
+            // snapshot before accepting a new command so they cannot cross turns. Turn traffic
+            // among them is remembered for a caller judging a stopped turn.
+            self.drain_idle_channel().await;
             let command = match self.channel.as_mut() {
                 Some(channel) => {
-                    // Residual events belong to the previous provider turn. Consume the current
-                    // queue snapshot before accepting a new command so they cannot cross turns.
-                    // Turn traffic among them is remembered for a caller judging a stopped turn.
-                    if drain_idle_events(channel, &command_sender).await {
-                        self.turn_cancel.note_idle_traffic();
-                    }
                     if let Ok(control) = channel.controls.try_recv() {
                         self.handle_idle_control(Some(control)).await;
                         continue;
@@ -63,9 +60,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             continue;
                         }
                         command = self.commands.recv() => {
-                            if drain_idle_events(channel, &command_sender).await {
-                                self.turn_cancel.note_idle_traffic();
-                            }
+                            self.drain_idle_channel().await;
                             command
                         }
                         event = channel.events.recv() => {
@@ -76,8 +71,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             if super::events::is_turn_traffic(&event) {
                                 self.turn_cancel.note_idle_traffic();
                             }
-                            super::events::preserve_idle_update(channel, &event, &command_sender);
-                            super::events::settle_idle_event(&channel.connection.client, event).await;
+                            if let Some(mut channel) = self.channel.take() {
+                                super::events::consume_idle_event(&mut self, &mut channel, event)
+                                    .await;
+                                self.channel = Some(channel);
+                            }
                             continue;
                         }
                     }
@@ -164,7 +162,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 RuntimeCommand::Stop { response } => {
                     self.title_acquisition.close();
-                    self.unload().await;
+                    self.stop_unload().await;
                     let _ = response.send(Ok(StopSessionResponse {
                         session: contract_session(self.session.clone()),
                     }));
@@ -183,16 +181,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         let _ = completion.send(result);
                     }
                 }
-                RuntimeCommand::ClaimDirectProviderCall { response } => {
-                    let _ = response.send(self.provider_session_id().to_string());
-                }
-                RuntimeCommand::AdoptConfigOptions {
-                    agent_session_id,
-                    config_options,
-                    response,
-                } => {
-                    let current = self.adopt_config_options(&agent_session_id, config_options);
-                    let _ = response.send(current);
+                RuntimeCommand::ChangeConfig(request) => {
+                    let mut channel = self.channel.take();
+                    self.change_config(channel.as_mut(), request).await;
+                    self.channel = channel;
                 }
                 RuntimeCommand::AdoptUserTitle { title, response } => {
                     self.adopt_user_title(title);
@@ -206,6 +198,17 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
             }
         }
+    }
+
+    /// Consumes what an idle session's provider sent since it was last looked at.
+    async fn drain_idle_channel(&mut self) {
+        let Some(mut channel) = self.channel.take() else {
+            return;
+        };
+        if drain_idle_events(self, &mut channel).await {
+            self.turn_cancel.note_idle_traffic();
+        }
+        self.channel = Some(channel);
     }
 
     /// Streams Ora's record to a client that opened this conversation.
@@ -464,6 +467,7 @@ mod tests {
             rebuilt_binding: None,
             load_restoration: Default::default(),
             reported_config_options: Vec::new(),
+            direct_config_changes: Vec::new(),
             commands_exceed_limit: false,
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
@@ -549,6 +553,7 @@ mod tests {
             rebuilt_binding: None,
             load_restoration: Default::default(),
             reported_config_options: Vec::new(),
+            direct_config_changes: Vec::new(),
             commands_exceed_limit: false,
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
@@ -635,6 +640,7 @@ mod tests {
             rebuilt_binding: None,
             load_restoration: Default::default(),
             reported_config_options: Vec::new(),
+            direct_config_changes: Vec::new(),
             commands_exceed_limit: false,
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
