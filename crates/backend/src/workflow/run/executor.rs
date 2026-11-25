@@ -297,8 +297,8 @@ pub enum NodeExecutionError {
         /// Retained so a schema failure does not erase the Agent's auditable final response.
         output: Option<String>,
     },
-    #[error("node {node_id} is missing the frozen materialization receipt for skill {skill_id}")]
-    MissingSkillMaterialization { node_id: String, skill_id: String },
+    #[error("node {node_id} is missing required skill {skill_id}")]
+    MissingRequiredSkill { node_id: String, skill_id: String },
     #[error("prompt session ended without a stop reason")]
     SessionEndedWithoutStopReason,
     #[error("workflow node stopped before its session became visible")]
@@ -338,9 +338,7 @@ impl NodeExecutionError {
             Self::InvalidRunPayload => NodeFailureKind::InvalidRunPayload,
             Self::PromptTemplate { .. } => NodeFailureKind::PromptTemplate,
             Self::StructuredOutput { .. } => NodeFailureKind::StructuredOutput,
-            Self::MissingSkillMaterialization { .. } => {
-                NodeFailureKind::MissingSkillMaterialization
-            }
+            Self::MissingRequiredSkill { .. } => NodeFailureKind::MissingRequiredSkill,
             Self::SessionEndedWithoutStopReason => NodeFailureKind::SessionEndedWithoutStopReason,
             Self::SessionBindingRejected => NodeFailureKind::SessionBindingRejected,
             Self::BaselinePersist { .. } => NodeFailureKind::BaselinePersist,
@@ -354,7 +352,7 @@ impl NodeExecutionError {
             | Self::MissingAgentConfig { .. }
             | Self::InvalidRunPayload
             | Self::PromptTemplate { .. }
-            | Self::MissingSkillMaterialization { .. }
+            | Self::MissingRequiredSkill { .. }
             | Self::SessionEndedWithoutStopReason
             | Self::SessionBindingRejected
             | Self::BaselinePersist { .. }
@@ -749,7 +747,7 @@ fn resolve_required_skills(
     node_id: &str,
     skills: &[AgentSkill],
 ) -> Result<Vec<RequiredWorkflowSkill>, NodeExecutionError> {
-    let bindings = payload.skill_materialization.bindings_for_node(node_id);
+    let bindings = payload.skill_receipt.bindings_for_node(node_id);
     let skill_repository = SqliteSkillRepository::new(pool.clone());
     let mut required = Vec::new();
     let mut seen_skill_ids = HashSet::new();
@@ -760,7 +758,7 @@ fn resolve_required_skills(
         let binding = bindings
             .iter()
             .find(|binding| binding.skill_id == skill.skill_id)
-            .ok_or_else(|| NodeExecutionError::MissingSkillMaterialization {
+            .ok_or_else(|| NodeExecutionError::MissingRequiredSkill {
                 node_id: node_id.to_string(),
                 skill_id: skill.skill_id.clone(),
             })?;
@@ -771,12 +769,12 @@ fn resolve_required_skills(
         )
         .map_err(|error| match error {
             StartPrerequisitesError::Repository(source) => NodeExecutionError::Repository(source),
-            _ => NodeExecutionError::MissingSkillMaterialization {
+            _ => NodeExecutionError::MissingRequiredSkill {
                 node_id: node_id.to_string(),
                 skill_id: binding.skill_id.clone(),
             },
         })?
-        .ok_or_else(|| NodeExecutionError::MissingSkillMaterialization {
+        .ok_or_else(|| NodeExecutionError::MissingRequiredSkill {
             node_id: node_id.to_string(),
             skill_id: binding.skill_id.clone(),
         })?;
@@ -956,8 +954,8 @@ mod tests {
 
         let payload = WorkflowRunPayload::new(
             WorkflowRunLocale::ZhCn,
-            ora_application::SkillMaterializationReceipt {
-                bindings: vec![ora_application::MaterializedSkillBinding {
+            ora_application::WorkflowSkillReceipt {
+                bindings: vec![ora_application::FrozenSkillBinding {
                     node_id: "review-node".to_string(),
                     skill_id: "catalog-id".to_string(),
                     catalog_skill_id: Some("catalog-id".to_string()),
@@ -979,15 +977,15 @@ mod tests {
         );
         assert!(matches!(
             resolve_required_skills(&pool, &skills_root, &payload, "other-node", &skills),
-            Err(NodeExecutionError::MissingSkillMaterialization { node_id, skill_id })
+            Err(NodeExecutionError::MissingRequiredSkill { node_id, skill_id })
                 if node_id == "other-node" && skill_id == "catalog-id"
         ));
 
-        // Removing SKILL.md between run start and dispatch fails with MissingSkillMaterialization.
+        // Removing SKILL.md between run start and dispatch fails with MissingRequiredSkill.
         std::fs::remove_file(&review_skill_md).unwrap();
         assert!(matches!(
             resolve_required_skills(&pool, &skills_root, &payload, "review-node", &skills),
-            Err(NodeExecutionError::MissingSkillMaterialization { node_id, skill_id })
+            Err(NodeExecutionError::MissingRequiredSkill { node_id, skill_id })
                 if node_id == "review-node" && skill_id == "catalog-id"
         ));
     }
@@ -1045,8 +1043,8 @@ mod tests {
         let frozen_plugin_id = "plugin:official/review-pack:review";
         let payload = WorkflowRunPayload::new(
             WorkflowRunLocale::EnUs,
-            ora_application::SkillMaterializationReceipt {
-                bindings: vec![ora_application::MaterializedSkillBinding {
+            ora_application::WorkflowSkillReceipt {
+                bindings: vec![ora_application::FrozenSkillBinding {
                     node_id: "review-node".to_string(),
                     skill_id: "review".to_string(),
                     catalog_skill_id: Some(frozen_plugin_id.to_string()),
@@ -1071,15 +1069,15 @@ mod tests {
         repo.remove_plugin_skills(&plugin_id, 3).unwrap();
         assert!(matches!(
             resolve_required_skills(&pool, &skills_root, &payload, "review-node", &bare_skills),
-            Err(NodeExecutionError::MissingSkillMaterialization { node_id, skill_id })
+            Err(NodeExecutionError::MissingRequiredSkill { node_id, skill_id })
                 if node_id == "review-node" && skill_id == "review"
         ));
 
         // Legacy receipt without `catalog_skill_id` holding a `plugin:` ID must also fail closed.
         let legacy_plugin_payload = WorkflowRunPayload::new(
             WorkflowRunLocale::EnUs,
-            ora_application::SkillMaterializationReceipt {
-                bindings: vec![ora_application::MaterializedSkillBinding {
+            ora_application::WorkflowSkillReceipt {
+                bindings: vec![ora_application::FrozenSkillBinding {
                     node_id: "review-node".to_string(),
                     skill_id: frozen_plugin_id.to_string(),
                     catalog_skill_id: None,
@@ -1099,15 +1097,15 @@ mod tests {
                 "review-node",
                 &plugin_skills,
             ),
-            Err(NodeExecutionError::MissingSkillMaterialization { node_id, skill_id })
+            Err(NodeExecutionError::MissingRequiredSkill { node_id, skill_id })
                 if node_id == "review-node" && skill_id == frozen_plugin_id
         ));
 
         // Legacy receipt without `catalog_skill_id` holding a bare name still resolves local skill.
         let legacy_bare_payload = WorkflowRunPayload::new(
             WorkflowRunLocale::EnUs,
-            ora_application::SkillMaterializationReceipt {
-                bindings: vec![ora_application::MaterializedSkillBinding {
+            ora_application::WorkflowSkillReceipt {
+                bindings: vec![ora_application::FrozenSkillBinding {
                     node_id: "review-node".to_string(),
                     skill_id: "review".to_string(),
                     catalog_skill_id: None,

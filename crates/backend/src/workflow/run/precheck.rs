@@ -21,8 +21,8 @@
 use super::prerequisites::SkillRoleWorkspaceInitializer;
 use crate::error::BackendError;
 use ora_application::{
-    ApplicationError, ExecutionContext, NodeType, SkillMaterializationReceipt,
-    StartPrerequisitesError, WorkflowGraph, WorkflowRunEngineRepository, WorkflowRunPayload,
+    ApplicationError, ExecutionContext, NodeType, StartPrerequisitesError, WorkflowGraph,
+    WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowSkillReceipt,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_domain::{WorkflowRunId, WorkflowRunStatus};
@@ -101,7 +101,7 @@ pub(super) fn ensure_dependencies_available(
                     message: format!("failed to parse frozen workflow run payload: {error}"),
                 }
             })?;
-            Some(payload.skill_materialization)
+            Some(payload.skill_receipt)
         }
         None => None,
     };
@@ -121,7 +121,7 @@ impl DependencySources<'_> {
     pub(super) fn resolve_graph(
         &self,
         graph: &WorkflowGraph,
-    ) -> Result<SkillMaterializationReceipt, BackendError> {
+    ) -> Result<WorkflowSkillReceipt, BackendError> {
         let receipt =
             SkillRoleWorkspaceInitializer::new(self.skills_root.to_path_buf(), self.pool.clone())
                 .resolve_graph(graph)
@@ -135,8 +135,8 @@ impl DependencySources<'_> {
     pub(super) fn validate_frozen_graph(
         &self,
         graph: &WorkflowGraph,
-        frozen_receipt: &SkillMaterializationReceipt,
-    ) -> Result<SkillMaterializationReceipt, BackendError> {
+        frozen_receipt: &WorkflowSkillReceipt,
+    ) -> Result<WorkflowSkillReceipt, BackendError> {
         let receipt =
             SkillRoleWorkspaceInitializer::new(self.skills_root.to_path_buf(), self.pool.clone())
                 .validate_frozen_graph(graph, frozen_receipt)

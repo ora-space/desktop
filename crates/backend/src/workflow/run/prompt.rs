@@ -546,10 +546,11 @@ Rules:\n\
     }
 }
 
-/// Renders a filesystem path with portable separators for Agent-facing prompt text.
+/// Renders a filesystem path with native OS separators (matching session `<available_skills>`).
 pub(super) fn render_prompt_path(path: &Path) -> String {
-    path.to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/")
+    ora_utils::path::strip_verbatim_prefix(path)
+        .display()
+        .to_string()
 }
 
 /// Wraps owned prompt text as one ACP content block.
@@ -592,7 +593,7 @@ fn failure_kind_label(kind: NodeFailureKind, locale: WorkflowRunLocale) -> &'sta
         (WorkflowRunLocale::ZhCn, NodeFailureKind::InvalidRunPayload) => "运行的冻结数据无效",
         (WorkflowRunLocale::ZhCn, NodeFailureKind::PromptTemplate) => "提示词模板无法渲染",
         (WorkflowRunLocale::ZhCn, NodeFailureKind::StructuredOutput) => "结构化输出不合格",
-        (WorkflowRunLocale::ZhCn, NodeFailureKind::MissingSkillMaterialization) => "技能未就绪",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::MissingRequiredSkill) => "技能未就绪",
         (WorkflowRunLocale::ZhCn, NodeFailureKind::SessionEndedWithoutStopReason) => "会话异常结束",
         (WorkflowRunLocale::ZhCn, NodeFailureKind::SessionBindingRejected) => "会话未能建立",
         (WorkflowRunLocale::ZhCn, NodeFailureKind::BaselinePersist) => "工作区基线保存失败",
@@ -616,9 +617,7 @@ fn failure_kind_label(kind: NodeFailureKind, locale: WorkflowRunLocale) -> &'sta
             "Prompt template cannot render"
         }
         (WorkflowRunLocale::EnUs, NodeFailureKind::StructuredOutput) => "Structured output invalid",
-        (WorkflowRunLocale::EnUs, NodeFailureKind::MissingSkillMaterialization) => {
-            "Skill unavailable"
-        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::MissingRequiredSkill) => "Skill unavailable",
         (WorkflowRunLocale::EnUs, NodeFailureKind::SessionEndedWithoutStopReason) => {
             "Session ended unexpectedly"
         }
@@ -1083,18 +1082,17 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn agent_facing_paths_use_forward_slashes_on_windows() {
-        let path = Path::new(r"D:\Projects\desktop")
+    fn agent_facing_paths_use_native_separators_on_windows() {
+        let path = Path::new(r"\\?\D:\Projects\desktop")
             .join(".data")
-            .join("worktrees")
-            .join("run-1")
-            .join(".agents")
+            .join("atoms")
             .join("skills")
-            .join("openspec-explore");
+            .join("openspec-explore")
+            .join("SKILL.md");
 
         assert_eq!(
             render_prompt_path(&path),
-            "D:/Projects/desktop/.data/worktrees/run-1/.agents/skills/openspec-explore"
+            r"D:\Projects\desktop\.data\atoms\skills\openspec-explore\SKILL.md"
         );
     }
 

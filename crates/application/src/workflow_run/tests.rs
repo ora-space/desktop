@@ -303,8 +303,8 @@ impl WorkflowRunWorkspaceInitializer for NoopWorkspaceInitializer {
         &self,
         _graph: &crate::WorkflowGraph,
         _workspace_root: &std::path::Path,
-    ) -> Result<crate::SkillMaterializationReceipt, StartPrerequisitesError> {
-        Ok(crate::SkillMaterializationReceipt::default())
+    ) -> Result<crate::WorkflowSkillReceipt, StartPrerequisitesError> {
+        Ok(crate::WorkflowSkillReceipt::default())
     }
 }
 

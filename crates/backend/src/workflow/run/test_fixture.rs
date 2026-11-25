@@ -7,11 +7,10 @@ use agent_client_protocol_schema::v1::{
     ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
 };
 use ora_application::{
-    Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository,
-    SkillMaterializationReceipt, WorkflowGraph, WorkflowGraphNode, WorkflowNodeRunIdGenerator,
-    WorkflowRepository, WorkflowRunEngine, WorkflowRunEngineRepository,
-    WorkflowRunInvalidationPublisher, WorkflowRunPayload, WorkflowRunRepository,
-    WorkflowVariablePool,
+    Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository, WorkflowGraph,
+    WorkflowGraphNode, WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunEngine,
+    WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher, WorkflowRunPayload,
+    WorkflowRunRepository, WorkflowSkillReceipt, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_db::{
@@ -294,7 +293,7 @@ pub(crate) fn seeded_pending_run(
     let parsed_graph = WorkflowGraph::parse(graph).unwrap();
     let payload = WorkflowRunPayload::with_variable_pool(
         WorkflowRunLocale::EnUs,
-        SkillMaterializationReceipt::default(),
+        WorkflowSkillReceipt::default(),
         parsed_graph.start_node().map(|node| node.id.clone()),
         WorkflowVariablePool::from_graph(&parsed_graph),
     );

@@ -111,7 +111,7 @@ const state = createWorkspaceMemory();
 const client = createTestClient(workspaceHandlers(state));
 ```
 
-Synthetic fixtures such as `emptyFilesHandlers` and `readyEffectHandlers` describe their behavior in
+Synthetic fixtures such as `emptyFilesHandlers` describe their behavior in
 their names and are never global defaults; a test with no dependencies starts from
 `createTestClient({})`. Custom behavior, including scripted chat streams and injected failures,
 uses typed handlers. Never replace generated client methods or cast partial objects to

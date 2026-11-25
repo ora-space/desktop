@@ -8,13 +8,13 @@ use thiserror::Error;
 /// Records the frozen catalog skill bindings selected for one workflow run.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SkillMaterializationReceipt {
-    pub bindings: Vec<MaterializedSkillBinding>,
+pub struct WorkflowSkillReceipt {
+    pub bindings: Vec<FrozenSkillBinding>,
 }
 
-impl SkillMaterializationReceipt {
+impl WorkflowSkillReceipt {
     /// Returns the frozen skill bindings belonging to one graph node in declaration order.
-    pub fn bindings_for_node(&self, node_id: &str) -> Vec<&MaterializedSkillBinding> {
+    pub fn bindings_for_node(&self, node_id: &str) -> Vec<&FrozenSkillBinding> {
         self.bindings
             .iter()
             .filter(|binding| binding.node_id == node_id)
@@ -25,7 +25,7 @@ impl SkillMaterializationReceipt {
 /// Binds one graph node's declared skill to its frozen catalog identifier and invocation name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MaterializedSkillBinding {
+pub struct FrozenSkillBinding {
     pub node_id: String,
     pub skill_id: String,
     /// Exact catalog row identifier resolved when the run or snapshot was frozen.
@@ -43,7 +43,9 @@ pub struct MaterializedSkillBinding {
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowRunPayload {
     pub locale: WorkflowRunLocale,
-    pub skill_materialization: SkillMaterializationReceipt,
+    /// Preserves the persisted `"skillMaterialization"` JSON key for compatibility with existing rows.
+    #[serde(rename = "skillMaterialization")]
+    pub skill_receipt: WorkflowSkillReceipt,
     /// Identifies the owner of editable Start variables without treating the run instruction as one.
     #[serde(default)]
     pub start_node_id: Option<String>,
@@ -82,14 +84,11 @@ impl Default for WorkflowRunPayload {
 }
 
 impl WorkflowRunPayload {
-    /// Creates the immutable execution metadata captured while the run worktree is initialized.
-    pub fn new(
-        locale: WorkflowRunLocale,
-        skill_materialization: SkillMaterializationReceipt,
-    ) -> Self {
+    /// Creates the immutable execution metadata captured while the run is initialized.
+    pub fn new(locale: WorkflowRunLocale, skill_receipt: WorkflowSkillReceipt) -> Self {
         Self {
             locale,
-            skill_materialization,
+            skill_receipt,
             start_node_id: None,
             variable_pool: WorkflowVariablePool::default(),
             condition_decisions: BTreeMap::new(),
@@ -102,13 +101,13 @@ impl WorkflowRunPayload {
     /// Creates run metadata with the graph-derived variable pool used by a new execution.
     pub fn with_variable_pool(
         locale: WorkflowRunLocale,
-        skill_materialization: SkillMaterializationReceipt,
+        skill_receipt: WorkflowSkillReceipt,
         start_node_id: Option<String>,
         variable_pool: WorkflowVariablePool,
     ) -> Self {
         Self {
             locale,
-            skill_materialization,
+            skill_receipt,
             start_node_id,
             variable_pool,
             condition_decisions: BTreeMap::new(),
@@ -204,11 +203,11 @@ mod tests {
 
     /// Persisted skill bindings round-trip with catalog id and invocation name.
     #[test]
-    fn workflow_run_payload_round_trips_materialized_skill_bindings() {
+    fn workflow_run_payload_round_trips_frozen_skill_bindings() {
         let expected = WorkflowRunPayload::new(
             WorkflowRunLocale::EnUs,
-            SkillMaterializationReceipt {
-                bindings: vec![MaterializedSkillBinding {
+            WorkflowSkillReceipt {
+                bindings: vec![FrozenSkillBinding {
                     node_id: "review".to_string(),
                     skill_id: "review".to_string(),
                     catalog_skill_id: Some("plugin:official/review-pack:review".to_string()),
@@ -234,8 +233,8 @@ mod tests {
             serde_json::from_str::<WorkflowRunPayload>(encoded).unwrap(),
             WorkflowRunPayload::new(
                 WorkflowRunLocale::EnUs,
-                SkillMaterializationReceipt {
-                    bindings: vec![MaterializedSkillBinding {
+                WorkflowSkillReceipt {
+                    bindings: vec![FrozenSkillBinding {
                         node_id: "review".to_string(),
                         skill_id: "catalog-id".to_string(),
                         catalog_skill_id: None,

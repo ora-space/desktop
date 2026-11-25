@@ -575,7 +575,7 @@ async fn switched_receipt_freezes_catalog_skill_bindings_without_workspace_paths
         .unwrap();
     let payload: ora_application::WorkflowRunPayload =
         serde_json::from_str(row.payload.as_deref().unwrap()).unwrap();
-    let bindings = payload.skill_materialization.bindings_for_node("reviewer");
+    let bindings = payload.skill_receipt.bindings_for_node("reviewer");
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].skill_id, "code_review");
     assert_eq!(

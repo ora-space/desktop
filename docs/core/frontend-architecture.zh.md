@@ -65,4 +65,4 @@ const state = createWorkspaceMemory();
 const client = createTestClient(workspaceHandlers(state));
 ```
 
-`emptyFilesHandlers`、`readyEffectHandlers` 这类合成 fixture 用名字说明自己的行为，从不作为全局默认；没有依赖的测试从 `createTestClient({})` 开始。自定义行为，包括脚本化的聊天流和注入的失败，都用带类型的 handler 实现。永远不要替换生成客户端的方法，也不要把部分对象强转成 `ContractsClient`。handler 断言要包含传输层的第二个参数 `options`。
+`emptyFilesHandlers` 这类合成 fixture 用名字说明自己的行为，从不作为全局默认；没有依赖的测试从 `createTestClient({})` 开始。自定义行为，包括脚本化的聊天流和注入的失败，都用带类型的 handler 实现。永远不要替换生成客户端的方法，也不要把部分对象强转成 `ContractsClient`。handler 断言要包含传输层的第二个参数 `options`。

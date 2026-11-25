@@ -242,7 +242,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
     }
 
-    /// Waits for the Agent Session Barrier so MCP refresh cannot race Effect mutation.
+    /// Waits for the Agent Session Barrier to serialize live MCP refreshes for this agent plugin.
     async fn acquire_mcp_barrier(&self) -> Option<BarrierGuard> {
         let plugin_id = self
             .session_mcp
@@ -302,7 +302,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 Vec::new()
             }
         };
-        let request = crate::skill_catalog::apply_skill_setup_to_load_session(
+        let request = crate::skill_catalog::apply_skill_setup(
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
                 .mcp_servers(servers),
             channel.connection.additional_directories_supported,

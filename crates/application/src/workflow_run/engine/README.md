@@ -43,13 +43,12 @@ runtime registered for its node type.
   `complete_iteration_node`) and `FailurePropagation`: a failure inside a composite region
   resolves to the owning composite node (`Composite`), and the owner's error strategy decides at
   settlement whether the node fails (`fail`) or records the round and advances (`continue`).
-- **Worktree initializer port** (`ports.rs`): the `WorkflowRunWorktreeInitializer` trait that the
-  deploy flow calls to validate roles and resolve Effect-owned skill placements. It returns the
-  actual per-node placements as a receipt rather than exposing a directory convention to later
-  execution layers.
-- **Skill delivery model** (`skill_delivery.rs`): Agent capability, non-empty validated discovery
-  roots, frozen materialization bindings, and the typed workflow-run payload shared by deployment
-  and node execution.
+- **Workspace initializer port** (`ports.rs`): the `WorkflowRunWorkspaceInitializer` trait that the
+  deploy flow calls to validate roles and freeze enabled Skill catalog bindings. It returns the
+  per-node catalog bindings as a `WorkflowSkillReceipt` without writing files into the workspace.
+- **Skill delivery model** (`skill_delivery.rs`): frozen catalog skill bindings
+  (`WorkflowSkillReceipt`, `FrozenSkillBinding`) and the typed workflow-run payload shared by
+  deployment and node execution.
 - **Composite scheduler** (`engine/composite_scheduler.rs`): execute pure advance plans through
   atomic repository operations, then dispatch newly started rows with their committed pool.
 - **Loop scheduler** (`engine/loop_scheduler.rs`): create or resume one durable round scope,
@@ -98,7 +97,7 @@ Exported from `workflow_run::engine`: `WorkflowRunEngine`, `WorkflowRunControlHa
 `NodeExecutor`, `WorkflowRunCallback`, `WorkflowRunEngineRepository`,
 `WorkflowRunInvalidationPublisher`, `NoRunInvalidations`, `WorkflowGraph`,
 `WorkflowGraphNode`, `AgentConfig`, `AgentExecutor`, `AgentSkill`, `AgentMcp`, `NodeType`,
-`GraphError`, `UnknownNodeType`, `SkillMaterializationReceipt`, `MaterializedSkillBinding`,
+`GraphError`, `UnknownNodeType`, `WorkflowSkillReceipt`, `FrozenSkillBinding`,
 `WorkflowRunPayload`, the automatic-retry types (`AgentRetryPolicy`, `WorkflowRetryRepository`,
 `WorkflowRetryTimer`, `NoRetryTimer`, `NodeRetryWait`, `NodeAutoRetry`), and the repository
 outcome enums including `BindWorkflowNodeSessionResult`. The node runtime traits and registry are internal to the engine
@@ -144,9 +143,10 @@ node-run transition — engine or interactive — publishes one event. `ora-db` 
   is React Flow's `data.kind`, read through a serde rename.
 - Full-graph order and transitive closures use the same topological rank (upstream first), giving
   agent prompt assembly a stable panorama and input lineage.
-- Skill discovery roots are validated worktree-relative paths supplied through an Agent capability
-  provider. Deployment freezes the actual invocation name and package paths per node; execution
-  does not re-resolve those values from the mutable global skill catalog.
+- Deployment validates each enabled Skill against Ora's live catalog (rejecting ambiguous bare
+  names) and freezes its exact `catalog_skill_id` and `invocation_name` per node; execution
+  resolves that frozen ID to its live formal-storage `SKILL.md` path and never falls back to a
+  different skill of the same name.
 - An agent node's `output` is its final assistant text. Complete conversation history belongs to
   the Ora session and is never duplicated into `workflow_node_runs`.
 - A running agent node keeps `session_id` absent while its owning prompt is being prepared. The

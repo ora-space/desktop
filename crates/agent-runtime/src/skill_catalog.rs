@@ -152,40 +152,50 @@ pub(crate) fn skill_directories_meta(entries: &[SkillCatalogEntry]) -> Option<Me
     Some(meta)
 }
 
-/// Attaches skill readable roots and `_meta` to an ACP `session/new` request when applicable.
-///
-/// Hosts with empty catalogs and roots (such as `ora-node`) leave both fields untouched, keeping
-/// the serialized ACP payload identical to prior releases.
-pub(crate) fn apply_skill_setup_to_new_session(
-    mut request: NewSessionRequest,
-    additional_directories_supported: bool,
-    extra_read_roots: Vec<PathBuf>,
-    entries: &[SkillCatalogEntry],
-) -> NewSessionRequest {
-    if additional_directories_supported && !extra_read_roots.is_empty() {
-        request = request.additional_directories(extra_read_roots);
-    }
-    if let Some(meta) = skill_directories_meta(entries) {
-        request = request.meta(meta);
-    }
-    request
+/// ACP session setup requests that can carry readable roots and skill directory metadata.
+pub(crate) trait SkillSetupRequest: Sized {
+    fn with_additional_directories(self, directories: Vec<PathBuf>) -> Self;
+    fn with_meta(self, meta: Meta) -> Self;
 }
 
-/// Attaches skill readable roots and `_meta` to an ACP `session/load` request when applicable.
+impl SkillSetupRequest for NewSessionRequest {
+    fn with_additional_directories(self, directories: Vec<PathBuf>) -> Self {
+        self.additional_directories(directories)
+    }
+
+    fn with_meta(self, meta: Meta) -> Self {
+        self.meta(meta)
+    }
+}
+
+impl SkillSetupRequest for LoadSessionRequest {
+    fn with_additional_directories(self, directories: Vec<PathBuf>) -> Self {
+        self.additional_directories(directories)
+    }
+
+    fn with_meta(self, meta: Meta) -> Self {
+        self.meta(meta)
+    }
+}
+
+/// Attaches skill readable roots and `_meta` to an ACP `session/new` or `session/load` request
+/// when applicable.
 ///
-/// ACP specifies that `session/load` carries the complete `additionalDirectories` list rather than
-/// a diff, so every load sends the full list when the Agent advertised the capability.
-pub(crate) fn apply_skill_setup_to_load_session(
-    mut request: LoadSessionRequest,
+/// Hosts with empty catalogs and roots (such as `ora-node`) leave both fields untouched, keeping
+/// the serialized ACP payload identical to prior releases. ACP specifies that `session/load`
+/// carries the complete `additionalDirectories` list rather than a diff, so both setup requests
+/// send the full list whenever the Agent advertised the capability.
+pub(crate) fn apply_skill_setup<R: SkillSetupRequest>(
+    mut request: R,
     additional_directories_supported: bool,
     extra_read_roots: Vec<PathBuf>,
     entries: &[SkillCatalogEntry],
-) -> LoadSessionRequest {
+) -> R {
     if additional_directories_supported && !extra_read_roots.is_empty() {
-        request = request.additional_directories(extra_read_roots);
+        request = request.with_additional_directories(extra_read_roots);
     }
     if let Some(meta) = skill_directories_meta(entries) {
-        request = request.meta(meta);
+        request = request.with_meta(meta);
     }
     request
 }

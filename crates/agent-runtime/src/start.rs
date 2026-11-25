@@ -436,7 +436,7 @@ async fn await_session_new<T: AcpTransport>(
     activity: &SetupActivity,
     window: Duration,
 ) -> Result<NewSessionResponse, RuntimeError> {
-    let params = crate::skill_catalog::apply_skill_setup_to_new_session(
+    let params = crate::skill_catalog::apply_skill_setup(
         NewSessionRequest::new(cwd).mcp_servers(servers),
         additional_directories_supported,
         extra_read_roots,

@@ -4,9 +4,8 @@
 //! and `specs/test-cases/desktop/core/agent/session/skill/session-setup-and-hosts.md`.
 
 use super::{
-    AnnouncedSkills, SKILL_DIRECTORIES_META_KEY, apply_skill_setup_to_load_session,
-    apply_skill_setup_to_new_session, insert_catalog_block, prepare_skill_catalog_injection,
-    skill_directories_meta,
+    AnnouncedSkills, SKILL_DIRECTORIES_META_KEY, apply_skill_setup, insert_catalog_block,
+    prepare_skill_catalog_injection, skill_directories_meta,
 };
 use crate::host::SkillCatalogEntry;
 use agent_client_protocol_schema::v1::{
@@ -236,7 +235,7 @@ fn setup_requests_follow_capability_negotiation_and_preserve_empty_wire_shape() 
         "/app-data/atoms/skills/review",
     )];
 
-    let with_cap_new = apply_skill_setup_to_new_session(
+    let with_cap_new = apply_skill_setup(
         NewSessionRequest::new("/workspace"),
         /*additional_directories_supported*/ true,
         roots.clone(),
@@ -251,7 +250,7 @@ fn setup_requests_follow_capability_negotiation_and_preserve_empty_wire_shape() 
         Some(&serde_json::json!(["/app-data/atoms/skills/review"]))
     );
 
-    let without_cap_load = apply_skill_setup_to_load_session(
+    let without_cap_load = apply_skill_setup(
         LoadSessionRequest::new("provider-1", "/workspace"),
         /*additional_directories_supported*/ false,
         roots,
@@ -261,7 +260,7 @@ fn setup_requests_follow_capability_negotiation_and_preserve_empty_wire_shape() 
     assert!(without_cap_load.meta.is_some());
 
     // Empty host (Node) produces the exact same JSON as bare NewSessionRequest / LoadSessionRequest.
-    let node_new = apply_skill_setup_to_new_session(
+    let node_new = apply_skill_setup(
         NewSessionRequest::new("/workspace"),
         /*additional_directories_supported*/ true,
         Vec::new(),
@@ -271,7 +270,7 @@ fn setup_requests_follow_capability_negotiation_and_preserve_empty_wire_shape() 
         serde_json::to_value(&node_new).unwrap(),
         serde_json::to_value(NewSessionRequest::new("/workspace")).unwrap()
     );
-    let node_load = apply_skill_setup_to_load_session(
+    let node_load = apply_skill_setup(
         LoadSessionRequest::new("provider-1", "/workspace"),
         /*additional_directories_supported*/ true,
         Vec::new(),

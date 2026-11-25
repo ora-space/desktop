@@ -3,8 +3,8 @@
 use super::prerequisites::SkillRoleWorkspaceInitializer;
 use super::test_fixture::{ClockAt, RecordingExecutor, bootstrap, run_test, seeded_pending_run};
 use ora_application::{
-    SkillMaterializationReceipt, UuidWorkflowNodeRunIdGenerator, WorkflowGraph, WorkflowRunEngine,
-    WorkflowRunEngineRepository, WorkflowRunWorkspaceInitializer,
+    UuidWorkflowNodeRunIdGenerator, WorkflowGraph, WorkflowRunEngine, WorkflowRunEngineRepository,
+    WorkflowRunWorkspaceInitializer, WorkflowSkillReceipt,
 };
 use ora_db::SqliteWorkflowRunEngineRepository;
 use ora_domain::WorkflowRunStatus;
@@ -58,7 +58,7 @@ fn unused_agents_are_excluded_from_preparation_execution_and_restart() {
             initializer
                 .initialize_workspace(&graph, temp.path())
                 .unwrap(),
-            SkillMaterializationReceipt::default()
+            WorkflowSkillReceipt::default()
         );
         let run_id = seeded_pending_run(&temp, &pool, &source);
         let repository = SqliteWorkflowRunEngineRepository::new(pool);

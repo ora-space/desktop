@@ -2,9 +2,9 @@
 
 use crate::error::BackendError;
 use ora_application::{
-    ApplicationError, SkillMaterializationReceipt, SnapshotIncompatibility, SnapshotSwitchPlan,
-    WorkflowGraph, WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunPayload,
-    WorkflowRunRepository, WorkflowVariablePool, plan_snapshot_switch,
+    ApplicationError, SnapshotIncompatibility, SnapshotSwitchPlan, WorkflowGraph,
+    WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowRunRepository,
+    WorkflowSkillReceipt, WorkflowVariablePool, plan_snapshot_switch,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_db::{
@@ -135,8 +135,8 @@ pub(super) fn prepare_resume(
     snapshot_id: Option<&str>,
     resolve: impl FnOnce(
         &WorkflowGraph,
-        Option<&SkillMaterializationReceipt>,
-    ) -> Result<SkillMaterializationReceipt, BackendError>,
+        Option<&WorkflowSkillReceipt>,
+    ) -> Result<WorkflowSkillReceipt, BackendError>,
 ) -> Result<Option<PreparedSwitch>, BackendError> {
     let context = load_context(pool, run_id)?;
     let Some(snapshot_id) = snapshot_id.filter(|id| *id != context.run.snapshot_id.as_ref()) else {
@@ -147,7 +147,7 @@ pub(super) fn prepare_resume(
                     .map_err(|error| ApplicationError::WorkflowRunStartFailed {
                         message: format!("failed to parse frozen workflow run payload: {error}"),
                     })?
-                    .skill_materialization,
+                    .skill_receipt,
             ),
             None => None,
         };
@@ -172,7 +172,7 @@ pub(super) fn prepare_resume(
     let new_graph = WorkflowGraph::parse(&target.graph).map_err(ApplicationError::from)?;
     let receipt = resolve(&new_graph, /*frozen_receipt*/ None)?;
     let mut payload = parsed_payload(context.run.payload.as_deref());
-    payload.skill_materialization = receipt;
+    payload.skill_receipt = receipt;
     payload.variable_pool = plan.variable_pool;
     payload.start_node_id = new_graph.start_node().map(|node| node.id.clone());
     let payload_json = serde_json::to_string(&payload).map_err(|error| {

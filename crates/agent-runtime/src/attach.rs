@@ -224,7 +224,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 Vec::new()
             }
         };
-        let request = crate::skill_catalog::apply_skill_setup_to_load_session(
+        let request = crate::skill_catalog::apply_skill_setup(
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
                 .mcp_servers(servers),
             channel.connection.additional_directories_supported,

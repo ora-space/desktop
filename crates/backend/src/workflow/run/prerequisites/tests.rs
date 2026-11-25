@@ -1,5 +1,5 @@
 use super::*;
-use ora_application::{SkillMaterializationReceipt, StartPrerequisitesError, WorkflowGraph};
+use ora_application::{StartPrerequisitesError, WorkflowGraph, WorkflowSkillReceipt};
 use ora_db::{
     DatabaseBootstrapper, DatabaseLocation, PluginSkillProjection, SqliteSkillRepository,
     default_migration_catalog,
@@ -112,15 +112,15 @@ fn freezes_catalog_bindings_for_local_and_plugin_skills_without_writing_workspac
 
     assert_eq!(
         receipt,
-        SkillMaterializationReceipt {
+        WorkflowSkillReceipt {
             bindings: vec![
-                MaterializedSkillBinding {
+                FrozenSkillBinding {
                     node_id: "agent".to_string(),
                     skill_id: "uuid-local-1".to_string(),
                     catalog_skill_id: Some("uuid-local-1".to_string()),
                     invocation_name: "sfmea-review".to_string(),
                 },
-                MaterializedSkillBinding {
+                FrozenSkillBinding {
                     node_id: "agent".to_string(),
                     skill_id: "plugin:official/review-pack:audit_code".to_string(),
                     catalog_skill_id: Some("plugin:official/review-pack:audit_code".to_string()),
@@ -249,8 +249,8 @@ fn initialize_workspace_records_child_loop_skills_without_copying_packages() {
 
     assert_eq!(
         receipt,
-        SkillMaterializationReceipt {
-            bindings: vec![MaterializedSkillBinding {
+        WorkflowSkillReceipt {
+            bindings: vec![FrozenSkillBinding {
                 node_id: "inner".to_string(),
                 skill_id: "review".to_string(),
                 catalog_skill_id: Some("review".to_string()),
@@ -396,7 +396,7 @@ fn rejects_conflicting_invocation_names_across_distinct_skills_and_allows_reuse(
     assert!(
         matches!(
             &error,
-            StartPrerequisitesError::SkillMaterializationError { message }
+            StartPrerequisitesError::SkillDependencyError { message }
                 if message.contains("/qa-review")
         ),
         "expected invocation collision error, got: {error:?}"
@@ -477,7 +477,7 @@ fn rejects_ambiguous_bare_skill_name_while_allowing_exact_catalog_ids() {
     assert!(
         matches!(
             &error,
-            StartPrerequisitesError::SkillMaterializationError { message }
+            StartPrerequisitesError::SkillDependencyError { message }
                 if message.contains("Code review")
                     && message.contains("review")
                     && message.contains("uuid-local-review")

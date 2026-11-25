@@ -2,9 +2,9 @@
 mod tests;
 
 use ora_application::{
-    AgentDefinitionRepository, FilesystemSkillStorage, MaterializedSkillBinding, NodeType,
-    RepositoryError, SkillMaterializationReceipt, SkillRepository, StartPrerequisitesError,
-    WorkflowGraph, WorkflowGraphNode, WorkflowRunWorkspaceInitializer, skill_package_is_usable,
+    AgentDefinitionRepository, FilesystemSkillStorage, FrozenSkillBinding, NodeType,
+    RepositoryError, SkillRepository, StartPrerequisitesError, WorkflowGraph, WorkflowGraphNode,
+    WorkflowRunWorkspaceInitializer, WorkflowSkillReceipt, skill_package_is_usable,
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository};
 use ora_domain::{AgentDefinitionId, Namespace, Skill, SkillId, SkillOrigin};
@@ -43,7 +43,7 @@ impl SkillRoleWorkspaceInitializer {
     pub(super) fn resolve_graph(
         &self,
         graph: &WorkflowGraph,
-    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
+    ) -> Result<WorkflowSkillReceipt, StartPrerequisitesError> {
         self.resolve_graph_with_frozen(graph, /*frozen_receipt*/ None)
     }
 
@@ -52,16 +52,16 @@ impl SkillRoleWorkspaceInitializer {
     pub(super) fn validate_frozen_graph(
         &self,
         graph: &WorkflowGraph,
-        frozen_receipt: &SkillMaterializationReceipt,
-    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
+        frozen_receipt: &WorkflowSkillReceipt,
+    ) -> Result<WorkflowSkillReceipt, StartPrerequisitesError> {
         self.resolve_graph_with_frozen(graph, Some(frozen_receipt))
     }
 
     fn resolve_graph_with_frozen(
         &self,
         graph: &WorkflowGraph,
-        frozen_receipt: Option<&SkillMaterializationReceipt>,
-    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
+        frozen_receipt: Option<&WorkflowSkillReceipt>,
+    ) -> Result<WorkflowSkillReceipt, StartPrerequisitesError> {
         let roles = collect_roles(graph);
         let agent_repository = SqliteAgentDefinitionRepository::new(self.pool.clone());
         for role_id in &roles {
@@ -81,7 +81,7 @@ impl WorkflowRunWorkspaceInitializer for SkillRoleWorkspaceInitializer {
         &self,
         graph: &WorkflowGraph,
         _workspace_root: &Path,
-    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
+    ) -> Result<WorkflowSkillReceipt, StartPrerequisitesError> {
         self.resolve_graph(graph)
     }
 }
@@ -123,9 +123,9 @@ fn resolve_graph_skill_bindings(
     skills_root: &Path,
     skill_repository: &SqliteSkillRepository,
     graph: &WorkflowGraph,
-    frozen_receipt: Option<&SkillMaterializationReceipt>,
-) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
-    let mut receipt = SkillMaterializationReceipt::default();
+    frozen_receipt: Option<&WorkflowSkillReceipt>,
+) -> Result<WorkflowSkillReceipt, StartPrerequisitesError> {
+    let mut receipt = WorkflowSkillReceipt::default();
     let mut resolved_invocations = HashMap::<String, (String, String)>::new();
     for node in graph
         .execution_scopes()
@@ -165,8 +165,8 @@ fn resolve_graph_skill_bindings(
                 None => {
                     resolve_graph_ref_skill_entry(skills_root, skill_repository, &skill.skill_id)
                         .map_err(|error| match error {
-                            StartPrerequisitesError::SkillMaterializationError { message } => {
-                                StartPrerequisitesError::SkillMaterializationError {
+                            StartPrerequisitesError::SkillDependencyError { message } => {
+                                StartPrerequisitesError::SkillDependencyError {
                                     message: format!(
                                         "node {} ({}): {message}",
                                         node_display_name(node),
@@ -189,7 +189,7 @@ fn resolve_graph_skill_bindings(
                 resolved_invocations.get(&resolved.invocation_name)
                 && existing_id != &resolved.catalog_skill_id
             {
-                return Err(StartPrerequisitesError::SkillMaterializationError {
+                return Err(StartPrerequisitesError::SkillDependencyError {
                     message: format!(
                         "skills {existing_name} ({existing_id}) and {} ({}) resolve to the same prompt invocation /{}",
                         resolved.catalog_name, resolved.catalog_skill_id, resolved.invocation_name
@@ -204,7 +204,7 @@ fn resolve_graph_skill_bindings(
                         resolved.catalog_name.clone(),
                     )
                 });
-            receipt.bindings.push(MaterializedSkillBinding {
+            receipt.bindings.push(FrozenSkillBinding {
                 node_id: node.id.clone(),
                 skill_id: skill.skill_id.clone(),
                 catalog_skill_id: Some(resolved.catalog_skill_id),
@@ -215,7 +215,7 @@ fn resolve_graph_skill_bindings(
     Ok(receipt)
 }
 
-/// Resolves one frozen `MaterializedSkillBinding` for node dispatch.
+/// Resolves one frozen `FrozenSkillBinding` for node dispatch.
 ///
 /// Bindings that froze `catalog_skill_id` resolve strictly by that exact ID so an uninstalled
 /// skill never falls back to a same-named skill. Legacy pre-Effect-retirement receipts without
@@ -223,7 +223,7 @@ fn resolve_graph_skill_bindings(
 pub(super) fn resolve_binding_skill_entry(
     skills_root: &Path,
     skill_repository: &SqliteSkillRepository,
-    binding: &MaterializedSkillBinding,
+    binding: &FrozenSkillBinding,
 ) -> Result<Option<ResolvedCatalogSkill>, StartPrerequisitesError> {
     match binding.catalog_skill_id.as_deref() {
         Some(catalog_skill_id) => {
@@ -292,7 +292,7 @@ pub(super) fn resolve_graph_ref_skill_entry(
             .map(|skill| format!("{} ({})", skill.id, skill.namespace))
             .collect::<Vec<_>>()
             .join(", ");
-        return Err(StartPrerequisitesError::SkillMaterializationError {
+        return Err(StartPrerequisitesError::SkillDependencyError {
             message: format!(
                 "skill reference `{skill_id}` matches multiple skills ({candidates}); specify a concrete skill instead"
             ),
@@ -310,7 +310,7 @@ fn usable_entry(
     skill: &Skill,
 ) -> Result<Option<ResolvedCatalogSkill>, StartPrerequisitesError> {
     let usable = skill_package_is_usable(storage, skill).map_err(|error| {
-        StartPrerequisitesError::SkillMaterializationError {
+        StartPrerequisitesError::SkillDependencyError {
             message: error.to_string(),
         }
     })?;

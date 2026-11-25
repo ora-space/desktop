@@ -1610,12 +1610,20 @@ fn skill_plugins_bound_to_agent_nodes_reach_the_prompt() -> TestResult {
                 prompt.contains("- code-review:"),
                 "missing normalized skill invocation in <required_skills>: {prompt:?}"
             );
+            let expected_installed_segment = std::path::Path::new("plugins")
+                .join("installed")
+                .to_string_lossy()
+                .into_owned();
+            let expected_legacy_segment = std::path::Path::new(".opencode")
+                .join("skills")
+                .to_string_lossy()
+                .into_owned();
             assert!(
-                prompt.contains("plugins/installed/") && prompt.contains("SKILL.md"),
+                prompt.contains(&expected_installed_segment) && prompt.contains("SKILL.md"),
                 "the prompt must point to the formal plugin storage SKILL.md path: {prompt:?}"
             );
             assert!(
-                !prompt.contains(".opencode/skills/"),
+                !prompt.contains(&expected_legacy_segment) && !prompt.contains(".opencode/skills/"),
                 "the prompt must not reference workspace materialized paths: {prompt:?}"
             );
             assert!(

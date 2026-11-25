@@ -498,7 +498,7 @@ impl ApplicationError {
             StartPrerequisitesError::WorkflowRoleNotFound { role_id } => {
                 Self::WorkflowRoleNotFound { role_id }
             }
-            StartPrerequisitesError::SkillMaterializationError { message } => {
+            StartPrerequisitesError::SkillDependencyError { message } => {
                 Self::WorkflowRunStartFailed { message }
             }
             StartPrerequisitesError::Repository(source) => Self::WorkflowRunRepository { source },
