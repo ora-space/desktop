@@ -105,15 +105,29 @@ impl<G: WriteGuard> SessionJournal<G> {
     /// Controller acknowledged. While one exists, a connection that did not negotiate
     /// `turn_cancel` must not take the sessions over (D5).
     pub fn has_undrained_keep_sessions(&self) -> Result<bool, Error> {
-        let db = self.lock()?;
-        let sessions = db.connection.prepare("SELECT input,state,result,last_sequence FROM node_executions n WHERE kind='agent_session' AND (state<>'completed' OR EXISTS(SELECT 1 FROM execution_events e WHERE e.execution=n.execution)) ORDER BY rowid")?
-            .query_map([], row)?
-            .map(|r| decode(r?))
-            .collect::<Result<Vec<_>, Error>>()?;
-        Ok(sessions.iter().any(|session| {
+        Ok(self.undrained_keep_sessions()?.iter().any(|session| {
             let spec = &session.command.payload.spec;
             spec.keep_session_on_cancel || spec.keep_session_on_failure
         }))
+    }
+
+    /// Whether any session that chose `keep_session_on_failure` is still unfinished or still has
+    /// events no Controller acknowledged. While one exists, a connection that did not negotiate
+    /// `turn_failure` must not take the sessions over (D6).
+    pub fn has_undrained_failure_sessions(&self) -> Result<bool, Error> {
+        Ok(self
+            .undrained_keep_sessions()?
+            .iter()
+            .any(|session| session.command.payload.spec.keep_session_on_failure))
+    }
+
+    /// All still-unfinished agent sessions, or agent sessions with unacknowledged events.
+    fn undrained_keep_sessions(&self) -> Result<Vec<SessionExecution>, Error> {
+        let db = self.lock()?;
+        db.connection.prepare("SELECT input,state,result,last_sequence FROM node_executions n WHERE kind='agent_session' AND (state<>'completed' OR EXISTS(SELECT 1 FROM execution_events e WHERE e.execution=n.execution)) ORDER BY rowid")?
+            .query_map([], row)?
+            .map(|r| decode(r?))
+            .collect()
     }
 }
 
