@@ -730,3 +730,304 @@ fn condition_preview_uses_the_observed_input_and_preserves_the_old_decision() {
         ))
     ));
 }
+
+/// Only a successful snapshot switch starts a new configuration baseline. Earlier revisions stay
+/// readable as history and are never replayed, also after switching back; their previews go stale.
+#[test]
+fn snapshot_switch_starts_a_new_configuration_baseline() {
+    let (_temp, _path, store) = fixture();
+    let edit_on = |node_run: &str, value: &str, revision: u32| PreviewWorkflowDebugRequest {
+        run_id: "other".into(),
+        selection: WorkflowDebugSelection::NodeRunId(node_run.into()),
+        base_revision: revision,
+        patch: vec![WorkflowDebugPatch::Replace {
+            path: "/agentConfig/prompt".into(),
+            value: json!(value),
+        }],
+    };
+    let attempt = |id: &str| {
+        store
+            .attempt(&GetWorkflowDebugAttemptRequest {
+                run_id: "other".into(),
+                node_run_id: id.into(),
+            })
+            .unwrap()
+    };
+    let prompt = |id: &str| attempt(id).configuration.unwrap()["agentConfig"]["prompt"].clone();
+    // Replaces the live attempt of the only node and records the input the preview needs.
+    let admit = |id: &str| {
+        store
+            .pool
+            .with_connection(|db| {
+                db.execute(
+                    "UPDATE workflow_node_runs SET is_deleted=1 WHERE run_id='other'",
+                    [],
+                )?;
+                insert_attempt(db, id, "agent", "agent", None)
+            })
+            .unwrap();
+        store
+            .record_agent_dispatch(
+                "other",
+                id,
+                &json!({"variablePool":WorkflowVariablePool::default()}),
+            )
+            .unwrap();
+    };
+    let confirm = |request: &PreviewWorkflowDebugRequest, key: &str| {
+        let preview = store.preview(request, impact).unwrap();
+        let claim = CommitWorkflowDebugRequest {
+            run_id: "other".into(),
+            preview_id: preview.preview_id,
+            request_id: key.into(),
+        };
+        assert!(matches!(
+            store.claim(&claim).unwrap(),
+            DebugClaim::Claimed(_)
+        ));
+        store
+            .apply_after_stop("other", key, 2, |_, _| Ok(()))
+            .unwrap();
+    };
+    admit("a1");
+    confirm(&edit_on("a1", "one", 0), "first");
+    admit("a2");
+    assert_eq!(
+        (attempt("a2").revision, prompt("a2")),
+        (Some(1), json!("one"))
+    );
+    let before = store.preview(&edit_on("a2", "two", 1), impact).unwrap();
+    store
+        .pool
+        .with_connection(|db| {
+            db.execute(
+                "INSERT INTO workflow_snapshots(id,workflow_id,version,graph,created_at)
+                 SELECT 'fresh','wf','2',json_set(graph,'$.nodes[1].data.agentConfig.prompt','fresh'),1
+                 FROM workflow_snapshots WHERE id='snap'",
+                [],
+            )?;
+            db.execute(
+                "UPDATE workflow_runs SET run_status=3,error='E' WHERE id='other'",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let repository = crate::SqliteWorkflowRunEngineRepository::new(store.pool.clone());
+    let run = ora_domain::WorkflowRunId::new("other");
+    let payload = serde_json::to_string(&ora_application::WorkflowRunPayload::default()).unwrap();
+    let switch = |snapshot: &str, now: i64| {
+        repository.switch_run_snapshot(
+            &run,
+            &ora_domain::WorkflowSnapshotId::new(snapshot),
+            &payload,
+            now,
+        )
+    };
+    assert!(switch("fresh", 3).unwrap());
+    // The switch raised the run revision: receipts from before it cannot be confirmed or reused.
+    assert!(matches!(
+        store.claim(&CommitWorkflowDebugRequest {
+            run_id: "other".into(),
+            preview_id: before.preview_id,
+            request_id: "late".into(),
+        }),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::StalePreview))
+    ));
+    assert!(matches!(
+        store.preview(&edit_on("a2", "three", 1), impact),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::StalePreview))
+    ));
+    admit("a3");
+    assert_eq!(
+        (attempt("a3").revision, prompt("a3")),
+        (Some(2), json!("fresh"))
+    );
+    // The edit made before the switch is history only: a new attempt does not inherit it.
+    assert_eq!(prompt("a2"), json!("one"));
+    confirm(&edit_on("a3", "three", 2), "second");
+    admit("a4");
+    assert_eq!(prompt("a4"), json!("three"));
+    // Returning to the first snapshot does not bring its edits back either.
+    store
+        .pool
+        .with_connection(|db| {
+            Ok(db
+                .execute(
+                    "UPDATE workflow_runs SET run_status=3,error='E' WHERE id='other'",
+                    [],
+                )
+                .map(|_| ())?)
+        })
+        .unwrap();
+    assert!(switch("snap", 4).unwrap());
+    // Attempts recorded before the new baseline are no longer targets.
+    assert!(matches!(
+        store.preview(&edit_on("a4", "four", 4), impact),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::MissingFact(reason)))
+            if reason.contains("a4") && reason.contains("baseline 4")
+    ));
+    admit("a5");
+    assert_eq!(
+        (attempt("a5").revision, prompt("a5")),
+        (Some(4), json!("old"))
+    );
+    // A refused switch leaves the baseline and the bound snapshot alone.
+    store
+        .pool
+        .with_connection(|db| {
+            Ok(db
+                .execute("UPDATE workflow_runs SET run_status=1 WHERE id='other'", [])
+                .map(|_| ())?)
+        })
+        .unwrap();
+    assert!(!switch("fresh", 5).unwrap());
+    assert_eq!(
+        store
+            .preview(&edit_on("a5", "five", 4), impact)
+            .unwrap()
+            .base_revision,
+        4
+    );
+    assert_eq!(
+        store
+            .history("other")
+            .unwrap()
+            .iter()
+            .map(|entry| entry.operation.phase.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            WorkflowDebugPhase::Applied { revision: 1 },
+            WorkflowDebugPhase::Applied { revision: 3 },
+        ]
+    );
+}
+
+/// A whole-run restart takes the current revision as its baseline: the new root keeps top-level
+/// edits, while a rebuilt container starts from its entrance configuration and overrides bound to
+/// the previous container execution stay history.
+#[test]
+fn restart_keeps_top_level_revisions_but_not_container_overrides() {
+    let (_temp, _path, store) = fixture();
+    let graph = json!({"nodes":[
+        {"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
+        {"id":"top","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"top-old"}}},
+        {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["agent","output"]}}},
+        {"id":"agent","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"{{#iter.item#}}"}}}],
+        "edges":[{"source":"start","target":"top"},{"source":"start","target":"iter"},{"source":"iter","target":"agent"}]});
+    store
+        .pool
+        .with_connection(|db| {
+            bind_graph(db, graph)?;
+            let mut payload = ora_application::WorkflowRunPayload::default();
+            payload
+                .variable_pool
+                .declare("start.items", "array[string]", "start");
+            payload
+                .variable_pool
+                .set("start.items", "start", json!(["a", "b", "c"]))
+                .unwrap();
+            db.execute(
+                "UPDATE workflow_runs SET payload=?1 WHERE id='other'",
+                [serde_json::to_string(&payload)?],
+            )?;
+            insert_attempt(db, "t1", "top", "agent", None)?;
+            insert_attempt(db, "it1", "iter", "iteration", None)?;
+            insert_attempt(db, "f2", "agent", "agent", Some(2))
+        })
+        .unwrap();
+    let mut item = WorkflowVariablePool::default();
+    item.declare("iter.item", "string", "iter");
+    item.set("iter.item", "iter", json!("c")).unwrap();
+    store
+        .record_agent_dispatch(
+            "other",
+            "t1",
+            &json!({"variablePool":WorkflowVariablePool::default()}),
+        )
+        .unwrap();
+    store
+        .record_agent_dispatch("other", "f2", &json!({"variablePool":item}))
+        .unwrap();
+    let confirm = |node_run: &str, value: Value, revision: u32, key: &str| {
+        let request = PreviewWorkflowDebugRequest {
+            run_id: "other".into(),
+            selection: WorkflowDebugSelection::NodeRunId(node_run.into()),
+            base_revision: revision,
+            patch: vec![WorkflowDebugPatch::Replace {
+                path: "/agentConfig/prompt".into(),
+                value,
+            }],
+        };
+        let preview = store.preview(&request, impact).unwrap();
+        let claim = CommitWorkflowDebugRequest {
+            run_id: "other".into(),
+            preview_id: preview.preview_id,
+            request_id: key.into(),
+        };
+        assert!(matches!(
+            store.claim(&claim).unwrap(),
+            DebugClaim::Claimed(_)
+        ));
+        store
+            .apply_after_stop("other", key, 2, |_, _| Ok(()))
+            .unwrap();
+    };
+    confirm("t1", json!("top-new"), 0, "top");
+    confirm("f2", json!("new-{{#iter.item#}}"), 1, "member");
+    let prompt = |id: &str| {
+        store
+            .attempt(&GetWorkflowDebugAttemptRequest {
+                run_id: "other".into(),
+                node_run_id: id.into(),
+            })
+            .unwrap()
+            .configuration
+            .unwrap()["agentConfig"]["prompt"]
+            .clone()
+    };
+    // The edited attempt keeps what it ran with; the override reaches the later items of the
+    // same container execution.
+    store
+        .pool
+        .with_connection(|db| insert_attempt(db, "f3", "agent", "agent", Some(3)))
+        .unwrap();
+    assert_eq!(
+        (prompt("f2"), prompt("f3")),
+        (json!("{{#iter.item#}}"), json!("new-{{#iter.item#}}"))
+    );
+    let repository = crate::SqliteWorkflowRunEngineRepository::new(store.pool.clone());
+    store
+        .pool
+        .with_connection(|db| {
+            Ok(db
+                .execute(
+                    "UPDATE workflow_runs SET run_status=3,error='E' WHERE id='other'",
+                    [],
+                )
+                .map(|_| ())?)
+        })
+        .unwrap();
+    assert_eq!(
+        repository
+            .restart_run(&ora_domain::WorkflowRunId::new("other"), 5)
+            .unwrap(),
+        ora_application::RestartWorkflowRunResult::Restarted
+    );
+    store
+        .pool
+        .with_connection(|db| {
+            insert_attempt(db, "t2", "top", "agent", None)?;
+            insert_attempt(db, "it2", "iter", "iteration", None)?;
+            insert_attempt(db, "n2", "agent", "agent", Some(2))
+        })
+        .unwrap();
+    assert_eq!(
+        (prompt("t2"), prompt("n2"), prompt("f3")),
+        (
+            json!("top-new"),
+            json!("{{#iter.item#}}"),
+            json!("new-{{#iter.item#}}")
+        )
+    );
+}

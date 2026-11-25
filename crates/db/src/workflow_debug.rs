@@ -126,9 +126,10 @@ impl WorkflowDebugStore {
 }
 
 /// Reads the active configuration revision under the same transaction as the preview or claim.
+/// A snapshot switch raises it like an applied edit does, through a baseline revision.
 fn run_version(db: &Connection, run: &str) -> Result<u32, DatabaseError> {
     db.query_row(
-        "SELECT COALESCE((SELECT MAX(revision) FROM workflow_debug_operations WHERE run_id=r.id),0) FROM workflow_runs r WHERE r.id=?1 AND r.is_deleted=0 AND r.run_status<>0",
+        "SELECT COALESCE((SELECT MAX(revision) FROM workflow_debug_revisions WHERE run_id=r.id),0) FROM workflow_runs r WHERE r.id=?1 AND r.is_deleted=0 AND r.run_status<>0",
         [run], |row| row.get(0),
     ).optional()?.ok_or(DebugRejection::InvalidTarget.into())
 }

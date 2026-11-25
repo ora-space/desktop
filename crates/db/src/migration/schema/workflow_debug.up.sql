@@ -84,13 +84,24 @@ CREATE TABLE workflow_debug_first_attempts (
     operation_id INTEGER PRIMARY KEY REFERENCES workflow_debug_operations(id) ON DELETE CASCADE,
     node_run_id TEXT NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE
 );
+-- A successful snapshot switch starts a new configuration baseline, also when the run returns
+-- to a snapshot it used before. Earlier revisions remain readable as history and are not replayed.
+CREATE TABLE workflow_debug_baselines (
+    run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    snapshot_id TEXT NOT NULL REFERENCES workflow_snapshots(id),
+    PRIMARY KEY(run_id,revision)
+);
+CREATE VIEW workflow_debug_revisions AS
+    SELECT run_id,revision FROM workflow_debug_baselines
+    UNION ALL SELECT run_id,revision FROM workflow_debug_operations WHERE revision IS NOT NULL;
 
 -- Record only new attempts. A retry waiting for its backoff has no dispatch evidence yet.
 CREATE TRIGGER workflow_debug_admit AFTER INSERT ON workflow_node_runs
 BEGIN
     INSERT INTO workflow_debug_attempts(node_run_id, snapshot_id, revision, container_attempt, entry_state)
     SELECT NEW.id, r.snapshot_id,
-           COALESCE((SELECT MAX(revision) FROM workflow_debug_operations WHERE run_id = r.id), 0),
+           COALESCE((SELECT MAX(revision) FROM workflow_debug_revisions WHERE run_id = r.id), 0),
            COALESCE(s.parent_loop_node_run_id, (
                SELECT owner.id FROM json_each(CASE WHEN json_valid(snap.graph) THEN snap.graph END, '$.nodes') n
                JOIN workflow_node_runs owner ON owner.run_id = r.id AND owner.scope_id = NEW.scope_id
@@ -111,7 +122,8 @@ BEGIN
     SELECT op.id,NEW.id FROM workflow_debug_operations op
     JOIN workflow_debug_previews p ON p.id=op.preview_id
     JOIN workflow_debug_attempts a ON a.node_run_id=NEW.id AND a.snapshot_id=p.snapshot_id
-    WHERE op.run_id=NEW.run_id AND op.revision IS NOT NULL
+    WHERE op.run_id=NEW.run_id
+      AND op.revision>COALESCE((SELECT MAX(revision) FROM workflow_debug_baselines WHERE run_id=op.run_id),0)
       AND json_extract(p.plan,'$.target.nodeRunId') IS NULL
       AND json_extract(p.plan,'$.target.scopeId')=NEW.scope_id
       AND json_extract(p.plan,'$.target.nodeId')=NEW.node_id
