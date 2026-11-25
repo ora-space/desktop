@@ -502,6 +502,10 @@ async fn a_call_never_written_by_its_instant_is_withdrawn() {
 
     assert_eq!(started.elapsed().as_secs(), 10);
     assert_eq!(frames.recv().await.unwrap()["method"], "example.fill");
+    // There is room now, which a call that was not withdrawn would use.
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
     assert!(frames.try_recv().is_err());
     assert!(runtime.inner.pending.lock().await.clear().is_empty());
 }
