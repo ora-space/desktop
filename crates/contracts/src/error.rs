@@ -111,6 +111,22 @@ pub struct WorkflowSkillNotFoundParams {
     pub skill_id: String,
 }
 
+/// Names the workflow node, ambiguous bare Skill reference, and matching catalog candidates.
+///
+/// Raised when a workflow declares a bare Skill name matching multiple Skill catalog entries
+/// (for example a local Skill and a plugin Skill sharing the same name), so the operator can
+/// select a specific Skill instead of letting runtime guess.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowSkillAmbiguousParams {
+    pub node_id: String,
+    /// Node label to show; equal to `node_id` when the node carries no title.
+    pub node_title: String,
+    pub skill_ref: String,
+    pub candidates: Vec<String>,
+}
+
 /// Names the workflow node and the MCP plugin its frozen graph declares, for a run that cannot
 /// start because the MCP plugin is no longer installed.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
@@ -424,6 +440,7 @@ pub enum PublicError {
     WorkflowRunValidation(EmptyErrorParams),
     WorkflowRunInputInvalid(WorkflowRunInputInvalidParams),
     WorkflowSkillNotFound(Box<WorkflowSkillNotFoundParams>),
+    WorkflowSkillAmbiguous(Box<WorkflowSkillAmbiguousParams>),
     WorkflowMcpNotFound(Box<WorkflowMcpNotFoundParams>),
     WorkflowRoleNotFound(EmptyErrorParams),
     WorkflowRunStartFailed(EmptyErrorParams),
@@ -571,6 +588,7 @@ impl PublicError {
             Self::WorkflowRunValidation(_) => "workflow_run_validation",
             Self::WorkflowRunInputInvalid(_) => "workflow_run_input_invalid",
             Self::WorkflowSkillNotFound(_) => "workflow_skill_not_found",
+            Self::WorkflowSkillAmbiguous(_) => "workflow_skill_ambiguous",
             Self::WorkflowMcpNotFound(_) => "workflow_mcp_not_found",
             Self::WorkflowRoleNotFound(_) => "workflow_role_not_found",
             Self::WorkflowRunStartFailed(_) => "workflow_run_start_failed",
@@ -617,6 +635,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     PluginConfigurationValidationParams::export_all(config)?;
     PluginPackageInvalidParams::export_all(config)?;
     MarketplaceArtifactRetrievalFieldInvalidParams::export_all(config)?;
+    WorkflowSkillAmbiguousParams::export_all(config)?;
     PublicError::export_all(config)?;
     ContractError::export_all(config)?;
     Ok(())
@@ -633,7 +652,8 @@ mod tests {
         WorkflowNodeCompletionBlockerKind, WorkflowNodeIncompleteParams,
         WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
         WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey, WorkflowRunInputInvalidParams,
-        WorkflowSkillNotFoundParams, WorkflowSnapshotIncompatibleWithResumeParams,
+        WorkflowSkillAmbiguousParams, WorkflowSkillNotFoundParams,
+        WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -828,6 +848,15 @@ mod tests {
                 node_title: "Review".to_string(),
                 skill_id: "code_review".to_string(),
             })),
+            PublicError::WorkflowSkillAmbiguous(Box::new(WorkflowSkillAmbiguousParams {
+                node_id: "review".to_string(),
+                node_title: "Review".to_string(),
+                skill_ref: "code_review".to_string(),
+                candidates: vec![
+                    "local-uuid (local)".to_string(),
+                    "plugin:local/review-pack:code_review (local/review-pack)".to_string(),
+                ],
+            })),
             PublicError::WorkflowMcpNotFound(Box::new(WorkflowMcpNotFoundParams {
                 node_id: "review".to_string(),
                 node_title: "Review".to_string(),
@@ -985,6 +1014,7 @@ mod tests {
                 | PublicError::WorkflowRunValidation(_)
                 | PublicError::WorkflowRunInputInvalid(_)
                 | PublicError::WorkflowSkillNotFound(_)
+                | PublicError::WorkflowSkillAmbiguous(_)
                 | PublicError::WorkflowMcpNotFound(_)
                 | PublicError::WorkflowRoleNotFound(_)
                 | PublicError::WorkflowRunStartFailed(_)
@@ -1009,7 +1039,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 127);
+        assert_eq!(samples.len(), 128);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

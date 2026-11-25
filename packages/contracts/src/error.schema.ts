@@ -48,6 +48,13 @@ export const workflowSkillNotFoundParamsSchema = z.object({
     skillId: z.string()
 });
 
+export const workflowSkillAmbiguousParamsSchema = z.object({
+    nodeId: z.string(),
+    nodeTitle: z.string(),
+    skillRef: z.string(),
+    candidates: z.array(z.string())
+});
+
 export const workflowMcpNotFoundParamsSchema = z.object({
     nodeId: z.string(),
     nodeTitle: z.string(),
@@ -471,6 +478,9 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("workflow_skill_not_found"),
         "params": workflowSkillNotFoundParamsSchema
     }), z.object({
+        "code": z.literal("workflow_skill_ambiguous"),
+        "params": workflowSkillAmbiguousParamsSchema
+    }), z.object({
         "code": z.literal("workflow_mcp_not_found"),
         "params": workflowMcpNotFoundParamsSchema
     }), z.object({
@@ -873,6 +883,9 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("workflow_skill_not_found"),
         "params": workflowSkillNotFoundParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_skill_ambiguous"),
+        "params": workflowSkillAmbiguousParamsSchema
     }), z.object({
         "code": z.literal("workflow_mcp_not_found"),
         "params": workflowMcpNotFoundParamsSchema

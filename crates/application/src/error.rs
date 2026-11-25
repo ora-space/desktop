@@ -253,6 +253,13 @@ pub enum ApplicationError {
         node_title: String,
         skill_id: String,
     },
+    #[error("workflow skill reference for node {node_id} is ambiguous: {skill_ref}")]
+    WorkflowSkillAmbiguous {
+        node_id: String,
+        node_title: String,
+        skill_ref: String,
+        candidates: Vec<String>,
+    },
     #[error("workflow MCP for node {node_id} is not installed: {mcp_id}")]
     WorkflowMcpNotFound {
         node_id: String,
@@ -486,6 +493,17 @@ impl ApplicationError {
                 node_title,
                 skill_id,
             },
+            StartPrerequisitesError::WorkflowSkillAmbiguous {
+                node_id,
+                node_title,
+                skill_ref,
+                candidates,
+            } => Self::WorkflowSkillAmbiguous {
+                node_id,
+                node_title,
+                skill_ref,
+                candidates,
+            },
             StartPrerequisitesError::WorkflowMcpNotFound {
                 node_id,
                 node_title,
@@ -715,6 +733,25 @@ impl PartialEq for ApplicationError {
                     skill_id: right_skill,
                 },
             ) => left_node == right_node && left_title == right_title && left_skill == right_skill,
+            (
+                WorkflowSkillAmbiguous {
+                    node_id: left_node,
+                    node_title: left_title,
+                    skill_ref: left_ref,
+                    candidates: left_candidates,
+                },
+                WorkflowSkillAmbiguous {
+                    node_id: right_node,
+                    node_title: right_title,
+                    skill_ref: right_ref,
+                    candidates: right_candidates,
+                },
+            ) => {
+                left_node == right_node
+                    && left_title == right_title
+                    && left_ref == right_ref
+                    && left_candidates == right_candidates
+            }
             (
                 WorkflowMcpNotFound {
                     node_id: left_node,

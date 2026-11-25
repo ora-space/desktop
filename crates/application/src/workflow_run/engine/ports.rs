@@ -157,6 +157,13 @@ pub enum StartPrerequisitesError {
         node_title: String,
         skill_id: String,
     },
+    #[error("workflow skill reference for node {node_id} is ambiguous: {skill_ref}")]
+    WorkflowSkillAmbiguous {
+        node_id: String,
+        node_title: String,
+        skill_ref: String,
+        candidates: Vec<String>,
+    },
     #[error("workflow MCP not installed for node {node_id}: {mcp_id}")]
     WorkflowMcpNotFound {
         node_id: String,

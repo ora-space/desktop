@@ -477,15 +477,43 @@ fn rejects_ambiguous_bare_skill_name_while_allowing_exact_catalog_ids() {
     assert!(
         matches!(
             &error,
-            StartPrerequisitesError::SkillDependencyError { message }
-                if message.contains("Code review")
-                    && message.contains("review")
-                    && message.contains("uuid-local-review")
-                    && message.contains("plugin:official/review-pack:review")
-                    && message.contains("specify a concrete skill")
+            StartPrerequisitesError::WorkflowSkillAmbiguous {
+                node_id,
+                node_title,
+                skill_ref,
+                candidates,
+            } if node_id == "agent"
+                && node_title == "Code review"
+                && skill_ref == "review"
+                && candidates == &vec![
+                    "plugin:official/review-pack:review (official/review-pack)".to_string(),
+                    "uuid-local-review (local)".to_string(),
+                ]
         ),
-        "expected ambiguous skill dependency error, got: {error:?}"
+        "expected WorkflowSkillAmbiguous error, got: {error:?}"
     );
+
+    // Even if one matching candidate's package is currently broken/unusable on disk, the bare
+    // name stays conservatively rejected as ambiguous rather than silently picking the other.
+    std::fs::remove_file(skills_root.join("review").join("SKILL.md"))
+        .expect("break local review skill package");
+    let broken_ambiguous = initializer.resolve_graph(&bare_graph).unwrap_err();
+    assert!(
+        matches!(
+            &broken_ambiguous,
+            StartPrerequisitesError::WorkflowSkillAmbiguous {
+                skill_ref,
+                candidates,
+                ..
+            } if skill_ref == "review" && candidates.len() == 2
+        ),
+        "broken duplicate candidate must still fail as ambiguous: {broken_ambiguous:?}"
+    );
+    std::fs::write(
+        skills_root.join("review").join("SKILL.md"),
+        "---\nname: review\ndescription: Local review\n---\nInstructions",
+    )
+    .expect("restore local review skill package");
 
     // Selecting either concrete catalog ID succeeds unambiguously even while both exist.
     for exact_id in ["uuid-local-review", "plugin:official/review-pack:review"] {

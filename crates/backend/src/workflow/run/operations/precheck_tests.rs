@@ -15,7 +15,7 @@ use ora_contracts::{
     CancelWorkflowRunRequest, CreateWorkflowRunRequest, ImportPluginRequest, PluginDataDisposition,
     PublicError, RestartWorkflowRunRequest, ResumeWorkflowRunRequest, StartWorkflowRunRequest,
     UninstallPluginRequest, WorkflowMcpNotFoundParams, WorkflowRunLocale, WorkflowRunStatus,
-    WorkflowSkillNotFoundParams,
+    WorkflowSkillAmbiguousParams, WorkflowSkillNotFoundParams,
 };
 use pretty_assertions::assert_eq;
 use std::fs::File;
@@ -831,10 +831,11 @@ async fn a_rejected_start_creates_no_node_run() {
     );
 }
 
-/// Covers owner Decision A across run creation, legacy-receipt start, and snapshot switch:
+/// Covers owner Decision A and N7 across run creation, legacy-receipt start, and snapshot switch:
 /// when a local and a plugin skill share the same bare name, creating a run, starting a run whose
 /// receipt lacks a frozen catalog ID, and switching snapshots with the bare name are all rejected
-/// with `workflow_run_start_failed`, while referencing a concrete catalog ID succeeds.
+/// with the user-visible `workflow_skill_ambiguous` public error naming the node, reference, and
+/// candidates, while referencing a concrete catalog ID succeeds.
 #[tokio::test]
 async fn ambiguous_bare_skill_name_blocks_create_start_and_snapshot_switch() {
     let disabled = SKILL_GRAPH.replace(
@@ -856,6 +857,19 @@ async fn ambiguous_bare_skill_name_blocks_create_start_and_snapshot_switch() {
         .expect("create same-named local skill")
         .skill;
 
+    let mut expected_candidates = vec![
+        format!("{} (local)", local_skill.id),
+        "plugin:local/review-pack:code_review (local/review-pack)".to_string(),
+    ];
+    expected_candidates.sort();
+    let expected_public =
+        PublicError::WorkflowSkillAmbiguous(Box::new(WorkflowSkillAmbiguousParams {
+            node_id: "reviewer".to_string(),
+            node_title: "Code review".to_string(),
+            skill_ref: "code_review".to_string(),
+            candidates: expected_candidates.clone(),
+        }));
+
     // Create a clean run on snapshot-1 (skill disabled) and settle it before publishing v2.
     let switch_run_id = fixture.create_run();
     fixture.start_and_settle(&switch_run_id).await;
@@ -874,15 +888,18 @@ async fn ambiguous_bare_skill_name_blocks_create_start_and_snapshot_switch() {
             inject_last_failure: None,
         })
         .expect_err("ambiguous bare skill name must block run creation");
+    assert_eq!(create_error.public_error(), &expected_public);
     assert_eq!(
-        create_error.public_error().code(),
-        "workflow_run_start_failed"
-    );
-    assert!(
-        std::error::Error::source(&create_error)
-            .expect("source")
-            .to_string()
-            .contains("matches multiple skills")
+        serde_json::to_value(create_error.public_error()).unwrap(),
+        serde_json::json!({
+            "code": "workflow_skill_ambiguous",
+            "params": {
+                "nodeId": "reviewer",
+                "nodeTitle": "Code review",
+                "skillRef": "code_review",
+                "candidates": expected_candidates,
+            },
+        })
     );
 
     // 2. Snapshot switch onto a graph carrying the ambiguous bare name is also rejected.
@@ -894,16 +911,7 @@ async fn ambiguous_bare_skill_name_blocks_create_start_and_snapshot_switch() {
             snapshot_id: Some("snapshot-2".to_string()),
         })
         .expect_err("ambiguous bare skill name must block snapshot switch");
-    assert_eq!(
-        switch_error.public_error().code(),
-        "workflow_run_start_failed"
-    );
-    assert!(
-        std::error::Error::source(&switch_error)
-            .expect("source")
-            .to_string()
-            .contains("specify a concrete skill")
-    );
+    assert_eq!(switch_error.public_error(), &expected_public);
 
     // 3. A pending run with a legacy payload (no frozen `catalogSkillId`) targeting an ambiguous
     // bare name is rejected on start rather than silently picking one skill.
@@ -938,10 +946,7 @@ async fn ambiguous_bare_skill_name_blocks_create_start_and_snapshot_switch() {
             run_id: legacy_run_id,
         })
         .expect_err("ambiguous bare skill name must block starting a legacy run");
-    assert_eq!(
-        start_error.public_error().code(),
-        "workflow_run_start_failed"
-    );
+    assert_eq!(start_error.public_error(), &expected_public);
 
     // 4. Switching to a concrete catalog ID succeeds unambiguously even while both skills exist.
     let explicit_graph = SKILL_GRAPH.replace(
@@ -1022,13 +1027,29 @@ async fn corrupt_frozen_payload_rejects_start_and_same_snapshot_resume() {
     let resume_error = fixture
         .runs
         .resume_from_failure(ResumeWorkflowRunRequest {
-            run_id: settled_run_id,
+            run_id: settled_run_id.clone(),
             rollback: None,
             snapshot_id: None,
         })
         .expect_err("corrupt run payload must fail same-snapshot resume");
     assert_eq!(
         resume_error.public_error().code(),
+        "workflow_run_start_failed"
+    );
+
+    // Switching to another published snapshot also refuses a corrupt stored payload instead of
+    // silently resetting its locale and variable pool.
+    fixture.publish_target(SKILL_GRAPH);
+    let switch_error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: settled_run_id,
+            rollback: None,
+            snapshot_id: Some("snapshot-2".to_string()),
+        })
+        .expect_err("corrupt run payload must fail cross-snapshot switch");
+    assert_eq!(
+        switch_error.public_error().code(),
         "workflow_run_start_failed"
     );
 }

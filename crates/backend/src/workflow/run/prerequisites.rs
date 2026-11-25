@@ -165,6 +165,16 @@ fn resolve_graph_skill_bindings(
                 None => {
                     resolve_graph_ref_skill_entry(skills_root, skill_repository, &skill.skill_id)
                         .map_err(|error| match error {
+                            StartPrerequisitesError::WorkflowSkillAmbiguous {
+                                skill_ref,
+                                candidates,
+                                ..
+                            } => StartPrerequisitesError::WorkflowSkillAmbiguous {
+                                node_id: node.id.clone(),
+                                node_title: node_display_name(node),
+                                skill_ref,
+                                candidates,
+                            },
                             StartPrerequisitesError::SkillDependencyError { message } => {
                                 StartPrerequisitesError::SkillDependencyError {
                                     message: format!(
@@ -290,12 +300,12 @@ pub(super) fn resolve_graph_ref_skill_entry(
         let candidates = matching
             .iter()
             .map(|skill| format!("{} ({})", skill.id, skill.namespace))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(StartPrerequisitesError::SkillDependencyError {
-            message: format!(
-                "skill reference `{skill_id}` matches multiple skills ({candidates}); specify a concrete skill instead"
-            ),
+            .collect();
+        return Err(StartPrerequisitesError::WorkflowSkillAmbiguous {
+            node_id: String::new(),
+            node_title: String::new(),
+            skill_ref: skill_id.to_string(),
+            candidates,
         });
     }
     match matching.into_iter().next() {

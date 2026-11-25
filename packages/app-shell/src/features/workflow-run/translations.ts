@@ -42,6 +42,8 @@ export const workflowRunTranslations = {
       "启动变量 {{variable}} 的输入无效：{{reason}}",
     "errors.workflow_skill_not_found":
       "节点「{{nodeTitle}}」需要的技能 {{skillId}} 不可用，请安装或恢复该技能后重试。",
+    "errors.workflow_skill_ambiguous":
+      "节点「{{nodeTitle}}」引用的技能名 {{skillRef}} 存在歧义，匹配到多个技能（{{candidates}}），请在节点中指定具体技能后重试。",
     "errors.workflow_mcp_not_found":
       "节点「{{nodeTitle}}」需要的 MCP {{mcpId}} 不可用，请安装或修复该 MCP 插件后重试。",
     "errors.workflow_role_not_found": "未找到该工作流角色。",
@@ -588,6 +590,8 @@ export const workflowRunTranslations = {
       "Invalid input for start variable '{{variable}}': {{reason}}",
     "errors.workflow_skill_not_found":
       "The skill {{skillId}} required by node '{{nodeTitle}}' is unavailable. Install or restore the skill, then retry.",
+    "errors.workflow_skill_ambiguous":
+      "The skill name '{{skillRef}}' referenced by node '{{nodeTitle}}' is ambiguous and matches multiple skills ({{candidates}}). Select a specific skill for this node, then retry.",
     "errors.workflow_mcp_not_found":
       "The MCP {{mcpId}} required by node '{{nodeTitle}}' is unavailable. Install or repair the MCP plugin, then retry.",
     "errors.workflow_role_not_found": "Workflow role not found.",

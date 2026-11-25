@@ -4,7 +4,7 @@ use crate::error::BackendError;
 use ora_application::{
     ApplicationError, SnapshotIncompatibility, SnapshotSwitchPlan, WorkflowGraph,
     WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowRunRepository,
-    WorkflowSkillReceipt, WorkflowVariablePool, plan_snapshot_switch,
+    WorkflowSkillReceipt, plan_snapshot_switch,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_db::{
@@ -83,7 +83,7 @@ pub(super) fn check_switch(
         .map_err(|error| {
             BackendError::internal("failed to list node runs for snapshot switch", error)
         })?;
-    let variable_pool = payload_pool(context.run.payload.as_deref());
+    let variable_pool = parse_existing_payload(context.run.payload.as_deref())?.variable_pool;
     plan_snapshot_switch(&old_graph, &new_graph, &node_runs, &variable_pool).map_err(
         |SnapshotIncompatibility { reason }| {
             BackendError::from(ApplicationError::WorkflowSnapshotIncompatibleWithResume { reason })
@@ -171,7 +171,7 @@ pub(super) fn prepare_resume(
     let plan = check_switch(pool, &context, &target)?;
     let new_graph = WorkflowGraph::parse(&target.graph).map_err(ApplicationError::from)?;
     let receipt = resolve(&new_graph, /*frozen_receipt*/ None)?;
-    let mut payload = parsed_payload(context.run.payload.as_deref());
+    let mut payload = parse_existing_payload(context.run.payload.as_deref())?;
     payload.skill_receipt = receipt;
     payload.variable_pool = plan.variable_pool;
     payload.start_node_id = new_graph.start_node().map(|node| node.id.clone());
@@ -193,12 +193,16 @@ fn incompatible(reason: &str) -> BackendError {
     })
 }
 
-fn payload_pool(payload: Option<&str>) -> WorkflowVariablePool {
-    parsed_payload(payload).variable_pool
-}
-
-fn parsed_payload(payload: Option<&str>) -> WorkflowRunPayload {
-    payload
-        .and_then(|raw| serde_json::from_str(raw).ok())
-        .unwrap_or_else(|| WorkflowRunPayload::new(WorkflowRunLocale::ZhCn, Default::default()))
+fn parse_existing_payload(payload: Option<&str>) -> Result<WorkflowRunPayload, BackendError> {
+    match payload {
+        Some(raw) => serde_json::from_str(raw).map_err(|error| {
+            BackendError::from(ApplicationError::WorkflowRunStartFailed {
+                message: format!("failed to parse frozen workflow run payload: {error}"),
+            })
+        }),
+        None => Ok(WorkflowRunPayload::new(
+            WorkflowRunLocale::ZhCn,
+            Default::default(),
+        )),
+    }
 }
