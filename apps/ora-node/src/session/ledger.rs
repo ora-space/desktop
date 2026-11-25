@@ -125,6 +125,17 @@ impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> 
             .map(|(outcome, _)| outcome)
     }
 
+    /// Delegates the one durable settlement of a failed turn, with its merged cancels.
+    fn settle_turn_failure(
+        &self,
+        execution: &ExecutionId,
+        turn: &ora_node_protocol::TurnId,
+        outcome: ora_node_protocol::TurnFailureOutcome,
+        merged: &[CommandId],
+    ) -> Result<(), Self::Error> {
+        SessionJournal::settle_turn_failure(self, execution, turn, outcome, merged).map(|_| ())
+    }
+
     /// Keeps runtime settlements within the database's one-way command state machine.
     fn settle_command(
         &self,

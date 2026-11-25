@@ -144,6 +144,16 @@ pub trait SessionLedger: Clone + Send + Sync + 'static {
         target: Option<&CommandId>,
     ) -> Result<ora_node_protocol::TurnCancelOutcome, Self::Error>;
 
+    /// Records one failed turn's settlement and the cancels merged into its stop, in the same
+    /// transaction, so a `session_ending` can never follow a `kept` for the same stop (D6).
+    fn settle_turn_failure(
+        &self,
+        execution: &ExecutionId,
+        turn: &ora_node_protocol::TurnId,
+        outcome: ora_node_protocol::TurnFailureOutcome,
+        merged: &[CommandId],
+    ) -> Result<(), Self::Error>;
+
     /// Settles one queued command.
     fn settle_command(
         &self,

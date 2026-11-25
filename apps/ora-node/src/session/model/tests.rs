@@ -103,6 +103,15 @@ impl SessionLedger for Ledger {
     ) -> Result<ora_node_protocol::TurnCancelOutcome, Self::Error> {
         Err(std::io::Error::other("model fixture has no turn cancels"))
     }
+    fn settle_turn_failure(
+        &self,
+        _execution: &ExecutionId,
+        _turn: &ora_node_protocol::TurnId,
+        _outcome: ora_node_protocol::TurnFailureOutcome,
+        _merged: &[CommandId],
+    ) -> Result<(), Self::Error> {
+        Err(std::io::Error::other("model fixture has no failed turns"))
+    }
     fn record_session_stop(
         &self,
         identity: &ora_node_db::SessionStopIdentity,

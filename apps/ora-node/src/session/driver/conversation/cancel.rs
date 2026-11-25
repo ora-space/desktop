@@ -6,7 +6,7 @@
 //! conversation only decides when a cancel takes effect and what outcome it asks the ledger for.
 use super::book::forget_acceptance;
 use super::*;
-use ora_node_protocol::{TurnCancelOutcome, TurnId};
+use ora_node_protocol::{TurnCancelOutcome, TurnFailureOutcome, TurnId};
 
 /// A queued `CancelTurn` the conversation has not settled yet.
 #[derive(Clone, Debug)]
@@ -351,15 +351,56 @@ impl<L: SessionLedger> Conversation<'_, L> {
             Err(end) => return Judged::End(end),
         }
         // A turn stopped by failure already had its own result when a cancel merged into it.
-        let outcome = match stopped.cause {
-            StopCause::Cancel => TurnCancelOutcome::Stopped,
-            StopCause::Failure(_) => TurnCancelOutcome::AlreadyEnded,
-        };
-        if let Err(end) = self.settle_merged(&stopped.merged, outcome) {
-            return Judged::End(end);
+        match stopped.cause {
+            StopCause::Cancel => {
+                if let Err(end) =
+                    self.settle_merged(&stopped.merged, TurnCancelOutcome::Stopped)
+                {
+                    return Judged::End(end);
+                }
+            }
+            StopCause::Failure(_) => {
+                // A kept failed turn records its own conclusion beside the cancels merged into its
+                // stop, in one transaction, before the next turn is admitted (D6).
+                if let Err(end) = self.settle_failure(
+                    &stopped.turn_id,
+                    TurnFailureOutcome::Kept,
+                    &stopped.merged,
+                ) {
+                    return Judged::End(end);
+                }
+            }
         }
         self.turn_ended(&stopped.turn_id);
         Judged::Kept
+    }
+
+    /// Records one failed turn's `TurnFailureSettled` together with the cancels merged into its
+    /// stop, in one transaction; the merged cancels' acceptance times are then released.
+    fn settle_failure(
+        &self,
+        turn: &TurnId,
+        outcome: TurnFailureOutcome,
+        merged: &[CommandId],
+    ) -> Result<(), SessionEnd> {
+        match self
+            .ledger
+            .settle_turn_failure(self.execution, turn, outcome, merged)
+        {
+            Ok(()) => {
+                for command in merged {
+                    forget_acceptance(self.cancel_acceptance, self.execution, command);
+                }
+                Ok(())
+            }
+            Err(error) => {
+                if self.queued_end()?.is_some() {
+                    return Ok(());
+                }
+                ora_warn!(execution_id = %self.execution, turn_id = %turn, error = %error, "turn failure was not settled");
+                Err(SessionEnd::agent_failed("ledger_unavailable"))
+            }
+        }
     }
 
     /// Settles every cancel merged into one stop with the same outcome, in acceptance order.
