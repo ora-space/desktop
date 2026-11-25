@@ -542,6 +542,10 @@ impl WorkflowRuns {
         request: ResumeWorkflowRunRequest,
     ) -> Result<ResumeWorkflowRunResponse, BackendError> {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        // Rollback may restore files before the repository writes the new run state.
+        ora_db::workflow_debug::WorkflowDebugStore::new(self.pool.clone())
+            .ensure_debug_operation_inactive(&request.run_id)
+            .map_err(BackendError::from_debug_store)?;
         super::rollback::resume_from_failure(
             self.dependency_sources(),
             &self.agent_runtime,
