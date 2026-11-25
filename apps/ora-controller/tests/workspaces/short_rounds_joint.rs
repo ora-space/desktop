@@ -49,7 +49,7 @@ impl JointNode {
                             greeted = true;
                             Some(NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
                                 protocol_version: CURRENT_PROTOCOL_VERSION,
-                                payload: HelloAccepted { turn_cancel: false, selected_version: CURRENT_PROTOCOL_VERSION,
+                                payload: HelloAccepted { turn_cancel: false, turn_failure: false, selected_version: CURRENT_PROTOCOL_VERSION,
                                     node: self.identity.clone(), capabilities: vec![NodeCapability::RepositoryClone, NodeCapability::RuntimeControl],
                                     model_adapter: None, thread_previews: false },
                             }))

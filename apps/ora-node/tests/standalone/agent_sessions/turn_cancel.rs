@@ -53,6 +53,7 @@ pub(super) async fn greet(
                 supported_versions: vec![CURRENT_PROTOCOL_VERSION],
                 thread_previews: false,
                 turn_cancel,
+                turn_failure: false,
             },
         });
         if write_controller_message(&mut stream, &hello).await.is_ok() {

@@ -60,6 +60,8 @@ fn assistant(text: &str) -> HistoryRecord {
 fn turn_ended() -> HistoryRecord {
     HistoryRecord::TurnEnded {
         stop_reason: StopReason::EndTurn,
+        ended_by: None,
+        failure: None,
     }
 }
 
@@ -67,6 +69,8 @@ fn turn_ended() -> HistoryRecord {
 fn turn_cancelled() -> HistoryRecord {
     HistoryRecord::TurnEnded {
         stop_reason: StopReason::Cancelled,
+        ended_by: None,
+        failure: None,
     }
 }
 

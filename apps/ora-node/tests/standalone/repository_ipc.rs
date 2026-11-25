@@ -82,6 +82,7 @@ pub(super) async fn connect(path: &Path, owner: &str) -> UnixStream {
             payload: Hello {
                 thread_previews: false,
                 turn_cancel: false,
+                turn_failure: false,
                 controller_id: ControllerId::new(owner),
                 supported_versions: vec![CURRENT_PROTOCOL_VERSION],
             },
@@ -292,6 +293,7 @@ fn git_server_capabilities_follow_the_git_access_identity() {
                             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
                             thread_previews: false,
                             turn_cancel: false,
+                            turn_failure: false,
                         },
                     }),
                 )

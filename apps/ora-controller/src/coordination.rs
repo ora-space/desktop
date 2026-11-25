@@ -146,6 +146,7 @@ pub async fn take_over<S: CoordinationStore>(
         | NodeToControllerMessage::SessionTurnFailed(_)
         // Sent only to a Controller that negotiated `turn_cancel`, which this one never declares.
         | NodeToControllerMessage::TurnCancelSettled(_)
+        | NodeToControllerMessage::TurnFailureSettled(_)
         | NodeToControllerMessage::ScheduledArtifactGrantNeeded(_)
         | NodeToControllerMessage::UploadGrantNeeded(_) => Err(Error::Conflict),
     }
