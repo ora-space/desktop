@@ -113,15 +113,18 @@ prompt 是有序的 ACP `ContentBlock`（文本、图片、音频、资源链接
 宿主可选择启用 `RuntimeEvents::record_preview`，在定型前观察已合并的待完成记录。通知最多每秒十次，轮次结束发送空的
 完整替换。回调为尽力而为，不产生确认，也不改变 `record_settled` 原有持久顺序。未选择启用的宿主不复制待完成快照。
 
-宿主通过 `AgentRuntimeHost` 组装运行时，它的关联类型提供五个接口；它们是泛型参数，所以每个宿主得到自己单态化的运行时。
+宿主通过 `AgentRuntimeHost` 组装运行时，它的关联类型提供六个接口；它们是泛型参数，所以每个宿主得到自己单态化的运行时。
 
-| 接口 | 运行时需要 | Desktop | Node |
-|---|---|---|---|
-| `SessionStore` | 创建、读取、列出和更新会话行；软删除 | `SqliteSessionRepository` | `MemorySessionStore` |
-| `AgentAttach` | 列出 Agent 插件，附着到进程和 tap，停止进程，记录其 Effect 消费者 | `PluginApi` | 本次执行自己的单插件生命周期 |
-| `SessionSetup` | Session MCP 视图、revision 和健康观测 | Session MCP 解析器和 MCP 健康 | `NoSessionMcp` |
-| `RuntimeEvents` | 标题和模型目录通知；写入的每一行历史 | `AppEventPublisher` | 每一行成为一个 Thread 事件 |
-| `WorkspaceDirectory` | Workspace 的 `cwd` | Workspace 仓储加路径基准 | 本次执行的 checkout |
+| 接口                 | 运行时需要                                    | Desktop                       | Node                         |
+| -------------------- | --------------------------------------------- | ----------------------------- | ---------------------------- |
+| `SessionStore`       | 创建、读取、列出和更新会话行；软删除          | `SqliteSessionRepository`     | `MemorySessionStore`         |
+| `AgentAttach`        | 列出 Agent 插件，附着到进程和 tap，停止进程   | `PluginApi`                   | 本次执行自己的单插件生命周期 |
+| `SessionSetup`       | Session MCP 视图、revision 和健康观测         | Session MCP 解析器和 MCP 健康 | `NoSessionMcp`               |
+| `Skills`             | 当前 Available Skill 目录条目与可读存储根目录 | `DesktopSkillCatalog`         | `NoSkillCatalog`             |
+| `RuntimeEvents`      | 标题和模型目录通知；写入的每一行历史          | `AppEventPublisher`           | 每一行成为一个 Thread 事件   |
+| `WorkspaceDirectory` | Workspace 的 `cwd`                            | Workspace 仓储加路径基准      | 本次执行的 checkout          |
+
+在 Desktop 上，`ora-agent-runtime` 会在活跃会话的首条 prompt（以及冷启动 `session/load`、重新打开已停止会话或压缩重置后的下一条 prompt）中注入全量 `<available_skills>`，在会话中途 Skill 集合变化时注入按路径计算的 `<available_skills_update>` 增量（若有前导 `/命令` 文本块，则紧随其后），并在 Agent 支持 `additionalDirectories` 时于 `session/new` / `session/load` 中传递两个稳定的可读存储根目录及 `_meta["ora/skillDirectories"]`。`NoSkillCatalog` 使 Node 会话保持不变。
 
 失败以 `RuntimeError`（分类、类型化公开错误、上下文、错误链）离开 crate；Desktop 把它无损地转换为 `BackendError` 并能转回。crate 不得依赖 `ora-backend`、SQLite 或 Tauri。没有人在场的宿主使用的入口（`wait_for_agent`、`start_session_with_id`、`prompt_session_as_message`）见 [Node Agent 会话](../node/agent-sessions.zh.md)。
 

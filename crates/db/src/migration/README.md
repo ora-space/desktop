@@ -74,8 +74,23 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   nothing ever promotes a local checkout. Remote locations and deleted rows are untouched. Its
   downgrade is intentionally empty because older builds admit an active local Workspace the same
   way.
-- Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a
-  Workspace seeds its new Scope from published Sources in the same transaction.
+- Migration `0025` adds nullable `package_root` onto `skills`, backfills plugin Skill roots from
+  retired Effect source revisions, and drops all remaining `effect_*` triggers and tables in
+  child-before-parent order. Its persisted downgrade explicitly aborts inside the rollback
+  transaction because the retired ledger and filesystem ownership markers cannot be restored, so an
+  older build refuses to strip the `0025` bookkeeping row and a newer build can reopen cleanly.
+  - **Automatic pre-`0025` backup**: before `0025` runs on an existing pre-`0025` database, both
+    packaged Desktop bootstrap (`Backend::open`) and `cargo xtask reconcile-migrations` write a
+    self-contained SQLite backup into a sibling temporary file (`VACUUM INTO`) and atomically
+    replace `ora.sqlite3.pre-0025.bak` in the same data directory. Every startup while the legacy
+    `effect_*` tables still exist refreshes that backup (so a zero-byte leftover or an earlier
+    downgrade-and-reupgrade cycle never leaves a stale copy), while fresh and already-migrated
+    databases skip backup creation.
+  - **Downgrade recovery**: upgrading past `0025` cannot be downgraded in place. To return to an
+    older Desktop release, quit Ora Desktop, remove `ora.sqlite3`, `ora.sqlite3-wal`, and
+    `ora.sqlite3-shm` from the data directory, copy `ora.sqlite3.pre-0025.bak` to `ora.sqlite3`,
+    and launch the older build.
+  - **Frozen SQL text**: `0025`'s `up_sql` and `down_sql` are frozen once merged (see below).
 
 ## Application bootstrap
 
@@ -107,6 +122,15 @@ An applied version absent from the catalog inside the shared target prefix is an
 The public `reconcile_migration_history` interface opens and reconciles a database for explicit
 tooling. `cargo xtask reconcile-migrations DATA_DIRECTORY` calls it before `task run:desktop`
 starts the application; packaged application startup never calls this interface.
+
+**Irreversible boundary at `0025`:** development databases that have already applied migration
+`0025` cannot reconcile or roll back past `0025` because `0025`'s persisted `down_sql` aborts the
+rollback transaction. Consequently, `0025`'s SQL text (`up_sql` and `down_sql`) — as well as every
+earlier migration's SQL snapshot — is frozen for post-`0025` development databases: editing `0025`
+(or an earlier migration) causes `reconcile_database` to detect snapshot drift at or before `0025`,
+attempt to roll back `0025`, and fail. Subsequent schema changes must be added as new migrations
+(`0026+`), or the development database must be recreated (or restored from
+`ora.sqlite3.pre-0025.bak`).
 
 Explicit reconciliation also resumes first-install work from the durable journal.
 

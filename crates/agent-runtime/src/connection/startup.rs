@@ -59,6 +59,7 @@ pub(super) struct SharedProcess<A: AgentAttach> {
     pub list_session_supported: bool,
     pub close_session_supported: bool,
     pub delete_session_supported: bool,
+    pub additional_directories_supported: bool,
 }
 
 /// Starts one agent in the neutral home directory and completes the ACP handshake.
@@ -129,6 +130,11 @@ pub(super) async fn spawn_initialized_process<A: AgentAttach>(
             .session_capabilities
             .delete
             .is_some(),
+        additional_directories_supported: response
+            .agent_capabilities
+            .session_capabilities
+            .additional_directories
+            .is_some(),
     })
 }
 
@@ -142,11 +148,7 @@ async fn spawn_plugin_connection<A: AgentAttach>(
         .attach_agent(plugin_id)
         .await
         .map_err(plugin_attach_error)?;
-    let LaunchedPluginAgent {
-        runtime,
-        messages,
-        effect_declaration,
-    } = match plugin_agent::attach(
+    let LaunchedPluginAgent { runtime, messages } = match plugin_agent::attach(
         attachment,
         &plugin_id.canonical(),
         home_directory,
@@ -161,9 +163,6 @@ async fn spawn_plugin_connection<A: AgentAttach>(
             return Err(plugin_start_error(error));
         }
     };
-    plugin_host
-        .replace_agent_effect_declaration(plugin_id.clone(), effect_declaration)
-        .map_err(|error| StartFailure::Terminal(agent_start_failed(error.to_string())))?;
     let transport = PluginAcpTransport::new(runtime.clone());
     Ok(StartedAgent {
         process: AgentProcess {

@@ -64,6 +64,8 @@ pub(super) struct RuntimeConnection {
     /// it so unused provider history does not accumulate; agents without it fall
     /// back to `session/close`, which only detaches.
     pub delete_session_supported: bool,
+    /// Whether the agent advertises `sessionCapabilities.additionalDirectories`.
+    pub additional_directories_supported: bool,
 }
 
 #[derive(Clone)]
@@ -283,18 +285,6 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
             );
             supervisors.insert(agent_ref, supervisor);
         }
-    }
-
-    /// Resolves a plugin package address onto the agent identity its sessions are bound to.
-    ///
-    /// The two are the same value now that an agent is identified by its whole plugin id, but the
-    /// lookup remains because the answer also has to say whether that package is installed: a
-    /// caller holding a package address wants the agent it currently supplies, not an identity
-    /// minted for a package that is gone.
-    pub fn agent_for_plugin(&self, plugin_id: &PluginId) -> Option<AgentRef> {
-        self.plugin_host
-            .is_installed(plugin_id)
-            .then(|| AgentRef::for_plugin(plugin_id))
     }
 
     /// Selects the sole application-scoped connection for one persisted agent identity.
@@ -546,6 +536,7 @@ async fn run_supervisor<H: AgentRuntimeHost>(context: SupervisorContext<H>) {
                     list_session_supported: process.list_session_supported,
                     close_session_supported: process.close_session_supported,
                     delete_session_supported: process.delete_session_supported,
+                    additional_directories_supported: process.additional_directories_supported,
                 };
                 let _ = state.send(ConnectionState::Ready(connection));
                 ora_info!(agent = identifier, generation, "agent runtime is ready");

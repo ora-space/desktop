@@ -1,6 +1,5 @@
 mod control;
 mod discovery;
-mod effect;
 mod inbound;
 mod transport;
 
@@ -9,13 +8,11 @@ mod tests;
 
 pub(crate) use control::{PluginAgentError, stop_agent};
 pub(crate) use discovery::{DiscoveryScope, discover};
-pub use effect::{AgentEffectError, coordinate, reactivate, verify_ready};
 pub(crate) use transport::PluginAcpTransport;
 
 use std::path::Path;
 
 use ora_acp::AcpMessages;
-use ora_effect::ConsumerDeclaration;
 use ora_plugin_runtime::PluginRuntime;
 
 use crate::host::AgentPluginAttachment;
@@ -24,7 +21,6 @@ use crate::host::AgentPluginAttachment;
 pub(crate) struct LaunchedPluginAgent {
     pub runtime: PluginRuntime,
     pub messages: AcpMessages,
-    pub effect_declaration: Option<ConsumerDeclaration>,
 }
 
 /// Brings up the agent behind one already-running plugin process.
@@ -52,14 +48,11 @@ pub(crate) async fn attach(
     let plugin_id = ora_domain::PluginId::parse(plugin_id).map_err(|error| {
         PluginAgentError::ContractIncomplete(format!("invalid plugin identity: {error}"))
     })?;
-    let effect_declaration = effect::registered_consumer_declaration(&plugin_id, &registration)
-        .map_err(|error| PluginAgentError::ContractIncomplete(error.to_string()))?;
     control::start_agent(&runtime, home_directory, host_version, model_context).await?;
     inbound::discard_frames_before_start(&mut notifications, &plugin_id.canonical());
 
     Ok(LaunchedPluginAgent {
         runtime,
         messages: inbound::spawn_frame_forwarding(notifications, plugin_id.to_string()),
-        effect_declaration,
     })
 }

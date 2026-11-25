@@ -20,7 +20,7 @@ ora-backend ─ composition ─────────────────�
   ├─ ora-application  use cases ── ora-db  SQLite (ora.sqlite3)          │
   ├─ ora-agent-runtime  ACP sessions ──▶ agent plugins ──▶ agent CLIs    │
   ├─ plugin lifecycle  Deno plugin processes, marketplace, packs, Hooks  │
-  ├─ workflow run engine, Effects, Git cleanup worker, scheduler         │
+  ├─ workflow run engine, Git cleanup worker, scheduler                  │
   └─ gitlancer  typed Git CLI ──▶ project checkouts and task worktrees ◀─┘
 ora-reaper sidecar ── kills every registered process tree on exit or crash
 ```
@@ -35,8 +35,10 @@ ora-reaper sidecar ── kills every registered process tree on exit or crash
 - Every agent comes from an installed plugin that drives an agent CLI over ACP; Ora records each
   conversation itself so it can outlive or switch providers, see [Agent runtime](agents/agent-runtime.md)
   and [Session history](agents/session-history.md).
-- Skills reach agents as files materialized into Workspaces by the Effect system; MCP servers reach them
-  as session input, see [Effects](agents/effects.md) and [Session MCP](agents/session-mcp.md).
+- Skills reach agents via a storage-path catalog injected into session prompts (plus readable storage
+  roots over ACP when supported), without materializing files into Workspaces; MCP servers reach them
+  as session input, see [Agent definitions and Skills](agents/agents-and-skills.md#how-skills-reach-agents)
+  and [Session MCP](agents/session-mcp.md).
 - Workflows orchestrate agent nodes over a frozen graph, see [Workflows](workflows/workflows.md).
 
 ## Cloud runtime
@@ -66,16 +68,16 @@ Ora Cloud ◀── mTLS gRPC, dialed out ── ora-controller ── Substrate
 
 ## Workspace layout
 
-| Path | Contents |
-|---|---|
-| `apps/` | Executables: `desktop/src-tauri`, `ora-controller`, `ora-node`, `ora-reaper` |
-| `crates/` | Shared Rust crates, all prefixed `ora-` (domain, contracts, application, db, backend, agent-runtime, plugin-*, node-*, process, gitlancer, utils, …) |
-| `packages/` | TypeScript packages: `app-shell`, `contracts`, `chat`, `editor`, `ui`, `plugin-sdk`, `workflow-runtime`, `workflow-mock` |
-| `xtask/` | Contract export, migration reconciliation and the Rust size gate |
-| `e2e/` | Desktop end-to-end tests with a fake ACP agent |
-| `docker/` | Node and Controller images |
-| `third_party/cloud` | The pinned Cloud contract submodule |
-| `specs/` | An independent checkout of `ora-space/specs` (ADRs and core test cases), ignored by this repository |
+| Path                | Contents                                                                                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/`             | Executables: `desktop/src-tauri`, `ora-controller`, `ora-node`, `ora-reaper`                                                                         |
+| `crates/`           | Shared Rust crates, all prefixed `ora-` (domain, contracts, application, db, backend, agent-runtime, plugin-_, node-_, process, gitlancer, utils, …) |
+| `packages/`         | TypeScript packages: `app-shell`, `contracts`, `chat`, `editor`, `ui`, `plugin-sdk`, `workflow-runtime`, `workflow-mock`                             |
+| `xtask/`            | Contract export, migration reconciliation and the Rust size gate                                                                                     |
+| `e2e/`              | Desktop end-to-end tests with a fake ACP agent                                                                                                       |
+| `docker/`           | Node and Controller images                                                                                                                           |
+| `third_party/cloud` | The pinned Cloud contract submodule                                                                                                                  |
+| `specs/`            | An independent checkout of `ora-space/specs` (ADRs and core test cases), ignored by this repository                                                  |
 
 Each crate and package keeps its internals in its own `README.md`; these documents cover what crosses
 module boundaries.

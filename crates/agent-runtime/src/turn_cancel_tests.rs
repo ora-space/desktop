@@ -250,6 +250,8 @@ fn a_catalog_ahead_of_an_already_queued_answer_is_kept() {
             title_acquisition: crate::TitleAcquisition::disabled(),
             command_sender: commands.downgrade(),
             session_mcp: NoSessionMcp::default(),
+            skill_catalog: inner.skill_catalog.clone(),
+            announced_skills: None,
             barriers: inner.barriers.clone(),
             live_mcp: LiveMcpState::Inactive,
             turn_cancel: Default::default(),

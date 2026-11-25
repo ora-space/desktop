@@ -21,7 +21,7 @@ impl<H: AgentRuntimeHost> Clone for AgentRuntime<H> {
 }
 
 impl<H: AgentRuntimeHost> AgentRuntime<H> {
-    /// Captures the same manager used by sessions, plugins, workflow execution, and Effect.
+    /// Captures the same manager used by sessions, plugins, and workflow execution.
     pub fn new(manager: Arc<AgentRuntimeManager<H>>) -> Self {
         Self { manager }
     }

@@ -7,8 +7,24 @@ import type { TFunction } from "i18next";
 import {
   activeLocale,
   translationResources,
+  type Locale,
   type TranslationKey,
 } from "./i18n-instance";
+
+function formatInterpolationParams(
+  params: Record<string, unknown>,
+  lng: Locale,
+): Record<string, unknown> {
+  const separator = lng === "zh-CN" ? "、" : ", ";
+  return Object.fromEntries(
+    Object.entries(params).map(([key, value]) => [
+      key,
+      Array.isArray(value) && value.every((item) => typeof item === "string")
+        ? value.join(separator)
+        : value,
+    ]),
+  );
+}
 
 /** Localizes every remote or local transport failure without displaying technical Error.message. */
 export function localizeContractError(error: unknown, t: TFunction): string {
@@ -17,7 +33,10 @@ export function localizeContractError(error: unknown, t: TFunction): string {
     const key = `errors.${error.code}`;
     if (key in translationResources[lng]) {
       return t(key as TranslationKey, {
-        ...error.payload.params,
+        ...formatInterpolationParams(
+          error.payload.params as Record<string, unknown>,
+          lng,
+        ),
         requestId: error.requestId,
         lng,
       });

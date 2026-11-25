@@ -31,7 +31,6 @@ import {
   useTargetAgentCli,
 } from "../../state/hooks/use-target-agent-cli";
 import { useTargetAgentReadiness } from "../../state/hooks/use-target-agent-readiness";
-import { useAgentEffectReadiness } from "../../state/hooks/use-agent-effect-readiness";
 import { useMissingWorkspaceDirectory } from "../../state/hooks/use-missing-workspace-directory";
 import {
   pendingModelKey,
@@ -52,7 +51,6 @@ import { useChatStore } from "../../chat-store-context";
 import { DragRegion } from "../../components/drag-region";
 import { WindowControls } from "../../components/window-controls";
 import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
-import { AgentEffectRecoveryBanner } from "../chat/agent-effect-recovery-banner";
 import { SessionAgentBanner } from "../chat/session-agent-banner";
 import { SessionMcpHealthBanner } from "../chat/session-mcp-health-banner";
 import {
@@ -222,10 +220,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         ? task?.workspaceId
         : selectedWorkspace?.id;
   const targetAgentReadiness = useTargetAgentReadiness(selection);
-  const agentEffectReadiness = useAgentEffectReadiness(
-    selectedWorkspaceId,
-    targetAgentCli,
-  );
   // A deleted project folder still opens here; naming it is what keeps an empty model list
   // and a refused send from reading as an agent or plugin fault.
   const missingDirectory = useMissingWorkspaceDirectory(selectedWorkspaceId);
@@ -753,7 +747,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         <SessionAgentBanner session={session} />
         <SessionMcpHealthBanner session={session} />
         <WorkspaceDirectoryBanner missingPath={missingDirectory} />
-        <AgentEffectRecoveryBanner readiness={agentEffectReadiness} />
         <SessionHistoryNotices session={session} />
         <WorkspaceReviewLayout context={reviewContext}>
           <WorkspaceChatPane
@@ -773,7 +766,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             targetAgentCli={targetAgentCli}
             projectSelected={project !== undefined}
             missingDirectory={missingDirectory}
-            agentEffectReadiness={agentEffectReadiness}
             targetAgentReadiness={targetAgentReadiness}
             showContextBar={
               selection.sessionId === null && pendingTurn === null

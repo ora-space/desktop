@@ -48,6 +48,13 @@ export const workflowSkillNotFoundParamsSchema = z.object({
     skillId: z.string()
 });
 
+export const workflowSkillAmbiguousParamsSchema = z.object({
+    nodeId: z.string(),
+    nodeTitle: z.string(),
+    skillRef: z.string(),
+    candidates: z.array(z.string())
+});
+
 export const workflowMcpNotFoundParamsSchema = z.object({
     nodeId: z.string(),
     nodeTitle: z.string(),
@@ -162,12 +169,6 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("plugin_host_incompatible"),
         "params": emptyErrorParamsSchema
     }), z.object({
-        "code": z.literal("effect_target_not_found"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
-        "code": z.literal("effect_target_not_recoverable"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
         "code": z.literal("plugin_package_invalid"),
         "params": pluginPackageInvalidParamsSchema
     }), z.object({
@@ -476,6 +477,9 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("workflow_skill_not_found"),
         "params": workflowSkillNotFoundParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_skill_ambiguous"),
+        "params": workflowSkillAmbiguousParamsSchema
     }), z.object({
         "code": z.literal("workflow_mcp_not_found"),
         "params": workflowMcpNotFoundParamsSchema
@@ -571,12 +575,6 @@ export const contractErrorSchema = z.object({
         "code": z.literal("plugin_host_incompatible"),
         "params": emptyErrorParamsSchema
     }), z.object({
-        "code": z.literal("effect_target_not_found"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
-        "code": z.literal("effect_target_not_recoverable"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
         "code": z.literal("plugin_package_invalid"),
         "params": pluginPackageInvalidParamsSchema
     }), z.object({
@@ -885,6 +883,9 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("workflow_skill_not_found"),
         "params": workflowSkillNotFoundParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_skill_ambiguous"),
+        "params": workflowSkillAmbiguousParamsSchema
     }), z.object({
         "code": z.literal("workflow_mcp_not_found"),
         "params": workflowMcpNotFoundParamsSchema
