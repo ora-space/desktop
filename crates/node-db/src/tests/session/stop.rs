@@ -490,7 +490,7 @@ fn stop_marks_upgrade_keeps_rows_unflagged_and_admits_the_mark_scan_proof() {
                 .collect::<Vec<_>>()
         ),
         (
-            crate::schema::STOP_MARKS_VERSION,
+            crate::schema::LATEST_VERSION,
             true,
             vec![
                 (

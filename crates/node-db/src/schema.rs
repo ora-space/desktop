@@ -112,6 +112,9 @@ pub(super) fn initialize(
     if version >= STOP_MARKS_VERSION {
         expected.execute_batch(include_str!("session_stop_marks.sql"))?;
     }
+    if version >= TURN_FAILURE_SETTLEMENTS_VERSION {
+        expected.execute_batch(include_str!("turn_failure.sql"))?;
+    }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
     }
