@@ -343,7 +343,7 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     let mut servers = mcp.into_servers();
     servers.extend(session_mcp.host_mcp_servers());
     let skill_entries = match skill_catalog.skill_catalog(workspace_id) {
-        Ok(entries) => entries,
+        Ok(snapshot) => snapshot.entries,
         Err(error) => {
             ora_warn!(
                 session_id = %ora_session_id,

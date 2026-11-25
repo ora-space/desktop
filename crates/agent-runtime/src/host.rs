@@ -16,6 +16,7 @@ use ora_domain::{
 use ora_history::HistoryLine;
 use ora_plugin_lifecycle::{ConnectionError, InboundNotification};
 use ora_plugin_runtime::PluginRuntime;
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -279,21 +280,38 @@ pub struct SkillCatalogEntry {
     pub package_dir: PathBuf,
 }
 
+/// One point-in-time reading of a host's available Skill catalog.
+///
+/// `entries` contains every Skill whose package was read and verified usable.
+/// `unreadable_paths` records `SKILL.md` paths whose package could not be read due to a per-entry
+/// I/O or permission error ("unknown" availability): the runtime neither announces them as newly
+/// added nor announces already-announced ones as removed, while continuing to deliver every
+/// readable entry normally.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SkillCatalogSnapshot {
+    /// Readable, verified Skill entries available for delivery.
+    pub entries: Vec<SkillCatalogEntry>,
+    /// `SKILL.md` paths of catalog rows whose usability could not be verified due to I/O errors.
+    pub unreadable_paths: BTreeSet<PathBuf>,
+}
+
 /// Supplies available Skills and readable Skill storage roots for Agent sessions.
 ///
 /// Desktop reads currently available local and plugin Skills from its catalog and exposes the two
-/// stable Skill storage roots; `ora-node` returns empty vectors so Node sessions receive no prompt
-/// injection, no `additionalDirectories`, and no Skill setup metadata.
+/// stable Skill storage roots; `ora-node` returns empty snapshots and roots so Node sessions
+/// receive no prompt injection, no `additionalDirectories`, and no Skill setup metadata.
 pub trait SkillCatalogSource: Clone + Send + Sync + 'static {
-    /// Lists the currently available Skills visible for sessions in `workspace_id`.
+    /// Reads the current Skill catalog snapshot visible for sessions in `workspace_id`.
     ///
-    /// Returns an error when the host cannot reliably read its Skill catalog or verify package
-    /// availability; the runtime treats a read failure as a skipped turn rather than an empty
-    /// catalog so active sessions do not receive false removal deltas.
+    /// Returns an error only when the catalog itself cannot be read (for example a database
+    /// failure); the runtime treats a catalog-level failure as a skipped turn without committing
+    /// `announced_skills`. Per-package read failures are reported in
+    /// [`SkillCatalogSnapshot::unreadable_paths`] so one unreadable package does not hide other
+    /// skills or trigger false removal deltas.
     fn skill_catalog(
         &self,
         workspace_id: &WorkspaceId,
-    ) -> Result<Vec<SkillCatalogEntry>, RuntimeError>;
+    ) -> Result<SkillCatalogSnapshot, RuntimeError>;
 
     /// Lists stable parent directories under which Skill packages reside.
     fn extra_read_roots(&self) -> Vec<PathBuf>;

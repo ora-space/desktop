@@ -1,5 +1,5 @@
 use super::DesktopSkillCatalog;
-use ora_agent_runtime::{SkillCatalogEntry, SkillCatalogSource};
+use ora_agent_runtime::{SkillCatalogEntry, SkillCatalogSnapshot, SkillCatalogSource};
 use ora_application::SkillRepository as _;
 use ora_db::{
     DatabaseBootstrapper, DatabaseLocation, PluginSkillProjection, RepositoryPool,
@@ -8,6 +8,7 @@ use ora_db::{
 use ora_domain::{AuditFields, Namespace, PluginId, Skill, SkillId, WorkspaceId};
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -105,25 +106,28 @@ fn resolves_usable_local_and_plugin_skill_paths_and_excludes_broken_packages() {
             vec![skills_root.clone(), plugins_installed]
         );
 
-        let entries = catalog
+        let snapshot = catalog
             .skill_catalog(&WorkspaceId::new("ws-1"))
             .expect("read usable skill catalog");
         assert_eq!(
-            entries,
-            vec![
-                SkillCatalogEntry {
-                    name: "local-valid".to_string(),
-                    description: "Valid local skill".to_string(),
-                    skill_md_path: local_valid_dir.join("SKILL.md"),
-                    package_dir: local_valid_dir.clone(),
-                },
-                SkillCatalogEntry {
-                    name: "audit".to_string(),
-                    description: "Audits changes".to_string(),
-                    skill_md_path: plugin_valid_dir.join("SKILL.md"),
-                    package_dir: plugin_valid_dir,
-                },
-            ]
+            snapshot,
+            SkillCatalogSnapshot {
+                entries: vec![
+                    SkillCatalogEntry {
+                        name: "local-valid".to_string(),
+                        description: "Valid local skill".to_string(),
+                        skill_md_path: local_valid_dir.join("SKILL.md"),
+                        package_dir: local_valid_dir.clone(),
+                    },
+                    SkillCatalogEntry {
+                        name: "audit".to_string(),
+                        description: "Audits changes".to_string(),
+                        skill_md_path: plugin_valid_dir.join("SKILL.md"),
+                        package_dir: plugin_valid_dir,
+                    },
+                ],
+                unreadable_paths: BTreeSet::new(),
+            }
         );
 
         // Soft-delete local-valid and remove plugin skill -> catalog shrinks cleanly for next delta.
@@ -138,7 +142,7 @@ fn resolves_usable_local_and_plugin_skill_paths_and_excludes_broken_packages() {
             catalog
                 .skill_catalog(&WorkspaceId::new("ws-1"))
                 .expect("read emptied skill catalog"),
-            vec![]
+            SkillCatalogSnapshot::default()
         );
     });
 }
@@ -172,12 +176,21 @@ fn returns_error_when_skill_repository_query_fails() {
 }
 
 #[test]
-fn returns_error_when_skill_manifest_read_fails_with_io_error() {
+fn marks_unreadable_skill_manifest_unknown_without_hiding_readable_skills() {
     with_trace_logging(|| {
         let temp = TempDir::new().expect("temp dir");
         let app_data = temp.path().join("app-data");
         let home_dir = temp.path().join("home");
         let skills_root = app_data.join("atoms").join("skills");
+
+        let readable_dir = skills_root.join("readable-skill");
+        fs::create_dir_all(&readable_dir).expect("create readable skill dir");
+        fs::write(
+            readable_dir.join("SKILL.md"),
+            "---\nname: readable-skill\ndescription: Readable\n---\nBody",
+        )
+        .expect("write readable SKILL.md");
+
         let local_dir = skills_root.join("locked-skill");
         fs::create_dir_all(&local_dir).expect("create locked skill dir");
         let manifest_path = local_dir.join("SKILL.md");
@@ -189,6 +202,17 @@ fn returns_error_when_skill_manifest_read_fails_with_io_error() {
 
         let pool = test_pool(&app_data);
         let repo = SqliteSkillRepository::new(pool.clone());
+        repo.create_skill(
+            Skill::new(
+                SkillId::new("skill-readable"),
+                Namespace::local(),
+                "readable-skill",
+                "Readable",
+                AuditFields::new(9, 9, /*is_deleted*/ false),
+            )
+            .expect("readable skill"),
+        )
+        .expect("insert readable skill");
         repo.create_skill(
             Skill::new(
                 SkillId::new("skill-locked"),
@@ -233,14 +257,20 @@ fn returns_error_when_skill_manifest_read_fails_with_io_error() {
             RestorePerms(manifest_path.clone())
         };
 
-        let error = catalog
+        let snapshot = catalog
             .skill_catalog(&WorkspaceId::new("ws-1"))
-            .expect_err("package manifest read I/O error must propagate instead of dropping skill");
-        assert!(
-            error
-                .to_string()
-                .contains("failed to verify skill package usability"),
-            "unexpected error: {error}"
+            .expect("per-entry manifest I/O error must not fail the whole catalog");
+        assert_eq!(
+            snapshot,
+            SkillCatalogSnapshot {
+                entries: vec![SkillCatalogEntry {
+                    name: "readable-skill".to_string(),
+                    description: "Readable".to_string(),
+                    skill_md_path: readable_dir.join("SKILL.md"),
+                    package_dir: readable_dir,
+                }],
+                unreadable_paths: BTreeSet::from([manifest_path]),
+            }
         );
     });
 }
@@ -283,17 +313,20 @@ fn strips_windows_verbatim_prefix_from_persisted_plugin_package_roots() {
         .expect("insert plugin skill");
 
         let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir);
-        let entries = catalog
+        let snapshot = catalog
             .skill_catalog(&WorkspaceId::new("ws-1"))
             .expect("read plugin skill catalog");
         assert_eq!(
-            entries,
-            vec![SkillCatalogEntry {
-                name: "audit".to_string(),
-                description: "Audits changes".to_string(),
-                skill_md_path: expected_plain.join("SKILL.md"),
-                package_dir: expected_plain,
-            }]
+            snapshot,
+            SkillCatalogSnapshot {
+                entries: vec![SkillCatalogEntry {
+                    name: "audit".to_string(),
+                    description: "Audits changes".to_string(),
+                    skill_md_path: expected_plain.join("SKILL.md"),
+                    package_dir: expected_plain,
+                }],
+                unreadable_paths: BTreeSet::new(),
+            }
         );
     });
 }

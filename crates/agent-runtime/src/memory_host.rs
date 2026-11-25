@@ -5,7 +5,7 @@
 //! own explicit setup. The runtime tests reuse both adapters.
 
 use crate::RuntimeError;
-use crate::host::{SessionSetup, SessionStore, SkillCatalogEntry, SkillCatalogSource};
+use crate::host::{SessionSetup, SessionStore, SkillCatalogSnapshot, SkillCatalogSource};
 use crate::session_setup::{AgentSessionMcpCapabilities, SessionMcpRevision, SessionMcpSnapshot};
 use ora_domain::{
     AgentRef, HistoryState, PluginId, Session, SessionId, SessionMcpSelection, SessionStatus,
@@ -188,8 +188,8 @@ impl SkillCatalogSource for NoSkillCatalog {
     fn skill_catalog(
         &self,
         _workspace_id: &WorkspaceId,
-    ) -> Result<Vec<SkillCatalogEntry>, RuntimeError> {
-        Ok(Vec::new())
+    ) -> Result<SkillCatalogSnapshot, RuntimeError> {
+        Ok(SkillCatalogSnapshot::default())
     }
 
     fn extra_read_roots(&self) -> Vec<PathBuf> {
@@ -209,7 +209,7 @@ mod tests {
             catalog
                 .skill_catalog(&WorkspaceId::new("workspace-1"))
                 .expect("NoSkillCatalog never fails"),
-            Vec::<SkillCatalogEntry>::new()
+            SkillCatalogSnapshot::default()
         );
         assert_eq!(catalog.extra_read_roots(), Vec::<PathBuf>::new());
     }

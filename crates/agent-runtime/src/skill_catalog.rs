@@ -7,7 +7,7 @@
 #[cfg(test)]
 mod tests;
 
-use crate::host::SkillCatalogEntry;
+use crate::host::{SkillCatalogEntry, SkillCatalogSnapshot};
 use agent_client_protocol_schema::v1::{
     ContentBlock, LoadSessionRequest, Meta, NewSessionRequest, TextContent,
 };
@@ -53,12 +53,13 @@ pub(crate) struct SkillCatalogInjection {
 /// `session/load`, rebuilt session, or post-compaction reset) and receives the full catalog if
 /// non-empty. When `announced` is `Some`, only `SKILL.md` path additions and removals produce an
 /// incremental update block; an identical path set emits nothing so prompt prefixes remain stable.
+/// Entries in [`SkillCatalogSnapshot::unreadable_paths`] have unknown availability: already
+/// announced paths are kept without announcing removal, and unannounced paths are not added.
 pub(crate) fn prepare_skill_catalog_injection(
     announced: Option<&AnnouncedSkills>,
-    current: &[SkillCatalogEntry],
+    snapshot: &SkillCatalogSnapshot,
 ) -> Option<SkillCatalogInjection> {
-    let sorted = sorted_distinct_entries(current);
-    let next_announced = AnnouncedSkills::from_entries(&sorted);
+    let sorted = sorted_distinct_entries(&snapshot.entries);
 
     let Some(previous) = announced else {
         if sorted.is_empty() {
@@ -66,7 +67,7 @@ pub(crate) fn prepare_skill_catalog_injection(
         }
         return Some(SkillCatalogInjection {
             block_text: render_full_catalog(&sorted),
-            next_announced,
+            next_announced: AnnouncedSkills::from_entries(&sorted),
         });
     };
 
@@ -79,7 +80,9 @@ pub(crate) fn prepare_skill_catalog_injection(
     let mut removed: Vec<(&PathBuf, &str)> = previous
         .by_path
         .iter()
-        .filter(|(path, _)| !current_paths.contains(*path))
+        .filter(|(path, _)| {
+            !current_paths.contains(*path) && !snapshot.unreadable_paths.contains(*path)
+        })
         .map(|(path, name)| (path, name.as_str()))
         .collect();
     removed.sort_by(|(path_a, name_a), (path_b, name_b)| {
@@ -92,6 +95,16 @@ pub(crate) fn prepare_skill_catalog_injection(
 
     if added.is_empty() && removed.is_empty() {
         return None;
+    }
+
+    let mut next_announced = AnnouncedSkills::from_entries(&sorted);
+    for (path, name) in &previous.by_path {
+        if !current_paths.contains(path) && snapshot.unreadable_paths.contains(path) {
+            next_announced
+                .by_path
+                .entry(path.clone())
+                .or_insert_with(|| name.clone());
+        }
     }
 
     Some(SkillCatalogInjection {

@@ -64,7 +64,7 @@ pub use end_cause::{PromptEndCause, PromptEndReport};
 pub use error::{ErrorClassification, RuntimeError, SharedError};
 pub use host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,
-    SessionStore, SkillCatalogEntry, SkillCatalogSource, WorkspaceDirectory,
+    SessionStore, SkillCatalogEntry, SkillCatalogSnapshot, SkillCatalogSource, WorkspaceDirectory,
 };
 pub use mcp_resolver::{
     EligibleMcpMember, InstalledMcpCandidate, McpConfigurationEligibility, SessionMcpCatalog,

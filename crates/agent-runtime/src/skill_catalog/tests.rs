@@ -7,12 +7,20 @@ use super::{
     AnnouncedSkills, SKILL_DIRECTORIES_META_KEY, apply_skill_setup, insert_catalog_block,
     prepare_skill_catalog_injection, skill_directories_meta,
 };
-use crate::host::SkillCatalogEntry;
+use crate::host::{SkillCatalogEntry, SkillCatalogSnapshot};
 use agent_client_protocol_schema::v1::{
     ContentBlock, ImageContent, LoadSessionRequest, NewSessionRequest, TextContent,
 };
 use pretty_assertions::assert_eq;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
+
+fn snapshot(entries: Vec<SkillCatalogEntry>) -> SkillCatalogSnapshot {
+    SkillCatalogSnapshot {
+        entries,
+        unreadable_paths: BTreeSet::new(),
+    }
+}
 
 fn entry(name: &str, description: &str, skill_md: &str, package_dir: &str) -> SkillCatalogEntry {
     SkillCatalogEntry {
@@ -49,7 +57,7 @@ fn full_catalog_sorts_deterministically_keeps_duplicate_names_and_preserves_nati
         ),
     ];
 
-    let injection = prepare_skill_catalog_injection(/*announced*/ None, &entries)
+    let injection = prepare_skill_catalog_injection(/*announced*/ None, &snapshot(entries))
         .expect("non-empty catalog must inject");
 
     assert_eq!(
@@ -68,7 +76,7 @@ Available skills are listed below. When a task matches a skill's description, re
 #[test]
 fn empty_catalog_emits_no_block_and_no_meta() {
     assert_eq!(
-        prepare_skill_catalog_injection(/*announced*/ None, &[]),
+        prepare_skill_catalog_injection(/*announced*/ None, &SkillCatalogSnapshot::default()),
         None
     );
     assert_eq!(skill_directories_meta(&[]), None);
@@ -90,9 +98,11 @@ fn delta_tracks_path_identity_across_unchanged_add_remove_and_upgrade() {
         "/home/plugins/installed/acme.1/sec/1.0.0/assets/sec-audit/SKILL.md",
         "/home/plugins/installed/acme.1/sec/1.0.0/assets/sec-audit",
     );
-    let initial =
-        prepare_skill_catalog_injection(/*announced*/ None, &[local.clone(), plugin_v1])
-            .expect("initial full");
+    let initial = prepare_skill_catalog_injection(
+        /*announced*/ None,
+        &snapshot(vec![local.clone(), plugin_v1]),
+    )
+    .expect("initial full");
     let announced = initial.next_announced;
 
     let same_path_updated = entry(
@@ -108,7 +118,10 @@ fn delta_tracks_path_identity_across_unchanged_add_remove_and_upgrade() {
         "/home/plugins/installed/acme.1/sec/1.0.0/assets/sec-audit",
     );
     assert_eq!(
-        prepare_skill_catalog_injection(Some(&announced), &[same_path_updated, plugin_v1_same]),
+        prepare_skill_catalog_injection(
+            Some(&announced),
+            &snapshot(vec![same_path_updated, plugin_v1_same]),
+        ),
         None
     );
 
@@ -127,7 +140,7 @@ fn delta_tracks_path_identity_across_unchanged_add_remove_and_upgrade() {
     );
     let delta = prepare_skill_catalog_injection(
         Some(&announced),
-        &[local, plugin_v2.clone(), added.clone()],
+        &snapshot(vec![local, plugin_v2.clone(), added.clone()]),
     )
     .expect("upgrade + add must emit delta");
     assert_eq!(
@@ -143,20 +156,117 @@ Removed skills (no longer available; do not use):\n\
     );
 
     // Uninstalling everything still emits removals and resets cumulative paths to empty.
-    let cleared = prepare_skill_catalog_injection(Some(&delta.next_announced), &[])
-        .expect("removing all skills emits removal delta");
+    let cleared = prepare_skill_catalog_injection(
+        Some(&delta.next_announced),
+        &SkillCatalogSnapshot::default(),
+    )
+    .expect("removing all skills emits removal delta");
     assert!(cleared.block_text.contains("Removed skills"));
     assert!(!cleared.block_text.contains("Added skills"));
     assert_eq!(
-        prepare_skill_catalog_injection(Some(&cleared.next_announced), &[]),
+        prepare_skill_catalog_injection(
+            Some(&cleared.next_announced),
+            &SkillCatalogSnapshot::default(),
+        ),
         None
     );
 
     // Explicitly verify forgetting announced state yields full catalog on next turn.
     let reset: Option<&AnnouncedSkills> = None;
-    let resent = prepare_skill_catalog_injection(reset, &[plugin_v2, added])
+    let resent = prepare_skill_catalog_injection(reset, &snapshot(vec![plugin_v2, added]))
         .expect("reset resends full catalog");
     assert!(resent.block_text.starts_with("<available_skills>\n"));
+}
+
+/// Covers N6: per-entry unreadable paths are treated as "unknown" — unannounced ones are not
+/// added, already-announced ones are not announced as removed and stay remembered across turns,
+/// and all other readable entries proceed normally.
+#[test]
+fn unreadable_entries_are_neither_added_nor_removed_while_other_entries_proceed() {
+    let alpha = entry(
+        "alpha",
+        "Alpha skill.",
+        "/data/atoms/skills/alpha/SKILL.md",
+        "/data/atoms/skills/alpha",
+    );
+    let beta = entry(
+        "beta",
+        "Beta skill.",
+        "/data/atoms/skills/beta/SKILL.md",
+        "/data/atoms/skills/beta",
+    );
+    let gamma = entry(
+        "gamma",
+        "Gamma skill.",
+        "/data/atoms/skills/gamma/SKILL.md",
+        "/data/atoms/skills/gamma",
+    );
+
+    // Turn 1: `alpha` is readable, `beta` is unreadable -> full catalog includes only `alpha`.
+    let initial = prepare_skill_catalog_injection(
+        /*announced*/ None,
+        &SkillCatalogSnapshot {
+            entries: vec![alpha.clone()],
+            unreadable_paths: BTreeSet::from([beta.skill_md_path.clone()]),
+        },
+    )
+    .expect("readable entry must still produce initial full catalog");
+    assert!(initial.block_text.starts_with("<available_skills>\n"));
+    assert!(initial.block_text.contains("alpha: Alpha skill."));
+    assert!(!initial.block_text.contains("beta"));
+
+    // Turn 2: `alpha` becomes unreadable (already announced -> must NOT be removed), `beta` stays
+    // unreadable (unannounced -> must NOT be added), and `gamma` is added.
+    let turn2 = prepare_skill_catalog_injection(
+        Some(&initial.next_announced),
+        &SkillCatalogSnapshot {
+            entries: vec![gamma.clone()],
+            unreadable_paths: BTreeSet::from([
+                alpha.skill_md_path.clone(),
+                beta.skill_md_path.clone(),
+            ]),
+        },
+    )
+    .expect("adding gamma while alpha/beta are unreadable must emit addition delta");
+    assert!(turn2.block_text.starts_with("<available_skills_update>\n"));
+    assert!(turn2.block_text.contains("gamma: Gamma skill."));
+    assert!(!turn2.block_text.contains("Removed skills"));
+    assert!(!turn2.block_text.contains("alpha"));
+    assert!(!turn2.block_text.contains("beta"));
+
+    // Turn 3: `alpha` stays unreadable and nothing else changed -> no delta emitted.
+    assert_eq!(
+        prepare_skill_catalog_injection(
+            Some(&turn2.next_announced),
+            &SkillCatalogSnapshot {
+                entries: vec![gamma.clone()],
+                unreadable_paths: BTreeSet::from([
+                    alpha.skill_md_path.clone(),
+                    beta.skill_md_path.clone(),
+                ]),
+            },
+        ),
+        None
+    );
+
+    // Turn 4: both `alpha` and `beta` recover readable -> only `beta` is newly added (`alpha` was
+    // preserved in `next_announced` across its unreadable turns).
+    let turn4 = prepare_skill_catalog_injection(
+        Some(&turn2.next_announced),
+        &snapshot(vec![alpha.clone(), beta.clone(), gamma.clone()]),
+    )
+    .expect("recovering unannounced beta must emit addition delta");
+    assert!(turn4.block_text.contains("beta: Beta skill."));
+    assert!(!turn4.block_text.contains("alpha"));
+    assert!(!turn4.block_text.contains("Removed skills"));
+
+    // Turn 5: `alpha` is genuinely deleted (not unreadable) -> now announced as removed.
+    let turn5 =
+        prepare_skill_catalog_injection(Some(&turn4.next_announced), &snapshot(vec![beta, gamma]))
+            .expect("deleting alpha must emit removal delta");
+    assert!(turn5.block_text.contains("Removed skills"));
+    assert!(turn5.block_text.contains("alpha"));
+    assert!(!turn5.block_text.contains("Added skills"));
 }
 
 /// Leading slash commands stay first while ordinary prompts receive the block before user content

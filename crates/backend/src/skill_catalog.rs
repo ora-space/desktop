@@ -1,11 +1,15 @@
 #[cfg(test)]
 mod tests;
 
-use ora_agent_runtime::{RuntimeError, SkillCatalogEntry, SkillCatalogSource};
+use ora_agent_runtime::{
+    RuntimeError, SkillCatalogEntry, SkillCatalogSnapshot, SkillCatalogSource,
+};
 use ora_application::{FilesystemSkillStorage, SkillRepository as _, skill_package_is_usable};
 use ora_db::{RepositoryPool, SqliteSkillRepository};
 use ora_domain::{SkillOrigin, WorkspaceId};
+use ora_logging::ora_warn;
 use ora_utils::path::strip_verbatim_prefix;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Resolves live Skill catalog entries and host read roots directly from Ora's formal storage.
@@ -36,34 +40,45 @@ impl SkillCatalogSource for DesktopSkillCatalog {
     fn skill_catalog(
         &self,
         _workspace_id: &WorkspaceId,
-    ) -> Result<Vec<SkillCatalogEntry>, RuntimeError> {
+    ) -> Result<SkillCatalogSnapshot, RuntimeError> {
         let skills = self.skill_repository.list_skills().map_err(|error| {
             RuntimeError::internal("failed to query skill catalog for session delivery", error)
         })?;
         let storage = FilesystemSkillStorage::new(self.skills_root.clone());
         let mut entries = Vec::with_capacity(skills.len());
+        let mut unreadable_paths = BTreeSet::new();
         for skill in skills {
-            let usable = skill_package_is_usable(&storage, &skill).map_err(|error| {
-                RuntimeError::internal(
-                    "failed to verify skill package usability for session catalog",
-                    error,
-                )
-            })?;
-            if !usable {
-                continue;
-            }
             let package_dir = match &skill.origin {
                 SkillOrigin::Local => self.skills_root.join(&skill.name),
                 SkillOrigin::Plugin { package_root, .. } => strip_verbatim_prefix(package_root),
             };
-            entries.push(SkillCatalogEntry {
-                name: skill.name,
-                description: skill.description,
-                skill_md_path: package_dir.join("SKILL.md"),
-                package_dir,
-            });
+            let skill_md_path = package_dir.join("SKILL.md");
+            match skill_package_is_usable(&storage, &skill) {
+                Ok(true) => {
+                    entries.push(SkillCatalogEntry {
+                        name: skill.name,
+                        description: skill.description,
+                        skill_md_path,
+                        package_dir,
+                    });
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    ora_warn!(
+                        skill_id = %skill.id,
+                        skill_name = %skill.name,
+                        path = %skill_md_path.display(),
+                        error = %error,
+                        "failed to read skill package manifest; treating skill availability as unknown",
+                    );
+                    unreadable_paths.insert(skill_md_path);
+                }
+            }
         }
-        Ok(entries)
+        Ok(SkillCatalogSnapshot {
+            entries,
+            unreadable_paths,
+        })
     }
 
     fn extra_read_roots(&self) -> Vec<PathBuf> {

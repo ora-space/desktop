@@ -8,7 +8,7 @@
 use super::{PipeProcess, PipeSpawner};
 use crate::host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, SessionSetup, SkillCatalogEntry,
-    SkillCatalogSource, WorkspaceDirectory,
+    SkillCatalogSnapshot, SkillCatalogSource, WorkspaceDirectory,
 };
 use crate::session_setup::{AgentSessionMcpCapabilities, SessionMcpRevision, SessionMcpSnapshot};
 use crate::test_host::{NeverFails, RecordedEvents};
@@ -33,7 +33,7 @@ use ora_plugin_runtime::{NoHostRequests, PluginLogSetup, PluginRuntime, PluginRu
 use ora_scheduler::Scheduler;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -47,6 +47,7 @@ const PLUGIN_ID: &str = "official/skill-test.agent";
 #[derive(Clone, Default)]
 struct DynamicSkillCatalog {
     entries: Arc<Mutex<Vec<SkillCatalogEntry>>>,
+    unreadable_paths: Arc<Mutex<BTreeSet<PathBuf>>>,
     roots: Arc<Mutex<Vec<PathBuf>>>,
     fail_reads: Arc<AtomicBool>,
 }
@@ -54,6 +55,10 @@ struct DynamicSkillCatalog {
 impl DynamicSkillCatalog {
     fn set_entries(&self, entries: Vec<SkillCatalogEntry>) {
         *self.entries.lock().unwrap() = entries;
+    }
+
+    fn set_unreadable_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
+        *self.unreadable_paths.lock().unwrap() = paths.into_iter().collect();
     }
 
     fn set_roots(&self, roots: Vec<PathBuf>) {
@@ -69,14 +74,17 @@ impl SkillCatalogSource for DynamicSkillCatalog {
     fn skill_catalog(
         &self,
         _workspace_id: &WorkspaceId,
-    ) -> Result<Vec<SkillCatalogEntry>, RuntimeError> {
+    ) -> Result<SkillCatalogSnapshot, RuntimeError> {
         if self.fail_reads.load(Ordering::Acquire) {
             return Err(RuntimeError::internal(
                 "synthetic skill catalog read failure",
                 std::io::Error::other("disk unavailable"),
             ));
         }
-        Ok(self.entries.lock().unwrap().clone())
+        Ok(SkillCatalogSnapshot {
+            entries: self.entries.lock().unwrap().clone(),
+            unreadable_paths: self.unreadable_paths.lock().unwrap().clone(),
+        })
     }
 
     fn extra_read_roots(&self) -> Vec<PathBuf> {
@@ -912,7 +920,7 @@ async fn run_empty_init_and_compaction_reset_scenario() {
         attach,
         store,
         directory: FixedDir(dir.path().to_path_buf()),
-        session_setup: mcp,
+        session_setup: mcp.clone(),
         skill_catalog: skills.clone(),
         events: RecordedEvents::default(),
         home_directory: dir.path().to_path_buf(),
@@ -1062,7 +1070,7 @@ async fn run_catalog_read_failure_scenario() {
         attach,
         store,
         directory: FixedDir(dir.path().to_path_buf()),
-        session_setup: mcp,
+        session_setup: mcp.clone(),
         skill_catalog: skills.clone(),
         events: RecordedEvents::default(),
         home_directory: dir.path().to_path_buf(),
@@ -1153,7 +1161,7 @@ async fn run_catalog_read_failure_scenario() {
             .to_string_lossy(),
         &dir.path().join("atoms/skills/beta").to_string_lossy(),
     );
-    skills.set_entries(vec![skill_a, skill_b]);
+    skills.set_entries(vec![skill_a.clone(), skill_b.clone()]);
     send_prompt(&manager, &session.id, "turn 5 add beta").await;
     {
         let recorded = frames.lock().unwrap();
@@ -1164,6 +1172,134 @@ async fn run_catalog_read_failure_scenario() {
         assert!(texts[0].contains("beta: Beta skill."));
         assert!(!texts[0].contains("alpha"));
         assert_eq!(texts[1], "turn 5 add beta");
+    }
+
+    // Catalog read failure during MCP refresh `session/load`: succeeds, preserves
+    // `additionalDirectories`, omits `_meta["ora/skillDirectories"]`, skips prompt injection,
+    // and keeps the `{alpha, beta}` announced baseline intact.
+    skills.set_fail_reads(true);
+    mcp.bump();
+    send_prompt(&manager, &session.id, "turn 6 mcp refresh while failing").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let loads = acp_methods(&recorded, "session/load");
+        assert_eq!(loads.len(), 1);
+        assert_eq!(
+            loads[0]["params"]["additionalDirectories"],
+            serde_json::to_value(&read_roots).unwrap()
+        );
+        assert!(loads[0]["params"].get("_meta").is_none());
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(
+            prompt_texts(prompts[5]),
+            vec!["turn 6 mcp refresh while failing"]
+        );
+    }
+
+    // Recover reads unchanged after MCP refresh -> baseline still `{alpha, beta}`, no block.
+    skills.set_fail_reads(false);
+    send_prompt(&manager, &session.id, "turn 7 after mcp refresh recovery").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(
+            prompt_texts(prompts[6]),
+            vec!["turn 7 after mcp refresh recovery"]
+        );
+    }
+
+    // Catalog read failure during restore `session/load` after stop: `session/load` succeeds,
+    // keeps `additionalDirectories`, omits `_meta`, skips prompt injection without committing an
+    // empty baseline, so the next recovered prompt sends the FULL `<available_skills>` catalog.
+    manager
+        .stop_session(StopSessionRequest {
+            session_id: session.id.clone(),
+        })
+        .await
+        .unwrap();
+    skills.set_fail_reads(true);
+    send_prompt(&manager, &session.id, "turn 8 restore load while failing").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let loads = acp_methods(&recorded, "session/load");
+        assert_eq!(loads.len(), 2);
+        assert_eq!(
+            loads[1]["params"]["additionalDirectories"],
+            serde_json::to_value(&read_roots).unwrap()
+        );
+        assert!(loads[1]["params"].get("_meta").is_none());
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(
+            prompt_texts(prompts[7]),
+            vec!["turn 8 restore load while failing"]
+        );
+    }
+
+    skills.set_fail_reads(false);
+    send_prompt(&manager, &session.id, "turn 9 recovered after restore").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        let texts = prompt_texts(prompts[8]);
+        assert_eq!(texts.len(), 2);
+        assert!(
+            texts[0].starts_with("<available_skills>\n"),
+            "expected full catalog after failing restore turn, got: {texts:?}"
+        );
+        assert!(texts[0].contains("alpha: Alpha skill."));
+        assert!(texts[0].contains("beta: Beta skill."));
+        assert_eq!(texts[1], "turn 9 recovered after restore");
+    }
+
+    // N6 partial unreadable entry: mark `alpha` unreadable and add `gamma` -> `gamma` arrives as
+    // addition delta without falsely removing `alpha`; an unannounced unreadable `delta` is not
+    // added until it becomes readable.
+    let skill_c = entry(
+        "gamma",
+        "Gamma skill.",
+        &dir.path()
+            .join("atoms/skills/gamma/SKILL.md")
+            .to_string_lossy(),
+        &dir.path().join("atoms/skills/gamma").to_string_lossy(),
+    );
+    let skill_d = entry(
+        "delta",
+        "Delta skill.",
+        &dir.path()
+            .join("atoms/skills/delta/SKILL.md")
+            .to_string_lossy(),
+        &dir.path().join("atoms/skills/delta").to_string_lossy(),
+    );
+    skills.set_entries(vec![skill_b.clone(), skill_c.clone()]);
+    skills.set_unreadable_paths([skill_a.skill_md_path.clone(), skill_d.skill_md_path.clone()]);
+    send_prompt(&manager, &session.id, "turn 10 partial unreadable").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        let texts = prompt_texts(prompts[9]);
+        assert_eq!(texts.len(), 2);
+        assert!(texts[0].starts_with("<available_skills_update>\n"));
+        assert!(texts[0].contains("gamma: Gamma skill."));
+        assert!(!texts[0].contains("Removed skills"));
+        assert!(!texts[0].contains("alpha"));
+        assert!(!texts[0].contains("delta"));
+        assert_eq!(texts[1], "turn 10 partial unreadable");
+    }
+
+    // Both `alpha` and `delta` recover readable -> only `delta` is added (`alpha` stayed announced).
+    skills.set_entries(vec![skill_a, skill_b, skill_c, skill_d]);
+    skills.set_unreadable_paths(Vec::new());
+    send_prompt(&manager, &session.id, "turn 11 unreadable recovered").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        let texts = prompt_texts(prompts[10]);
+        assert_eq!(texts.len(), 2);
+        assert!(texts[0].starts_with("<available_skills_update>\n"));
+        assert!(texts[0].contains("delta: Delta skill."));
+        assert!(!texts[0].contains("alpha"));
+        assert!(!texts[0].contains("Removed skills"));
+        assert_eq!(texts[1], "turn 11 unreadable recovered");
     }
 
     scheduler.shutdown().await;

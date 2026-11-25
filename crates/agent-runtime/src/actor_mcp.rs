@@ -291,7 +291,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let mut servers = snapshot.servers().to_vec();
         servers.extend(self.session_mcp.host_mcp_servers());
         let skill_entries = match self.skill_catalog.skill_catalog(&self.session.workspace_id) {
-            Ok(entries) => entries,
+            Ok(snapshot) => snapshot.entries,
             Err(error) => {
                 ora_warn!(
                     session_id = %self.session.id,
