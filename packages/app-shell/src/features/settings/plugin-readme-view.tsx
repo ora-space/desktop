@@ -40,7 +40,9 @@ import { MarkdownDocument } from "../chat/markdown-message";
 import { PluginDownloadProgress } from "./plugin-download-progress";
 import { PluginLogo } from "./plugin-logo";
 import {
+  documentsUndelivered,
   showPluginInstallOutcome,
+  type MarketplaceImportTrigger,
   workflowDocumentSummary,
 } from "./plugin-install-feedback";
 import {
@@ -190,8 +192,9 @@ function PluginDetailAction({
       t,
       "settings.plugins.installSuccess",
       response.workflows,
+      "install",
     );
-    reportWorkflowDocuments(response.pluginId, response.workflows);
+    reportWorkflowDocuments(response.pluginId, response.workflows, "install");
   };
   /**
    * Opens the dependency report a market install or upgrade delivered documents for.
@@ -202,8 +205,9 @@ function PluginDetailAction({
   const reportWorkflowDocuments = (
     pluginId: string,
     workflows: readonly MarketplaceWorkflowOutcome[],
+    trigger: MarketplaceImportTrigger,
   ) => {
-    const report = marketplaceWorkflowReportInput(pluginId, workflows);
+    const report = marketplaceWorkflowReportInput(pluginId, workflows, trigger);
     if (report !== null) setImportReport(report);
   };
   const failUpdate = (cause: unknown) => {
@@ -212,10 +216,16 @@ function PluginDetailAction({
   /** Reports an upgrade that delivered document outcomes; other upgrades stay silent. */
   const succeedUpdate = (response: UpdatePluginResponse) => {
     if (response.workflows.length === 0) return;
-    toast.success(t("settings.plugins.updateSuccess"), {
-      description: workflowDocumentSummary(response.workflows, t),
-    });
-    reportWorkflowDocuments(response.pluginId, response.workflows);
+    if (documentsUndelivered(response.workflows, "update")) {
+      toast.warning(t("settings.plugins.updateSuccessDocumentsNotImported"), {
+        description: workflowDocumentSummary(response.workflows, t, "update"),
+      });
+    } else {
+      toast.success(t("settings.plugins.updateSuccess"), {
+        description: workflowDocumentSummary(response.workflows, t, "update"),
+      });
+    }
+    reportWorkflowDocuments(response.pluginId, response.workflows, "update");
   };
   const failUninstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.uninstallFailed"));

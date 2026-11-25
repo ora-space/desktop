@@ -58,7 +58,9 @@ import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 import { PluginDownloadProgress } from "./plugin-download-progress";
 import {
+  documentsUndelivered,
   showPluginInstallOutcome,
+  type MarketplaceImportTrigger,
   workflowDocumentSummary,
 } from "./plugin-install-feedback";
 import {
@@ -732,21 +734,24 @@ function AvailablePluginCard({
       t,
       "settings.plugins.installSuccess",
       response.workflows,
+      "install",
     );
-    reportWorkflowDocuments(response.pluginId, response.workflows);
+    reportWorkflowDocuments(response.pluginId, response.workflows, "install");
   };
   /**
    * Opens the same dependency report the local import shows when a market install or upgrade
    * delivered documents, so both entries answer "can these workflows run here?".
    *
-   * Only documents that arrived or failed become rows; a package that skipped everything already
-   * handled keeps its one-line toast, the way the manager's explicit retry does.
+   * The trigger decides which skips are news: an install or a retry reports every conflict it hit,
+   * while an upgrade only opens the report for a conflict it is reporting for the first time and
+   * keeps a known conflict in its neutral summary.
    */
   const reportWorkflowDocuments = (
     pluginId: string,
     workflows: readonly MarketplaceWorkflowOutcome[],
+    trigger: MarketplaceImportTrigger,
   ) => {
-    const report = marketplaceWorkflowReportInput(pluginId, workflows);
+    const report = marketplaceWorkflowReportInput(pluginId, workflows, trigger);
     if (report !== null) onWorkflowReport(report);
   };
   const failUpdate = (cause: unknown) => {
@@ -760,10 +765,16 @@ function AvailablePluginCard({
    */
   const succeedUpdate = (response: UpdatePluginResponse) => {
     if (response.workflows.length === 0) return;
-    toast.success(t("settings.plugins.updateSuccess"), {
-      description: workflowDocumentSummary(response.workflows, t),
-    });
-    reportWorkflowDocuments(response.pluginId, response.workflows);
+    if (documentsUndelivered(response.workflows, "update")) {
+      toast.warning(t("settings.plugins.updateSuccessDocumentsNotImported"), {
+        description: workflowDocumentSummary(response.workflows, t, "update"),
+      });
+    } else {
+      toast.success(t("settings.plugins.updateSuccess"), {
+        description: workflowDocumentSummary(response.workflows, t, "update"),
+      });
+    }
+    reportWorkflowDocuments(response.pluginId, response.workflows, "update");
   };
   /** Asks for the Hook execution disclosure before the one action that would run a program. */
   const start = (action: HookExecutionAction) => {

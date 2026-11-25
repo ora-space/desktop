@@ -43,7 +43,10 @@ import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
 import { McpHealthRow } from "./mcp-health-row";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { PluginLogo } from "./plugin-logo";
-import { workflowDocumentSummary } from "./plugin-install-feedback";
+import {
+  documentsUndelivered,
+  workflowDocumentSummary,
+} from "./plugin-install-feedback";
 import { marketplaceWorkflowReportInput } from "./workflow-import-report";
 import { useWorkflowUninstallImpact } from "./use-workflow-uninstall-impact";
 import { WorkflowUninstallImpact } from "./workflow-uninstall-impact";
@@ -274,14 +277,21 @@ function InstalledPluginRow({
    */
   const succeedUpdate = (response: UpdatePluginResponse) => {
     if (response.workflows.length === 0) return;
-    toast.success(t("settings.plugins.updateSuccess"), {
-      description: workflowDocumentSummary(response.workflows, t),
-    });
+    if (documentsUndelivered(response.workflows, "update")) {
+      toast.warning(t("settings.plugins.updateSuccessDocumentsNotImported"), {
+        description: workflowDocumentSummary(response.workflows, t, "update"),
+      });
+    } else {
+      toast.success(t("settings.plugins.updateSuccess"), {
+        description: workflowDocumentSummary(response.workflows, t, "update"),
+      });
+    }
     // An upgrade that added documents gets the same readiness report an install gets, so a
     // package the user already owns is not the one entry that hides a missing reference.
     const report = marketplaceWorkflowReportInput(
       response.pluginId,
       response.workflows,
+      "update",
     );
     if (report !== null) setImportReport(report);
   };
@@ -305,15 +315,23 @@ function InstalledPluginRow({
     pluginId: string;
     workflows: MarketplaceWorkflowOutcome[];
   }) => {
-    const description = workflowDocumentSummary(response.workflows, t);
+    const description = workflowDocumentSummary(response.workflows, t, "retry");
     if (description !== "") {
-      toast.success(t("settings.plugins.retryWorkflowImportDone"), {
-        description,
-      });
+      if (documentsUndelivered(response.workflows, "retry")) {
+        toast.warning(
+          t("settings.plugins.retryWorkflowImportDocumentsNotImported"),
+          { description },
+        );
+      } else {
+        toast.success(t("settings.plugins.retryWorkflowImportDone"), {
+          description,
+        });
+      }
     }
     const report = marketplaceWorkflowReportInput(
       response.pluginId,
       response.workflows,
+      "retry",
     );
     if (report !== null) setImportReport(report);
   };

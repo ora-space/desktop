@@ -3735,8 +3735,8 @@ it("reports the workflow documents a marketplace install imported", async () => 
 });
 
 /**
- * The installed Workflow card retries only the paths without a terminal record, and shows what the
- * retry decided: handled paths are counts, a document that still fails is named with its reason.
+ * The installed Workflow card retries the paths without a surviving copy, and shows what the retry
+ * decided: existing copies are counts, a document that still fails is named with its reason.
  */
 it("retries failed workflow document imports from the installed card", async () => {
   const user = userEvent.setup();
@@ -3756,8 +3756,8 @@ it("retries failed workflow document imports from the installed card", async () 
       reason: "document is not valid JSON",
     },
   ];
-  const successToast = vi
-    .spyOn(toast, "success")
+  const warningToast = vi
+    .spyOn(toast, "warning")
     .mockClear()
     .mockImplementation(() => "toast");
   renderSettings(client);
@@ -3765,15 +3765,19 @@ it("retries failed workflow document imports from the installed card", async () 
 
   await user.click(
     await screen.findByRole("button", {
-      name: /重试导入失败的文档|Retry failed document imports/,
+      name: /重试导入未导入的文档|Retry importing the missing documents/,
     }),
   );
 
-  await waitFor(() => expect(successToast).toHaveBeenCalled());
-  expect(successToast.mock.calls[0]?.[1]?.description).toMatch(
-    /此前已处理|already handled/,
+  // Nothing was delivered and a document still fails, so the retry must not headline as success.
+  await waitFor(() => expect(warningToast).toHaveBeenCalled());
+  expect(warningToast.mock.calls[0]?.[0]).toMatch(
+    /部分工作流文档仍未导入|Some workflow documents are still not imported/,
   );
-  expect(successToast.mock.calls[0]?.[1]?.description).toMatch(
+  expect(warningToast.mock.calls[0]?.[1]?.description).toMatch(
+    /已有副本|already have a copy/,
+  );
+  expect(warningToast.mock.calls[0]?.[1]?.description).toMatch(
     /导入失败|failed to import/,
   );
   const report = await screen.findByRole("dialog");
@@ -3783,4 +3787,133 @@ it("retries failed workflow document imports from the installed card", async () 
   expect(
     within(report).getByText("document is not valid JSON"),
   ).toBeInTheDocument();
+});
+
+/**
+ * An install whose documents all hit a name conflict must not headline as a plain success.
+ *
+ * The toast names the conflict count and the report opens with the colliding workflow, because the
+ * user has to know which document to free before the import can succeed.
+ */
+it("reports a marketplace install that delivered no document as a non-success", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins = [];
+  state.availablePlugins = [workflowListing()];
+  state.installedWorkflows = [
+    {
+      state: "skipped_conflict",
+      pluginId: WORKFLOW_PLUGIN_ID,
+      sourceFile: "assets/workflows/1.0.0.json",
+      name: "导入流程",
+      knownConflict: false,
+    },
+  ];
+  const warningToast = vi
+    .spyOn(toast, "warning")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: /安装|Install/ }));
+
+  await waitFor(() => expect(warningToast).toHaveBeenCalled());
+  expect(successToast).not.toHaveBeenCalled();
+  expect(warningToast.mock.calls[0]?.[0]).toMatch(
+    /插件已安装，但工作流未导入|Plugin installed, but its workflows were not imported/,
+  );
+  expect(warningToast.mock.calls[0]?.[1]?.description).toMatch(
+    /同名冲突未导入|name conflict/,
+  );
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText("assets/workflows/1.0.0.json")).toBeVisible();
+  expect(within(report).getByText(/导入流程/)).toBeVisible();
+  expect(
+    within(report).getByText(
+      /重试导入未导入的文档|Retry importing the missing documents/,
+    ),
+  ).toBeVisible();
+});
+
+/**
+ * An upgrade re-reports a conflict the record already carried as a neutral count, not a failure.
+ *
+ * Opening the report on every upgrade would turn a known conflict into a recurring alarm, so the
+ * dialog has to stay closed while the toast still admits the document was not imported.
+ */
+it("reports an upgrade's known conflict as a neutral count without opening the report", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({ ...weatherInstalled(), version: "1.1.0" });
+  state.updatedWorkflows = [
+    {
+      state: "skipped_conflict",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      name: "发布流程",
+      knownConflict: true,
+    },
+  ];
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  const warningToast = vi
+    .spyOn(toast, "warning")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "更新" }));
+
+  await waitFor(() => expect(successToast).toHaveBeenCalled());
+  expect(warningToast).not.toHaveBeenCalled();
+  expect(successToast.mock.calls[0]?.[1]?.description).toMatch(
+    /仍因同名冲突未导入|still not imported because of a name conflict/,
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+/**
+ * An upgrade keeps a copy the user deleted and says so neutrally.
+ *
+ * The deletion is the user's own earlier choice, so it must neither fail the upgrade nor read as
+ * the "already handled" line that hid the recovery path in 0.6.0.
+ */
+it("reports an upgrade's deleted copy as a neutral count", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({ ...weatherInstalled(), version: "1.1.0" });
+  state.updatedWorkflows = [
+    {
+      state: "skipped_deleted_copy",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+    },
+  ];
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  const warningToast = vi
+    .spyOn(toast, "warning")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "更新" }));
+
+  await waitFor(() => expect(successToast).toHaveBeenCalled());
+  expect(warningToast).not.toHaveBeenCalled();
+  expect(successToast.mock.calls[0]?.[1]?.description).toMatch(
+    /副本已删除，卸载后重装可恢复|copy(ies) deleted/,
+  );
+  expect(successToast.mock.calls[0]?.[1]?.description).not.toMatch(
+    /此前已处理|already handled/,
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

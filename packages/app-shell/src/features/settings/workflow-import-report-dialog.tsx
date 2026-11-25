@@ -30,7 +30,6 @@ import {
   type WorkflowImportReport,
   type WorkflowImportReportInput,
 } from "./workflow-import-report";
-
 export type { WorkflowImportReportInput };
 
 interface WorkflowImportReportDialogProps {
@@ -64,6 +63,8 @@ export function WorkflowImportReportDialog({
   const refused = input.outcomes.filter(
     (outcome) => outcome.state === "failed",
   );
+  const unresolved = input.unresolved ?? [];
+  const deletedCopies = input.deletedCopies ?? [];
 
   return (
     <Dialog
@@ -116,6 +117,52 @@ export function WorkflowImportReportDialog({
                   >
                     <p className="font-mono break-all">{outcome.sourceFile}</p>
                     <p className="text-muted-foreground">{outcome.reason}</p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {(unresolved.length > 0 || deletedCopies.length > 0) && (
+            <section
+              aria-label={t("settings.plugins.importReportSkippedTitle", {
+                count: unresolved.length + deletedCopies.length,
+              })}
+              className="overflow-hidden rounded-[10px] border border-border"
+            >
+              <h3 className="border-b border-border px-3 py-2 text-[13px] font-medium">
+                {t("settings.plugins.importReportSkippedTitle", {
+                  count: unresolved.length + deletedCopies.length,
+                })}
+              </h3>
+              <ul className="divide-y divide-border">
+                {unresolved.map((entry, index) => (
+                  <li
+                    key={`${entry.sourceFile}:${index}`}
+                    className="px-3 py-2 text-[12px]"
+                  >
+                    <p className="font-mono break-all">{entry.sourceFile}</p>
+                    <p>
+                      {t(
+                        entry.knownConflict
+                          ? "settings.plugins.importReportConflictKnown"
+                          : "settings.plugins.importReportConflict",
+                        { name: entry.name },
+                      )}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t("settings.plugins.importReportConflictRecovery")}
+                    </p>
+                  </li>
+                ))}
+                {deletedCopies.map((sourceFile, index) => (
+                  <li
+                    key={`${sourceFile}:${index}`}
+                    className="px-3 py-2 text-[12px]"
+                  >
+                    <p className="font-mono break-all">{sourceFile}</p>
+                    <p className="text-muted-foreground">
+                      {t("settings.plugins.workflowDocumentDeletedCopy")}
+                    </p>
                   </li>
                 ))}
               </ul>
