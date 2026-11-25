@@ -17,6 +17,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { Button, cn, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
+import type { AgentDiscoveryScope } from "../../state/data/agent-runtime";
 import {
   ComposerEditor,
   type ComposerEditorHandle,
@@ -35,6 +36,7 @@ import { useTranslation } from "react-i18next";
 import { ModelSelector } from "./model-selector";
 import { ThoughtLevelSelector } from "./thought-level-selector";
 import { PermissionSelector } from "./permission-selector";
+import { type DiscoveredCommands, presentableCommands } from "./agent-commands";
 import { ComposerActionMenu } from "./composer-action-menu";
 import { ImagePreviewDialog } from "./image-preview-dialog";
 import {
@@ -97,12 +99,16 @@ interface ComposerProps {
   modelSelectorDisabled?: boolean;
   /** Session whose model configuration the selector should display. */
   modelSelectorSessionId?: string;
+  /** Keeps the selector from waiting for commands this surface never shows. */
+  discoveryScope?: AgentDiscoveryScope;
   placeholder?: string;
   autoFocus?: boolean;
   skills?: Skill[];
   roles?: Agent[];
-  /** `null` while the Agent has not reported its commands. */
+  /** What the session's Agent reported; `null` while it has not. */
   availableCommands?: acp.AvailableCommand[] | null;
+  /** Shown instead while no report describes the Agent the next message goes to. */
+  discoveredCommands?: DiscoveredCommands;
 }
 
 interface ImageAttachment {
@@ -141,11 +147,13 @@ export function Composer({
   sendDisabledHint,
   modelSelectorDisabled = disabled,
   modelSelectorSessionId,
+  discoveryScope = "modelsAndCommands",
   placeholder,
   autoFocus = false,
   skills = [],
   roles = [],
   availableCommands = [],
+  discoveredCommands,
 }: ComposerProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState<ComposerQueryState>(EMPTY_COMPOSER_QUERY);
@@ -447,11 +455,15 @@ export function Composer({
   });
   const fileMentionActive = fileMentions.active;
 
+  const shownCommands =
+    discoveredCommands === undefined
+      ? availableCommands
+      : discoveredCommands.commands;
   const allActions = useMemo(
     () =>
       buildComposerActions({
         skills,
-        commands: availableCommands ?? [],
+        commands: presentableCommands(shownCommands ?? []),
         roles,
         plugins: composerPlugins,
         translatePluginSummary: (summaryKey) => t(summaryKey),
@@ -459,7 +471,7 @@ export function Composer({
         attachmentLabel: t("chat.actionMenu.addImages"),
         attachmentDescription: t("chat.actionMenu.addImagesDescription"),
       }),
-    [availableCommands, composerPlugins, roles, skills, t],
+    [shownCommands, composerPlugins, roles, skills, t],
   );
   const filteredActions = useMemo(() => {
     if (plusMenuOpen) return filterComposerActions(allActions, "");
@@ -488,11 +500,12 @@ export function Composer({
       : t(fileMenuStatusMessageKey);
   const availableCommandNames = useMemo(
     () =>
-      // Without a catalog nothing can be called unsupported.
-      availableCommands === null
+      // Only the report of the session the next message goes to can call a command unsupported,
+      // and all of it: a command the menu leaves out is still one the Agent offers.
+      availableCommands === null || discoveredCommands !== undefined
         ? undefined
         : new Set(availableCommands.map(({ name }) => name)),
-    [availableCommands],
+    [availableCommands, discoveredCommands],
   );
   const unsupportedCommandTitle = useCallback(
     (commandName: string) =>
@@ -501,7 +514,8 @@ export function Composer({
   );
   // A second slash or a leading dot makes the token a path, which no command list would answer.
   const commandsPendingNotice =
-    availableCommands === null &&
+    shownCommands === null &&
+    discoveredCommands?.isLoading !== true &&
     (plusMenuOpen ||
       (slashQuery !== null &&
         !slashQuery.startsWith(".") &&
@@ -1109,6 +1123,7 @@ export function Composer({
               <>
                 <ModelSelector
                   disabled={modelSelectorDisabled}
+                  discoveryScope={discoveryScope}
                   sessionId={modelSelectorSessionId}
                 />
                 {/* Shares the model picker's overflow gate: both describe the

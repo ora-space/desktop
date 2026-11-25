@@ -415,7 +415,8 @@ async fn a_failed_check_keeps_the_ready_release_and_its_notes() {
         .ready("installer", descriptor, artifact)
         .ready()
         .expect("release is ready");
-    let error = UpdateError::NoPendingUpdate;
+    // The nearest error alone only names the operation.
+    let error = UpdateError::CacheWrite(std::io::Error::other("disk is full"));
 
     assert_eq!(
         RuntimeUpdateState::after_failed_check(Some(retained.clone()), true, &error).status(),
@@ -428,7 +429,7 @@ async fn a_failed_check_keeps_the_ready_release_and_its_notes() {
         assert_eq!(
             RuntimeUpdateState::after_failed_check(retained, valid, &error).status(),
             DesktopUpdateStatus::Failed {
-                message: error.to_string(),
+                message: "failed to write update cache: disk is full".to_owned(),
             }
         );
     }

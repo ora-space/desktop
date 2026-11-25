@@ -14,11 +14,11 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
-        operation_name: "listAgentModels",
+        operation_name: "discoverAgent",
         namespace: NAMESPACE,
-        member_name: "listModels",
-        request_type: "ListAgentModelsRequest",
-        response_type: "ListAgentModelsResponse",
+        member_name: "discover",
+        request_type: "DiscoverAgentRequest",
+        response_type: "DiscoverAgentResponse",
         response_mode: FrontendResponseMode::Unary,
     },
 ];

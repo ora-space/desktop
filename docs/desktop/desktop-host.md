@@ -45,10 +45,10 @@ builds consume the checked-in output and never run `xtask`. See
 
 Access is granted per Webview label through `capabilities/`:
 
-| Label | May invoke |
-|---|---|
-| `main` | Every registered command |
-| `plugin-webview:*` | `plugin_webview_invoke` only, see [Surfaces](../plugins/surfaces.md) |
+| Label              | May invoke                                                             |
+| ------------------ | ---------------------------------------------------------------------- |
+| `main`             | Every registered command                                               |
+| `plugin-webview:*` | `plugin_webview_invoke` only, see [Surfaces](../plugins/surfaces.md)   |
 | `remote-webview:*` | Nothing: no capability targets the label, so the page has no Tauri IPC |
 
 `build.rs` cross-checks the registry against `permissions/main-commands.toml`, so a registered
@@ -77,32 +77,32 @@ Streams are described in [Streams and cancellation](../core/streams.md).
 Besides the generated contract commands, Desktop registers native commands that have no SDK
 operation:
 
-| Command | Purpose |
-|---|---|
-| `stream_contract`, `cancel_contract_stream` | Shared stream transport |
-| `get_worktree_root`, `set_worktree_root` | Where new task worktrees are created |
-| `resolve_task_cwd`, `resolve_workspace_cwd` | The live working directory of a task or Workspace |
-| `open_location` | Reveal a path in the system file manager (`explorer /select,`, `open -R`) instead of opening it with the default editor; directories open as folder windows |
-| `open_external_url` | Open an `http(s)`/`mailto` URL in the system browser; other schemes are `InvalidRequest` |
-| `write_workflow_export`, `read_workflow_import` | Workflow file export and import |
-| `download_today_log`, `download_plugin_log` | Copy a diagnostic log to a destination chosen in the save dialog |
-| `surface_*`, `plugin_webview_invoke` | Plugin surfaces, see [Surfaces](../plugins/surfaces.md) |
-| `is_new_installation` | Whether this process created the database, see [Release notes](../development/release-notes.md#display) |
-| `get_desktop_update_status`, `check_desktop_update`, `install_desktop_update` | See [Desktop updates](#desktop-updates) |
+| Command                                                                       | Purpose                                                                                                                                                     |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stream_contract`, `cancel_contract_stream`                                   | Shared stream transport                                                                                                                                     |
+| `get_worktree_root`, `set_worktree_root`                                      | Where new task worktrees are created                                                                                                                        |
+| `resolve_task_cwd`, `resolve_workspace_cwd`                                   | The live working directory of a task or Workspace                                                                                                           |
+| `open_location`                                                               | Reveal a path in the system file manager (`explorer /select,`, `open -R`) instead of opening it with the default editor; directories open as folder windows |
+| `open_external_url`                                                           | Open an `http(s)`/`mailto` URL in the system browser; other schemes are `InvalidRequest`                                                                    |
+| `write_workflow_export`, `read_workflow_import`                               | Workflow file export and import                                                                                                                             |
+| `download_today_log`, `download_plugin_log`                                   | Copy a diagnostic log to a destination chosen in the save dialog                                                                                            |
+| `surface_*`, `plugin_webview_invoke`                                          | Plugin surfaces, see [Surfaces](../plugins/surfaces.md)                                                                                                     |
+| `is_new_installation`                                                         | Whether this process created the database, see [Release notes](../development/release-notes.md#display)                                                     |
+| `get_desktop_update_status`, `check_desktop_update`, `install_desktop_update` | See [Desktop updates](#desktop-updates)                                                                                                                     |
 
 ## Persistent paths
 
-| Data | Location |
-|---|---|
-| SQLite database (including `user_config`) | `<data root>/ora.sqlite3` |
-| Logs | `<data root>/logs/ora.log` |
-| Session history | `<data root>/sessions/` |
-| Scheduled run artifacts | `<data root>/scheduled-artifacts/<run id>/` |
-| Skill packages | `<data root>/atoms/skills/` |
-| Instance lock | `<data root>/instance.lock` |
-| Plugins, marketplace sources, plugin data and logs | `~/.ora/plugins/` |
-| Default worktree root | `~/.ora/worktrees` |
-| Downloaded update packages | `~/.ora/cache/desktop-updates/v2/` |
+| Data                                               | Location                                    |
+| -------------------------------------------------- | ------------------------------------------- |
+| SQLite database (including `user_config`)          | `<data root>/ora.sqlite3`                   |
+| Logs                                               | `<data root>/logs/ora.log`                  |
+| Session history                                    | `<data root>/sessions/`                     |
+| Scheduled run artifacts                            | `<data root>/scheduled-artifacts/<run id>/` |
+| Skill packages                                     | `<data root>/atoms/skills/`                 |
+| Instance lock                                      | `<data root>/instance.lock`                 |
+| Plugins, marketplace sources, plugin data and logs | `~/.ora/plugins/`                           |
+| Default worktree root                              | `~/.ora/worktrees`                          |
+| Downloaded update packages                         | `~/.ora/cache/desktop-updates/v2/`          |
 
 The worktree root is non-sensitive configuration chosen in Settings → Data & privacy; it must be an
 absolute path to an existing directory. It is only a creation target: a new value affects task
@@ -128,7 +128,9 @@ process is reused (after re-verifying it against the configured public key) inst
 again. Development builds keep the commands for tests but register no network work.
 
 - A package already downloaded stays installable when a later check fails; `Failed` is reported only
-  when nothing was installable, and a failed installation restores `Ready`.
+  when nothing was installable, and a failed installation restores `Ready`. The settings sidebar and
+  the release notes page show a failed check; the page also shows its reason and a failed
+  installation, and lets the user retry.
 - Linux releases ship an AppImage, so a `deb`/`rpm` installation or a bare executable reports
   `ManualUpdate` with a reason before any download, and the shell points the user to the release
   instead of offering an install.
