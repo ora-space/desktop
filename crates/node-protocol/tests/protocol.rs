@@ -28,6 +28,8 @@ mod support;
 mod thread_preview;
 #[path = "protocol/turn_cancel.rs"]
 mod turn_cancel;
+#[path = "protocol/turn_failure.rs"]
+mod turn_failure;
 #[path = "protocol/worktree.rs"]
 mod worktree;
 
