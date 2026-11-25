@@ -357,9 +357,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             &self.session.agent_ref,
             self.provider_session_id(),
             model,
-            config_options,
+            &config_options,
         )
         .await
+        .unwrap_or(config_options)
     }
 
     /// Persists a rebuilt binding once the prompt that carried the transcript was accepted.

@@ -106,15 +106,16 @@ turn locally until `startSession` returns.
 
 - **Start.** `startSession` is the only creation path. It calls `session/new` with the current
   Session MCP snapshot, applies the caller's optional model intent against the options that
-  handshake reported, persists the Session, opens its history and installs its actor. Until the
-  actor owns it, a guard releases the unexposed provider session (`session/delete` when supported,
-  otherwise `session/close`) on any error or cancellation, and failed persistence removes the
-  history file and soft-deletes any inserted row.
+  handshake reported (an applied intent outdates options the agent pushed before it), persists the
+  Session, opens its history and installs its actor. Until the actor owns it, a guard releases the
+  unexposed provider session (`session/delete` when supported, otherwise `session/close`) on any
+  error or cancellation, and failed persistence removes the history file and soft-deletes any
+  inserted row.
 - **Load.** Loading reads Ora's own record and touches no agent: it creates no provider session and
   changes no lifecycle state, so a conversation opens even if its agent is gone. If an actor exists
   it answers its own load (replaying the record and then following a prompt in flight) without
-  taking ownership of that prompt. While it is attached, the command catalog its provider last
-  reported precedes the replay; the catalog is not recorded and ends with the attachment.
+  taking ownership of that prompt. While it is attached, the options and the command catalog its
+  provider last reported precede the replay; neither is recorded and both end with the attachment.
 - **Attach.** A prompt is what acquires a provider session. A session holding no channel registers a
   route on the current connection and calls `session/load` with its private provider id and the
   current MCP snapshot, discards whatever the agent recites, and marks the row `Running`. Options
@@ -138,7 +139,9 @@ turn locally until `startSession` returns.
   had reported are withdrawn until the replacement reports its own, and so are its options when the
   replacement offers none.
 - **Configure.** A session that holds a provider reports its own options and is configured through
-  `setSessionConfig`. A model chosen while a session held no provider is an intent applied at the
+  `setSessionConfig`. The actor takes the agent's answer before the caller gets it, so a view opened
+  later sees the options after the change; an answer for a provider session that was replaced
+  meanwhile is ignored. A model chosen while a session held no provider is an intent applied at the
   next attach. Reasoning effort is read only from the `thought_level` option a live session reports;
   there is no pre-session effort catalog.
 - **Stop and delete.** Explicit stop calls `session/close` when advertised, unloads the route and
