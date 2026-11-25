@@ -45,5 +45,6 @@ pub use reader::{
 };
 pub use record::{
     AgentSwitch, HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta, ToolCallTiming,
+    TurnEndedBy, TurnFailure, TurnFailureAnswer, TurnFailureCode,
 };
 pub use writer::{HistoryWriter, remove_session_history};

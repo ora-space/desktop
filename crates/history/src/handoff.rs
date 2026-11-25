@@ -207,7 +207,7 @@ fn collect_turns(history: &SessionHistory) -> Vec<HandoffTurn> {
     for line in &history.lines {
         match &line.record {
             HistoryRecord::Update { update, .. } => absorb_update(&mut current, update),
-            HistoryRecord::TurnEnded { stop_reason } => {
+            HistoryRecord::TurnEnded { stop_reason, .. } => {
                 current.stop_reason = Some(*stop_reason);
                 if !current.is_empty() {
                     turns.push(std::mem::take(&mut current));
@@ -325,7 +325,7 @@ pub fn final_completed_assistant_turn(history: &SessionHistory) -> Option<String
     let mut turn_open = false;
     for line in &history.lines {
         match &line.record {
-            HistoryRecord::TurnEnded { stop_reason } => {
+            HistoryRecord::TurnEnded { stop_reason, .. } => {
                 closed = Some((std::mem::take(&mut current), *stop_reason));
                 turn_open = false;
             }

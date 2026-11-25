@@ -65,7 +65,18 @@ pub enum HistoryRecord {
     ///
     /// Without this a replayed turn cannot be told apart from a completed one,
     /// which is exactly the information provider replay never carried.
-    TurnEnded { stop_reason: StopReason },
+    ///
+    /// A turn that did not complete also records why: `ended_by` for a caller cancel or a session
+    /// end, and `failure` for a turn that failed. Both leave `stop_reason` as `cancelled` so
+    /// readers that only look at it keep working. A turn the Agent itself ended with its own stop
+    /// reason has neither field.
+    TurnEnded {
+        stop_reason: StopReason,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ended_by: Option<TurnEndedBy>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failure: Option<TurnFailure>,
+    },
     /// Records that the conversation moved to a different agent CLI.
     AgentSwitched(AgentSwitch),
     /// Records that the agent bound by the preceding switch was given the record.
@@ -101,4 +112,63 @@ pub struct AgentSwitch {
     pub to: AgentRef,
     /// The provider session the conversation continues on after the switch.
     pub agent_session_id: String,
+}
+
+/// What ended a turn that did not complete, recorded beside `stop_reason: cancelled`.
+///
+/// A caller cancel and a session end are told apart by `ended_by`, while a turn that failed carries
+/// a `failure`. A turn the Agent itself ended with its own stop reason has neither.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnEndedBy {
+    CallerCancel,
+    SessionEnd,
+}
+
+/// The bounded reason a turn failed, carried in `TurnFailure.code`.
+///
+/// It belongs to this turn and is distinct from the session-terminal detail code; the two only
+/// share `agent_unavailable` and `agent_authentication_required` because they name the same fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnFailureCode {
+    AgentAuthenticationRequired,
+    AgentError,
+    NoProgress,
+    AgentUnavailable,
+    Internal,
+}
+
+/// How the Agent answered the last watchdog cancel, carried in `TurnFailure.answer`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnFailureAnswer {
+    Cancelled,
+    EndTurn,
+    MaxTokens,
+    MaxTurnRequests,
+    Refusal,
+    Error,
+    None,
+}
+
+/// The reason one turn failed, attached to `TurnEnded`.
+///
+/// `code` is always present; the rest appear only where the reason has that information. `message`
+/// is the Agent's sanitized text and never appears outside this field; `attempts`/`answer` describe
+/// a watchdog that gave up on a stalled turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TurnFailure {
+    pub code: TurnFailureCode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_code: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_truncated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<TurnFailureAnswer>,
 }

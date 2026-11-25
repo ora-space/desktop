@@ -148,6 +148,8 @@ fn round_trips_appended_records_in_conversation_order() {
                 seq: 2,
                 record: HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             },
         ])
@@ -166,6 +168,8 @@ fn round_trips_appended_records_in_conversation_order() {
                 2,
                 HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             ),
         ],
