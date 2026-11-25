@@ -139,7 +139,6 @@ Deno.test("a generic Agent must apply the exact model context before start succe
 
 Deno.test("serves the whole agent contract over one run loop", async () => {
   const received: JsonValue[] = [];
-  const effectCalls: unknown[] = [];
   const discoveryContexts: unknown[] = [];
   let send: AcpSender | undefined;
   const plugin = defineAgent({
@@ -158,25 +157,6 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     onAcp: (frame) => {
       received.push(frame);
     },
-    effects: {
-      resources: [{
-        workspaceRelativePath: ".agents/skills",
-        materializationFormat: "ora/skill-directory.v1",
-        coordination: "quiesce_before_mutation",
-      }],
-      coordinate: (context) => {
-        effectCalls.push(context);
-        return { barrier: "held" };
-      },
-      reactivate: (context) => {
-        effectCalls.push(context);
-        return { restarted: true };
-      },
-      verifyReady: (context) => {
-        effectCalls.push(context);
-        return { loaded: true };
-      },
-    },
   });
   const harness = createTransportHarness();
   const run = plugin.run(harness.transport);
@@ -190,16 +170,8 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
         "agent/stop",
         "agent/discover",
         "agent/list_models",
-        "effect/coordinate",
-        "effect/reactivate",
-        "effect/verify_ready",
       ],
       emits: ["agent/acp"],
-      effectResources: [{
-        workspaceRelativePath: ".agents/skills",
-        materializationFormat: "ora/skill-directory.v1",
-        coordination: "quiesce_before_mutation",
-      }],
     },
   });
 
@@ -261,51 +233,6 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     { cwd: "/home/user/project", includeCommands: false },
   ]);
   assertEquals(received, [{ jsonrpc: "2.0", id: 7, method: "initialize" }]);
-
-  const coordination = {
-    targetId: "target-1",
-    resourceIds: ["resource-1"],
-  };
-  await harness.send({
-    jsonrpc: "2.0",
-    id: 4,
-    method: "effect/coordinate",
-    params: coordination,
-  });
-  assertEquals((await harness.responses.next()).value, {
-    jsonrpc: "2.0",
-    id: 4,
-    result: { barrier: "held" },
-  });
-  await harness.send({
-    jsonrpc: "2.0",
-    id: 5,
-    method: "effect/reactivate",
-    params: coordination,
-  });
-  assertEquals((await harness.responses.next()).value, {
-    jsonrpc: "2.0",
-    id: 5,
-    result: { restarted: true },
-  });
-  const readiness = {
-    targetId: "target-1",
-    generation: 7,
-    consumerRevisionId: "consumer-revision-1",
-    projectionDigest: "sha256:projection",
-  };
-  await harness.send({
-    jsonrpc: "2.0",
-    id: 6,
-    method: "effect/verify_ready",
-    params: readiness,
-  });
-  assertEquals((await harness.responses.next()).value, {
-    jsonrpc: "2.0",
-    id: 6,
-    result: { loaded: true },
-  });
-  assertEquals(effectCalls, [coordination, coordination, readiness]);
 
   await send?.({ jsonrpc: "2.0", id: 7, result: { protocolVersion: 1 } });
   assertEquals((await harness.responses.next()).value, {

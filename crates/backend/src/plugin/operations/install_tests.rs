@@ -77,6 +77,7 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> Plugins {
             plugin_host: host.clone(),
             pool: pool.clone(),
             home_directory: root.to_path_buf(),
+            skills_root: root.join("atoms").join("skills"),
             relative_path_base: root.to_path_buf(),
             sessions_root: root.join("sessions"),
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
@@ -372,6 +373,7 @@ fn pack_test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, Arc<Plugin
             plugin_host: host.clone(),
             pool: pool.clone(),
             home_directory: root.to_path_buf(),
+            skills_root: root.join("atoms").join("skills"),
             relative_path_base: root.to_path_buf(),
             sessions_root: root.join("sessions"),
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
@@ -4357,6 +4359,7 @@ fn attributed_plugin_id(outcome: &MarketplaceWorkflowOutcome) -> &str {
     match outcome {
         MarketplaceWorkflowOutcome::Imported { plugin_id, .. }
         | MarketplaceWorkflowOutcome::SkippedProcessed { plugin_id, .. }
+        | MarketplaceWorkflowOutcome::SkippedDeletedCopy { plugin_id, .. }
         | MarketplaceWorkflowOutcome::SkippedConflict { plugin_id, .. }
         | MarketplaceWorkflowOutcome::Failed { plugin_id, .. } => plugin_id,
     }
@@ -4367,6 +4370,7 @@ fn outcome_source_file(outcome: &MarketplaceWorkflowOutcome) -> &str {
     match outcome {
         MarketplaceWorkflowOutcome::Imported { source_file, .. }
         | MarketplaceWorkflowOutcome::SkippedProcessed { source_file, .. }
+        | MarketplaceWorkflowOutcome::SkippedDeletedCopy { source_file, .. }
         | MarketplaceWorkflowOutcome::SkippedConflict { source_file, .. }
         | MarketplaceWorkflowOutcome::Failed { source_file, .. } => source_file,
     }
@@ -4641,9 +4645,13 @@ async fn marketplace_upgrade_imports_only_new_documents() {
     );
 }
 
-/// A name conflict with the user's own workflow is reported once and then remembered as terminal.
+/// A name conflict is reported with the name it collided on until the name is free again.
+///
+/// The install reports it as a first conflict, the upgrade reports the same conflict as the known
+/// one instead of claiming the document was already handled, and renaming the user's workflow lets
+/// the card retry import the document without uninstalling anything.
 #[tokio::test]
-async fn marketplace_install_reports_a_name_conflict_once() {
+async fn marketplace_conflict_is_reported_until_the_name_is_free() {
     let _trace = trace_guard();
     let data_dir = TempDir::new().expect("data dir");
     let pool = test_pool(data_dir.path());
@@ -4682,6 +4690,8 @@ async fn marketplace_install_reports_a_name_conflict_once() {
         vec![MarketplaceWorkflowOutcome::SkippedConflict {
             plugin_id: PLUGIN_ID.to_owned(),
             source_file: "assets/workflows/1.0.0.json".to_owned(),
+            name: "导入流程".to_owned(),
+            known_conflict: false,
         }]
     );
     assert_eq!(
@@ -4723,11 +4733,41 @@ async fn marketplace_install_reports_a_name_conflict_once() {
         .expect("update the workflow package");
     assert_eq!(
         updated.workflows,
-        vec![MarketplaceWorkflowOutcome::SkippedProcessed {
+        vec![MarketplaceWorkflowOutcome::SkippedConflict {
             plugin_id: PLUGIN_ID.to_owned(),
             source_file: "assets/workflows/1.0.0.json".to_owned(),
+            name: "导入流程".to_owned(),
+            known_conflict: true,
         }],
-        "the conflict is reported once, not on every upgrade"
+        "the upgrade reports the conflict the record already carried as known"
+    );
+
+    // Freeing the name is all the recovery the document needs: the card retry re-judges the path
+    // without uninstalling the package or waiting for a new version.
+    workflows
+        .update(ora_contracts::UpdateWorkflowRequest {
+            workflow_id: mine.workflow.id.clone(),
+            name: "导入流程-0".to_owned(),
+        })
+        .expect("rename the user's workflow");
+    let retried = plugins
+        .retry_workflow_import(RetryWorkflowImportRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .expect("retry the document import");
+    assert!(
+        matches!(
+            retried.workflows.as_slice(),
+            [MarketplaceWorkflowOutcome::Imported { source_file, name, .. }]
+                if source_file == "assets/workflows/1.0.0.json" && name == "导入流程"
+        ),
+        "the retry imports the document once its name is free: {:?}",
+        retried.workflows
+    );
+    assert_eq!(
+        listed_workflow_names(&pool),
+        vec!["导入流程".to_string(), "导入流程-0".to_string()],
+        "the user's renamed workflow and the imported copy both exist"
     );
 }
 
@@ -4813,10 +4853,10 @@ async fn retry_workflow_import_reconsiders_only_unrecorded_paths() {
     );
 }
 
-/// A workflow the user deleted stays deleted: its source path is terminal, so an upgrade and a
-/// retry both refuse to bring it back.
+/// A workflow the user deleted is kept deleted inside its install cycle, and only a fresh install
+/// cycle recovers it.
 #[tokio::test]
-async fn a_deleted_workflow_is_not_resurrected_by_an_upgrade_or_retry() {
+async fn a_deleted_copy_stays_deleted_until_the_package_is_reinstalled() {
     let _trace = trace_guard();
     let data_dir = TempDir::new().expect("data dir");
     let pool = test_pool(data_dir.path());
@@ -4876,13 +4916,13 @@ async fn a_deleted_workflow_is_not_resurrected_by_an_upgrade_or_retry() {
         })
         .await
         .expect("update the workflow package");
-    assert!(
-        matches!(
-            updated.workflows.as_slice(),
-            [MarketplaceWorkflowOutcome::SkippedProcessed { .. }]
-        ),
-        "an upgrade leaves a deleted copy deleted: {:?}",
-        updated.workflows
+    assert_eq!(
+        updated.workflows,
+        vec![MarketplaceWorkflowOutcome::SkippedDeletedCopy {
+            plugin_id: PLUGIN_ID.to_owned(),
+            source_file: "assets/workflows/1.0.0.json".to_owned(),
+        }],
+        "an upgrade keeps the deletion and says so instead of claiming it was handled"
     );
     assert_eq!(listed_workflow_names(&pool), Vec::<String>::new());
 
@@ -4891,14 +4931,236 @@ async fn a_deleted_workflow_is_not_resurrected_by_an_upgrade_or_retry() {
             plugin_id: PLUGIN_ID.to_owned(),
         })
         .expect("retry the document import");
+    assert_eq!(
+        retried.workflows,
+        vec![MarketplaceWorkflowOutcome::SkippedDeletedCopy {
+            plugin_id: PLUGIN_ID.to_owned(),
+            source_file: "assets/workflows/1.0.0.json".to_owned(),
+        }],
+        "a retry keeps the deletion too, and reports it as one"
+    );
+
+    // A successful install opens a new cycle, so the copy the user deleted comes back.
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+            data_disposition: PluginDataDisposition::Retain,
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .expect("uninstall the workflow package");
+    let reinstalled = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("reinstall the workflow package");
+    assert!(
+        matches!(
+            reinstalled.workflows.as_slice(),
+            [MarketplaceWorkflowOutcome::Imported { name, .. }] if name == "导入流程"
+        ),
+        "a reinstall restores the deleted copy: {:?}",
+        reinstalled.workflows
+    );
+    assert_eq!(listed_workflow_names(&pool), vec!["导入流程".to_string()]);
+}
+
+/// A reinstall restores the copy the user deleted while the surviving one keeps its record.
+///
+/// The two documents come from one package, so this is the case where recovery and the surviving
+/// copy's `SkippedProcessed` have to stay distinguishable in the same batch.
+#[tokio::test]
+async fn reinstalling_the_package_restores_a_deleted_copy_without_duplicating_the_survivor() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+
+    let (artifact, sha) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[
+            ("1.0.0.json", WORKFLOW_DOCUMENT),
+            ("2.0.0.json", SECOND_WORKFLOW_DOCUMENT),
+        ],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, artifact);
+    plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install the workflow package");
+
+    // The user deletes one of the two copies the package delivered.
+    let workflows = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock);
+    let listed = workflows
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows");
+    let deleted = listed
+        .workflows
+        .iter()
+        .find(|workflow| workflow.name == "发布流程")
+        .expect("the second document became a workflow");
+    workflows
+        .delete(ora_contracts::DeleteWorkflowRequest {
+            workflow_id: deleted.id.clone(),
+        })
+        .expect("the user deletes one imported workflow");
+
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+            data_disposition: PluginDataDisposition::Retain,
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .expect("uninstall the workflow package");
+    let reinstalled = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("reinstall the workflow package");
+
+    assert!(
+        matches!(
+            reinstalled.workflows.as_slice(),
+            [
+                MarketplaceWorkflowOutcome::SkippedProcessed { source_file: first, .. },
+                MarketplaceWorkflowOutcome::Imported {
+                    source_file: second,
+                    name,
+                    ..
+                }
+            ] if first == "assets/workflows/1.0.0.json"
+                && second == "assets/workflows/2.0.0.json"
+                && name == "发布流程"
+        ),
+        "the surviving copy stays skipped while the deleted one comes back: {:?}",
+        reinstalled.workflows
+    );
+    assert_eq!(
+        listed_workflow_names(&pool),
+        vec!["发布流程".to_string(), "导入流程".to_string()],
+        "the library holds exactly the two documents the package carries"
+    );
+}
+
+/// A recovery that fails for a reason other than the name hands the path back to the cycle.
+///
+/// Keeping the record would report the failure and then refuse the fix from the card, so the
+/// conditional delete is what makes "fix the document, then retry" work without another reinstall.
+#[tokio::test]
+async fn a_failed_recovery_of_a_deleted_copy_stays_retryable_in_the_cycle() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+    const MEMBER: &str = "ora-space.cdase-workflow";
+
+    let (artifact, sha) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, artifact);
+    plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install the workflow package");
+
+    let workflows = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock);
+    let listed = workflows
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows");
+    workflows
+        .delete(ora_contracts::DeleteWorkflowRequest {
+            workflow_id: listed.workflows[0].id.clone(),
+        })
+        .expect("the user deletes the imported workflow");
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+            data_disposition: PluginDataDisposition::Retain,
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .expect("uninstall the workflow package");
+
+    // The same version is republished with an unreadable document, so the recovery attempt fails
+    // for a reason that has nothing to do with the copy's name.
+    let (broken, broken_sha) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[("1.0.0.json", "{ not json")],
+    );
+    publish_listing(
+        data_dir.path(),
+        IDENTIFIER,
+        &workflow_listing(IDENTIFIER, "0.1.0", &broken_sha),
+        "republish workflow package 0.1.0",
+    );
+    plugins
+        .sync_available(ora_contracts::SyncAvailablePluginsRequest {})
+        .expect("sync marketplace");
+    host.use_local_marketplace_release(PLUGIN_ID, broken);
+    let reinstalled = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("reinstall the workflow package");
+    assert!(
+        matches!(
+            reinstalled.workflows.as_slice(),
+            [MarketplaceWorkflowOutcome::Failed { .. }]
+        ),
+        "the recovery reports the document failure: {:?}",
+        reinstalled.workflows
+    );
+    assert_eq!(listed_workflow_names(&pool), Vec::<String>::new());
+
+    // The record was cleared, so repairing the installed document is enough to retry it.
+    let document = installed_workflow_document(data_dir.path(), MEMBER, "0.1.0", "1.0.0.json");
+    fs::write(&document, WORKFLOW_DOCUMENT).expect("repair the document");
+    let retried = plugins
+        .retry_workflow_import(RetryWorkflowImportRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .expect("retry the document import");
     assert!(
         matches!(
             retried.workflows.as_slice(),
-            [MarketplaceWorkflowOutcome::SkippedProcessed { .. }]
+            [MarketplaceWorkflowOutcome::Imported { name, .. }] if name == "导入流程"
         ),
-        "a retry does not reset the user's choice either: {:?}",
+        "the repaired document imports inside the same cycle: {:?}",
         retried.workflows
     );
+    assert_eq!(listed_workflow_names(&pool), vec!["导入流程".to_string()]);
 }
 
 /// Uninstalling and reinstalling the package keeps the source record, so no copy comes back.
@@ -5079,4 +5341,198 @@ async fn workflow_summary_tracks_marketplace_source_across_uninstall_and_reinsta
         .find(|wf| wf.id == market_summary.id)
         .expect("existing copy retained on reinstall");
     assert_eq!(restored.source_plugin_id.as_deref(), Some(PLUGIN_ID));
+}
+
+/// A Pack install opens a new cycle only for the members that the Pack run itself installed;
+/// an already-installed member is skipped and keeps any deletion from its active cycle. Both
+/// members start with a deleted copy, so the reinstalled member's recovery proves the Pack used
+/// a new install cycle rather than an in-cycle retry, which would leave the copy deleted.
+#[tokio::test]
+async fn pack_install_opens_a_new_cycle_only_for_members_installed_by_that_run() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const MEMBER_SKIPPED: &str = "ora-space.wf-skipped";
+    const MEMBER_SKIPPED_ID: &str = "official/ora-space.wf-skipped";
+    const MEMBER_NEW: &str = "ora-space.wf-new";
+    const MEMBER_NEW_ID: &str = "official/ora-space.wf-new";
+    const PACK: &str = "ora-space.workflow-pack";
+    const PACK_ID: &str = "official/ora-space.workflow-pack";
+
+    let (skipped_artifact, skipped_sha) = build_workflow_artifact(
+        data_dir.path(),
+        MEMBER_SKIPPED,
+        "0.1.0",
+        &[("1.0.0.json", WORKFLOW_DOCUMENT)],
+    );
+    let (new_artifact, new_sha) = build_workflow_artifact(
+        data_dir.path(),
+        MEMBER_NEW,
+        "0.1.0",
+        &[("2.0.0.json", SECOND_WORKFLOW_DOCUMENT)],
+    );
+    let members_toml = format!(
+        "{}{}",
+        member_table(MEMBER_SKIPPED),
+        member_table(MEMBER_NEW)
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[
+            (
+                MEMBER_SKIPPED,
+                workflow_listing(MEMBER_SKIPPED, "0.1.0", &skipped_sha),
+            ),
+            (MEMBER_NEW, workflow_listing(MEMBER_NEW, "0.1.0", &new_sha)),
+            (PACK, pack_listing(PACK, &members_toml)),
+        ],
+    );
+    host.use_local_marketplace_release(MEMBER_SKIPPED_ID, skipped_artifact);
+    host.use_local_marketplace_release(MEMBER_NEW_ID, new_artifact);
+
+    // Give both members a deleted copy, then uninstall only the member the Pack run will
+    // install: the skipped member keeps its deletion inside its own cycle, while the reinstalled
+    // member's surviving record must be recovered by the Pack's new cycle.
+    for plugin_id in [MEMBER_SKIPPED_ID, MEMBER_NEW_ID] {
+        plugins
+            .install(InstallPluginRequest {
+                hook_execution_acknowledged: false,
+                plugin_id: plugin_id.to_owned(),
+            })
+            .await
+            .expect("pre-install the member");
+    }
+    let workflows = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock);
+    let listed = workflows
+        .list(ora_contracts::ListWorkflowsRequest {})
+        .expect("list workflows");
+    assert_eq!(listed.workflows.len(), 2);
+    for workflow in listed.workflows {
+        workflows
+            .delete(ora_contracts::DeleteWorkflowRequest {
+                workflow_id: workflow.id,
+            })
+            .expect("delete the member's imported workflow");
+    }
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: MEMBER_NEW_ID.to_owned(),
+            data_disposition: PluginDataDisposition::Retain,
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .expect("uninstall the member the Pack will reinstall");
+    assert_eq!(listed_workflow_names(&pool), Vec::<String>::new());
+
+    let installed = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PACK_ID.to_owned(),
+        })
+        .await
+        .expect("install the pack");
+
+    assert_eq!(
+        installed.outcome,
+        InstallOutcome::PackInstalled {
+            members: vec![MEMBER_NEW_ID.to_owned()],
+            skipped: vec![MEMBER_SKIPPED_ID.to_owned()],
+            failed: None,
+        }
+    );
+    assert!(
+        matches!(
+            installed.workflows.as_slice(),
+            [MarketplaceWorkflowOutcome::Imported {
+                plugin_id,
+                source_file,
+                name,
+                ..
+            }] if plugin_id == MEMBER_NEW_ID
+                && source_file == "assets/workflows/2.0.0.json"
+                && name == "发布流程"
+        ),
+        "only the member installed by this pack run opens a new cycle and recovers its deleted copy: {:?}",
+        installed.workflows
+    );
+    assert_eq!(
+        listed_workflow_names(&pool),
+        vec!["发布流程".to_string()],
+        "the skipped member's deleted workflow stays deleted"
+    );
+}
+
+/// An ASCII case-only variant is treated as a name conflict, reports the surviving blocking
+/// workflow's name, and becomes importable on card retry once that name is freed.
+#[tokio::test]
+async fn ascii_case_variant_name_reports_the_blocking_workflow_name_and_recovers() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.cdase-workflow";
+    const PLUGIN_ID: &str = "official/ora-space.cdase-workflow";
+
+    let workflows = crate::workflow::WorkflowApi::new(pool.clone(), SystemClock);
+    let mine = workflows
+        .create(ora_contracts::CreateWorkflowRequest {
+            name: "Release Flow".to_owned(),
+            graph: None,
+        })
+        .expect("create the user's workflow");
+
+    let lower_document = WORKFLOW_DOCUMENT.replace("导入流程", "release flow");
+    let (artifact, sha) = build_workflow_artifact(
+        data_dir.path(),
+        IDENTIFIER,
+        "0.1.0",
+        &[("1.0.0.json", lower_document.as_str())],
+    );
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(IDENTIFIER, workflow_listing(IDENTIFIER, "0.1.0", &sha))],
+    );
+    host.use_local_marketplace_release(PLUGIN_ID, artifact);
+
+    let installed = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .await
+        .expect("install the workflow package");
+    assert_eq!(
+        installed.workflows,
+        vec![MarketplaceWorkflowOutcome::SkippedConflict {
+            plugin_id: PLUGIN_ID.to_owned(),
+            source_file: "assets/workflows/1.0.0.json".to_owned(),
+            name: "Release Flow".to_owned(),
+            known_conflict: false,
+        }]
+    );
+
+    workflows
+        .update(ora_contracts::UpdateWorkflowRequest {
+            workflow_id: mine.workflow.id,
+            name: "Other Flow".to_owned(),
+        })
+        .expect("rename the blocking workflow");
+    let retried = plugins
+        .retry_workflow_import(RetryWorkflowImportRequest {
+            plugin_id: PLUGIN_ID.to_owned(),
+        })
+        .expect("retry after freeing the name");
+    assert!(
+        matches!(
+            retried.workflows.as_slice(),
+            [MarketplaceWorkflowOutcome::Imported { name, .. }] if name == "release flow"
+        ),
+        "the retry imports the document once the case-colliding name is free: {:?}",
+        retried.workflows
+    );
+    assert_eq!(
+        listed_workflow_names(&pool),
+        vec!["Other Flow".to_string(), "release flow".to_string()]
+    );
 }

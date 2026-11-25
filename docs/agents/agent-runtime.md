@@ -141,9 +141,9 @@ turn locally until `startSession` returns.
 - **Configure.** A session that holds a provider reports its own options and is configured through
   `setSessionConfig`. The actor takes the agent's answer before the caller gets it, so a view opened
   later sees the options after the change; an answer for a provider session that was replaced
-  meanwhile is ignored. A model chosen while a session held no provider is an intent applied at the
-  next attach. Reasoning effort is read only from the `thought_level` option a live session reports;
-  there is no pre-session effort catalog.
+  meanwhile is ignored, and the caller gets the replacement's options. A model chosen while a session
+  held no provider is an intent applied at the next attach. Reasoning effort is read only from the
+  `thought_level` option a live session reports; there is no pre-session effort catalog.
 - **Stop and delete.** Explicit stop calls `session/close` when advertised, unloads the route and
   keeps provider history. Deletion is described in [Session history](session-history.md#deletion).
 
@@ -296,16 +296,24 @@ settlement. Notifications are capped at ten per second, and a turn boundary send
 replacement. The callback is best effort, produces no acknowledgement and does not change the
 `record_settled` durability order. Hosts that do not opt in incur no pending-snapshot copy.
 
-A host composes the runtime through `AgentRuntimeHost`, whose associated types supply five
+A host composes the runtime through `AgentRuntimeHost`, whose associated types supply six
 interfaces; they are generic parameters, so each host gets its own monomorphized runtime.
 
-| Interface | Runtime needs | Desktop | Node |
-|---|---|---|---|
-| `SessionStore` | Create, read, list and update session rows; soft delete | `SqliteSessionRepository` | `MemorySessionStore` |
-| `AgentAttach` | List agent plugins, attach to a process and its tap, stop it, record its Effect consumer | `PluginApi` | The execution's own one-plugin lifecycle |
-| `SessionSetup` | The Session MCP view, revisions and health observation | Session MCP resolver and MCP health | `NoSessionMcp` |
-| `RuntimeEvents` | Title and model-catalog notifications; every history line written | `AppEventPublisher` | Each line becomes a Thread event |
-| `WorkspaceDirectory` | A Workspace's `cwd` | Workspace repository plus the path base | The execution's checkout |
+| Interface            | Runtime needs                                                      | Desktop                                 | Node                                     |
+| -------------------- | ------------------------------------------------------------------ | --------------------------------------- | ---------------------------------------- |
+| `SessionStore`       | Create, read, list and update session rows; soft delete            | `SqliteSessionRepository`               | `MemorySessionStore`                     |
+| `AgentAttach`        | List agent plugins, attach to a process and its tap, stop it       | `PluginApi`                             | The execution's own one-plugin lifecycle |
+| `SessionSetup`       | The Session MCP view, revisions and health observation             | Session MCP resolver and MCP health     | `NoSessionMcp`                           |
+| `Skills`             | Current Available Skill catalog entries and readable storage roots | `DesktopSkillCatalog`                   | `NoSkillCatalog`                         |
+| `RuntimeEvents`      | Title and model-catalog notifications; every history line written  | `AppEventPublisher`                     | Each line becomes a Thread event         |
+| `WorkspaceDirectory` | A Workspace's `cwd`                                                | Workspace repository plus the path base | The execution's checkout                 |
+
+On Desktop, `ora-agent-runtime` injects `<available_skills>` (full catalog on a live session's first
+prompt, cold `session/load`, reopened stopped session, or post-compaction reset) and
+`<available_skills_update>` (path-keyed deltas on mid-session catalog changes) into outgoing prompts—after any
+leading `/command` text block—and forwards the two readable Skill storage roots in ACP
+`additionalDirectories` (when advertised) plus `_meta["ora/skillDirectories"]` during `session/new`
+and `session/load`. `NoSkillCatalog` leaves Node sessions completely unchanged.
 
 Failures leave the crate as `RuntimeError` (classification, typed public error, context, source
 chain); Desktop converts it to `BackendError` and back without loss. The crate must not depend on

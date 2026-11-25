@@ -18,11 +18,11 @@
 //! session and fails closed with `agent_not_installed`; rejecting an identity here would also
 //! reject the portable identities the runtime deliberately accepts.
 
-use super::prerequisites::plugin_initializer;
+use super::prerequisites::SkillRoleWorkspaceInitializer;
 use crate::error::BackendError;
 use ora_application::{
-    ApplicationError, ExecutionContext, NodeType, SkillMaterializationReceipt,
-    StartPrerequisitesError, WorkflowGraph, WorkflowRunEngineRepository,
+    ApplicationError, ExecutionContext, NodeType, StartPrerequisitesError, WorkflowGraph,
+    WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowSkillReceipt,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_domain::{WorkflowRunId, WorkflowRunStatus};
@@ -94,7 +94,25 @@ pub(super) fn ensure_dependencies_available(
         return Ok(());
     }
     let graph = WorkflowGraph::parse(&context.graph_json).map_err(ApplicationError::from)?;
-    dependencies.resolve_graph(&graph)?;
+    let frozen = match context.run.payload.as_deref() {
+        Some(raw) => {
+            let payload: WorkflowRunPayload = serde_json::from_str(raw).map_err(|error| {
+                ApplicationError::WorkflowRunStartFailed {
+                    message: format!("failed to parse frozen workflow run payload: {error}"),
+                }
+            })?;
+            Some(payload.skill_receipt)
+        }
+        None => None,
+    };
+    match frozen.as_ref() {
+        Some(receipt) => {
+            dependencies.validate_frozen_graph(&graph, receipt)?;
+        }
+        None => {
+            dependencies.resolve_graph(&graph)?;
+        }
+    }
     Ok(())
 }
 
@@ -103,14 +121,26 @@ impl DependencySources<'_> {
     pub(super) fn resolve_graph(
         &self,
         graph: &WorkflowGraph,
-    ) -> Result<SkillMaterializationReceipt, BackendError> {
-        let initializer = plugin_initializer(self.skills_root, self.pool, self.plugin_api)
-            .map_err(|error| ApplicationError::WorkflowRunStartFailed {
-                message: error.to_string(),
-            })?;
-        let receipt = initializer
-            .resolve_graph(graph)
+    ) -> Result<WorkflowSkillReceipt, BackendError> {
+        let receipt =
+            SkillRoleWorkspaceInitializer::new(self.skills_root.to_path_buf(), self.pool.clone())
+                .resolve_graph(graph)
+                .map_err(ApplicationError::from_start_prerequisites_error)?;
+        validate_mcp_bindings(self.plugin_api, graph)
             .map_err(ApplicationError::from_start_prerequisites_error)?;
+        Ok(receipt)
+    }
+
+    /// Re-validates a frozen run's dependencies against any already-frozen exact catalog skill IDs.
+    pub(super) fn validate_frozen_graph(
+        &self,
+        graph: &WorkflowGraph,
+        frozen_receipt: &WorkflowSkillReceipt,
+    ) -> Result<WorkflowSkillReceipt, BackendError> {
+        let receipt =
+            SkillRoleWorkspaceInitializer::new(self.skills_root.to_path_buf(), self.pool.clone())
+                .validate_frozen_graph(graph, frozen_receipt)
+                .map_err(ApplicationError::from_start_prerequisites_error)?;
         validate_mcp_bindings(self.plugin_api, graph)
             .map_err(ApplicationError::from_start_prerequisites_error)?;
         Ok(receipt)

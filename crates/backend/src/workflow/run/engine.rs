@@ -175,9 +175,11 @@ impl WorkflowRunInvalidationPublisher for WorkflowRunInvalidations {
 }
 
 /// Builds the run engine, its session executor, and control handler.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_workflow_run_engine(
     agent_runtime: Arc<AgentRuntimeManager>,
     pool: RepositoryPool,
+    skills_root: PathBuf,
     sessions_root: PathBuf,
     baselines_root: PathBuf,
     clock: SystemClock,
@@ -204,6 +206,7 @@ pub(crate) fn build_workflow_run_engine(
         SqliteAgentDefinitionRepository::new(pool.clone()),
         callback.clone(),
         clock,
+        skills_root,
         sessions_root,
         baselines_root,
         transitions.clone(),

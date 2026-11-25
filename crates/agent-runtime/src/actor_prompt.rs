@@ -12,6 +12,7 @@ use super::title_acquisition::PollAttempt;
 use super::tool_timing::ToolTimings;
 use super::*;
 use crate::attach::LoadRestoration;
+use crate::host::SkillCatalogSource;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
@@ -35,8 +36,8 @@ pub(crate) fn produced_output(update: &SessionUpdate) -> bool {
 
 /// One attempt at a prompt, including the single rebuild retry after a stale `session/load`.
 struct PromptAttempt {
-    /// Blocks a rebuilt channel must receive; `None` builds the ordinary prompt.
-    blocks: Option<Vec<ContentBlock>>,
+    /// Prompt prepared for a rebuilt channel; `None` builds the ordinary prompt.
+    blocks: Option<AgentPrompt>,
     /// The prompt was already recorded before the first attempt, so a retry must not repeat it.
     skip_record: bool,
     /// Only the attempt after a load may rebuild; the retry attempt may not recurse again.
@@ -167,13 +168,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let AgentPrompt {
             blocks,
             settles_handoff,
+            prefix_len,
         } = match attempt.blocks.take() {
-            Some(blocks) => AgentPrompt {
-                blocks,
-                // A rebuilt channel receives the transcript with this prompt, so accepting it
-                // both settles the handoff and earns the new binding.
-                settles_handoff: true,
-            },
+            Some(prompt) => prompt,
             None => prompt_for_agent(self, &prompt),
         };
         let recorded = record_prompt.blocks.as_deref().unwrap_or(&prompt);
@@ -203,6 +200,35 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             self.finish_unsent_prompt(channel, &end_report, &events, &mut followers);
             return;
         }
+        let (blocks, catalog_commit) = match self
+            .skill_catalog
+            .skill_catalog(&self.session.workspace_id)
+        {
+            Ok(current_skills) => {
+                let skill_injection = crate::skill_catalog::prepare_skill_catalog_injection(
+                    self.announced_skills.as_ref(),
+                    &current_skills,
+                );
+                let blocks = match &skill_injection {
+                    Some(injection) => crate::skill_catalog::insert_catalog_block(
+                        blocks,
+                        injection.block_text.clone(),
+                        prefix_len,
+                    ),
+                    None => blocks,
+                };
+                (blocks, Some(skill_injection))
+            }
+            Err(error) => {
+                ora_warn!(
+                    session_id = %self.session.id,
+                    workspace_id = %self.session.workspace_id,
+                    error = %error,
+                    "failed to read skill catalog for prompt; skipping catalog injection for this turn",
+                );
+                (blocks, None)
+            }
+        };
         let agent_session_id = self.provider_session_id().to_string();
         let mut request = PromptRequest::new(agent_session_id.clone(), blocks);
         if let Some(instruction) = &record_prompt.attempt_instruction {
@@ -217,7 +243,22 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             )
             .await
         {
-            Ok(pending) => pending,
+            Ok(pending) => {
+                // Commit announced skill paths only once the ACP request is accepted on the wire:
+                // any failure before admission or send leaves the next prompt free to re-emit.
+                // A catalog read error skips both injection and commit so the next turn retries
+                // against the previous announced baseline. An initial turn with a readable empty
+                // catalog records the empty announced set (ADR D3) so a skill installed later
+                // arrives as an incremental update rather than full.
+                if let Some(skill_injection) = catalog_commit {
+                    if let Some(injection) = skill_injection {
+                        self.announced_skills = Some(injection.next_announced);
+                    } else {
+                        self.announced_skills.get_or_insert_with(Default::default);
+                    }
+                }
+                pending
+            }
             Err(error) => {
                 // The request never reached the agent, so a transcript this prompt
                 // was carrying is still owed and stays owed — in memory and, since
@@ -674,8 +715,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     config_options,
                     response,
                 }) => {
-                    self.adopt_config_options(&agent_session_id, config_options);
-                    let _ = response.send(());
+                    let current = self.adopt_config_options(&agent_session_id, config_options);
+                    let _ = response.send(current);
                 }
                 ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
                     self.adopt_user_title(title);
@@ -697,12 +738,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 ActiveInput::Command(RuntimeCommand::McpDesiredMaybeChanged) => {
                     self.note_desired_mcp();
                 }
-                // The Effect barrier is what makes this unreachable while an operation is in
-                // flight: a consumer is only restarted after its plugin reported every turn
-                // finished. A replacement that still raced in leaves this request unanswered, and
-                // this loop's existing failure handling ends the operation and stops the session —
-                // the same repair the idle path performs, arrived at the slower way.
-                ActiveInput::Command(RuntimeCommand::AgentProcessReplaced { .. }) => {}
                 ActiveInput::Command(RuntimeCommand::TitlePoll {
                     attempt: PollAttempt::First,
                 }) => {

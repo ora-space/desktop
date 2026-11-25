@@ -3,7 +3,8 @@ use super::{
     SkillImportService,
 };
 use crate::skill::{
-    BACKUP_DIR_NAME, DeleteSkillHandler, FilesystemSkillStorage, JOURNAL_DIR_NAME, STAGING_DIR_NAME,
+    BACKUP_DIR_NAME, DeleteSkillHandler, FilesystemSkillStorage, JOURNAL_DIR_NAME,
+    STAGING_DIR_NAME, SkillNameClaimedError,
 };
 use crate::{Clock, RepositoryError, SkillRepository};
 use ora_contracts::{
@@ -16,7 +17,7 @@ use pretty_assertions::assert_eq;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -765,6 +766,262 @@ fn concurrent_same_name_imports_do_not_report_storage_failure() {
     );
 }
 
+/// Wraps the fake repository so one importer can be parked right after observing a free name.
+///
+/// The reported race needed one importer to be descheduled between its name lookup and its
+/// leftover check for exactly as long as a sibling import takes. Parking the first post-arm lookup
+/// reproduces that interleaving deterministically instead of relying on thread scheduling.
+struct PausableRepository {
+    inner: Arc<FakeSkillRepository>,
+    armed: AtomicBool,
+    parked: Mutex<bool>,
+    parked_count: AtomicUsize,
+    released: AtomicBool,
+    wake: std::sync::Condvar,
+}
+
+impl PausableRepository {
+    fn new(inner: Arc<FakeSkillRepository>) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            armed: AtomicBool::new(false),
+            parked: Mutex::new(false),
+            parked_count: AtomicUsize::new(0),
+            released: AtomicBool::new(false),
+            wake: std::sync::Condvar::new(),
+        })
+    }
+    /// Starts parking the next name lookup that observes the catalog without the name.
+    fn arm(&self) {
+        self.armed.store(true, Ordering::SeqCst);
+    }
+    /// Blocks until one importer is parked inside its name lookup.
+    fn wait_until_parked(&self) {
+        let mut parked = self.parked.lock().unwrap();
+        while !*parked {
+            parked = self.wake.wait(parked).unwrap();
+        }
+    }
+    /// Lets the parked importer continue with its stale "name is free" observation.
+    fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
+    }
+}
+
+impl SkillRepository for Arc<PausableRepository> {
+    fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
+        self.inner.create_skill(skill)
+    }
+    fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError> {
+        self.inner.find_skill(skill_id)
+    }
+    fn find_skill_by_name(
+        &self,
+        namespace: &Namespace,
+        name: &str,
+    ) -> Result<Option<Skill>, RepositoryError> {
+        let observed = self.inner.find_skill_by_name(namespace, name)?;
+        if self.armed.load(Ordering::SeqCst)
+            && observed.is_none()
+            && self.parked_count.fetch_add(1, Ordering::SeqCst) == 0
+        {
+            *self.parked.lock().unwrap() = true;
+            self.wake.notify_all();
+            while !self.released.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        Ok(observed)
+    }
+    fn list_skills(&self) -> Result<Vec<Skill>, RepositoryError> {
+        self.inner.list_skills()
+    }
+    fn update_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
+        self.inner.update_skill(skill)
+    }
+    fn soft_delete_skill(
+        &self,
+        skill_id: &SkillId,
+        deleted_at: i64,
+    ) -> Result<bool, RepositoryError> {
+        self.inner.soft_delete_skill(skill_id, deleted_at)
+    }
+}
+
+#[test]
+fn import_that_saw_a_free_name_before_the_winner_committed_reports_stale_conflict() {
+    let temp = TempDir::new().unwrap();
+    let inner = FakeSkillRepository::new();
+    let repository = PausableRepository::new(inner.clone());
+    let source_a = temp.path().join("source-a");
+    let source_b = temp.path().join("source-b");
+    write_manifest(&source_a, "SKILL.md", "grilling", "First");
+    write_manifest(&source_b, "SKILL.md", "grilling", "Second");
+
+    let service = SkillImportService::new(
+        repository.clone(),
+        FilesystemSkillStorage::new(temp.path().join("atoms").join("skills")),
+        SequentialIdGenerator::default(),
+        TestClock::new(1_000_000),
+        NoopSkillImportProgressPublisher,
+        SkillImportConfig {
+            temp_root: temp.path().join("os-temp"),
+            limits: ora_skill_package::Limits::default(),
+            idle_timeout: Duration::from_secs(30),
+            max_lifetime: Duration::from_secs(60),
+            result_retention: Duration::from_secs(60),
+            preparation_timeout: Duration::from_secs(30),
+        },
+    );
+    let prepare = |source: &Path| {
+        service
+            .prepare(PrepareSkillImportRequest {
+                source: SkillImportSource::Folder {
+                    path: source.to_string_lossy().into_owned(),
+                },
+            })
+            .unwrap()
+            .session
+    };
+    let read_session = |session_id: &str| {
+        service
+            .get_session(GetSkillImportSessionRequest {
+                session_id: session_id.to_string(),
+            })
+            .unwrap()
+            .session
+    };
+    let wait_completed = |session_id: &str| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let session = read_session(session_id);
+            if session.status == SkillImportSessionStatus::Completed {
+                return session;
+            }
+            assert!(
+                Instant::now() <= deadline,
+                "commit {session_id} did not complete in time"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+
+    let session_a = prepare(&source_a);
+    let session_b = prepare(&source_b);
+    assert_eq!(
+        session_a.candidates[0].status,
+        ora_contracts::SkillImportCandidateStatus::Ready
+    );
+    assert_eq!(
+        session_b.candidates[0].status,
+        ora_contracts::SkillImportCandidateStatus::Ready
+    );
+
+    // Park whichever importer looks the name up first until the other one has fully committed.
+    repository.arm();
+    for session in [&session_a, &session_b] {
+        service
+            .commit(CommitSkillImportRequest {
+                session_id: session.session_id.clone(),
+                decisions: vec![],
+            })
+            .unwrap();
+    }
+    repository.wait_until_parked();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while [&session_a, &session_b].iter().all(|session| {
+        read_session(&session.session_id).status != SkillImportSessionStatus::Completed
+    }) {
+        assert!(Instant::now() <= deadline, "no commit completed in time");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    repository.release();
+
+    let completed_a = wait_completed(&session_a.session_id);
+    let completed_b = wait_completed(&session_b.session_id);
+    let statuses = [
+        completed_a.progress.results[0].status.clone(),
+        completed_b.progress.results[0].status.clone(),
+    ];
+    let imported = statuses
+        .iter()
+        .filter(|status| **status == ora_contracts::SkillImportResultStatus::Imported)
+        .count();
+    let stale = statuses
+        .iter()
+        .filter(|status| **status == ora_contracts::SkillImportResultStatus::StaleConflict)
+        .count();
+
+    assert_eq!((imported, stale), (1, 1));
+    assert_eq!(inner.snapshot().len(), 1);
+    let winner = if completed_a.progress.results[0].status
+        == ora_contracts::SkillImportResultStatus::Imported
+    {
+        "First"
+    } else {
+        "Second"
+    };
+    let manifest = fs::read_to_string(
+        temp.path()
+            .join("atoms")
+            .join("skills")
+            .join("grilling")
+            .join("SKILL.md"),
+    )
+    .unwrap();
+    assert!(
+        manifest.contains(&format!("description: {winner}")),
+        "the loser must not replace the winner's package: {manifest}"
+    );
+}
+
+#[test]
+fn losing_the_name_claim_at_insert_reports_stale_conflict_and_rolls_the_package_back() {
+    let temp = TempDir::new().unwrap();
+    let repository = FakeSkillRepository::new();
+    let source = temp.path().join("source");
+    write_manifest(&source, "SKILL.md", "grilling", "First");
+
+    let (service, _) = test_service(repository.clone(), &temp, Duration::from_secs(30));
+    let session = prepare_folder(&service, &source);
+    let session_id = session.session_id.clone();
+    repository.claim_next_create();
+
+    service
+        .commit(CommitSkillImportRequest {
+            session_id: session_id.clone(),
+            decisions: vec![],
+        })
+        .unwrap();
+    let completed = wait_for_completion(&service, &session_id);
+
+    assert_eq!(
+        completed.progress.results[0].status,
+        ora_contracts::SkillImportResultStatus::StaleConflict
+    );
+    assert!(completed.progress.results[0].error_code.is_none());
+    assert!(repository.snapshot().is_empty());
+    // A lost claim rolls the package transaction back instead of leaving the promoted directory
+    // for the next startup reconciliation to clean up.
+    assert!(
+        !temp
+            .path()
+            .join("atoms")
+            .join("skills")
+            .join("grilling")
+            .exists()
+    );
+    let journals = temp
+        .path()
+        .join("atoms")
+        .join("skills")
+        .join(JOURNAL_DIR_NAME);
+    assert!(
+        !journals.exists() || fs::read_dir(&journals).unwrap().next().is_none(),
+        "a lost name claim must not leave a transaction journal behind"
+    );
+}
+
 #[test]
 fn continues_after_individual_candidate_failure() {
     let temp = TempDir::new().unwrap();
@@ -1099,6 +1356,7 @@ fn expires_idle_sessions_on_access() {
 struct FakeSkillRepository {
     skills: Mutex<Vec<Skill>>,
     fail_create: std::sync::atomic::AtomicUsize,
+    claim_next_create: std::sync::atomic::AtomicUsize,
 }
 
 impl FakeSkillRepository {
@@ -1106,6 +1364,7 @@ impl FakeSkillRepository {
         Arc::new(Self {
             skills: Mutex::new(Vec::new()),
             fail_create: std::sync::atomic::AtomicUsize::new(0),
+            claim_next_create: std::sync::atomic::AtomicUsize::new(0),
         })
     }
     fn push_skill(&self, id: &str, name: &str, description: &str, created: i64, updated: i64) {
@@ -1132,6 +1391,10 @@ impl FakeSkillRepository {
     fn fail_next_create(&self) {
         self.fail_create.fetch_add(1, Ordering::SeqCst);
     }
+    /// Reports the next create as a lost name claim, as the active-name index would.
+    fn claim_next_create(&self) {
+        self.claim_next_create.fetch_add(1, Ordering::SeqCst);
+    }
     fn snapshot(&self) -> Vec<Skill> {
         self.skills
             .lock()
@@ -1151,7 +1414,27 @@ impl SkillRepository for Arc<FakeSkillRepository> {
                 "injected create failure",
             )));
         }
-        self.skills.lock().unwrap().push(skill.clone());
+        if self.claim_next_create.load(Ordering::SeqCst) > 0 {
+            self.claim_next_create.fetch_sub(1, Ordering::SeqCst);
+            return Err(RepositoryError::new(SkillNameClaimedError {
+                namespace: skill.namespace.as_ref().to_string(),
+                name: skill.name.clone(),
+            }));
+        }
+        let mut skills = self.skills.lock().unwrap();
+        // Mirrors `skills_active_namespace_name_unique`: a visible row owns its name atomically.
+        let claimed = skills.iter().any(|existing| {
+            existing.namespace == skill.namespace
+                && !existing.audit_fields.is_deleted
+                && existing.name.eq_ignore_ascii_case(&skill.name)
+        });
+        if claimed {
+            return Err(RepositoryError::new(SkillNameClaimedError {
+                namespace: skill.namespace.as_ref().to_string(),
+                name: skill.name.clone(),
+            }));
+        }
+        skills.push(skill.clone());
         Ok(skill)
     }
     fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError> {

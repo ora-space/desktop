@@ -17,7 +17,7 @@ artifact retrieval mode. Operations: `listMarketplaceSources`, `addMarketplaceSo
 - **Namespace.** Each source's canonical URL (case, credentials, default port, trailing slash and
   `.git` normalized) is bound once to a namespace in `plugin_source_namespace`. The binding outlives
   the source configuration: once a plugin from that source is installed, the namespace is frozen into
-  its install path, data directory, Skill rows and Effect consumer identity, so deleting and
+  its install path, data directory and Skill rows, so deleting and
   re-adding a repository reuses it. Two sources publishing the same identifier produce two distinct
   plugin ids and both stay listed.
 - **Enabled.** Disabling keeps the URL, branch, proxy policy, position and namespace binding but

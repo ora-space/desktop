@@ -13,10 +13,10 @@ use ora_domain::{
     AgentRef, HistoryState, PluginId, Session, SessionHostCapabilities, SessionId,
     SessionMcpSelection, SessionStatus, SessionTitle, WorkspaceId,
 };
-use ora_effect::ConsumerDeclaration;
 use ora_history::HistoryLine;
 use ora_plugin_lifecycle::{ConnectionError, InboundNotification};
 use ora_plugin_runtime::PluginRuntime;
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -30,6 +30,7 @@ pub trait AgentRuntimeHost: Send + Sync + 'static {
     type Store: SessionStore;
     type Attach: AgentAttach;
     type Setup: SessionSetup;
+    type Skills: SkillCatalogSource;
     type Events: RuntimeEvents;
     type Directory: WorkspaceDirectory;
 }
@@ -136,16 +137,6 @@ pub trait AgentAttach: Send + Sync + 'static {
         &self,
         plugin_id: &PluginId,
     ) -> impl Future<Output = Result<(), Self::StopError>> + Send;
-
-    /// Records the Effect consumer declaration an agent plugin registered, or clears it.
-    ///
-    /// A failure is terminal for the connection: the plugin registered something the host cannot
-    /// honour, and retrying would register the same thing again.
-    fn replace_agent_effect_declaration(
-        &self,
-        plugin_id: PluginId,
-        declaration: Option<ConsumerDeclaration>,
-    ) -> Result<(), RuntimeError>;
 }
 
 /// Resolves the MCP servers every ACP `session/new` and `session/load` sends.
@@ -274,4 +265,54 @@ pub trait RuntimeEvents: Clone + Send + Sync + 'static {
 pub trait WorkspaceDirectory: Send + Sync + 'static {
     /// Resolves the absolute `cwd` for sessions of one Workspace.
     fn workspace_cwd(&self, workspace_id: &WorkspaceId) -> Result<PathBuf, RuntimeError>;
+}
+
+/// One available Skill delivered to an Agent session by prompt catalog and setup metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SkillCatalogEntry {
+    /// Display or invocation name of the Skill.
+    pub name: String,
+    /// Human-readable description telling the Agent when to read the Skill.
+    pub description: String,
+    /// Native absolute path to the Skill's `SKILL.md` file.
+    pub skill_md_path: PathBuf,
+    /// Native absolute path to the Skill package directory containing `SKILL.md`.
+    pub package_dir: PathBuf,
+}
+
+/// One point-in-time reading of a host's available Skill catalog.
+///
+/// `entries` contains every Skill whose package was read and verified usable.
+/// `unreadable_paths` records `SKILL.md` paths whose package could not be read due to a per-entry
+/// I/O or permission error ("unknown" availability): the runtime neither announces them as newly
+/// added nor announces already-announced ones as removed, while continuing to deliver every
+/// readable entry normally.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SkillCatalogSnapshot {
+    /// Readable, verified Skill entries available for delivery.
+    pub entries: Vec<SkillCatalogEntry>,
+    /// `SKILL.md` paths of catalog rows whose usability could not be verified due to I/O errors.
+    pub unreadable_paths: BTreeSet<PathBuf>,
+}
+
+/// Supplies available Skills and readable Skill storage roots for Agent sessions.
+///
+/// Desktop reads currently available local and plugin Skills from its catalog and exposes the two
+/// stable Skill storage roots; `ora-node` returns empty snapshots and roots so Node sessions
+/// receive no prompt injection, no `additionalDirectories`, and no Skill setup metadata.
+pub trait SkillCatalogSource: Clone + Send + Sync + 'static {
+    /// Reads the current Skill catalog snapshot visible for sessions in `workspace_id`.
+    ///
+    /// Returns an error only when the catalog itself cannot be read (for example a database
+    /// failure); the runtime treats a catalog-level failure as a skipped turn without committing
+    /// `announced_skills`. Per-package read failures are reported in
+    /// [`SkillCatalogSnapshot::unreadable_paths`] so one unreadable package does not hide other
+    /// skills or trigger false removal deltas.
+    fn skill_catalog(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<SkillCatalogSnapshot, RuntimeError>;
+
+    /// Lists stable parent directories under which Skill packages reside.
+    fn extra_read_roots(&self) -> Vec<PathBuf>;
 }

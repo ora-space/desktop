@@ -5,7 +5,6 @@
 
 mod agent;
 mod child_process;
-mod effect;
 mod frame;
 mod model_context;
 mod registration;
@@ -14,7 +13,6 @@ mod workbench;
 
 pub use agent::*;
 pub use child_process::*;
-pub use effect::*;
 pub use frame::*;
 pub use model_context::*;
 pub use registration::*;
@@ -46,7 +44,6 @@ pub fn export_typescript_bindings_to(
     agent::export(&config)?;
     model_context::export(&config)?;
     child_process::export(&config)?;
-    effect::export(&config)?;
     registration::export(&config)?;
     storage::export(&config)?;
     workbench::export(&config)?;

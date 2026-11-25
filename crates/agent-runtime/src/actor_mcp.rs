@@ -14,6 +14,7 @@ use super::{RuntimeActor, permission_not_pending, session_busy, session_setup_wi
 use crate::AgentRuntimeHost;
 use crate::RuntimeError;
 use crate::host::SessionSetup;
+use crate::host::SkillCatalogSource;
 use crate::session_setup::{
     AgentSessionMcpCapabilities, BarrierGuard, BarrierReason, LiveMcpEvent, LiveMcpPromptAdmission,
     SessionMcpSnapshot,
@@ -241,7 +242,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
     }
 
-    /// Waits for the Agent Session Barrier so MCP refresh cannot race Effect mutation.
+    /// Waits for the Agent Session Barrier to serialize live MCP refreshes for this agent plugin.
     async fn acquire_mcp_barrier(&self) -> Option<BarrierGuard> {
         let plugin_id = self
             .session_mcp
@@ -289,9 +290,25 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let window = session_setup_window(&snapshot);
         let mut servers = snapshot.servers().to_vec();
         servers.extend(self.session_mcp.host_mcp_servers());
-        let request =
+        let skill_entries = match self.skill_catalog.skill_catalog(&self.session.workspace_id) {
+            Ok(snapshot) => snapshot.entries,
+            Err(error) => {
+                ora_warn!(
+                    session_id = %self.session.id,
+                    workspace_id = %self.session.workspace_id,
+                    error = %error,
+                    "failed to read skill catalog for MCP refresh session/load; omitting skill directory metadata",
+                );
+                Vec::new()
+            }
+        };
+        let request = crate::skill_catalog::apply_skill_setup(
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
-                .mcp_servers(servers);
+                .mcp_servers(servers),
+            channel.connection.additional_directories_supported,
+            self.skill_catalog.extra_read_roots(),
+            &skill_entries,
+        );
         record_session_mcp_boundary(
             &self.session_mcp,
             &self.session.id,
@@ -336,7 +353,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             match input {
                 ActiveInput::Event(SessionEvent::Update(update, arrived)) => {
                     channel.retain_commands(&update);
-                    self.observe_session_update(&update.update);
+                    self.observe_replayed_session_update(&update.update);
                     deadline.as_mut().reset(Instant::now() + window);
                     settle_idle_event(&client, SessionEvent::Update(update, arrived)).await;
                 }
@@ -395,11 +412,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     }));
                     return Err(session_stopped());
                 }
-                ActiveInput::Command(RuntimeCommand::AgentProcessReplaced { agent }) => {
-                    self.channel = Some(channel);
-                    self.detach_replaced_agent(&agent);
-                    return Err(session_stopped());
-                }
                 ActiveInput::Command(RuntimeCommand::RespondToPermission { response, .. }) => {
                     let _ = response.send(Err(permission_not_pending()));
                 }
@@ -411,8 +423,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     config_options,
                     response,
                 }) => {
-                    self.adopt_config_options(&agent_session_id, config_options);
-                    let _ = response.send(());
+                    let current = self.adopt_config_options(&agent_session_id, config_options);
+                    let _ = response.send(current);
                 }
                 ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
                     self.adopt_user_title(title);

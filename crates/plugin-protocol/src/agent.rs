@@ -28,6 +28,10 @@ pub const AGENT_DISCOVERY_BUDGET_MS: u64 = 60_000;
 pub const AGENT_COMMANDS_WAIT_CAP_MS: u64 = 2_000;
 /// ACP major version carried over the agent plugin channel.
 pub const SUPPORTED_ACP_VERSION: u32 = 1;
+/// OpenCode shared project configuration materialization format.
+pub const OPENCODE_MCP_CONFIG_V1: &str = "ora/opencode-mcp-config.v1";
+/// Claude shared project configuration materialization format.
+pub const CLAUDE_MCP_CONFIG_V1: &str = "ora/claude-mcp-config.v1";
 
 /// Host context handed to an agent when its underlying process starts.
 #[derive(Debug, Clone, Deserialize, Serialize, TS, PartialEq, Eq)]

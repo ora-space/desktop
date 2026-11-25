@@ -40,7 +40,9 @@ import { MarkdownDocument } from "../chat/markdown-message";
 import { PluginDownloadProgress } from "./plugin-download-progress";
 import { PluginLogo } from "./plugin-logo";
 import {
+  documentsUndelivered,
   showPluginInstallOutcome,
+  type MarketplaceImportTrigger,
   workflowDocumentSummary,
 } from "./plugin-install-feedback";
 import {
@@ -66,6 +68,7 @@ export function PluginReadmeView({
   installed,
   onBack,
   onResolveDependency,
+  onOpenInstalledPlugin,
 }: {
   plugin: AvailablePlugin;
   installed: InstalledPlugin | undefined;
@@ -78,6 +81,8 @@ export function PluginReadmeView({
     dependency: WorkflowDependency,
     fix: WorkflowDependencyFix,
   ) => void;
+  /** Opens the installed plugin card for an unresolved workflow entry. */
+  onOpenInstalledPlugin: (pluginId: string) => void;
 }) {
   const { t } = useTranslation();
   const readme = usePluginReadme(plugin.id);
@@ -114,6 +119,7 @@ export function PluginReadmeView({
           plugin={plugin}
           installed={installed}
           onResolveDependency={onResolveDependency}
+          onOpenInstalledPlugin={onOpenInstalledPlugin}
         />
       </header>
 
@@ -146,6 +152,7 @@ function PluginDetailAction({
   plugin,
   installed,
   onResolveDependency,
+  onOpenInstalledPlugin,
 }: {
   plugin: AvailablePlugin;
   installed: InstalledPlugin | undefined;
@@ -153,6 +160,7 @@ function PluginDetailAction({
     dependency: WorkflowDependency,
     fix: WorkflowDependencyFix,
   ) => void;
+  onOpenInstalledPlugin: (pluginId: string) => void;
 }) {
   const { t } = useTranslation();
   const showContractError = useContractErrorToast();
@@ -190,8 +198,9 @@ function PluginDetailAction({
       t,
       "settings.plugins.installSuccess",
       response.workflows,
+      "install",
     );
-    reportWorkflowDocuments(response.pluginId, response.workflows);
+    reportWorkflowDocuments(response.pluginId, response.workflows, "install");
   };
   /**
    * Opens the dependency report a market install or upgrade delivered documents for.
@@ -202,8 +211,9 @@ function PluginDetailAction({
   const reportWorkflowDocuments = (
     pluginId: string,
     workflows: readonly MarketplaceWorkflowOutcome[],
+    trigger: MarketplaceImportTrigger,
   ) => {
-    const report = marketplaceWorkflowReportInput(pluginId, workflows);
+    const report = marketplaceWorkflowReportInput(pluginId, workflows, trigger);
     if (report !== null) setImportReport(report);
   };
   const failUpdate = (cause: unknown) => {
@@ -212,10 +222,16 @@ function PluginDetailAction({
   /** Reports an upgrade that delivered document outcomes; other upgrades stay silent. */
   const succeedUpdate = (response: UpdatePluginResponse) => {
     if (response.workflows.length === 0) return;
-    toast.success(t("settings.plugins.updateSuccess"), {
-      description: workflowDocumentSummary(response.workflows, t),
-    });
-    reportWorkflowDocuments(response.pluginId, response.workflows);
+    if (documentsUndelivered(response.workflows, "update")) {
+      toast.warning(t("settings.plugins.updateSuccessDocumentsNotImported"), {
+        description: workflowDocumentSummary(response.workflows, t, "update"),
+      });
+    } else {
+      toast.success(t("settings.plugins.updateSuccess"), {
+        description: workflowDocumentSummary(response.workflows, t, "update"),
+      });
+    }
+    reportWorkflowDocuments(response.pluginId, response.workflows, "update");
   };
   const failUninstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.uninstallFailed"));
@@ -247,148 +263,156 @@ function PluginDetailAction({
     );
   };
 
-  if (install.isPending) {
-    return (
-      <Button disabled className="shrink-0 disabled:opacity-100">
-        <PluginDownloadProgress
-          progress={install.progress}
-          label={t("settings.plugins.downloadProgress")}
-        />
-        {t("settings.plugins.installing")}
-      </Button>
-    );
-  }
-  if (update.isPending) {
-    return (
-      <Button disabled className="shrink-0 disabled:opacity-100">
-        <PluginDownloadProgress
-          progress={update.progress}
-          label={t("settings.plugins.downloadProgress")}
-        >
-          <IconArrowBigUpLines className="size-3.5" />
-        </PluginDownloadProgress>
-        {t("settings.plugins.updating")}
-      </Button>
-    );
-  }
-  if (installed === undefined) {
+  const actionControl = (() => {
+    if (install.isPending) {
+      return (
+        <Button disabled className="shrink-0 disabled:opacity-100">
+          <PluginDownloadProgress
+            progress={install.progress}
+            label={t("settings.plugins.downloadProgress")}
+          />
+          {t("settings.plugins.installing")}
+        </Button>
+      );
+    }
+    if (update.isPending) {
+      return (
+        <Button disabled className="shrink-0 disabled:opacity-100">
+          <PluginDownloadProgress
+            progress={update.progress}
+            label={t("settings.plugins.downloadProgress")}
+          >
+            <IconArrowBigUpLines className="size-3.5" />
+          </PluginDownloadProgress>
+          {t("settings.plugins.updating")}
+        </Button>
+      );
+    }
+    if (installed === undefined) {
+      return (
+        <>
+          <Button
+            variant="outline"
+            className="shrink-0"
+            disabled={incompatible}
+            onClick={() => start("install")}
+          >
+            <IconDownload />
+            {t("settings.plugins.install")}
+          </Button>
+          {isHook && (
+            <HookExecutionConfirm
+              name={plugin.title || plugin.name}
+              action="install"
+              open={confirmAction !== null}
+              onOpenChange={(open) => setConfirmAction(open ? "install" : null)}
+              onConfirm={() => confirm("install")}
+              busy={install.isPending}
+            />
+          )}
+        </>
+      );
+    }
+    if (hasUpdate) {
+      return (
+        <>
+          <Button className="shrink-0" onClick={() => start("update")}>
+            <IconArrowBigUpLines />
+            {t("settings.plugins.update")}
+          </Button>
+          {isHook && (
+            <HookExecutionConfirm
+              name={plugin.title || plugin.name}
+              action="update"
+              open={confirmAction !== null}
+              onOpenChange={(open) => setConfirmAction(open ? "update" : null)}
+              onConfirm={() => confirm("update")}
+              busy={update.isPending}
+            />
+          )}
+        </>
+      );
+    }
+
     return (
       <>
         <Button
           variant="outline"
-          className="shrink-0"
-          disabled={incompatible}
-          onClick={() => start("install")}
+          className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          disabled={uninstalling}
+          onClick={() => setUninstallOpen(true)}
         >
-          <IconDownload />
-          {t("settings.plugins.install")}
+          {uninstalling ? (
+            <IconLoader2 className="animate-spin" />
+          ) : (
+            <IconTrash />
+          )}
+          {t(
+            uninstalling
+              ? "settings.plugins.uninstalling"
+              : "settings.plugins.uninstall",
+          )}
         </Button>
-        {isHook && (
-          <HookExecutionConfirm
-            name={plugin.title || plugin.name}
-            action="install"
-            open={confirmAction !== null}
-            onOpenChange={(open) => setConfirmAction(open ? "install" : null)}
-            onConfirm={() => confirm("install")}
-            busy={install.isPending}
-          />
-        )}
+        <AlertDialog
+          open={uninstallOpen}
+          onOpenChange={(open) => {
+            setUninstallOpen(open);
+            if (open) setDeleteData(true);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {t("settings.plugins.uninstallTitle", {
+                  name: plugin.title || plugin.name,
+                })}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {t("settings.plugins.uninstallDescription")}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <WorkflowUninstallImpact state={uninstallImpact} />
+            {isHook && <HookRemovalDisclosure />}
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={deleteData}
+                onChange={(event) => setDeleteData(event.target.checked)}
+              />
+              {t("settings.plugins.deleteConfigurationData")}
+            </label>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={uninstalling}>
+                {t("common.cancel")}
+              </AlertDialogCancel>
+              <Button
+                variant="destructive"
+                disabled={uninstalling || uninstallImpact.checking}
+                onClick={() =>
+                  mutations.uninstall.mutate(
+                    {
+                      dataDisposition: deleteData ? "delete" : "retain",
+                      hookExecutionAcknowledged: isHook,
+                    },
+                    {
+                      onError: failUninstall,
+                      onSuccess: () => setUninstallOpen(false),
+                    },
+                  )
+                }
+              >
+                {t("settings.plugins.uninstall")}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </>
     );
-  }
-  if (hasUpdate) {
-    return (
-      <>
-        <Button className="shrink-0" onClick={() => start("update")}>
-          <IconArrowBigUpLines />
-          {t("settings.plugins.update")}
-        </Button>
-        {isHook && (
-          <HookExecutionConfirm
-            name={plugin.title || plugin.name}
-            action="update"
-            open={confirmAction !== null}
-            onOpenChange={(open) => setConfirmAction(open ? "update" : null)}
-            onConfirm={() => confirm("update")}
-            busy={update.isPending}
-          />
-        )}
-      </>
-    );
-  }
+  })();
 
   return (
     <>
-      <Button
-        variant="outline"
-        className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-        disabled={uninstalling}
-        onClick={() => setUninstallOpen(true)}
-      >
-        {uninstalling ? (
-          <IconLoader2 className="animate-spin" />
-        ) : (
-          <IconTrash />
-        )}
-        {t(
-          uninstalling
-            ? "settings.plugins.uninstalling"
-            : "settings.plugins.uninstall",
-        )}
-      </Button>
-      <AlertDialog
-        open={uninstallOpen}
-        onOpenChange={(open) => {
-          setUninstallOpen(open);
-          if (open) setDeleteData(true);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t("settings.plugins.uninstallTitle", {
-                name: plugin.title || plugin.name,
-              })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("settings.plugins.uninstallDescription")}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <WorkflowUninstallImpact state={uninstallImpact} />
-          {isHook && <HookRemovalDisclosure />}
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={deleteData}
-              onChange={(event) => setDeleteData(event.target.checked)}
-            />
-            {t("settings.plugins.deleteConfigurationData")}
-          </label>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={uninstalling}>
-              {t("common.cancel")}
-            </AlertDialogCancel>
-            <Button
-              variant="destructive"
-              disabled={uninstalling || uninstallImpact.checking}
-              onClick={() =>
-                mutations.uninstall.mutate(
-                  {
-                    dataDisposition: deleteData ? "delete" : "retain",
-                    hookExecutionAcknowledged: isHook,
-                  },
-                  {
-                    onError: failUninstall,
-                    onSuccess: () => setUninstallOpen(false),
-                  },
-                )
-              }
-            >
-              {t("settings.plugins.uninstall")}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {actionControl}
       {importReport !== null && (
         <WorkflowImportReportDialog
           input={importReport}
@@ -396,6 +420,10 @@ function PluginDetailAction({
           onResolve={(dependency, fix) => {
             setImportReport(null);
             onResolveDependency(dependency, fix);
+          }}
+          onOpenInstalledPlugin={(memberPluginId) => {
+            setImportReport(null);
+            onOpenInstalledPlugin(memberPluginId);
           }}
         />
       )}

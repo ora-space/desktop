@@ -2,7 +2,7 @@
 
 English | [中文](skill-configuration.zh.md)
 
-Skill plugins may declare Settings-only `assets/config.json`. The existing plugin configuration editor stores overrides in the host plugin data directory. Configuration does not change Skill Catalog publication or workspace materialization.
+Skill plugins may declare Settings-only `assets/config.json`. The existing plugin configuration editor stores overrides in the host plugin data directory. Configuration does not change Skill Catalog publication or session Skill catalog delivery.
 
 ```json
 {
@@ -48,7 +48,7 @@ Snapshot capture first checks the names of every field in each valid declaration
 
 ## Security boundary
 
-Configuration remains in host `store.json`; this feature does not add encryption or an OS keychain. Ora does not copy configured values into workspace files, Effect state, ACP messages or host logs. Public setting values remain visible in the editor.
+Configuration remains in host `store.json`; this feature does not add encryption or an OS keychain. Ora does not copy configured values into workspace files, ACP messages or host logs. Public setting values remain visible in the editor.
 
 Every Agent receives the desktop-wide snapshot. This is **not** per-workspace or per-Skill secret isolation. Agents and scripts can read and print environment values; redaction does not prevent malicious scripts from leaking them. After reset or uninstall, existing processes retain the old snapshot until terminated. Revoke credentials at the external service when immediate revocation is required.
 

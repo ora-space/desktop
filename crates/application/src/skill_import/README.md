@@ -49,6 +49,8 @@ filesystem port (see the `skill` module), and does not decide HTTP or IPC semant
   startup reconciliation that make this ordering crash-safe.
 - A `ready` candidate whose name is claimed in the database or whose formal directory appears
   before promotion completes is recorded as `staleConflict`. That occupancy is a permanent
-  conflict, not a retryable `skill_storage_error`.
+  conflict, not a retryable `skill_storage_error`. The active-name unique index decides the claim
+  atomically with the row insert, so two concurrent same-name imports cannot both report success:
+  the loser's promoted package is rolled back and its candidate becomes `staleConflict`.
 
 See the [ora-application overview](../../README.md).

@@ -50,33 +50,37 @@ the run name, the instruction and typed values for declared Start inputs. Ora's 
 frozen into the run, so every generated handoff uses the same language even if the interface
 language changes later.
 
-For each Skill-using node, run creation asks an `AgentSkillDeliveryProvider` for its validated,
-Workspace-relative discovery roots and freezes a per-node receipt with the Skill id, slash-command
-name and actual package paths. Local Skills resolve through their catalog directory and plugin Skills
-through the immutable package recorded in their row. The provider uses the discovery roots declared by the selected Agent plugin and falls back to
-`.agents/skills` when it declares none. Execution uses only the frozen receipt, so a later catalog change cannot
-silently rewrite the packages an existing run addresses.
+For each Skill-using node, run creation freezes a per-node receipt carrying only `{ node_id,
+skill_id, invocation_name }`—never content, plugin version, or paths. At dispatch time, each node
+resolves its live formal storage `SKILL.md` path by `skill_id` (local Skills under `<data
+root>/atoms/skills/<name>/SKILL.md` and plugin Skills under the row's validated `package_root`),
+ignoring any legacy Workspace-relative `packagePaths` frozen by pre-upgrade runs. If a bound Skill
+is upgraded mid-run, subsequent nodes read the new version's `SKILL.md`; if uninstalled mid-run, the
+dispatched node fails with `workflow_skill_not_found` instead of falling back to another
+same-named Skill or stale path.
 
 Before start, restart, or resume dispatches a node, Desktop checks the entire graph it will run
-against the current role and Skill catalogs and installed MCP packages. Creation checks roles and
-Skills; an enabled MCP binding first needs a valid MCP package at dispatch. A missing Skill or
-unavailable MCP fails with `workflow_skill_not_found` or `workflow_mcp_not_found`, naming the node
-and dependency. Repairing the dependency allows the same run to proceed. A repeated start of a
-running run returns that run; restart of a running run returns `workflow_run_not_restartable`.
-Whether an Agent is installed is not part of this precheck: the runtime resolves the frozen Agent
-identity when it opens the node's session and fails with `agent_not_installed` if it is missing.
+against the current role and Skill catalogs (confirming each `skill_id` resolves to an Available
+Skill whose formal storage `SKILL.md` is present and readable) and installed MCP packages. Creation
+checks roles and Skills; an enabled MCP binding first needs a valid MCP package at dispatch. A
+missing Skill or unavailable MCP fails with `workflow_skill_not_found` or `workflow_mcp_not_found`,
+naming the node and dependency. Repairing the dependency allows the same run to proceed. A repeated
+start of a running run returns that run; restart of a running run returns
+`workflow_run_not_restartable`. Whether an Agent is installed is not part of this precheck: the
+runtime resolves the frozen Agent identity when it opens the node's session and fails with
+`agent_not_installed` if it is missing.
 
 A resume onto a new snapshot checks the target graph before restoring a checkpoint or changing
-the worktree. It freezes the validated Skill paths from the Agent plugin's declaration when it
-switches snapshots. Keeping the current snapshot preserves its existing frozen Skill receipt.
-After dispatch, session setup handles an MCP removed or misconfigured before a node session opens,
-as well as missing Agent capabilities; it does not deliver a partial selection.
+the worktree. It freezes `{ node_id, skill_id, invocation_name }` for the target snapshot's Skills
+when it switches snapshots. Keeping the current snapshot preserves its existing frozen Skill
+receipts. After dispatch, session setup handles an MCP removed or misconfigured before a node
+session opens, as well as missing Agent capabilities; it does not deliver a partial selection.
 
-The boundary for a dependency removed while a run is already executing is the next scheduling
-operation: an in-flight run is not re-checked, because its nodes already hold the receipt they
-started with, and the next start, restart, or resume of that run is what refuses to continue.
-Whether an uninstall should instead be blocked while a workflow references the plugin is a product
-question tracked separately, in the install/uninstall dependency warnings.
+Any Agent can run Skill-bound workflow nodes without declaring Skill delivery capabilities; only
+two distinct Skills resolving to the same invocation name within one run are still rejected at
+start. For MCP dependencies, an in-flight run's frozen receipt is checked at the next scheduling
+operation (`start`, `restart`, or `resume`); for Skills, both pre-start validation and each node
+dispatch resolve live storage paths dynamically.
 
 ### Events
 
@@ -104,8 +108,8 @@ constraints, every node in deterministic topological order with its status, and 
 request kept separate. Predecessor outputs are never appended implicitly; a node receives one only
 when its prompt references the variable, such as `{{#agent-1.output#}}`. Enabled Skill slash commands
 stay at the start of the first text block (agent CLIs parse them positionally), followed by the
-actual Skill package paths in the Workspace, which the agent is told to use. A node's Skill bindings
-are required invocations, not an allowlist.
+live formal storage `SKILL.md` paths resolved at dispatch, which the agent is told to read and
+follow. A node's Skill bindings are required invocations, not an allowlist.
 
 When structured output is enabled, the JSON Schema contract is appended after the workflow context
 and constrains only the final assistant response to one bare JSON object, so the agent can still use

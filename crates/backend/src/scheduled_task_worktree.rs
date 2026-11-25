@@ -1204,19 +1204,18 @@ mod tests {
                 .expect("bootstrap database");
             let project_root = temporary.path().join("fixture-repository");
             std::fs::create_dir_all(&project_root).expect("create project workspace");
-            let project =
-                SqliteProjectRepository::with_clock(pool.clone(), crate::clock::SystemClock)
-                    .create_project(
-                        Project::new(
-                            ora_domain::ProjectId::new("project-1"),
-                            "Bootstrap fixture",
-                            AuditFields::new(10, 10, /*is_deleted*/ false),
-                        ),
-                        ora_domain::WorkspaceLocation::local_filesystem(
-                            git.repo_path().to_string_lossy().into_owned(),
-                        ),
-                    )
-                    .expect("create project");
+            let project = SqliteProjectRepository::new(pool.clone())
+                .create_project(
+                    Project::new(
+                        ora_domain::ProjectId::new("project-1"),
+                        "Bootstrap fixture",
+                        AuditFields::new(10, 10, /*is_deleted*/ false),
+                    ),
+                    ora_domain::WorkspaceLocation::local_filesystem(
+                        git.repo_path().to_string_lossy().into_owned(),
+                    ),
+                )
+                .expect("create project");
             let definition = ScheduledTask::new(
                 ScheduledTaskId::new("scheduled-task-it"),
                 "Integration task",
@@ -1584,7 +1583,7 @@ mod tests {
                     &default_migration_catalog().expect("migration catalog"),
                 )
                 .expect("bootstrap database");
-            SqliteProjectRepository::with_clock(pool.clone(), crate::clock::SystemClock)
+            SqliteProjectRepository::new(pool.clone())
                 .create_project(
                     Project::new(
                         ProjectId::new("project-1"),

@@ -159,9 +159,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 RuntimeCommand::McpDesiredMaybeChanged => {
                     self.on_idle_mcp_desired_changed().await;
                 }
-                RuntimeCommand::AgentProcessReplaced { agent } => {
-                    self.detach_replaced_agent(&agent);
-                }
                 RuntimeCommand::RespondToPermission { response, .. } => {
                     let _ = response.send(Err(permission_not_pending()));
                 }
@@ -194,8 +191,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     config_options,
                     response,
                 } => {
-                    self.adopt_config_options(&agent_session_id, config_options);
-                    let _ = response.send(());
+                    let current = self.adopt_config_options(&agent_session_id, config_options);
+                    let _ = response.send(current);
                 }
                 RuntimeCommand::AdoptUserTitle { title, response } => {
                     self.adopt_user_title(title);
@@ -292,24 +289,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.mark_stopped();
     }
 
-    /// Drops the live registration when this session's agent process was replaced under it.
+    /// Drops in-memory tracking of skills already announced to the provider session.
     ///
-    /// The provider session died with the process, so the channel is dropped without `session/close`
-    /// — that call would only ask a fresh agent to close an id it has never heard of. Detaching is
-    /// enough to repair the session rather than end it: the next prompt attaches, which restores
-    /// the session on the fresh process or rebuilds it when that fails. Without this the actor
-    /// would keep a channel it believes is live and prompt against a session id the new process
-    /// cannot resolve.
-    fn detach_replaced_agent(&mut self, agent: &ora_domain::AgentRef) {
-        if self.session.agent_ref != *agent || self.channel.is_none() {
-            return;
-        }
-        ora_debug!(
-            session_id = %self.session.id,
-            agent = %agent,
-            "detaching session after its agent process was replaced",
-        );
-        self.mark_stopped();
+    /// Called whenever the provider session context resets, detaches, or finishes context
+    /// compaction so the next user prompt injects the complete catalog again.
+    pub(crate) fn forget_announced_skills(&mut self) {
+        self.announced_skills = None;
     }
 
     /// Names the provider session this actor is talking to right now.
@@ -328,6 +313,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Persists a stopped state after the provider session is detached or becomes unusable.
     fn mark_stopped(&mut self) {
         self.channel = None;
+        self.forget_announced_skills();
         self.reported_config_options.clear();
         self.title_acquisition.close();
         if self.session_mcp.preserve_provider_identity() {
@@ -390,7 +376,7 @@ mod tests {
     use crate::session_setup::AgentSessionBarriers;
     use crate::test_host::{InstalledAgents, RecordedEvents, TestHost};
     use crate::title_acquisition::TitleAcquisition;
-    use crate::{MemorySessionStore, NoSessionMcp};
+    use crate::{MemorySessionStore, NoSessionMcp, NoSkillCatalog};
     use ora_domain::{
         AgentRef, AuditFields, PluginId, SessionId, SessionStatus, SessionTitle, WorkspaceId,
     };
@@ -484,6 +470,8 @@ mod tests {
             title_acquisition: TitleAcquisition::disabled(),
             command_sender,
             session_mcp: NoSessionMcp::default(),
+            skill_catalog: NoSkillCatalog,
+            announced_skills: None,
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
             turn_cancel: Default::default(),
@@ -567,6 +555,8 @@ mod tests {
             title_acquisition: TitleAcquisition::awaiting_first_prompt(true),
             command_sender,
             session_mcp: NoSessionMcp::default(),
+            skill_catalog: NoSkillCatalog,
+            announced_skills: None,
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
             turn_cancel: Default::default(),
@@ -579,6 +569,101 @@ mod tests {
         actor.persist_agent_title("Agent title");
         assert_eq!(actor.session.title.as_ref(), Some(&user_title));
         assert!(!actor.title_acquisition.accepts_title());
+        drop(commands);
+        drop(actor);
+        scheduler.shutdown().await;
+    }
+
+    /// Independently verifies `mark_stopped` and `unload` each clear in-memory `announced_skills`
+    /// without relying on a subsequent `session/load` to mask a missing reset.
+    #[tokio::test]
+    async fn mark_stopped_and_unload_independently_clear_announced_skills() {
+        let temporary = TempDir::new().expect("create actor test directory");
+        let store = MemorySessionStore::default();
+        let scheduler = Scheduler::new(chrono_tz::UTC);
+        let (agent_ref, agent_source) = test_agent_source();
+        let plugin_host = test_plugin_host();
+        let connections = ConnectionSupervisors::<TestHost>::start(
+            plugin_host.clone(),
+            store.clone(),
+            temporary.path().to_path_buf(),
+            SystemClock,
+        );
+        let connection = ConnectionSupervisor::start::<TestHost>(
+            agent_ref.clone(),
+            agent_source,
+            Arc::new(Mutex::new(BTreeSet::new())),
+            plugin_host.clone(),
+            store.clone(),
+            temporary.path().to_path_buf(),
+            SystemClock,
+        );
+        let recorder = crate::history::SessionRecorder::open(
+            &temporary.path().join("sessions"),
+            "session-1",
+            0,
+            &ora_domain::HistoryState::Writable,
+            crate::test_host::RecordedEvents::default(),
+            crate::history::LocalHistoryClock,
+        )
+        .expect("open actor recorder");
+        let session = ora_domain::Session::new(
+            SessionId::new("session-1"),
+            WorkspaceId::new("workspace-1"),
+            agent_ref,
+            "provider-session-1",
+            SessionStatus::Running,
+            ora_domain::SessionMcpSelection::Automatic,
+            AuditFields::new(0, 0, false),
+        );
+        store.create_session(session.clone()).unwrap();
+        let (commands, command_receiver) = mpsc::unbounded_channel();
+        let command_sender = commands.downgrade();
+        let mut actor = RuntimeActor {
+            cleanup_outcomes: HashMap::new(),
+            session,
+            cwd: temporary.path().to_path_buf(),
+            repository: store,
+            clock: SystemClock,
+            connection,
+            channel: None,
+            commands: command_receiver,
+            recorder,
+            sessions_root: temporary.path().join("sessions"),
+            connections,
+            handoff: HandoffDebt::Settled,
+            rebuilt_binding: None,
+            load_restoration: Default::default(),
+            reported_config_options: Vec::new(),
+            commands_exceed_limit: false,
+            scheduler: scheduler.clone(),
+            events: RecordedEvents::default(),
+            title_acquisition: TitleAcquisition::disabled(),
+            command_sender,
+            session_mcp: NoSessionMcp::default(),
+            skill_catalog: NoSkillCatalog,
+            announced_skills: Some(crate::skill_catalog::AnnouncedSkills::default()),
+            barriers: Arc::new(AgentSessionBarriers::new()),
+            live_mcp: LiveMcpState::Inactive,
+            turn_cancel: Default::default(),
+            #[cfg(feature = "test-support")]
+            test_prompt_inactivity_windows: None,
+            exit_probe: None,
+        };
+
+        actor.mark_stopped();
+        assert_eq!(
+            actor.announced_skills, None,
+            "mark_stopped must clear announced_skills directly"
+        );
+
+        actor.announced_skills = Some(crate::skill_catalog::AnnouncedSkills::default());
+        actor.unload().await;
+        assert_eq!(
+            actor.announced_skills, None,
+            "unload must clear announced_skills directly"
+        );
+
         drop(commands);
         drop(actor);
         scheduler.shutdown().await;

@@ -9,19 +9,11 @@ use ora_contracts::{
     LoadSessionEvent, PromptSessionEvent, RespondToPermissionRequest, RespondToPermissionResponse,
     StopSessionResponse,
 };
-use ora_domain::{AgentRef, PromptInactivityPolicy, SessionTitle};
+use ora_domain::{PromptInactivityPolicy, SessionTitle};
 use tokio::sync::{mpsc, oneshot};
 
 /// Carries one owned operation or lifecycle observation to the session's serialized actor.
 pub(crate) enum RuntimeCommand {
-    /// The agent's process was replaced, so every provider-side session it held is gone.
-    ///
-    /// Broadcast rather than addressed, because the actor registry is keyed by Ora session and one
-    /// agent's connection is shared by every Workspace; each actor decides whether it is bound to
-    /// the replaced agent.
-    AgentProcessReplaced {
-        agent: AgentRef,
-    },
     McpDesiredMaybeChanged,
     Load {
         cleanup: oneshot::Sender<Result<(), RuntimeError>>,
@@ -71,11 +63,12 @@ pub(crate) enum RuntimeCommand {
     /// The provider answered a direct configuration call with its options after the change.
     ///
     /// Some agents say so nowhere else. The answer is for one provider session, which may have been
-    /// replaced while it was on its way. Replied to once the options are what a load answers with.
+    /// replaced while it was on its way. Replies with what a load answers with from here on, which
+    /// is then the replacement's options rather than that answer.
     AdoptConfigOptions {
         agent_session_id: String,
         config_options: Vec<SessionConfigOption>,
-        response: oneshot::Sender<()>,
+        response: oneshot::Sender<Vec<SessionConfigOption>>,
     },
     AdoptUserTitle {
         title: SessionTitle,

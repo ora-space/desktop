@@ -9,6 +9,15 @@ type InstallSuccessKey =
   "settings.plugins.installSuccess" | "settings.plugins.importSuccess";
 
 /**
+ * Which marketplace operation produced the document outcomes.
+ *
+ * The operation changes what the same outcome means: an install or a card retry is the user asking
+ * for the documents now, so a name conflict is news and opens the report, while an automatic
+ * upgrade only has to speak up for a conflict it has not reported before.
+ */
+export type MarketplaceImportTrigger = "install" | "update" | "retry";
+
+/**
  * Presents one install outcome consistently across every marketplace entry point.
  *
  * `successKey` selects the wording of the plain success toast, so a local import can say the
@@ -18,20 +27,30 @@ type InstallSuccessKey =
  *
  * `workflows` carries the per-document results a Workflow package reported. They are summarised in
  * the same toast instead of a second one, because a document outcome and the installation outcome
- * are two facts about one operation; the details stay one click away in the workflow library.
+ * are two facts about one operation; the details stay one click away in the workflow library. When
+ * nothing was delivered the toast stops claiming a plain success, so the headline never contradicts
+ * the documents the user is missing.
  */
 export function showPluginInstallOutcome(
   outcome: InstallOutcome,
   t: TFunction,
   successKey: InstallSuccessKey = "settings.plugins.installSuccess",
   workflows: readonly MarketplaceWorkflowOutcome[] = [],
+  trigger: MarketplaceImportTrigger = "install",
 ): void {
-  const documentSummary = workflowDocumentSummary(workflows, t);
+  const documentSummary = workflowDocumentSummary(workflows, t, trigger);
+  const undelivered = documentsUndelivered(workflows, trigger);
   if (outcome.state !== "pack_installed") {
     // A package that contributed no documents keeps the plain one-argument toast its callers
     // already match against; only a document report turns it into a described toast.
     if (documentSummary === "") {
       toast.success(t(successKey));
+      return;
+    }
+    if (undelivered) {
+      toast.warning(t("settings.plugins.installSuccessDocumentsNotImported"), {
+        description: documentSummary,
+      });
       return;
     }
     toast.success(t(successKey), { description: documentSummary });
@@ -46,24 +65,57 @@ export function showPluginInstallOutcome(
     toast.error(t("settings.plugins.packInstallFailedTitle"), { description });
     return;
   }
+  if (undelivered) {
+    toast.warning(t("settings.plugins.packInstallDocumentsNotImported"), {
+      description,
+    });
+    return;
+  }
   toast.success(t("settings.plugins.packInstallTitle"), { description });
+}
+
+/**
+ * Reports whether a document report means the operation delivered nothing usable.
+ *
+ * The rule is deliberately narrow: a document that arrived is worth a success headline even
+ * beside failures, and an upgrade never turns a known conflict or a copy the user deleted into a
+ * non-success style, because neither is news the upgrade created.
+ */
+export function documentsUndelivered(
+  workflows: readonly MarketplaceWorkflowOutcome[],
+  trigger: MarketplaceImportTrigger,
+): boolean {
+  if (workflows.some((outcome) => outcome.state === "imported")) return false;
+  if (workflows.some((outcome) => outcome.state === "failed")) return true;
+  const conflicts = workflows.filter(
+    (outcome) => outcome.state === "skipped_conflict",
+  );
+  return trigger === "update"
+    ? conflicts.some((outcome) => !outcome.knownConflict)
+    : conflicts.length > 0;
 }
 
 /**
  * Summarises a marketplace document report as one line of counts.
  *
- * The four states are reported separately because they mean different things to the user: imported
- * documents are new workflows, processed paths were handled by an earlier version, conflict skips
- * name a workflow the user already had, and failures are the only part still worth retrying. An
- * empty report produces no line at all, so an ordinary plugin install keeps its plain toast.
+ * The states are reported separately because they mean different things to the user: imported
+ * documents are new workflows, processed paths still have their copy, a deleted copy is the user's
+ * own earlier choice with a recovery path, conflict skips name a workflow the user already had, and
+ * failures are the part worth retrying. An upgrade states its known conflicts and deleted copies as
+ * neutral counts instead of reopening the report, so a repeated upgrade does not look like a new
+ * failure every time. An empty report produces no line at all, so an ordinary plugin install keeps
+ * its plain toast.
  */
 export function workflowDocumentSummary(
   workflows: readonly MarketplaceWorkflowOutcome[],
   t: TFunction,
+  trigger: MarketplaceImportTrigger,
 ): string {
   let imported = 0;
   let processed = 0;
+  let deleted = 0;
   let conflicts = 0;
+  let knownConflicts = 0;
   let failed = 0;
   for (const outcome of workflows) {
     switch (outcome.state) {
@@ -73,8 +125,17 @@ export function workflowDocumentSummary(
       case "skipped_processed":
         processed += 1;
         break;
+      case "skipped_deleted_copy":
+        deleted += 1;
+        break;
       case "skipped_conflict":
-        conflicts += 1;
+        // A known conflict is only neutral while an upgrade reports it; an install or a retry is
+        // asking for the documents now, so the same conflict is the actionable count there.
+        if (outcome.knownConflict && trigger === "update") {
+          knownConflicts += 1;
+        } else {
+          conflicts += 1;
+        }
         break;
       case "failed":
         failed += 1;
@@ -92,9 +153,21 @@ export function workflowDocumentSummary(
       t("settings.plugins.workflowDocumentsProcessed", { count: processed }),
     );
   }
+  if (deleted > 0) {
+    parts.push(
+      t("settings.plugins.workflowDocumentsDeleted", { count: deleted }),
+    );
+  }
   if (conflicts > 0) {
     parts.push(
       t("settings.plugins.workflowDocumentsConflicts", { count: conflicts }),
+    );
+  }
+  if (knownConflicts > 0) {
+    parts.push(
+      t("settings.plugins.workflowDocumentsKnownConflicts", {
+        count: knownConflicts,
+      }),
     );
   }
   if (failed > 0) {

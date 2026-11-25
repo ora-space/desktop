@@ -42,6 +42,8 @@ export const workflowRunTranslations = {
       "启动变量 {{variable}} 的输入无效：{{reason}}",
     "errors.workflow_skill_not_found":
       "节点「{{nodeTitle}}」需要的技能 {{skillId}} 不可用，请安装或恢复该技能后重试。",
+    "errors.workflow_skill_ambiguous":
+      "节点「{{nodeTitle}}」引用的技能名 {{skillRef}} 存在歧义，匹配到多个技能（{{candidates}}），请在节点中指定具体技能后重试。",
     "errors.workflow_mcp_not_found":
       "节点「{{nodeTitle}}」需要的 MCP {{mcpId}} 不可用，请安装或修复该 MCP 插件后重试。",
     "errors.workflow_role_not_found": "未找到该工作流角色。",
@@ -480,7 +482,7 @@ export const workflowRunTranslations = {
       "智能体的回复不符合输出结构；可直接续跑让它按原提示词重试，或调整提示词/输出结构后发布新版本",
     "workflowRun.errorKind.missing_skill_materialization": "技能未就绪",
     "workflowRun.errorHint.missing_skill_materialization":
-      "重新发布工作流以重新生成技能文件",
+      "确认该技能包仍存在于目录中且包含有效的 SKILL.md 后再续跑",
     "workflowRun.errorKind.session_ended_without_stop_reason": "会话异常结束",
     "workflowRun.errorHint.session_ended_without_stop_reason":
       "通常是临时故障，可直接续跑",
@@ -597,6 +599,8 @@ export const workflowRunTranslations = {
       "Invalid input for start variable '{{variable}}': {{reason}}",
     "errors.workflow_skill_not_found":
       "The skill {{skillId}} required by node '{{nodeTitle}}' is unavailable. Install or restore the skill, then retry.",
+    "errors.workflow_skill_ambiguous":
+      "The skill name '{{skillRef}}' referenced by node '{{nodeTitle}}' is ambiguous and matches multiple skills ({{candidates}}). Select a specific skill for this node, then retry.",
     "errors.workflow_mcp_not_found":
       "The MCP {{mcpId}} required by node '{{nodeTitle}}' is unavailable. Install or repair the MCP plugin, then retry.",
     "errors.workflow_role_not_found": "Workflow role not found.",
@@ -1077,10 +1081,9 @@ export const workflowRunTranslations = {
       "The agent's reply did not match the output schema; resume to let it retry with the failure context, or adjust the prompt/schema and publish a new version",
     "workflowRun.errorHintWithoutInjection.structured_output":
       "The agent's reply did not match the output schema; resume to let it retry with the same prompt, or adjust the prompt/schema and publish a new version",
-    "workflowRun.errorKind.missing_skill_materialization":
-      "Skill not materialized",
+    "workflowRun.errorKind.missing_skill_materialization": "Skill unavailable",
     "workflowRun.errorHint.missing_skill_materialization":
-      "Republish the workflow to regenerate the skill files",
+      "Ensure the skill package still exists in the catalog with a valid SKILL.md, then resume",
     "workflowRun.errorKind.session_ended_without_stop_reason":
       "Session ended unexpectedly",
     "workflowRun.errorHint.session_ended_without_stop_reason":
