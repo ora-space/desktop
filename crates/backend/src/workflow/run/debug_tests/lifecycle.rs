@@ -3,6 +3,18 @@ use ora_db::DatabaseLocation;
 use pretty_assertions::assert_eq;
 use tokio::sync::Notify;
 
+// The independent branch can fail while x stops, or succeed and dispatch its successor.
+const INDEPENDENT_BRANCH_GRAPH: &str = r#"{"nodes":[
+    {"id":"start","data":{"kind":"start"}},
+    {"id":"x","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"x"}}},
+    {"id":"s","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"s"}}},
+    {"id":"independent","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"independent","retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0}}}},
+    {"id":"successor","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"successor"}}}
+],"edges":[
+    {"source":"start","target":"x"},{"source":"start","target":"s"},
+    {"source":"start","target":"independent"},{"source":"independent","target":"successor"}
+]}"#;
+
 /// Holds the runtime's actual stop future across a concurrent cancellation.
 #[derive(Default)]
 struct StopBarrier {
@@ -25,6 +37,125 @@ impl DebugSessionStopper for StopBarrier {
 /// Simulates the already persisted terminal run, including values the abandon path must retain.
 fn terminal(f: &Fixture, status: WorkflowRunStatus) {
     rusqlite::Connection::open(f._temp.path().join("repository.sqlite3")).unwrap().execute("UPDATE workflow_runs SET run_status=?1,error='original',output='original output',finished_at=321 WHERE id=?2",rusqlite::params![status.database_value(),f.run_id.as_ref()]).unwrap();
+}
+
+/// A revision applied after an independent failure cannot authorize x in the next terminal edit.
+#[test]
+fn self_failed_stop_then_terminal_edit_uses_fresh_baseline() {
+    run_test(async {
+        let barrier = Arc::new(StopBarrier::default());
+        let f = Fixture::with_graph(barrier.clone(), INDEPENDENT_BRANCH_GRAPH);
+        let repository = SqliteWorkflowRunRepository::new(f.pool.clone());
+        let original_s = f.row("s");
+        f.engine
+            .complete_node(
+                &f.run_id,
+                &original_s.id,
+                Some("first".into()),
+                None,
+                None,
+                vec![],
+            )
+            .unwrap();
+        let first = f.preview(f.row("x").id.as_ref(), 0);
+        assert_eq!(first.impact.schedule, ["x"]);
+        let (receipt, failed) = tokio::join!(
+            f.coordinator.commit(f.commit_request(&first, "edit-x")),
+            async {
+                barrier.entered.notified().await;
+                f.engine
+                    .fail_node(
+                        &f.run_id,
+                        &f.row("independent").id,
+                        ora_application::NodeFailure::new(
+                            ora_application::NodeFailureKind::Session,
+                            "independent failure",
+                        ),
+                    )
+                    .unwrap();
+                let failed = repository.find_run(&f.run_id).unwrap().unwrap();
+                barrier.release.notify_one();
+                failed
+            }
+        );
+        assert_eq!(failed.status, WorkflowRunStatus::Failed);
+        assert_eq!(
+            receipt.unwrap().phase,
+            WorkflowDebugPhase::Applied { revision: 1 }
+        );
+        assert_eq!(f.run_status(), WorkflowRunStatus::Failed);
+        assert_eq!(dispatched(&f.executor, "x"), 1);
+
+        let second = f.preview(original_s.id.as_ref(), 1);
+        assert_eq!(second.impact.schedule, ["s"]);
+        let receipt = f
+            .coordinator
+            .commit(f.commit_request(&second, "edit-s"))
+            .await
+            .unwrap();
+        assert_eq!(receipt.phase, WorkflowDebugPhase::Applied { revision: 2 });
+        let new_s = f.row("s");
+        assert_ne!(new_s.id, original_s.id);
+        f.engine
+            .complete_node(
+                &f.run_id,
+                &new_s.id,
+                Some("revised".into()),
+                None,
+                None,
+                vec![],
+            )
+            .unwrap();
+        assert_eq!(
+            (dispatched(&f.executor, "x"), dispatched(&f.executor, "s")),
+            (1, 2)
+        );
+        let settled = repository.find_run(&f.run_id).unwrap().unwrap();
+        assert_eq!(
+            (
+                settled.status,
+                settled.error,
+                settled.output,
+                settled.finished_at
+            ),
+            (
+                failed.status,
+                failed.error,
+                failed.output,
+                failed.finished_at
+            )
+        );
+    });
+}
+
+/// An edit accepted while Running leaves ordinary scheduling available on independent paths.
+#[test]
+fn running_edit_does_not_limit_independent_successor() {
+    run_test(async {
+        let f = Fixture::with_graph(Arc::new(NoSessions), INDEPENDENT_BRANCH_GRAPH);
+        let independent = f.row("independent");
+        let preview = f.preview(f.row("x").id.as_ref(), 0);
+        assert_eq!(preview.impact.schedule, ["x"]);
+        let receipt = f
+            .coordinator
+            .commit(f.commit_request(&preview, "edit-x"))
+            .await
+            .unwrap();
+        assert_eq!(receipt.phase, WorkflowDebugPhase::Applied { revision: 1 });
+        assert_eq!(dispatched(&f.executor, "successor"), 0);
+        f.engine
+            .complete_node(
+                &f.run_id,
+                &independent.id,
+                Some("ready".into()),
+                None,
+                None,
+                vec![],
+            )
+            .unwrap();
+        assert_eq!(dispatched(&f.executor, "successor"), 1);
+        assert_eq!(f.row("successor").status, WorkflowNodeStatus::Running);
+    });
 }
 
 #[test]

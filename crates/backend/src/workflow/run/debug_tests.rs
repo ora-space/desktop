@@ -131,8 +131,13 @@ struct Fixture {
 
 impl Fixture {
     fn new(stopper: Arc<dyn DebugSessionStopper>) -> Self {
+        Self::with_graph(stopper, GRAPH)
+    }
+
+    /// Starts the supplied graph with the same dispatch recorder and debug coordinator.
+    fn with_graph(stopper: Arc<dyn DebugSessionStopper>, graph: &str) -> Self {
         let (temp, pool) = bootstrap();
-        let run_id = seeded_pending_run(&temp, &pool, GRAPH);
+        let run_id = seeded_pending_run(&temp, &pool, graph);
         let executor = RecordingExecutor::default();
         let run_locks = KeyedResourceLocks::new();
         let invalidations = Arc::new(Invalidations::default());
