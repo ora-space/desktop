@@ -96,6 +96,7 @@
 - [本地开发](development/local-development.zh.md)
 - [测试](development/testing.zh.md)
 - [修改代码](development/changing-the-code.zh.md)
+- [更新日志](development/release-notes.zh.md)
 
 ## 维护规则
 

@@ -127,6 +127,7 @@ pub(crate) fn map_task(task: ScheduledTask) -> ContractScheduledTask {
         prompt: task.prompt,
         revision: task.revision,
         approval: task.approval.and_then(map_approval),
+        worktree_base_branch: task.worktree_base_branch,
         created_at: task.audit_fields.created_at,
         updated_at: task.audit_fields.updated_at,
     }

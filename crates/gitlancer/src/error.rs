@@ -63,6 +63,11 @@ pub enum DomainError {
     #[error("path {path:?} is outside worktree {worktree:?}")]
     PathOutsideWorktree { path: PathBuf, worktree: PathBuf },
 
+    /// Returned when Git found no repository although a `.git` entry exists at the given path,
+    /// meaning the repository there is damaged or unreadable rather than absent.
+    #[error("a .git entry exists but Git does not recognize it as a repository: {0:?}")]
+    UnrecognizedGitEntry(PathBuf),
+
     /// Returned when a worktree does not belong to the repository a caller supplied.
     #[error("worktree {worktree:?} does not belong to repository {repo:?}")]
     WorktreeMismatch { worktree: PathBuf, repo: PathBuf },
@@ -123,6 +128,10 @@ pub enum ParseError {
     /// Returned when checkpoint `diff-tree` `-z` output cannot be decoded into path records.
     #[error("invalid checkpoint diff output")]
     InvalidCheckpoint,
+
+    /// Returned when `rev-parse --is-inside-work-tree` prints neither `true` nor `false`.
+    #[error("invalid work tree probe output")]
+    InvalidWorkTreeProbe,
 
     /// Returned when a parser slot exists but the typed parser is not implemented yet.
     #[error("parser for feature {feature} is not implemented yet")]

@@ -13,6 +13,10 @@ export type PluginLogLevelResponse = {
   pluginId: string;
   level: RuntimeLogLevel;
   configured: boolean;
+  /**
+   * File requiring repair/restart; null when ordinary edits are safe.
+   */
+  readOnlyPath: string | null;
 };
 
 /**

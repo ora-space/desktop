@@ -161,7 +161,6 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
         match event {
             SessionEvent::Update(update, _) => {
                 *saw_output |= produced_output(&update.update);
-                channel.observe_commands(&update.update);
                 actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);

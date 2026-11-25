@@ -19,6 +19,7 @@ import {
   IconRobot,
   IconSearch,
 } from "@tabler/icons-react";
+import type { AgentDiscoveryScope } from "../../state/data/agent-runtime";
 import { useChatStore } from "../../chat-store-context";
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
@@ -39,7 +40,7 @@ import {
 import { useAgentModelPreferenceStore } from "../../state/stores/agent-model-preference-store";
 import { currentValueName, findModelOption, selectableValues } from "@ora/chat";
 import { PluginLogoMark } from "../settings/plugin-logo";
-import { useAgentModels } from "../../state/hooks/use-agent-models";
+import { useAgentDiscovery } from "../../state/hooks/use-agent-discovery";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useWorkspaces } from "../../state/hooks/use-workspaces";
 import { missingWorkspaceDirectory } from "../../state/hooks/use-missing-workspace-directory";
@@ -71,9 +72,12 @@ import { missingWorkspaceDirectory } from "../../state/hooks/use-missing-workspa
  */
 export function ModelSelector({
   disabled = false,
+  discoveryScope,
   sessionId,
 }: {
   disabled?: boolean;
+  /** What the surface around the picker shows of a discovery, so both ask for it once. */
+  discoveryScope: AgentDiscoveryScope;
   /** Session whose model configuration should be displayed instead of workspace selection. */
   sessionId?: string;
 }) {
@@ -196,9 +200,10 @@ export function ModelSelector({
   const usesSessionOptions =
     optionsSessionId !== null &&
     (!conversationLoaded || (liveOptions?.length ?? 0) > 0);
-  const discovered = useAgentModels(
+  const discovered = useAgentDiscovery(
     usesSessionOptions || directoryMissing ? null : agentCli,
     usesSessionOptions || directoryMissing ? null : workspaceId,
+    discoveryScope,
   );
   const activeSessionId = usesSessionOptions ? optionsSessionId : null;
   // A session can retain the last options reported before its plugin stopped.

@@ -20,6 +20,7 @@ import {
   SessionUsageIndicator,
   shouldShowSessionUsage,
 } from "../chat/session-usage-surface";
+import { useDiscoveredCommands } from "../chat/use-discovered-commands";
 
 const NO_HISTORY_NOTICES: SessionHistoryNotice[] = [];
 const NO_SETUPS: SessionSetupPresentation[] = [];
@@ -174,6 +175,15 @@ export function WorkspaceChatPane({
     session !== undefined &&
     conversation?.isLoaded !== true &&
     conversation?.error == null;
+  const availableCommands = conversation?.availableCommands ?? null;
+  const discoveredCommands = useDiscoveredCommands({
+    sessionId,
+    hasReport: availableCommands !== null,
+    isLoadingHistory,
+    agentRef: targetAgentCli,
+    workspaceId,
+    directoryMissing: missingDirectory !== null,
+  });
 
   return (
     <ChatView
@@ -192,7 +202,8 @@ export function WorkspaceChatPane({
       pendingPermissions={conversation?.pendingPermissions ?? []}
       skills={skills}
       roles={roles}
-      availableCommands={conversation?.availableCommands ?? []}
+      availableCommands={availableCommands}
+      discoveredCommands={discoveredCommands}
       disabled={!canChat}
       // An untouched chat cannot send yet, but disabling this picker as
       // part of the composer would make choosing its first agent impossible.

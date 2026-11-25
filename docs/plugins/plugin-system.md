@@ -133,8 +133,16 @@ The host can invoke only listed `methods`; a notification outside `emits` invali
 connection. `effectResources` declares the Workspace Resources an agent consumes, see
 [Effects](../agents/effects.md). Requests from the plugin to the host need no declaration.
 
-`agent/list_models` takes `AgentListModelsParams { cwd }`, the Workspace the discovery is for; the
-host calls it on demand with a longer budget than ordinary control calls.
+`agent/discover` takes `AgentDiscoverParams { cwd, includeCommands, deadline }`: the Workspace the
+discovery is for, whether the caller wants the agent's commands, and when the host stops waiting, in
+Unix milliseconds. The host times out at that same moment, time spent waiting to be written included,
+and the plugin measures waiting and cleanup against it. It answers with models and, when known,
+commands; an absent command list means nobody knows, an empty one that the agent has none. A malformed
+command is dropped alone. The host calls it on demand with a longer budget than ordinary control calls.
+
+`agent/list_models` is the old, models-only name. An agent plugin must register at least one of the
+two; the host calls `agent/discover` when it is registered, never both, and does not fall back when it
+fails. The SDK registers both, so older hosts still list models.
 
 ### Host services
 

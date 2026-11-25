@@ -27,7 +27,11 @@ impl ScheduledTaskTargetValidator for GitScheduledTaskTargetValidator {
         if !project_root.is_dir() {
             return Err(TaskWorktreeProvisionerError::NotARepository);
         }
-        GitTaskWorktreeProvisioner::new(project_root.to_path_buf()).resolve_default_branch()
+        // Without the repository check first, a plain folder makes `symbolic-ref` fail with an
+        // untyped error, which callers can only report as internal.
+        let provisioner = GitTaskWorktreeProvisioner::new(project_root.to_path_buf());
+        provisioner.validate_repository()?;
+        provisioner.resolve_default_branch()
     }
 }
 
@@ -48,6 +52,16 @@ mod tests {
         ));
         assert!(matches!(
             GitScheduledTaskTargetValidator.validate_git_worktree_target(fixture.path()),
+            Err(TaskWorktreeProvisionerError::NotARepository)
+        ));
+    }
+
+    #[test]
+    fn reports_a_plain_folder_default_branch_as_not_a_repository() {
+        let fixture = tempfile::tempdir().expect("create fixture");
+
+        assert!(matches!(
+            GitScheduledTaskTargetValidator.resolve_default_branch(fixture.path()),
             Err(TaskWorktreeProvisionerError::NotARepository)
         ));
     }

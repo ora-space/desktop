@@ -189,6 +189,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 RuntimeCommand::ClaimDirectProviderCall { response } => {
                     let _ = response.send(self.provider_session_id().to_string());
                 }
+                RuntimeCommand::AdoptConfigOptions {
+                    agent_session_id,
+                    config_options,
+                    response,
+                } => {
+                    self.adopt_config_options(&agent_session_id, config_options);
+                    let _ = response.send(());
+                }
                 RuntimeCommand::AdoptUserTitle { title, response } => {
                     self.adopt_user_title(title);
                     let _ = response.send(());
@@ -470,6 +478,7 @@ mod tests {
             rebuilt_binding: None,
             load_restoration: Default::default(),
             reported_config_options: Vec::new(),
+            commands_exceed_limit: false,
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
             title_acquisition: TitleAcquisition::disabled(),
@@ -552,6 +561,7 @@ mod tests {
             rebuilt_binding: None,
             load_restoration: Default::default(),
             reported_config_options: Vec::new(),
+            commands_exceed_limit: false,
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
             title_acquisition: TitleAcquisition::awaiting_first_prompt(true),

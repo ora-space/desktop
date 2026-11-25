@@ -37,7 +37,7 @@ resolve against the repository root. Debug builds use `deno` and `rg` from `PATH
 - Agents come from plugins, so install agent plugins from a marketplace source or import a local `.orax`
   before starting a chat.
 - `task package:desktop` builds a complete local installer the way the release workflow does, with the
-  release sidecars enabled.
+  release sidecars enabled. With `--tag`, it also requires [release notes](release-notes.md).
 
 ## Controller and Node
 

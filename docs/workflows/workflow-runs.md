@@ -63,6 +63,8 @@ Skills; an enabled MCP binding first needs a valid MCP package at dispatch. A mi
 unavailable MCP fails with `workflow_skill_not_found` or `workflow_mcp_not_found`, naming the node
 and dependency. Repairing the dependency allows the same run to proceed. A repeated start of a
 running run returns that run; restart of a running run returns `workflow_run_not_restartable`.
+Whether an Agent is installed is not part of this precheck: the runtime resolves the frozen Agent
+identity when it opens the node's session and fails with `agent_not_installed` if it is missing.
 
 A resume onto a new snapshot checks the target graph before restoring a checkpoint or changing
 the worktree. It freezes the validated Skill paths from the Agent plugin's declaration when it

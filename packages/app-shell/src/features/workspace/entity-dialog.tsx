@@ -87,7 +87,8 @@ function optionMatchesQuery(
   selectedLabel: string,
 ): boolean {
   const needle = query.trim().toLowerCase();
-  if (needle === "" || needle === selectedLabel.trim().toLowerCase()) return true;
+  if (needle === "" || needle === selectedLabel.trim().toLowerCase())
+    return true;
   return [option.label, option.keywords, option.value].some((part) =>
     part?.toLowerCase().includes(needle),
   );
@@ -101,6 +102,11 @@ interface EntityDialogProps {
   /** In-flight label; create flows pass a creating verb instead of "Saving…". */
   pendingLabel?: string;
   fields: EntityField[];
+  /**
+   * Set when the entity cannot be created at all (the description says why), so the form
+   * offers no submit that is certain to fail.
+   */
+  submitBlocked?: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (values: Record<string, string>) => Promise<void>;
 }
@@ -113,6 +119,7 @@ export function EntityDialog({
   submitLabel,
   pendingLabel,
   fields,
+  submitBlocked = false,
   onOpenChange,
   onSubmit,
 }: EntityDialogProps) {
@@ -180,7 +187,7 @@ export function EntityDialog({
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (submittingRef.current) return;
+    if (submittingRef.current || submitBlocked) return;
     // Native Enter still submits a form whose submit button is disabled, so
     // keep the same validation/feedback path the click path would have shown.
     if (hasEmptyNonLoadingField) {
@@ -364,7 +371,7 @@ export function EntityDialog({
             </Button>
             <Button
               type="submit"
-              disabled={submitting || optionsLoading}
+              disabled={submitting || optionsLoading || submitBlocked}
               aria-busy={submitting || optionsLoading}
             >
               {submitting || optionsLoading ? (
@@ -403,7 +410,8 @@ function SearchableSelectField({
   const menuOpenRef = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const selected = field.options.find((option) => option.value === value) ?? null;
+  const selected =
+    field.options.find((option) => option.value === value) ?? null;
 
   return (
     <Popover

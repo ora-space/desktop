@@ -26,9 +26,9 @@ use ora_agent_runtime::{
 };
 use ora_application::{RepositoryError, SessionRepository};
 use ora_contracts::{
-    AppEvent, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse,
-    InstalledPluginContribution, ListAgentModelsRequest, ListAgentModelsResponse,
-    ListInstalledPluginsRequest, StopPluginRequest,
+    AppEvent, DiscoverAgentRequest, DiscoverAgentResponse, GetAgentRuntimeStatusRequest,
+    GetAgentRuntimeStatusResponse, InstalledPluginContribution, ListInstalledPluginsRequest,
+    StopPluginRequest,
 };
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
@@ -72,12 +72,12 @@ impl AgentRuntime {
         Ok(self.inner.status(request)?)
     }
 
-    /// Discovers one agent's models for a workspace without creating a session.
-    pub async fn models(
+    /// Discovers what one agent offers in a workspace without creating a session.
+    pub async fn discover(
         &self,
-        request: ListAgentModelsRequest,
-    ) -> Result<ListAgentModelsResponse, BackendError> {
-        Ok(self.inner.models(request).await?)
+        request: DiscoverAgentRequest,
+    ) -> Result<DiscoverAgentResponse, BackendError> {
+        Ok(self.inner.discover(request).await?)
     }
 }
 

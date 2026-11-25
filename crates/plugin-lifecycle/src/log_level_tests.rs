@@ -58,19 +58,23 @@ async fn levels_default_to_info_persist_and_stay_per_identity() {
             PluginLogLevelState {
                 level: LogLevel::Info,
                 configured: false,
+                read_only_path: None,
             },
             PluginLogLevelState {
                 level: LogLevel::Debug,
                 configured: true,
+                read_only_path: None,
             },
             true,
             PluginLogLevelState {
                 level: LogLevel::Debug,
                 configured: true,
+                read_only_path: None,
             },
             PluginLogLevelState {
                 level: LogLevel::Info,
                 configured: false,
+                read_only_path: None,
             },
         )
     );
@@ -270,6 +274,7 @@ async fn uninstall_disposition_decides_whether_the_level_survives() {
             PluginLogLevelState {
                 level: LogLevel::Error,
                 configured: true,
+                read_only_path: None,
             },
         ),
         (
@@ -277,6 +282,7 @@ async fn uninstall_disposition_decides_whether_the_level_survives() {
             PluginLogLevelState {
                 level: LogLevel::Info,
                 configured: false,
+                read_only_path: None,
             },
         ),
     ] {
@@ -379,6 +385,7 @@ async fn delete_uninstall_rolls_back_every_tree_when_the_level_clear_fails() {
             PluginLogLevelState {
                 level: LogLevel::Error,
                 configured: true,
+                read_only_path: None,
             },
             true,
             true,
@@ -386,5 +393,75 @@ async fn delete_uninstall_rolls_back_every_tree_when_the_level_clear_fails() {
             1,
         ),
         "{error}"
+    );
+}
+
+/// A different plugin's unsupported preference cannot prevent explicit deletion of this plugin.
+#[tokio::test]
+async fn delete_uninstall_preserves_other_plugins_unknown_log_values() {
+    let _logging = trace_logging_guard();
+    let temp = TempDir::new().unwrap();
+    write_plugin_package(temp.path(), "ora.example");
+    let path = temp.path().join("plugins").join("log-levels.json");
+    std::fs::write(&path, br#"{"official/ora.example":"debug","official/future":{ "future": 184467440737095516161234 }}"#).unwrap();
+    let lifecycle = open_without_runtime(temp.path());
+    assert_eq!(
+        lifecycle
+            .plugin_log_level("official/ora.example")
+            .unwrap()
+            .read_only_path,
+        Some(path.clone())
+    );
+    lifecycle
+        .uninstall_plugin(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: "official/ora.example".to_owned(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .unwrap();
+    assert!(lifecycle.list_installed_plugins().plugins.is_empty());
+    let remaining: std::collections::BTreeMap<String, Box<serde_json::value::RawValue>> =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        remaining.keys().cloned().collect::<Vec<_>>(),
+        vec!["official/future".to_owned()]
+    );
+    assert_eq!(
+        remaining["official/future"].get(),
+        r#"{ "future": 184467440737095516161234 }"#
+    );
+}
+
+/// Unreadable JSON cannot be safely pruned; a failed clear restores the staged package and data.
+#[tokio::test]
+async fn malformed_log_file_prevents_delete_and_preserves_original_bytes() {
+    let _logging = trace_logging_guard();
+    let temp = TempDir::new().unwrap();
+    write_plugin_package(temp.path(), "ora.example");
+    let path = temp.path().join("plugins").join("log-levels.json");
+    std::fs::write(&path, b"{broken original").unwrap();
+    let lifecycle = open_without_runtime(temp.path());
+    let error = lifecycle
+        .uninstall_plugin(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: "official/ora.example".to_owned(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        PluginLifecycleError::LogLevelPersistence {
+            source: crate::PluginLogLevelPersistError::ReadOnly { .. },
+            ..
+        }
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), b"{broken original");
+    assert_eq!(lifecycle.list_installed_plugins().plugins.len(), 1);
+    assert!(
+        crate::tests::example_package_root(temp.path())
+            .join("main.js")
+            .is_file()
     );
 }

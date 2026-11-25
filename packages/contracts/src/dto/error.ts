@@ -19,6 +19,14 @@ export type ContractError =
     | { "code": "agent_name_conflict"; "params": EmptyErrorParams }
     | { "code": "agent_not_found"; "params": EmptyErrorParams }
     | { "code": "plugin_not_found"; "params": EmptyErrorParams }
+    | {
+      "code": "plugin_log_levels_read_only";
+      "params": PluginLogLevelsFileParams;
+    }
+    | {
+      "code": "plugin_log_levels_write_failed";
+      "params": PluginLogLevelsFileParams;
+    }
     | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
     | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
     | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
@@ -82,6 +90,7 @@ export type ContractError =
       "params": EmptyErrorParams;
     }
     | { "code": "workspace_diff_too_large"; "params": EmptyErrorParams }
+    | { "code": "workspace_not_git_repository"; "params": EmptyErrorParams }
     | { "code": "session_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_not_installed"; "params": EmptyErrorParams }
     | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
@@ -253,6 +262,11 @@ export type PluginConfigurationValidationParams = {
 };
 
 /**
+ * Host configuration path that needs repair; excludes the stored configuration contents.
+ */
+export type PluginLogLevelsFileParams = { path: string };
+
+/**
  * Names the package field a plugin install or import rejected, with its technical reason.
  *
  * `field` is a stable manifest path — `description`, `webview.allowed_origins[0]`, or the
@@ -278,6 +292,14 @@ export type PublicError =
   | { "code": "agent_name_conflict"; "params": EmptyErrorParams }
   | { "code": "agent_not_found"; "params": EmptyErrorParams }
   | { "code": "plugin_not_found"; "params": EmptyErrorParams }
+  | {
+    "code": "plugin_log_levels_read_only";
+    "params": PluginLogLevelsFileParams;
+  }
+  | {
+    "code": "plugin_log_levels_write_failed";
+    "params": PluginLogLevelsFileParams;
+  }
   | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
   | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
   | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
@@ -338,6 +360,7 @@ export type PublicError =
     "params": EmptyErrorParams;
   }
   | { "code": "workspace_diff_too_large"; "params": EmptyErrorParams }
+  | { "code": "workspace_not_git_repository"; "params": EmptyErrorParams }
   | { "code": "session_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_not_installed"; "params": EmptyErrorParams }
   | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }

@@ -10,12 +10,12 @@ after a Git failure, decide confirmation policy or retry commands; task and work
 
 ## Layers
 
-| Module | Owns |
-|---|---|
+| Module   | Owns                                                                                                                                                                |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `domain` | Repository facts and invariants: `RepoRoot`, `WorktreeRoot`, `GitDir`, `RepoRelativePath`, `BranchName`, `CommitId`, `Repository`, `WorktreeHandle`, `WorktreeKind` |
-| `exec` | CLI invocation: `GitCommand`, `GitIntent`, `GitEnv`, `GitOutput`, `GitRunner`, `CliGitRunner`, `RecordingGitRunner` |
-| `git` | The typed use cases Ora calls |
-| `parse` | Converting stable porcelain and plumbing output into typed results |
+| `exec`   | CLI invocation: `GitCommand`, `GitIntent`, `GitEnv`, `GitOutput`, `GitRunner`, `CliGitRunner`, `RecordingGitRunner`                                                 |
+| `git`    | The typed use cases Ora calls                                                                                                                                       |
+| `parse`  | Converting stable porcelain and plumbing output into typed results                                                                                                  |
 
 `domain` spawns no process and parses no output. `WorktreeHandle::resolve_repo_relative_path`
 lexically normalizes a path and rejects absolute paths and traversal outside the worktree, so a
@@ -41,7 +41,7 @@ worktree. Every use case executes in a `Repository` or `WorktreeHandle` context.
 ## Use cases
 
 - **Repositories and worktrees**: `discover_repository` reads the main checkout from `git worktree
-  list --porcelain` (not `rev-parse --show-toplevel`), so discovery from a nested directory or from
+list --porcelain` (not `rev-parse --show-toplevel`), so discovery from a nested directory or from
   inside a linked worktree resolves the owning repository. `list_worktrees` returns one handle per
   checkout with exactly one `WorktreeKind::Main`. `resolve_worktree` finds a linked worktree by
   name, `resolve_worktree_by_branch` by its checked-out branch (how Ora recovers a task checkout),
@@ -95,12 +95,21 @@ pub struct GitCommand {
 `GitIntent` classifies but does not enforce; upper layers use it to decide whether a command may run
 automatically, needs confirmation or may be retried. `GitEnv::automation_defaults` disables terminal
 prompts, fixes `LANG=C` and disables paging, so an agent-driven command cannot block on interactive
-UI or return localized output.
+UI. A caller-level `LC_ALL` still outranks `LANG`; commands whose stderr is classified by text (the
+work tree probe, the untracked-file diff) add `GitEnv::with_english_messages`, which pins
+`LC_ALL=C` for that command only. It is not a default because `LC_ALL` would also override
+`LC_CTYPE` for hooks that commit and push run.
 
 `CliGitRunner` runs the system `git`, measures duration, reports optional telemetry and returns
 `GitOutput { code, stdout, stderr, duration_ms }`. `run_bounded` drains stdout and stderr
 concurrently and kills Git when a stream exceeds its budget (`GitExecError::OutputTooLarge`, mapped
-to `GitlancerError::DiffTooLarge` for diffs). A non-zero exit keeps the code, arguments and output
+to `GitlancerError::DiffTooLarge` for diffs). `run_within(command, limit)` is an opt-in deadline
+for one call; only the work tree probe uses it. `CliGitRunner` kills Git once the limit passes and
+returns `OutputReadFailed` with `ErrorKind::TimedOut`; the limit also covers waiting for output a
+grandchild keeps open after Git exits, and such a grandchild is left running. It does not bound
+reaping a killed Git the OS cannot stop yet (an uninterruptible filesystem wait), nor any work the
+caller does around the command, such as the probe's `.git` `stat` checks. Other runners receive the
+limit as the command's `time_limit`, which budget-enforcing runners honor. A non-zero exit keeps the code, arguments and output
 for diagnostics. `RecordingGitRunner` executes nothing and exists for command-construction tests.
 Telemetry is opt-in through `gitlancer::logging::register`, see
 [Logging](../core/logging.md#git-command-logging).

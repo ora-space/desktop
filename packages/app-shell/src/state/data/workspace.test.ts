@@ -27,14 +27,14 @@ function aggregate() {
       projectId: "p1",
       kind: "main",
       lifecycle: "active",
-      directory: { kind: "present" },
+      directory: { kind: "present", git: "repository" },
     },
     {
       id: "w2",
       projectId: "p2",
       kind: "isolated",
       lifecycle: "active",
-      directory: { kind: "present" },
+      directory: { kind: "present", git: "repository" },
     },
   ];
   const sessions: Session[] = ["main", "w1", "w2"].map((workspaceId) => ({

@@ -307,6 +307,12 @@ fn failed_reads_are_not_reported_as_default_preferences() {
             .expect("remove only the fixture table to simulate a read fault");
         assert_storage_failure(
             settings
+                .network_proxy_check_url()
+                .await
+                .expect_err("probe URL read fails"),
+        );
+        assert_storage_failure(
+            settings
                 .developer_mode()
                 .await
                 .expect_err("developer read fails"),
@@ -322,6 +328,70 @@ fn failed_reads_are_not_reported_as_default_preferences() {
                 .network_proxy_settings()
                 .await
                 .expect_err("proxy read fails"),
+        );
+    });
+}
+
+/// Probe targets persist independently, and invalid input or failed writes preserve the old value.
+#[test]
+fn proxy_check_url_survives_reopen_and_rejects_destructive_fallbacks() {
+    run_test(async {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("ora.sqlite3");
+        let (_pool, settings) = open_settings(&path);
+        assert_eq!(
+            settings.network_proxy_check_url().await.unwrap(),
+            "https://google.com"
+        );
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM user_config", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            settings
+                .set_network_proxy_check_url(" https://custom.example/probe?q=1 ".to_owned())
+                .await
+                .unwrap(),
+            "https://custom.example/probe?q=1"
+        );
+        for invalid in ["", "file:///secret", "not a URL", "https://"] {
+            assert!(
+                settings
+                    .set_network_proxy_check_url(invalid.to_owned())
+                    .await
+                    .is_err()
+            );
+        }
+        connection.execute_batch("CREATE TRIGGER reject_probe_url BEFORE INSERT ON user_config WHEN NEW.key = 'network_proxy_check_url' BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END;").unwrap();
+        assert_storage_failure(
+            settings
+                .set_network_proxy_check_url("https://replacement.example".to_owned())
+                .await
+                .unwrap_err(),
+        );
+        let (_pool, reopened) = open_settings(&path);
+        assert_eq!(
+            (
+                reopened.network_proxy_check_url().await.unwrap(),
+                reopened.network_proxy_settings().await.unwrap()
+            ),
+            ("https://custom.example/probe?q=1".to_owned(), None)
+        );
+        connection.execute("UPDATE user_config SET value = 'unsupported target' WHERE key = 'network_proxy_check_url'", []).unwrap();
+        assert!(reopened.network_proxy_check_url().await.is_err());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT value FROM user_config WHERE key = 'network_proxy_check_url'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "unsupported target"
         );
     });
 }

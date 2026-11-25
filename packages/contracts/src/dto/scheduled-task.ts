@@ -205,6 +205,12 @@ export type ScheduledTask = {
   prompt: string;
   revision: bigint;
   approval: ScheduledTaskApproval | null;
+  /**
+   * Branch frozen as the base of every run's worktree. `None` only for definitions an older
+   * build stored before freezing; the backend then resolves it from the project on the next
+   * save, which needs a Git repository, so the editor must know.
+   */
+  worktreeBaseBranch: string | null;
   createdAt: bigint;
   updatedAt: bigint;
 };

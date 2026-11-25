@@ -898,11 +898,12 @@ export function RunNodeSessionChat({
         error={conversation?.error ?? null}
         pendingPermissions={conversation?.pendingPermissions ?? []}
         roles={agentsQuery.data ?? []}
-        availableCommands={conversation?.availableCommands ?? []}
+        availableCommands={conversation?.availableCommands ?? null}
         conversationNavigation={NODE_SESSION_CONVERSATION_NAVIGATION}
         disabled={composerDisabled}
         modelSelectorDisabled
         modelSelectorSessionId={sessionId}
+        discoveryScope="models"
         composerVisible={interactive}
         trailing={stepCard}
         composerActions={

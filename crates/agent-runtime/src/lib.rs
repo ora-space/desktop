@@ -10,6 +10,7 @@ mod attach;
 mod clock;
 mod command;
 mod connection;
+mod discovery;
 mod end_cause;
 mod error;
 mod events;
@@ -35,6 +36,7 @@ mod replay;
 mod restart_circuit;
 mod routing;
 mod scheduling;
+mod session_config;
 mod session_followers;
 mod session_setup;
 mod start;
@@ -101,16 +103,14 @@ use session_setup::LiveMcpState;
 use support::*;
 use title_acquisition::TitleAcquisition;
 
-use agent_client_protocol_schema::v1::{
-    ContentBlock, MessageId, SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
-};
+use agent_client_protocol_schema::v1::{ContentBlock, MessageId, SessionConfigOption};
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_contracts::{
     CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionResponse,
     LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest,
-    RespondToPermissionRequest, RespondToPermissionResponse, SetSessionConfigRequest,
-    SetSessionConfigResponse, StartSessionRequest, StartSessionResponse, StopSessionRequest,
-    StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
+    RespondToPermissionRequest, RespondToPermissionResponse, StartSessionRequest,
+    StartSessionResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest,
+    SwitchSessionAgentResponse,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_domain::{
@@ -199,6 +199,9 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     /// and offering the agent's own catalog on exactly that, and inferring it from a stale absence
     /// would silently drop a model chosen for a session that could already have been told.
     reported_config_options: Vec<SessionConfigOption>,
+    /// Whether the current provider session last reported more commands than shown, so each excess is
+    /// logged once.
+    commands_exceed_limit: bool,
     scheduler: Scheduler,
     events: H::Events,
     title_acquisition: TitleAcquisition,
@@ -287,32 +290,25 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         self.inner.connections.sync_plugin_agents();
     }
 
-    /// Reports the models one agent advertises before any session exists.
+    /// Reports what one agent offers before any session exists.
     ///
     /// Discovery is delegated to the plugin on demand and is never cached by Ora.
-    pub(crate) async fn agent_models(
+    pub(crate) async fn discover_agent(
         &self,
-        request: ora_contracts::ListAgentModelsRequest,
-    ) -> Result<ora_contracts::ListAgentModelsResponse, RuntimeError> {
+        request: ora_contracts::DiscoverAgentRequest,
+    ) -> Result<ora_contracts::DiscoverAgentResponse, RuntimeError> {
         let cwd = self.workspace_cwd(&WorkspaceId::new(request.workspace_id))?;
-        let supervisor = self
-            .inner
-            .connections
-            .for_agent(&domain_agent_ref(request.agent_ref)?)?;
-        let connection = supervisor.current()?;
-        let models = plugin_agent::list_models(&connection.runtime, &cwd)
+        let agent_ref = domain_agent_ref(request.agent_ref)?;
+        let connection = self.inner.connections.for_agent(&agent_ref)?.current()?;
+        let scope = if request.include_commands {
+            plugin_agent::DiscoveryScope::ModelsAndCommands
+        } else {
+            plugin_agent::DiscoveryScope::Models
+        };
+        let discovered = plugin_agent::discover(&connection.runtime, &cwd, scope)
             .await
             .map_err(agent_model_discovery_failed)?;
-        Ok(ora_contracts::ListAgentModelsResponse {
-            models: models
-                .iter()
-                .map(|model| ora_contracts::AgentModel {
-                    id: model.id.clone(),
-                    display_name: model.display_name.clone(),
-                    default: model.default,
-                })
-                .collect(),
-        })
+        Ok(discovery::response(&agent_ref, discovered))
     }
 
     /// Reports the live ACP handshake status of every supervised agent runtime.
@@ -337,42 +333,6 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 })
                 .collect(),
         }
-    }
-
-    /// Applies one configuration option to a persisted session.
-    pub async fn set_session_config(
-        &self,
-        request: SetSessionConfigRequest,
-    ) -> Result<SetSessionConfigResponse, RuntimeError> {
-        let config_id = SessionConfigId::new(request.config_id);
-        let value = SessionConfigOptionValue::value_id(request.value);
-        let session = self.find_session(&request.session_id)?;
-        // The live actor is asked which provider session to address rather than reading the row,
-        // because a session it rebuilt is not in the row until the transcript reaches it — writing
-        // configuration to the row's identity would reach the provider being replaced. A session
-        // with no actor holds no rebuilt binding, so its row is authoritative.
-        let agent_session_id = match self.lookup_actor(&session.id)? {
-            Some(handle) => {
-                let (response, claimed) = oneshot::channel();
-                handle
-                    .commands
-                    .send(RuntimeCommand::ClaimDirectProviderCall { response })
-                    .map_err(|_error| runtime_unavailable())?;
-                claimed.await.map_err(|_error| runtime_unavailable())?
-            }
-            None => session.agent_session_id.clone(),
-        };
-        // The provider request remains direct because it is independent of the actor's
-        // serialized prompt/load stream; only the title-polling attempt needs standing down.
-        let config_options = start::request_config_option(
-            &self.inner.connections,
-            &session.agent_ref,
-            &agent_session_id,
-            &config_id,
-            &value,
-        )
-        .await?;
-        Ok(SetSessionConfigResponse { config_options })
     }
 
     /// Locks first-title acquisition so a later agent title cannot overwrite a user rename.
@@ -771,6 +731,10 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             turn_cancel: Arc::default(),
         };
         actors.insert(session.id.clone(), handle.clone());
+        // Setup already recorded its own excess.
+        let commands_exceed_limit = setup.channel.as_ref().is_some_and(|channel| {
+            discovery::exceeds_shown_commands(channel.available_commands.len())
+        });
         #[cfg(feature = "test-support")]
         let test_prompt_inactivity_windows = *self
             .inner
@@ -794,6 +758,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 rebuilt_binding: None,
                 load_restoration: Default::default(),
                 reported_config_options: setup.config_options,
+                commands_exceed_limit,
                 scheduler: self.inner.scheduler.clone(),
                 events: self.inner.events.clone(),
                 title_acquisition: setup.title_acquisition,

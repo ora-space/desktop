@@ -1,6 +1,28 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// Requests the user's saved proxy probe target.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "proxy.ts")]
+pub struct GetProxyCheckUrlRequest {}
+
+/// Explicitly confirms a new HTTP(S) proxy probe target.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "proxy.ts")]
+pub struct SetProxyCheckUrlRequest {
+    pub url: String,
+}
+
+/// Returns the authoritative saved target, or the default only when no preference exists.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "proxy.ts")]
+pub struct ProxyCheckUrlResponse {
+    pub url: String,
+}
+
 /// Describes an optional host-level network proxy used by marketplace traffic.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +111,9 @@ pub enum CheckProxySettingsResponse {
 
 /// Exports the complete network-proxy DTO family into one TypeScript module.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    GetProxyCheckUrlRequest::export(config)?;
+    SetProxyCheckUrlRequest::export(config)?;
+    ProxyCheckUrlResponse::export(config)?;
     ProxySettings::export(config)?;
     GetProxySettingsRequest::export(config)?;
     GetProxySettingsResponse::export(config)?;

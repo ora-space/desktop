@@ -1,10 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { type ManifestNotes, selectManifestNotes } from "./release-notes.ts";
 
 export interface UpdateManifest {
   version: string;
   notes: string;
   pub_date: string;
+  /** Localized notes beside the standard text; clients that do not know the field ignore it. */
+  ora_release_notes: ManifestNotes;
   platforms: Record<string, { url: string; signature: string }>;
 }
 
@@ -12,6 +16,8 @@ export interface UpdateManifest {
 export async function createUpdateManifest(options: {
   bundlesDirectory: string;
   releaseTag: string | undefined;
+  /** The checkout whose notes the manifest carries. */
+  root?: string;
   now?: () => Date;
 }): Promise<UpdateManifest> {
   const { bundlesDirectory, releaseTag } = options;
@@ -30,10 +36,17 @@ export async function createUpdateManifest(options: {
     "windows-x86_64": /(?:_x64-setup|setup)\.exe$/i,
     "linux-x86_64": /\.AppImage$/,
   };
+  const version = releaseTag.replace(/^v/, "");
   const manifest: UpdateManifest = {
-    version: releaseTag.replace(/^v/, ""),
+    version,
     notes: `Ora ${releaseTag}`,
     pub_date: (options.now ?? (() => new Date()))().toISOString(),
+    // The plugin only accepts text in the standard field and would otherwise reject the whole
+    // manifest, so localized notes travel beside it.
+    ora_release_notes: await selectManifestNotes(
+      options.root ?? fileURLToPath(new URL("..", import.meta.url)),
+      version,
+    ),
     platforms: {},
   };
   for (const [target, pattern] of Object.entries(patterns)) {

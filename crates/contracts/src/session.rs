@@ -49,21 +49,58 @@ pub struct AgentModel {
     pub default: bool,
 }
 
-/// Requests the pre-session model list of one application-scoped agent runtime.
+/// How many of an agent's commands a client shows, whether discovered or reported by a session.
+///
+/// A client cuts what it shows; what is delivered is never cut.
+pub const SHOWN_AGENT_COMMAND_LIMIT: usize = 500;
+
+/// One command an agent reported before any session exists.
+///
+/// The text is whatever the agent wrote, often taken from repository files, so a client shows it
+/// as plain text and checks it before showing it at all.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct ListAgentModelsRequest {
-    pub agent_ref: AgentRef,
-    pub workspace_id: String,
+pub struct AgentCommand {
+    pub name: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_hint: Option<String>,
 }
 
-/// Returns the models one agent advertises outside any session.
+/// Requests what one application-scoped agent offers in a workspace outside any session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct ListAgentModelsResponse {
+pub struct DiscoverAgentRequest {
+    pub agent_ref: AgentRef,
+    pub workspace_id: String,
+    /// Asking for commands may make the agent's plugin wait for them, so model-only callers do not.
+    pub include_commands: bool,
+}
+
+impl DiscoverAgentRequest {
+    /// Asks for models alone, which never waits for the agent to report its commands.
+    pub fn models_only(agent_ref: AgentRef, workspace_id: String) -> Self {
+        Self {
+            agent_ref,
+            workspace_id,
+            include_commands: false,
+        }
+    }
+}
+
+/// Returns what one agent offers outside any session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct DiscoverAgentResponse {
     pub models: Vec<AgentModel>,
+    /// Absent when nobody knows the agent's commands, which is not the same as it having none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub commands: Option<Vec<AgentCommand>>,
 }
 
 /// Requests the live detection status of every application-scoped agent runtime.
@@ -567,8 +604,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AgentStatus::export(config)?;
     AgentRuntimeStatus::export(config)?;
     AgentModel::export(config)?;
-    ListAgentModelsRequest::export(config)?;
-    ListAgentModelsResponse::export(config)?;
+    AgentCommand::export(config)?;
+    DiscoverAgentRequest::export(config)?;
+    DiscoverAgentResponse::export(config)?;
     GetAgentRuntimeStatusRequest::export(config)?;
     GetAgentRuntimeStatusResponse::export(config)?;
     SessionStatus::export(config)?;
@@ -721,6 +759,22 @@ mod tests {
                     "durationMs": 12_000,
                 },
             })
+        );
+    }
+
+    /// A caller that only needs models must never make an agent's plugin wait for commands.
+    #[test]
+    fn models_only_discovery_asks_for_no_commands() {
+        assert_eq!(
+            super::DiscoverAgentRequest::models_only(
+                "official/test.agent".into(),
+                "workspace".to_string()
+            ),
+            super::DiscoverAgentRequest {
+                agent_ref: "official/test.agent".into(),
+                workspace_id: "workspace".to_string(),
+                include_commands: false,
+            }
         );
     }
 }

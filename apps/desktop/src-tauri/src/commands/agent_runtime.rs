@@ -10,9 +10,9 @@ backend_command!(
     "Reports readiness of the shared agent runtimes."
 );
 async_backend_command!(
-    list_agent_models,
-    ListAgentModelsRequest,
-    ListAgentModelsResponse,
-    agent_runtime.models,
-    "Discovers one agent's models for a workspace without creating a session."
+    discover_agent,
+    DiscoverAgentRequest,
+    DiscoverAgentResponse,
+    agent_runtime.discover,
+    "Discovers what one agent offers in a workspace without creating a session."
 );

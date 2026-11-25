@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use ora_logging::ora_warn;
 use ora_plugin_protocol::{
-    AGENT_LIST_MODELS_METHOD, AGENT_NOT_INSTALLED_CODE, AGENT_START_METHOD, AGENT_STOP_METHOD,
-    AGENT_UNUSABLE_CODE, AgentListModelsParams, AgentListModelsResult, AgentModel, AgentProtocol,
-    AgentStartContext, AgentStartResult, EFFECT_COORDINATE_METHOD, EFFECT_REACTIVATE_METHOD,
-    EFFECT_VERIFY_READY_METHOD, PluginEffectCoordination, SUPPORTED_ACP_VERSION,
+    AGENT_DISCOVER_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_NOT_INSTALLED_CODE, AGENT_START_METHOD,
+    AGENT_STOP_METHOD, AGENT_UNUSABLE_CODE, AgentProtocol, AgentStartContext, AgentStartResult,
+    EFFECT_COORDINATE_METHOD, EFFECT_REACTIVATE_METHOD, EFFECT_VERIFY_READY_METHOD,
+    PluginEffectCoordination, SUPPORTED_ACP_VERSION,
 };
 use ora_plugin_runtime::{PluginRegistration, PluginRuntime, PluginRuntimeError};
 use serde_json::json;
@@ -21,8 +21,6 @@ pub(crate) use ora_plugin_protocol::AGENT_ACP_METHOD;
 /// cancellation grace, because teardown must never be the reason shutdown stalls: the plugin
 /// process is ended immediately afterwards whether or not it answered.
 const AGENT_STOP_TIMEOUT: Duration = Duration::from_secs(2);
-/// Model discovery may start a one-shot agent process and therefore needs a dedicated budget.
-const AGENT_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Reports why one agent plugin could not be brought up or queried.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -68,12 +66,6 @@ pub(super) fn sensitive_start_error(error: &PluginRuntimeError) -> PluginAgentEr
     }
 }
 
-/// Describes one model an agent plugin offers before any session exists.
-///
-/// This is deliberately separate from ACP session config options, which only exist after
-/// `session/new`: the agent and model pickers must render before any session is created.
-pub(crate) type PluginAgentModel = AgentModel;
-
 /// Rejects a plugin whose registration does not cover the whole agent contract.
 ///
 /// This runs the moment the handshake completes, before any session exists and before a user is
@@ -82,14 +74,17 @@ pub(crate) type PluginAgentModel = AgentModel;
 pub(super) fn verify_agent_contract(
     registration: &PluginRegistration,
 ) -> Result<(), PluginAgentError> {
-    let missing_methods = [
-        AGENT_START_METHOD,
-        AGENT_STOP_METHOD,
-        AGENT_LIST_MODELS_METHOD,
-    ]
-    .into_iter()
-    .filter(|method| !registration.methods.contains(*method))
-    .collect::<Vec<_>>();
+    let mut missing_methods = [AGENT_START_METHOD, AGENT_STOP_METHOD]
+        .into_iter()
+        .filter(|method| !registration.methods.contains(*method))
+        .collect::<Vec<_>>();
+    // Plugins published before `agent/discover` answer only the models-only method, and stay usable.
+    if ![AGENT_DISCOVER_METHOD, AGENT_LIST_MODELS_METHOD]
+        .into_iter()
+        .any(|method| registration.methods.contains(method))
+    {
+        missing_methods.push(AGENT_DISCOVER_METHOD);
+    }
     if !missing_methods.is_empty() {
         return Err(PluginAgentError::ContractIncomplete(format!(
             "missing methods {}",
@@ -203,28 +198,4 @@ pub(crate) async fn stop_agent(runtime: &PluginRuntime, plugin_id: &str) {
             "agent plugin did not answer shutdown before its deadline"
         ),
     }
-}
-
-/// Reads the models one plugin offers for the agent and model pickers.
-pub(crate) async fn list_models(
-    runtime: &PluginRuntime,
-    cwd: &Path,
-) -> Result<Vec<PluginAgentModel>, PluginAgentError> {
-    let params = serde_json::to_value(AgentListModelsParams {
-        cwd: cwd.to_path_buf(),
-    })
-    .map_err(|error| PluginAgentError::Failed(error.to_string()))?;
-    let result = runtime
-        .invoke_with_timeout(
-            AGENT_LIST_MODELS_METHOD,
-            params,
-            AGENT_MODEL_DISCOVERY_TIMEOUT,
-        )
-        .await?;
-    let result: AgentListModelsResult = serde_json::from_value(result).map_err(|error| {
-        PluginAgentError::Failed(format!(
-            "invalid {AGENT_LIST_MODELS_METHOD} result: {error}"
-        ))
-    })?;
-    Ok(result.models)
 }

@@ -40,6 +40,34 @@ impl PreferredLogLevelStore for BackendPreferredLogLevelStore {
 }
 
 impl Settings {
+    /// Returns the saved probe target; only an absent value uses the first-use default.
+    pub async fn network_proxy_check_url(&self) -> Result<String, BackendError> {
+        let store = self.store.clone();
+        spawn_repository_work(move || {
+            let saved = store
+                .get(ConfigKey::NetworkProxyCheckUrl)
+                .map_err(user_config_repository_error)?;
+            match saved {
+                Some(value) => validated_proxy_check_url(value.as_str()),
+                None => Ok("https://google.com".to_owned()),
+            }
+        })
+        .await
+    }
+
+    /// Saves only the explicitly confirmed probe URL, independently of proxy form edits.
+    pub async fn set_network_proxy_check_url(&self, url: String) -> Result<String, BackendError> {
+        let url = validated_proxy_check_url(&url)?;
+        let store = self.store.clone();
+        spawn_repository_work(move || {
+            store
+                .set_display(ConfigKey::NetworkProxyCheckUrl, &url)
+                .map_err(user_config_repository_error)?;
+            Ok(url)
+        })
+        .await
+    }
+
     pub(crate) fn new(pool: RepositoryPool) -> Self {
         let repository = SqliteUserConfigRepository::new(pool);
         Self {
@@ -182,6 +210,19 @@ impl Settings {
             settings: self.clone(),
         }
     }
+}
+
+/// Validates without echoing a possibly private target into error messages.
+fn validated_proxy_check_url(value: &str) -> Result<String, BackendError> {
+    let value = value.trim();
+    let valid = url::Url::parse(value)
+        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some());
+    if !valid {
+        return Err(BackendError::invalid_proxy_settings(
+            "probe URL must be an absolute HTTP(S) URL".to_owned(),
+        ));
+    }
+    Ok(value.to_owned())
 }
 
 /// Keeps storage diagnostics internal while preserving the common public error projection.

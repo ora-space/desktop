@@ -172,7 +172,7 @@ const EMPTY_CONVERSATION: SessionConversation = {
   modelChanges: [],
   historyNotices: [],
   turns: [],
-  availableCommands: [],
+  availableCommands: null,
   sessionTitle: null,
   sessionUpdatedAt: null,
   isLoaded: false,
@@ -292,13 +292,23 @@ export function createChatStore(
       let completed = false;
       let pendingPreviewTimer: ReturnType<typeof setTimeout> | null = null;
 
+      /**
+       * Reads the options the conversation is on now rather than staging them with the transcript.
+       *
+       * A load can last as long as a running turn, and a model the user picks meanwhile reaches the
+       * conversation without passing through this stream.
+       */
+      const liveConfigOptions = () =>
+        get().conversations[oraSessionId]?.configOptions ??
+        previous.configOptions;
+
       /** Publishes the active replay turn without repainting once per provider text token. */
       const flushPendingPreview = () => {
         if (pendingPreviewTimer !== null) {
           clearTimeout(pendingPreviewTimer);
           pendingPreviewTimer = null;
         }
-        const preview = staged.preview(previous.configOptions);
+        const preview = staged.preview(liveConfigOptions());
         if (preview.isResponding) {
           updateConversation(set, oraSessionId, () => preview);
           return;
@@ -344,7 +354,10 @@ export function createChatStore(
             // sees them; they describe the conversation, not any one turn.
             const configOptions = sessionScopedConfigOptions(event.update);
             if (configOptions) {
-              staged.configOptions = configOptions;
+              updateConversation(set, oraSessionId, (conversation) => ({
+                ...conversation,
+                configOptions,
+              }));
             } else {
               staged.applyUpdate(
                 event.update,
@@ -386,7 +399,7 @@ export function createChatStore(
           ...staged.finish(),
           // An agent that reports nothing on load leaves whatever session
           // creation already established, rather than blanking the picker.
-          configOptions: staged.configOptions ?? previous.configOptions,
+          configOptions: liveConfigOptions(),
           // Replay rebuilds the transcript from the provider, which knows
           // nothing about Ora's markers, so any earlier ones cannot be placed
           // against the new turns and are dropped rather than misplaced.
@@ -395,6 +408,7 @@ export function createChatStore(
       } catch (error) {
         updateConversation(set, oraSessionId, () => ({
           ...previous,
+          configOptions: liveConfigOptions(),
           usage: reloadedUsage,
           ...(previous.diagnostics ? { diagnostics: undefined } : {}),
           error: isAbortError(error) ? previous.error : describeError(error),
@@ -616,6 +630,16 @@ export function createChatStore(
           );
           throw error;
         }
+        // Written before a stop is honoured: the session is already on this agent, so whatever an
+        // earlier one offered is gone even if no prompt follows. Agents usually report after
+        // answering setup, so a setup that collected none has not said there are none.
+        updateConversation(set, key, (conversation) => ({
+          ...conversation,
+          availableCommands:
+            prepared.availableCommands.length > 0
+              ? prepared.availableCommands
+              : null,
+        }));
         if (controller.signal.aborted) {
           // Stopped mid-startup: the session exists but we never open its stream.
           updateTurn(set, key, turnId, (current) =>
@@ -655,7 +679,6 @@ export function createChatStore(
         // to the landing layout and replay the slide-down animation.
         updateConversation(set, key, (conversation) => ({
           ...conversation,
-          availableCommands: prepared.availableCommands,
           isLoaded: true,
         }));
       }
@@ -792,6 +815,11 @@ export function createChatStore(
             );
             updateConversation(set, key, (conversation) => ({
               ...conversation,
+              // A turn the Agent finished is its chance to report; a cancelled one may never
+              // have reached it.
+              availableCommands:
+                conversation.availableCommands ??
+                (event.stopReason === "cancelled" ? null : []),
               usage: completeUsageTurn(
                 conversation.usage,
                 event.tokenUsage,
@@ -955,7 +983,7 @@ class HistoryBuilder {
   /** Session-scoped options seen during replay; `null` when the agent reported none. */
   configOptions: acp.SessionConfigOption[] | null = null;
   private readonly turns: ChatTurn[] = [];
-  private availableCommands: acp.AvailableCommand[] = [];
+  private availableCommands: acp.AvailableCommand[] | null = null;
   private sessionTitle: string | null = null;
   private sessionUpdatedAt: string | null = null;
   /**
@@ -1095,12 +1123,10 @@ class HistoryBuilder {
   }
 
   /** Materializes safe partial replay state while a load stream is still producing events. */
-  preview(
-    fallbackConfigOptions: acp.SessionConfigOption[],
-  ): SessionConversation {
+  preview(configOptions: acp.SessionConfigOption[]): SessionConversation {
     return {
       ...this.snapshot(),
-      configOptions: this.configOptions ?? fallbackConfigOptions,
+      configOptions,
       modelChanges: [],
       pendingPermissions: [...this.permissions],
       isLoading: true,

@@ -1,6 +1,14 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@ora/ui";
+import type { AgentDiscoveryScope } from "../../state/data/agent-runtime";
 import { PlatformProvider } from "../../platform";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -83,7 +91,11 @@ function reportOpenCode(status: AgentStatus) {
   };
 }
 
-function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
+function renderModelSelector(
+  seed: (state: FixtureState) => void = () => {},
+  sessionId?: string,
+  discoveryScope: AgentDiscoveryScope = "modelsAndCommands",
+) {
   const state = createFixtureState();
   state.tasks = [
     {
@@ -104,12 +116,12 @@ function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
     projectId: task.projectId,
     kind: "isolated" as const,
     lifecycle: "active" as const,
-    directory: { kind: "present" as const },
+    directory: { kind: "present" as const, git: "repository" as const },
   }));
   seed(state);
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
   const client = createTestClient(clientHandlers);
-  const discover = vi.spyOn(client.agentRuntime, "listModels");
+  const discover = vi.spyOn(client.agentRuntime, "discover");
   const setConfig = vi.spyOn(client.session, "setConfig");
   const chatStore = createChatStore(client.session);
   const queryClient = createTestQueryClient();
@@ -119,7 +131,10 @@ function renderModelSelector(seed: (state: FixtureState) => void = () => {}) {
       <AppI18nProvider>
         <PlatformProvider adapter={createStubPlatform()}>
           <TooltipProvider>
-            <ModelSelector />
+            <ModelSelector
+              discoveryScope={discoveryScope}
+              sessionId={sessionId}
+            />
           </TooltipProvider>
         </PlatformProvider>
       </AppI18nProvider>
@@ -181,6 +196,27 @@ async function openDetachedConversation(
 }
 
 describe("ModelSelector for a session that has not attached", () => {
+  it("asks for what its surface declares, whichever session it reads", async () => {
+    const asked = async (scope: AgentDiscoveryScope, sessionId?: string) => {
+      const { discover, chatStore } = renderModelSelector(
+        (state) => {
+          selectPersistedSession(state);
+        },
+        sessionId,
+        scope,
+      );
+      await act(() => chatStore.getState().loadSession("s1"));
+      await waitFor(() => expect(discover).toHaveBeenCalledOnce());
+      cleanup();
+      return discover.mock.calls[0]?.[0].includeCommands;
+    };
+
+    for (const sessionId of [undefined, "s1"]) {
+      expect(await asked("modelsAndCommands", sessionId)).toBe(true);
+      expect(await asked("models", sessionId)).toBe(false);
+    }
+  });
+
   /**
    * Reading a conversation never reaches its agent, so a persisted session can be open with no
    * provider and nothing to configure. The picker is then in exactly the position of a chat that

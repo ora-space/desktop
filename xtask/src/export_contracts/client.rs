@@ -2,11 +2,12 @@
 
 use super::{GENERATED_FILE_HEADER, write_generated_file};
 use crate::frontend::{FrontendEndpoint, FrontendResponseMode};
+use ora_contracts::SHOWN_AGENT_COMMAND_LIMIT;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-/// Emits the client factory and DTO barrel without adding another type-to-file registry.
+/// Emits the client factory, shared constants and DTO barrel without adding another type-to-file registry.
 pub(super) fn export(
     directory: &Path,
     endpoints: &[FrontendEndpoint],
@@ -32,6 +33,12 @@ pub(super) fn export(
         barrel.push_str(&format!("export * from \"./dto/{module}\";\n"));
     }
     write_generated_file(&directory.join("dto.generated.ts"), &barrel)?;
+    write_generated_file(
+        &directory.join("constants.generated.ts"),
+        &format!(
+            "{GENERATED_FILE_HEADER}export const SHOWN_AGENT_COMMAND_LIMIT = {SHOWN_AGENT_COMMAND_LIMIT};\n"
+        ),
+    )?;
     write_generated_file(
         &directory.join("client.generated.ts"),
         &render_client(endpoints)?,

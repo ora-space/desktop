@@ -83,6 +83,12 @@ impl SessionChannel {
         self.pending_updates.push_back(notification.clone());
     }
 
+    /// Drops queued configuration snapshots that a later authoritative answer replaced.
+    pub(super) fn discard_pending_options(&mut self) {
+        self.pending_updates
+            .retain(|pending| !matches!(pending.update, SessionUpdate::ConfigOptionUpdate(_)));
+    }
+
     /// Renders the reported command catalog for a client loading the attached session.
     ///
     /// A loading client starts from an empty catalog, so there is nothing to say until one exists.

@@ -13,6 +13,17 @@ export function useProxySettings() {
     queryKey: settingsKeys.proxySettings,
     queryFn: () => client.proxy.get({}),
   });
+  const urlQuery = useQuery({
+    queryKey: settingsKeys.proxyCheckUrl,
+    queryFn: () => client.proxy.getCheckUrl({}),
+  });
+  const urlMutation = useMutation({
+    mutationFn: (url: string) => client.proxy.setCheckUrl({ url }),
+    onSuccess: async (response) => {
+      await queryClient.cancelQueries({ queryKey: settingsKeys.proxyCheckUrl });
+      queryClient.setQueryData(settingsKeys.proxyCheckUrl, response);
+    },
+  });
   const mutation = useMutation({
     mutationFn: (settings: ProxySettings) => client.proxy.set({ settings }),
     onSuccess: (response) => {
@@ -62,15 +73,20 @@ export function useProxySettings() {
 
   return {
     settings: query.data?.settings ?? null,
+    checkUrl: urlQuery.data?.url ?? "",
+    hasLoaded: query.data !== undefined,
     isLoading: query.isPending,
     loadError: query.error,
+    isCheckUrlLoading: urlQuery.isPending,
+    checkUrlError: urlQuery.error,
     isSaving: mutation.isPending || clearMutation.isPending,
-    isChecking: checkMutation.isPending,
+    isChecking: checkMutation.isPending || urlMutation.isPending,
+    saveCheckUrl: urlMutation.mutateAsync,
     updateError: mutation.error ?? clearMutation.error,
     submit,
     clear,
     check,
-    retry: query.refetch,
+    retry: () => Promise.all([query.refetch(), urlQuery.refetch()]),
   };
 }
 

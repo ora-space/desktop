@@ -3,6 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
+import { bundleReleaseNotes } from "../../scripts/release-notes.ts";
 
 /** Reads the desktop crate version that the release workflow synchronizes before building. */
 function readWorkspaceVersion(): string {
@@ -20,9 +21,12 @@ function readWorkspaceVersion(): string {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(async () => ({
   define: {
     __ORA_APP_VERSION__: JSON.stringify(readWorkspaceVersion()),
+    __ORA_RELEASE_NOTES__: JSON.stringify(
+      await bundleReleaseNotes(path.resolve(__dirname, "../..")),
+    ),
   },
   plugins: [react(), tailwindcss()],
   test: {
@@ -111,4 +115,4 @@ export default defineConfig({
       ignored: [path.resolve(__dirname, "../../target")],
     },
   },
-});
+}));

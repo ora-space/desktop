@@ -10,7 +10,10 @@ use crate::host::RuntimeEvents;
 use crate::host::SessionStore;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::StopReason;
-use agent_client_protocol_schema::v1::{ListSessionsRequest, ListSessionsResponse, SessionUpdate};
+use agent_client_protocol_schema::v1::{
+    ConfigOptionUpdate, ListSessionsRequest, ListSessionsResponse, SessionConfigOption,
+    SessionUpdate,
+};
 use ora_contracts::StopSessionResponse;
 use ora_domain::SessionTitle;
 use ora_logging::{ora_debug, ora_warn};
@@ -148,6 +151,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             let _ = response.send(self.provider_session_id().to_string());
                             return;
                         }
+                        RuntimeCommand::AdoptConfigOptions { agent_session_id, config_options, response } => {
+                            self.adopt_config_options(&agent_session_id, config_options);
+                            let _ = response.send(());
+                        }
                         RuntimeCommand::AdoptUserTitle { title, response } => {
                             self.channel = Some(channel);
                             self.adopt_user_title(title);
@@ -232,9 +239,17 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 event = channel.events.recv() => {
                     match event {
                         Some(SessionEvent::Update(update, _)) => {
-                            channel.observe_commands(&update.update);
                             self.observe_session_update(&update.update);
-                            channel.pending_updates.push_back(update);
+                            // The other updates wait for the next prompt one by one; a catalog
+                            // replaces every earlier one.
+                            if matches!(
+                                update.update,
+                                SessionUpdate::AvailableCommandsUpdate(_)
+                            ) {
+                                channel.retain_commands(&update);
+                            } else {
+                                channel.pending_updates.push_back(update);
+                            }
                         }
                         Some(event) => {
                             settle_idle_event(&client, event).await;
@@ -318,7 +333,31 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             SessionUpdate::ConfigOptionUpdate(config) => {
                 self.reported_config_options = config.config_options.clone();
             }
+            SessionUpdate::AvailableCommandsUpdate(commands) => {
+                let count = commands.available_commands.len();
+                // An agent may report often; only going over the limit is news.
+                if !self.commands_exceed_limit {
+                    crate::discovery::warn_when_commands_exceed_limit(
+                        &self.session.agent_ref,
+                        count,
+                    );
+                }
+                self.commands_exceed_limit = crate::discovery::exceeds_shown_commands(count);
+            }
             _ => {}
+        }
+    }
+
+    /// Takes the options a direct configuration call was answered with, as if they were reported.
+    pub(super) fn adopt_config_options(
+        &mut self,
+        agent_session_id: &str,
+        config_options: Vec<SessionConfigOption>,
+    ) {
+        if agent_session_id == self.provider_session_id() {
+            self.observe_session_update(&SessionUpdate::ConfigOptionUpdate(
+                ConfigOptionUpdate::new(config_options),
+            ));
         }
     }
 

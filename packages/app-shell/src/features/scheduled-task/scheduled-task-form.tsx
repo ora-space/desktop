@@ -32,6 +32,7 @@ import {
   useUpdateScheduledTask,
 } from "../../state/hooks/use-scheduled-tasks";
 import type { AgentEntry } from "../../state/hooks/use-agent-catalog";
+import { useWorkspaceGitAvailability } from "../../state/hooks/use-workspace-git";
 import { WEEKDAYS, scheduleTime } from "./scheduled-task-format";
 
 interface ScheduledTaskFormProps {
@@ -82,6 +83,26 @@ export function ScheduledTaskForm({
   const [validationError, setValidationError] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const pending = createTask.isPending || updateTask.isPending;
+  // Runs provision a worktree, so the backend refuses a plain-folder project wherever it has to
+  // resolve or use the project's branch: creating a task, moving a task to another project,
+  // saving a task an older build stored without a frozen base branch, and enabling one. Editing
+  // an existing disabled task with a frozen branch on the same project resolves nothing and
+  // stays allowed. Saying which case applies beside the project choice beats a save that is
+  // certain to fail.
+  const projectNotGit =
+    useWorkspaceGitAvailability({ projectId }) === "notRepository";
+  const projectGitRefusal: "create" | "switch" | "unfrozen" | "enable" | null =
+    !projectNotGit
+      ? null
+      : task === null
+        ? "create"
+        : projectId !== task.projectId
+          ? "switch"
+          : task.worktreeBaseBranch === null
+            ? "unfrozen"
+            : enabled
+              ? "enable"
+              : null;
   const agentEntries = useMemo(
     () =>
       task !== null && !agents.some((agent) => agent.agentRef === task.agentRef)
@@ -121,6 +142,7 @@ export function ScheduledTaskForm({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (projectGitRefusal !== null) return;
     const [hourText, minuteText] = time.split(":");
     const hour = Number(hourText);
     const minute = Number(minuteText);
@@ -241,6 +263,24 @@ export function ScheduledTaskForm({
                     }
                   }}
                 />
+                {projectGitRefusal !== null ? (
+                  <p
+                    role="alert"
+                    data-selectable
+                    className="text-xs text-destructive"
+                  >
+                    {t(`scheduledTask.projectNotGit.${projectGitRefusal}`)}
+                  </p>
+                ) : (
+                  projectNotGit && (
+                    <p
+                      data-selectable
+                      className="text-xs text-muted-foreground"
+                    >
+                      {t("scheduledTask.projectNotGit.disabled")}
+                    </p>
+                  )
+                )}
               </div>
               <div className="grid min-w-0 gap-1.5">
                 <Label htmlFor="scheduled-task-agent" className="font-normal">
@@ -408,6 +448,7 @@ export function ScheduledTaskForm({
               type="submit"
               disabled={
                 pending ||
+                projectGitRefusal !== null ||
                 projects.length === 0 ||
                 (task === null && agents.length === 0)
               }

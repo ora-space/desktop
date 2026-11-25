@@ -18,6 +18,7 @@ import {
 import { usePluginOperationStore } from "../stores/plugin-operation-store";
 import { agentRuntimeKeys } from "../data/agent-runtime";
 import { usePluginMutations } from "./use-plugin-mutations";
+import { usePluginLogLevel } from "./use-plugin-log-level";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
 function createFixtureState() {
@@ -80,9 +81,10 @@ describe("usePluginMutations", () => {
       },
     });
     const queryClient = createTestQueryClient();
-    const queryKey = agentRuntimeKeys.agentModels(
+    const queryKey = agentRuntimeKeys.agentDiscovery(
       AGENT_REF,
       TARGET.workspaceId,
+      "modelsAndCommands",
     );
     const loadModels = vi.fn(async () => ({ catalog: "current" }));
 
@@ -176,4 +178,47 @@ describe("usePluginMutations", () => {
       expect(second.result.current.uninstall.isPending).toBe(false),
     );
   });
+});
+
+it("refreshes other plugins' shared write-protection state after uninstall", async () => {
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  const original = createTestClient(handlers);
+  const removed = state.installedPlugins[0]!.id;
+  const remaining = state.installedPlugins[1]!.id;
+  let protectedFile = true;
+  const client = createTestClient({
+    ...handlers,
+    getPluginLogLevel: async (req) => ({
+      pluginId: req.pluginId,
+      level: "info",
+      configured: false,
+      readOnlyPath: protectedFile ? "plugins/log-levels.json" : null,
+    }),
+    uninstallPlugin: async (request, options) => {
+      const response = await original.plugin.uninstall(request, options);
+      protectedFile = false;
+      return response;
+    },
+  });
+  const { result } = renderHookWithClient(
+    () => ({
+      mutations: usePluginMutations(removed),
+      level: usePluginLogLevel(remaining),
+    }),
+    client,
+  );
+  await waitFor(() =>
+    expect(result.current.level.state?.readOnlyPath).toBe(
+      "plugins/log-levels.json",
+    ),
+  );
+  await act(async () => {
+    await result.current.mutations.uninstall.mutateAsync({
+      dataDisposition: "delete",
+    });
+  });
+  await waitFor(() =>
+    expect(result.current.level.state?.readOnlyPath).toBeNull(),
+  );
 });
