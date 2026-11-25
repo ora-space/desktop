@@ -18,7 +18,7 @@ mod transport;
 mod tests;
 
 pub use client::{AcpClient, PendingSessionRequest};
-pub use error::AcpError;
+pub use error::{AcpError, AcpRequestError};
 pub use events::{
     AcpInboundEvent, ExtensionNotification, PermissionRequest, ReadEvent, ReadOrder,
     SessionResponse,

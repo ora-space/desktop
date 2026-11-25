@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 use tokio::sync::oneshot;
 
-use crate::error::AcpError;
+use crate::error::{AcpError, AcpRequestError};
 use crate::events::{ReadOrder, SessionResponse};
 use crate::frame::send_traced;
 use crate::pending::{PendingRequest, PendingRequests, lock_pending};
@@ -91,7 +91,11 @@ where
         match response.response {
             Ok(result) => serde_json::from_value(result)
                 .map_err(|error| AcpError::InvalidResponse(error.to_string())),
-            Err(error) => Err(AcpError::RequestFailed(error.message)),
+            Err(error) => Err(AcpError::RequestFailed(AcpRequestError {
+                code: i64::from(i32::from(error.code)),
+                message: error.message,
+                data: error.data,
+            })),
         }
     }
 
@@ -200,7 +204,11 @@ where
             Ok(result) => serde_json::from_value(result)
                 .map(|response| (response, order))
                 .map_err(|error| AcpError::InvalidResponse(error.to_string())),
-            Err(error) => Err(AcpError::RequestFailed(error.message)),
+            Err(error) => Err(AcpError::RequestFailed(AcpRequestError {
+                code: i64::from(i32::from(error.code)),
+                message: error.message,
+                data: error.data,
+            })),
         }
     }
 
