@@ -33,6 +33,16 @@ export function PendingUpdate() {
     setLastInstallable(installable);
     setConfirming(false);
   }
+  // The sidebar and the schedule check too, so a failure only lasts until the updater moves on.
+  if (
+    failedInstall !== null &&
+    (status.kind === "current" ||
+      status.kind === "checking" ||
+      status.kind === "downloading" ||
+      (installable !== null && installable !== failedInstall))
+  ) {
+    setFailedInstall(null);
+  }
   if (updates === undefined) return null;
   if (status.kind === "failed") {
     // The host's own status text, as in the version control's tooltip; it is not a thrown error.
