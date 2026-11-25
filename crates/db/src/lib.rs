@@ -24,7 +24,8 @@ mod tests;
 pub use bootstrap::{BootstrappedDatabase, DatabaseBootstrapper, reconcile_migration_history};
 pub use error::{DatabaseError, MigrationDirection};
 pub use legacy_effect_cleanup::{
-    LegacyManagedSkillRow, cleanup_legacy_managed_skills, read_legacy_managed_skills,
+    LegacyManagedSkillRow, backup_database_before_0025, cleanup_legacy_managed_skills,
+    pre_0025_backup_path, read_legacy_managed_skills,
 };
 pub use location::DatabaseLocation;
 pub use migration::{

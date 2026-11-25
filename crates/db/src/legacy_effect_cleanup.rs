@@ -1,13 +1,26 @@
+//! One-off upgrade migration code for databases upgrading from pre-`0025` schemas.
+//!
+//! Migration `0025` irreversibly retires the Effect ledger tables and switches Skill delivery from
+//! workspace materialization to formal storage paths. This module performs two pre-`0025` upgrade
+//! steps strictly before migrations run:
+//! 1. Backing up an existing pre-`0025` SQLite database to `<db>.pre-0025.bak` so users who need
+//!    to revert to an older Desktop build have a self-contained recovery copy.
+//! 2. Removing verified, unedited legacy Effect-managed skill directories while Effect rows still
+//!    exist in SQLite.
+//!
+//! Both entry points are no-ops for fresh installations and post-`0025` databases. This module is
+//! safe to remove once no supported upgrade path starts before schema `0025`.
+
 #[cfg(test)]
 mod tests;
 
 use crate::DatabaseError;
-use ora_logging::ora_warn;
+use ora_logging::{ora_info, ora_warn};
 use ora_utils::directory::fingerprint_directory;
 use ora_utils::path::{PortableRelativePath, StrictRelativePath};
 use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -15,6 +28,105 @@ use std::time::Duration;
 
 const MARKER_FILE_NAME: &str = ".ora-managed.json";
 const MARKER_SCHEMA_VERSION: u32 = 1;
+const PRE_0025_BACKUP_SUFFIX: &str = ".pre-0025.bak";
+const PRE_0025_BACKUP_TEMP_SUFFIX: &str = ".pre-0025.bak.tmp";
+
+/// Returns the version-marked backup path written beside `database_path` before migration `0025`.
+pub fn pre_0025_backup_path(database_path: &Path) -> PathBuf {
+    append_path_suffix(database_path, PRE_0025_BACKUP_SUFFIX)
+}
+
+/// Creates a self-contained SQLite backup beside `database_path` before irreversible migration
+/// `0025` runs on an existing pre-`0025` database.
+///
+/// Uses `VACUUM INTO` to fold committed WAL frames into a standalone sibling file and atomically
+/// renames it into place so partial backups are never left behind. Missing databases,
+/// uninitialized empty files, and databases that already applied `0025` return `Ok(None)`. If the
+/// version-marked backup already exists (for example after an interrupted prior upgrade attempt),
+/// it is preserved untouched and returned as `Ok(Some(path))`.
+pub fn backup_database_before_0025(database_path: &Path) -> Result<Option<PathBuf>, DatabaseError> {
+    if !database_path.exists() {
+        return Ok(None);
+    }
+    let connection = Connection::open(database_path)?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    if !needs_pre_0025_backup(&connection)? {
+        return Ok(None);
+    }
+
+    let backup_path = pre_0025_backup_path(database_path);
+    if backup_path.exists() {
+        return Ok(Some(backup_path));
+    }
+
+    let temp_path = append_path_suffix(database_path, PRE_0025_BACKUP_TEMP_SUFFIX);
+    if let Err(error) = fs::remove_file(&temp_path)
+        && error.kind() != ErrorKind::NotFound
+    {
+        return Err(DatabaseError::PreMigrationBackupFailed {
+            version: "0025",
+            path: temp_path,
+            message: format!("failed to clear stale temporary backup: {error}"),
+        });
+    }
+    let temp_path_str =
+        temp_path
+            .to_str()
+            .ok_or_else(|| DatabaseError::PreMigrationBackupFailed {
+                version: "0025",
+                path: temp_path.clone(),
+                message: "backup path is not valid UTF-8".to_string(),
+            })?;
+    if let Err(error) = connection.execute("VACUUM INTO ?1", [temp_path_str]) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(DatabaseError::PreMigrationBackupFailed {
+            version: "0025",
+            path: backup_path,
+            message: format!("SQLite VACUUM INTO failed: {error}"),
+        });
+    }
+    drop(connection);
+
+    if let Err(error) = fs::rename(&temp_path, &backup_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(DatabaseError::PreMigrationBackupFailed {
+            version: "0025",
+            path: backup_path,
+            message: format!("failed to finalize backup file: {error}"),
+        });
+    }
+
+    ora_info!(
+        backup_path = %backup_path.display(),
+        "created pre-0025 SQLite backup before irreversible Effect retirement migration"
+    );
+    Ok(Some(backup_path))
+}
+
+fn needs_pre_0025_backup(connection: &Connection) -> Result<bool, DatabaseError> {
+    if !has_table(connection, "migrations")? {
+        return Ok(false);
+    }
+    let applied_count: i64 =
+        connection.query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))?;
+    if applied_count == 0 {
+        return Ok(false);
+    }
+    let has_0025: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM migrations WHERE version = '0025' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(has_0025.is_none())
+}
+
+fn append_path_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut os = OsString::from(path.as_os_str());
+    os.push(suffix);
+    PathBuf::from(os)
+}
 
 /// Persisted legacy `ora/skill-directory.v1` record read before migration `0025` drops Effect tables.
 #[derive(Clone, Debug, Eq, PartialEq)]

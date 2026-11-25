@@ -1,4 +1,4 @@
-use super::cleanup_legacy_managed_skills;
+use super::{backup_database_before_0025, cleanup_legacy_managed_skills, pre_0025_backup_path};
 use crate::{DatabaseBootstrapper, DatabaseLocation, MigrationCatalog, default_migration_catalog};
 use ora_logging::with_trace_logging;
 use ora_utils::directory::fingerprint_directory;
@@ -461,5 +461,112 @@ fn skips_unix_symlink_targets_without_deleting_link_or_target() {
 
         assert!(fs::symlink_metadata(&symlink).is_ok());
         assert!(outside.join("SKILL.md").is_file());
+    });
+}
+
+/// Verifies Owner Decision B: an existing pre-`0025` database (including WAL-mode writes) is
+/// backed up to `ora.sqlite3.pre-0025.bak` before `0025` runs, the backup opens cleanly under a
+/// pre-`0025` catalog with all data intact, retries preserve an existing backup untouched, and
+/// missing, empty, or post-`0025` databases create no backup.
+#[test]
+fn creates_self_contained_pre_0025_backup_once_and_skips_fresh_or_post_0025_databases() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let missing = temp.path().join("missing.sqlite3");
+        assert_eq!(backup_database_before_0025(&missing).unwrap(), None);
+        assert!(!missing.exists());
+        assert!(!pre_0025_backup_path(&missing).exists());
+
+        let empty = temp.path().join("empty.sqlite3");
+        fs::write(&empty, b"").expect("create empty file");
+        assert_eq!(backup_database_before_0025(&empty).unwrap(), None);
+        assert!(!pre_0025_backup_path(&empty).exists());
+
+        let database_path = temp.path().join("ora.sqlite3");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        setup_pre_0025_database(&database_path, &workspace);
+
+        // Write additional data in WAL mode without truncating the WAL to verify `VACUUM INTO`
+        // produces a self-contained single-file backup.
+        let writer = Connection::open(&database_path).expect("open pre-0025 db");
+        writer
+            .execute_batch(
+                "PRAGMA journal_mode = WAL;
+                 INSERT INTO projects (id, name, created_at, updated_at, is_deleted)
+                 VALUES ('proj-wal', 'WAL Project', 2, 2, 0);",
+            )
+            .expect("write WAL row");
+        drop(writer);
+
+        let expected_backup = pre_0025_backup_path(&database_path);
+        assert_eq!(
+            expected_backup.file_name().and_then(OsStr::to_str),
+            Some("ora.sqlite3.pre-0025.bak")
+        );
+        let created = backup_database_before_0025(&database_path)
+            .expect("create pre-0025 backup")
+            .expect("pre-0025 database must produce a backup");
+        assert_eq!(created, expected_backup);
+        assert!(expected_backup.is_file());
+        assert!(
+            !temp.path().join("ora.sqlite3.pre-0025.bak.tmp").exists(),
+            "temporary backup file must be renamed away"
+        );
+
+        // Verify the standalone backup opens cleanly on a pre-0025 catalog and retains WAL data.
+        let restored_copy = temp.path().join("restored-old-build.sqlite3");
+        fs::copy(&expected_backup, &restored_copy).expect("copy backup for recovery test");
+        let restored_pool = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(&DatabaseLocation::path(&restored_copy), &pre_0025_catalog())
+            .expect("older build must open restored pre-0025 backup cleanly");
+        drop(restored_pool);
+        let verify_backup = Connection::open(&restored_copy).expect("open restored backup");
+        let wal_project_count: i64 = verify_backup
+            .query_row(
+                "SELECT COUNT(*) FROM projects WHERE id = 'proj-wal'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(wal_project_count, 1);
+        let effect_scope_count: i64 = verify_backup
+            .query_row("SELECT COUNT(*) FROM effect_scopes", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(effect_scope_count, 1);
+        drop(verify_backup);
+
+        // Calling backup again while still pre-0025 preserves the existing backup untouched.
+        let original_bytes = fs::read(&expected_backup).expect("read original backup");
+        let mutator = Connection::open(&database_path).expect("reopen pre-0025 db");
+        mutator
+            .execute(
+                "INSERT INTO projects (id, name, created_at, updated_at, is_deleted)
+                 VALUES ('proj-after-backup', 'After Backup', 3, 3, 0)",
+                [],
+            )
+            .unwrap();
+        drop(mutator);
+        assert_eq!(
+            backup_database_before_0025(&database_path).unwrap(),
+            Some(expected_backup.clone())
+        );
+        assert_eq!(
+            fs::read(&expected_backup).expect("re-read original backup"),
+            original_bytes
+        );
+
+        // Upgrade to latest (applies 0025), remove the backup, and verify post-0025 runs do NOT
+        // create another pre-0025 backup.
+        let upgraded = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(&database_path),
+                &default_migration_catalog().expect("latest catalog"),
+            )
+            .expect("upgrade through 0025");
+        drop(upgraded);
+        fs::remove_file(&expected_backup).expect("remove backup after upgrade");
+        assert_eq!(backup_database_before_0025(&database_path).unwrap(), None);
+        assert!(!expected_backup.exists());
     });
 }

@@ -1,18 +1,19 @@
 use std::path::Path;
 
 use ora_db::{
-    DatabaseLocation, cleanup_legacy_managed_skills, default_migration_catalog,
-    reconcile_migration_history,
+    DatabaseLocation, backup_database_before_0025, cleanup_legacy_managed_skills,
+    default_migration_catalog, reconcile_migration_history,
 };
 
 /// Reconciles the development database against current migration SQL before Desktop starts.
 ///
-/// Runs the D9 legacy Effect-managed skill directory cleanup before migration `0025` drops the
-/// Effect ledger so development startup (`task run:desktop`) cleans exact legacy copies just like
-/// packaged application bootstrap.
+/// Backs up an existing pre-`0025` database and runs the D9 legacy Effect-managed skill directory
+/// cleanup before migration `0025` drops the Effect ledger so development startup
+/// (`task run:desktop`) follows the same safety steps as packaged application bootstrap.
 pub fn run_reconcile_migrations(data_directory: &Path) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(data_directory)?;
     let database_path = data_directory.join("ora.sqlite3");
+    backup_database_before_0025(&database_path)?;
     cleanup_legacy_managed_skills(&database_path);
     let catalog = default_migration_catalog()?;
     reconcile_migration_history(&DatabaseLocation::path(database_path), &catalog)?;
@@ -179,6 +180,11 @@ mod tests {
 
         run_reconcile_migrations(&data_dir).expect("reconcile dev database");
 
+        let backup_path = ora_db::pre_0025_backup_path(&database_path);
+        assert!(
+            backup_path.is_file(),
+            "pre-0025 backup must be created before 0025 runs"
+        );
         assert!(
             !clean_dir.exists(),
             "exact managed skill directory must be deleted before 0025 drops the ledger"

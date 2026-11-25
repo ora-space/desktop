@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 
 use thiserror::Error;
 
@@ -94,5 +95,11 @@ pub enum DatabaseError {
         direction: MigrationDirection,
         #[source]
         source: rusqlite::Error,
+    },
+    #[error("failed to back up database before migration `{version}` at {}: {message}", path.display())]
+    PreMigrationBackupFailed {
+        version: &'static str,
+        path: PathBuf,
+        message: String,
     },
 }
