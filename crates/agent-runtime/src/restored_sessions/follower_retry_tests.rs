@@ -126,7 +126,7 @@ async fn assert_turn_end(
         .lines
         .into_iter()
         .filter_map(|line| match line.record {
-            HistoryRecord::TurnEnded { stop_reason } => Some(stop_reason),
+            HistoryRecord::TurnEnded { stop_reason, .. } => Some(stop_reason),
             _ => None,
         })
         .collect();

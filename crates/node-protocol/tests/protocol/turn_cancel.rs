@@ -109,6 +109,7 @@ async fn turn_cancel_negotiation_requires_its_capability() -> Result<(), TestErr
             payload: HelloAccepted {
                 thread_previews: false,
                 turn_cancel,
+                turn_failure: false,
                 selected_version: CURRENT_PROTOCOL_VERSION,
                 node: node.clone(),
                 capabilities,

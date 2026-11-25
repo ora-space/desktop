@@ -113,6 +113,8 @@ mod tests {
                 0,
                 HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             )],
             next_seq: 1,
@@ -181,6 +183,8 @@ mod tests {
                 1,
                 HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             )],
             next_seq: 2,

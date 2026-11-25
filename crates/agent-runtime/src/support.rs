@@ -422,13 +422,25 @@ mod tests {
     #[test]
     fn classifies_known_authentication_refusal_without_exposing_other_request_errors() {
         let authentication = map_prompt_error(ora_acp::AcpError::RequestFailed(
-            "Authentication required".to_string(),
+            ora_acp::AcpRequestError {
+                code: -32001,
+                message: "Authentication required".to_string(),
+                data: None,
+            },
         ));
         let not_logged_in = map_prompt_error(ora_acp::AcpError::RequestFailed(
-            "Not logged in".to_string(),
+            ora_acp::AcpRequestError {
+                code: -32001,
+                message: "Not logged in".to_string(),
+                data: None,
+            },
         ));
         let unknown = map_prompt_error(ora_acp::AcpError::RequestFailed(
-            "provider diagnostic".to_string(),
+            ora_acp::AcpRequestError {
+                code: -32001,
+                message: "provider diagnostic".to_string(),
+                data: None,
+            },
         ));
 
         assert_eq!(

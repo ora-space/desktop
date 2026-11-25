@@ -2934,6 +2934,8 @@ fn attempt_instruction_is_sent_but_not_recorded() {
             });
             expected_records.push(ora_history::HistoryRecord::TurnEnded {
                 stop_reason: StopReason::EndTurn,
+                ended_by: None,
+                failure: None,
             });
         }
         let records = ora_history::read_session_history(
