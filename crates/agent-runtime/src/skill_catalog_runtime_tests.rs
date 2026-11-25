@@ -154,6 +154,7 @@ struct MockAgentAttach {
 }
 
 impl MockAgentAttach {
+    #[allow(clippy::too_many_arguments)]
     async fn install(
         &self,
         root: &Path,
@@ -162,6 +163,7 @@ impl MockAgentAttach {
         legacy_effect_resources: bool,
         recorded_frames: Arc<Mutex<Vec<Value>>>,
         fail_next_prompt: Arc<AtomicBool>,
+        next_prompt_updates: Arc<Mutex<Vec<Value>>>,
     ) {
         let entrypoint = root.join("agent.ts");
         std::fs::write(&entrypoint, "").unwrap();
@@ -182,6 +184,7 @@ impl MockAgentAttach {
             legacy_effect_resources,
             recorded_frames,
             fail_next_prompt,
+            next_prompt_updates,
         ));
         let (_level, level) = watch::channel(ora_logging::LogLevel::Info);
         let (runtime, mut notifications) = PluginRuntime::launch(
@@ -273,6 +276,7 @@ async fn serve_skill_plugin(
     legacy_effect_resources: bool,
     recorded_frames: Arc<Mutex<Vec<Value>>>,
     fail_next_prompt: Arc<AtomicBool>,
+    next_prompt_updates: Arc<Mutex<Vec<Value>>>,
 ) {
     let mut register = json!({
         "jsonrpc": "2.0",
@@ -374,6 +378,29 @@ async fn serve_skill_plugin(
                             })
                         } else {
                             let sid = frame["params"]["sessionId"].as_str().unwrap();
+                            let extra_updates: Vec<Value> = {
+                                let mut queued = next_prompt_updates.lock().unwrap();
+                                std::mem::take(&mut *queued)
+                            };
+                            for update in extra_updates {
+                                write_message(
+                                    &mut writer,
+                                    &json!({
+                                        "jsonrpc": "2.0",
+                                        "method": "agent/acp",
+                                        "params": {
+                                            "jsonrpc": "2.0",
+                                            "method": "session/update",
+                                            "params": {
+                                                "sessionId": sid,
+                                                "update": update
+                                            }
+                                        }
+                                    }),
+                                )
+                                .await
+                                .unwrap();
+                            }
                             write_message(
                                 &mut writer,
                                 &json!({
@@ -472,6 +499,7 @@ async fn run_skill_catalog_e2e_scenario() {
     let dir = TempDir::new().unwrap();
     let frames = Arc::new(Mutex::new(Vec::new()));
     let fail_next_prompt = Arc::new(AtomicBool::new(false));
+    let next_prompt_updates = Arc::new(Mutex::new(Vec::new()));
     let attach = Arc::new(MockAgentAttach::default());
     attach
         .install(
@@ -481,6 +509,7 @@ async fn run_skill_catalog_e2e_scenario() {
             /*legacy_effect_resources*/ true,
             frames.clone(),
             fail_next_prompt.clone(),
+            next_prompt_updates.clone(),
         )
         .await;
 
@@ -652,6 +681,7 @@ async fn run_skill_catalog_e2e_scenario() {
             /*legacy_effect_resources*/ false,
             frames.clone(),
             fail_next_prompt.clone(),
+            next_prompt_updates.clone(),
         )
         .await;
     let restarted = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
@@ -802,9 +832,156 @@ async fn run_skill_catalog_e2e_scenario() {
     scheduler.shutdown().await;
 }
 
+/// Verifies ADR D3 item 3 (an empty initial turn initializes the announced set as empty so a
+/// skill installed later arrives as an incremental update) and ADR D4 / invariant 5 (parent
+/// `opencode/compaction` completion clears the announced set so the next turn re-emits the full
+/// catalog even when paths did not change, while `started`, `failed`, and child-session
+/// compactions do not reset it).
+async fn run_empty_init_and_compaction_reset_scenario() {
+    ora_logging::initialize_test_clock();
+    let dir = TempDir::new().unwrap();
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    let fail_next_prompt = Arc::new(AtomicBool::new(false));
+    let next_prompt_updates = Arc::new(Mutex::new(Vec::new()));
+    let attach = Arc::new(MockAgentAttach::default());
+    attach
+        .install(
+            dir.path(),
+            /*provider_prefix*/ "compact",
+            /*additional_directories_supported*/ true,
+            /*legacy_effect_resources*/ false,
+            frames.clone(),
+            fail_next_prompt,
+            next_prompt_updates.clone(),
+        )
+        .await;
+
+    let skills = DynamicSkillCatalog::default();
+    let mcp = ControllableMcpSetup::default();
+    let store = MemorySessionStore::default();
+    let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
+    let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        attach,
+        store,
+        directory: FixedDir(dir.path().to_path_buf()),
+        session_setup: mcp,
+        skill_catalog: skills.clone(),
+        events: RecordedEvents::default(),
+        home_directory: dir.path().to_path_buf(),
+        sessions_root: dir.path().join("sessions"),
+        scheduler: scheduler.clone(),
+    })
+    .unwrap();
+    manager
+        .wait_for_agent(&AgentRef::parse(PLUGIN_ID).unwrap())
+        .await
+        .unwrap();
+
+    let session = manager
+        .start_session(StartSessionRequest {
+            workspace_id: "ws-1".into(),
+            agent_ref: PLUGIN_ID.into(),
+            model: None,
+        })
+        .await
+        .unwrap()
+        .session;
+
+    // Turn 1 with empty catalog: no block injected, announced set becomes empty (not uninitialized).
+    send_prompt(&manager, &session.id, "first empty turn").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(prompt_texts(prompts[0]), vec!["first empty turn"]);
+    }
+
+    // Install first skill; Turn 2 must emit incremental `<available_skills_update>`, not full.
+    let skill_a = entry(
+        "alpha",
+        "Alpha skill.",
+        &dir.path()
+            .join("atoms/skills/alpha/SKILL.md")
+            .to_string_lossy(),
+        &dir.path().join("atoms/skills/alpha").to_string_lossy(),
+    );
+    skills.set_entries(vec![skill_a]);
+    // Also deliver non-resetting compaction notices during Turn 2: parent started, parent failed,
+    // and child-session completed must NOT clear the parent session's announced set.
+    *next_prompt_updates.lock().unwrap() = vec![
+        json!({
+            "sessionUpdate": "session_info_update",
+            "_meta": { "opencode/compaction": { "status": "started" } }
+        }),
+        json!({
+            "sessionUpdate": "session_info_update",
+            "_meta": { "opencode/compaction": { "status": "failed" } }
+        }),
+        json!({
+            "sessionUpdate": "session_info_update",
+            "_meta": {
+                "opencode/child-session": { "id": "child-1", "parentID": "parent-1", "depth": 1 },
+                "opencode/compaction": { "status": "completed" }
+            }
+        }),
+    ];
+    send_prompt(&manager, &session.id, "install first skill").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        let texts = prompt_texts(prompts[1]);
+        assert_eq!(texts.len(), 2);
+        assert!(
+            texts[0].starts_with("<available_skills_update>\n"),
+            "expected incremental update after empty turn 1, got: {texts:?}"
+        );
+        assert!(texts[0].contains("alpha: Alpha skill."));
+        assert_eq!(texts[1], "install first skill");
+    }
+
+    // Turn 3: path set unchanged and no parent compaction completed -> no block injected.
+    // During Turn 3, provider reports parent `opencode/compaction` completed.
+    *next_prompt_updates.lock().unwrap() = vec![json!({
+        "sessionUpdate": "session_info_update",
+        "_meta": { "opencode/compaction": { "status": "completed" } }
+    })];
+    send_prompt(&manager, &session.id, "trigger compaction").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        assert_eq!(prompt_texts(prompts[2]), vec!["trigger compaction"]);
+    }
+
+    // Turn 4: path set still unchanged, but compaction cleared announced skills -> full catalog!
+    send_prompt(&manager, &session.id, "after compaction").await;
+    {
+        let recorded = frames.lock().unwrap();
+        let prompts = acp_methods(&recorded, "session/prompt");
+        let texts = prompt_texts(prompts[3]);
+        assert_eq!(texts.len(), 2);
+        assert!(
+            texts[0].starts_with("<available_skills>\n"),
+            "expected full catalog after parent compaction completion, got: {texts:?}"
+        );
+        assert!(texts[0].contains("alpha: Alpha skill."));
+        assert_eq!(texts[1], "after compaction");
+    }
+
+    scheduler.shutdown().await;
+}
+
 #[tokio::test]
 async fn skill_catalog_delivery_deltas_resets_capabilities_and_history_across_live_sessions() {
     tokio::time::timeout(Duration::from_secs(10), run_skill_catalog_e2e_scenario())
         .await
         .expect("skill catalog e2e scenario timed out");
+}
+
+#[tokio::test]
+async fn empty_first_turn_emits_delta_on_first_install_and_compaction_resets_to_full_catalog() {
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        run_empty_init_and_compaction_reset_scenario(),
+    )
+    .await
+    .expect("empty init and compaction reset scenario timed out");
 }

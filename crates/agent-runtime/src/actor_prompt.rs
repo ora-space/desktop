@@ -230,8 +230,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             Ok(pending) => {
                 // Commit announced skill paths only once the ACP request is accepted on the wire:
                 // any failure before admission or send leaves the next prompt free to re-emit.
+                // An initial turn with an empty catalog records the empty announced set (ADR D3)
+                // so a skill installed later arrives as an incremental update rather than full.
                 if let Some(injection) = skill_injection {
                     self.announced_skills = Some(injection.next_announced);
+                } else {
+                    self.announced_skills.get_or_insert_with(Default::default);
                 }
                 pending
             }

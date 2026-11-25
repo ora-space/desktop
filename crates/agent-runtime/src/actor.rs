@@ -291,8 +291,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 
     /// Drops in-memory tracking of skills already announced to the provider session.
     ///
-    /// Called whenever the provider session context resets or detaches so the next user prompt
-    /// injects the complete catalog again; a future compaction notification can call this too.
+    /// Called whenever the provider session context resets, detaches, or finishes context
+    /// compaction so the next user prompt injects the complete catalog again.
     pub(crate) fn forget_announced_skills(&mut self) {
         self.announced_skills = None;
     }
