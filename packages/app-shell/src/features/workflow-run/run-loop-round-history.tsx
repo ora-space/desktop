@@ -5,6 +5,7 @@ import type { GraphWorkflowRound } from "@ora/workflow-runtime";
 import { retryWaitAttemptText } from "./retry-countdown";
 import { RunRetryWaitLabel } from "./run-retry-wait-label";
 import { RunStatusBadge } from "./run-status-mark";
+import { loopRoundLabel } from "./loop-round-state";
 
 /** Lets a Loop inspector select one persisted round without merging repeated child states. */
 export function RunLoopRoundHistory({
@@ -20,6 +21,8 @@ export function RunLoopRoundHistory({
 }) {
   const { t } = useTranslation();
   const safeRounds = rounds ?? [];
+  const hasMultipleAttempts =
+    new Set(safeRounds.map((round) => round.parentLoopNodeRunId)).size > 1;
   const [preferredRoundId, setPreferredRoundId] = useState<string | null>(null);
   const effectiveRoundId = selectedRoundId ?? preferredRoundId;
   const selectedRound =
@@ -56,9 +59,13 @@ export function RunLoopRoundHistory({
                 onSelectedRoundChange?.(round.id);
               }}
             >
-              {t("workflowRun.loopRounds.round", {
-                round: round.roundIndex,
-              })}
+              {loopRoundLabel(
+                t("workflowRun.loopRounds.round", {
+                  round: round.roundIndex,
+                }),
+                round,
+                hasMultipleAttempts,
+              )}
             </button>
           );
         })}
@@ -72,6 +79,14 @@ export function RunLoopRoundHistory({
             <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
               {nodeTitles[nodeId] ?? nodeId}
             </span>
+            {state.nodeRunId && (
+              <code
+                className="truncate text-[10px] text-muted-foreground"
+                title={state.nodeRunId}
+              >
+                {state.nodeRunId}
+              </code>
+            )}
             {state.sessionId !== undefined && (
               <span
                 className="max-w-20 truncate font-mono text-[9px] text-muted-foreground"

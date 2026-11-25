@@ -119,6 +119,7 @@ describe("Loop round state projection", () => {
   it("distinguishes budget exhaustion from a met condition only on the last round", () => {
     const run = createRun();
     run.nodeStates.loop = {
+      nodeRunId: "loop-run",
       status: "succeeded",
       stopReason: "loop_max_iterations",
     };
@@ -126,6 +127,26 @@ describe("Loop round state projection", () => {
     expect(run.rounds!.map((round) => loopRoundOutcome(run, round))).toEqual([
       "workflowRun.loopView.continue",
       "workflowRun.loopView.maxIterations",
+    ]);
+  });
+  it("keeps a rebuilt container's stop reason off older rounds", () => {
+    const run = createRun();
+    run.nodeStates.loop = {
+      nodeRunId: "rebuilt-loop",
+      status: "succeeded",
+      stopReason: "loop_exit",
+    };
+    run.rounds![1].status = "succeeded";
+    const rebuilt = {
+      ...run.rounds![0],
+      id: "new-round",
+      parentLoopNodeRunId: "rebuilt-loop",
+    };
+    run.rounds!.push(rebuilt);
+    expect(run.rounds!.map((round) => loopRoundOutcome(run, round))).toEqual([
+      "workflowRun.loopView.continue",
+      "workflowRun.loopView.completed",
+      "workflowRun.loopView.exit",
     ]);
   });
   it("never falls back to another round's session for an unexecuted member", () => {

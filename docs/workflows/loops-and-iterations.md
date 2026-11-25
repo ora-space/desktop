@@ -135,6 +135,10 @@ round. **Loop results** shows the committed exports, error and termination reaso
 satisfied condition, an explicit exit and the round limit. Running or failed Loops never present
 partial values as exports.
 
+When the history contains several executions of the same Loop, the round buttons also show the
+container execution ID. Select a round to see its members' execution IDs in the inspector. A
+completed historical round shows a specific stop reason only when the recorded container ID matches.
+
 ## Execution scopes
 
 Migration `0013` gives every execution an identity so repeated definition node ids do not overwrite
