@@ -55,13 +55,16 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   the archive survives re-upgrade. See [execution scope storage](../../../../docs/workflows/loops-and-iterations.md).
 - The unpublished Loop branch previously used `0011`. Startup recognizes its exact SQL snapshot,
   installs upstream `0011`/`0012`, and adopts it as `0013` atomically, preserving live scope history.
-- Migration `0022` records the terminal outcome of each workflow document a marketplace package
-  delivered, keyed by `(source namespace, plugin identifier, document path)`. The row is written in
-  the same transaction that creates the workflow, its draft and its first published snapshot, and it
-  deliberately carries no foreign key to `workflows`: the record outlives the copy so an upgrade,
-  reinstall, or retry can never re-import a path whose workflow the user edited, renamed, or
-  deleted. `state` is the closed vocabulary `imported` / `conflict_skipped`, and a failed import
-  writes no row at all, which is what keeps it retryable.
+- Migration `0022` records the marketplace import state of each workflow document, keyed by
+  `(source namespace, plugin identifier, document path)`. An `imported` row is committed in the same
+  transaction that creates the workflow, its draft, and its first published snapshot, and it
+  deliberately carries no foreign key to `workflows`: copy liveness is resolved on read against
+  `workflows.is_deleted = 0`, so a surviving copy keeps its source identity across upgrades,
+  renames, and reinstalls, a copy deleted during an install cycle stays deleted for upgrades and
+  card retries while a fresh marketplace install reconsiders it (and conditionally deletes the
+  row back to unrecorded if recovery fails for a non-conflict reason), and `conflict_skipped` stays
+  re-checkable on every install, upgrade, and card retry. A non-conflict import failure on an
+  unrecorded or `conflict_skipped` path leaves that state unchanged, keeping it retryable.
 - Migration `0019` adds the `finalized_without_effect` operation phase used by the explicit Effect
   recovery exit. Its upgrade rebuilds the operation journal and its referencing status/artifact
   tables through staging copies so every row and foreign key survives; the downgrade maps closed
