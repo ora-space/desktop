@@ -15,6 +15,8 @@ mod resume;
 mod support;
 #[path = "agent_session/turn_processes.rs"]
 mod turn_processes;
+#[path = "agent_session/turn_failure.rs"]
+mod turn_failure;
 #[path = "agent_session/workload.rs"]
 mod workload;
 
@@ -73,8 +75,18 @@ fn provider_failure_ends_the_session_with_a_safe_code_and_releases_resources() {
             .expect("a failed prompt must not leave the session idle");
         assert_eq!(ended.reason, AgentSessionEndReason::AgentFailed);
         assert_eq!(ended.detail.as_deref(), Some("agent_turn_failed"));
-        let history = serde_json::to_string(&fixture.history_lines()).expect("encode history");
-        assert!(!history.contains("upstream diagnostic"));
+        // The failure keeps the Agent's sanitized text, but the terminal detail stays a code.
+        let history = fixture.history_lines();
+        let failure = history
+            .iter()
+            .find(|line| line.get("type").and_then(Value::as_str) == Some("turnEnded"))
+            .and_then(|line| line.get("failure"))
+            .expect("the failed turn records its reason");
+        assert_eq!(failure.get("code"), Some(&serde_json::json!("agent_error")));
+        assert_eq!(
+            failure.get("message"),
+            Some(&serde_json::json!("upstream diagnostic must not escape"))
+        );
         assert_eq!(fixture.leases.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(
             fixture
@@ -101,9 +113,22 @@ fn missing_agent_credentials_end_the_session_with_an_actionable_code() {
             ended.detail.as_deref(),
             Some("agent_authentication_required")
         );
-        let history = serde_json::to_string(&fixture.history_lines()).expect("encode history");
-        assert!(!history.contains("Authentication required"));
-        assert!(!history.contains("Not logged in"));
+        // The failure code carries the actionable reason, and the sanitized text stays in the
+        // failure record rather than in the terminal detail.
+        let history = fixture.history_lines();
+        let failure = history
+            .iter()
+            .find(|line| line.get("type").and_then(Value::as_str) == Some("turnEnded"))
+            .and_then(|line| line.get("failure"))
+            .expect("the failed turn records its reason");
+        assert_eq!(
+            failure.get("code"),
+            Some(&serde_json::json!("agent_authentication_required"))
+        );
+        assert_eq!(
+            failure.get("message"),
+            Some(&serde_json::json!("Authentication required"))
+        );
         sessions.shutdown().await;
     });
 }
