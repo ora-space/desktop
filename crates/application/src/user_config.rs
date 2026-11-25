@@ -18,6 +18,59 @@ pub struct NetworkProxySettings {
 }
 use crate::{ApplicationError, RepositoryError};
 
+/// Selects the host's route independently of its saved manual endpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkProxyMode {
+    System,
+    Manual,
+    Direct,
+}
+
+impl fmt::Display for NetworkProxyMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::System => "system",
+            Self::Manual => "manual",
+            Self::Direct => "direct",
+        })
+    }
+}
+
+impl FromStr for NetworkProxyMode {
+    type Err = ParseNetworkProxyModeError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "system" => Ok(Self::System),
+            "manual" => Ok(Self::Manual),
+            "direct" => Ok(Self::Direct),
+            _ => Err(ParseNetworkProxyModeError),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Error)]
+#[error("unknown network proxy mode")]
+pub struct ParseNetworkProxyModeError;
+
+/// Contains the effective mode and the retained manual endpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NetworkProxyPreferences {
+    pub mode: NetworkProxyMode,
+    pub manual: Option<NetworkProxySettings>,
+}
+
+impl NetworkProxySettings {
+    /// Checks the required fields before the network layer validates the endpoint.
+    fn has_endpoint(&self) -> bool {
+        self.port != 0 && !self.host.trim().is_empty()
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("manual network proxy requires a host and port")]
+struct InvalidManualProxy;
+
 /// Represents whether developer-facing settings are discoverable in the shared UI.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum DeveloperMode {
@@ -124,6 +177,65 @@ where
             .map_err(ApplicationError::from_user_config_repository_error)?;
         Ok(level)
     }
+    /// Resolves old preferences without materializing default rows.
+    pub fn network_proxy_preferences(&self) -> Result<NetworkProxyPreferences, ApplicationError> {
+        let [mode, manual] = self
+            .store
+            .get_pair(ConfigKey::NetworkProxyMode, ConfigKey::NetworkProxySettings)
+            .map_err(ApplicationError::from_user_config_repository_error)?;
+        let mode = mode
+            .map(|value| value.parse::<NetworkProxyMode>())
+            .transpose()
+            .map_err(|error| corrupt_value(ConfigKey::NetworkProxyMode, error))?;
+        let manual = manual
+            .map(|value| value.parse_json::<NetworkProxySettings>())
+            .transpose()
+            .map_err(|error| corrupt_value(ConfigKey::NetworkProxySettings, error))?;
+        let mode = mode.unwrap_or(if manual.is_some() {
+            NetworkProxyMode::Manual
+        } else {
+            NetworkProxyMode::System
+        });
+        if mode == NetworkProxyMode::Manual
+            && !manual
+                .as_ref()
+                .is_some_and(NetworkProxySettings::has_endpoint)
+        {
+            return Err(corrupt_value(
+                ConfigKey::NetworkProxySettings,
+                InvalidManualProxy,
+            ));
+        }
+        Ok(NetworkProxyPreferences { mode, manual })
+    }
+
+    /// Commits a mode and its manual endpoint together, retaining the endpoint in other modes.
+    pub fn set_network_proxy_preferences(
+        &self,
+        mode: NetworkProxyMode,
+        manual: Option<NetworkProxySettings>,
+    ) -> Result<(), ApplicationError> {
+        if mode != NetworkProxyMode::Manual {
+            return self
+                .store
+                .set_display(ConfigKey::NetworkProxyMode, mode)
+                .map_err(ApplicationError::from_user_config_repository_error);
+        }
+        let manual = manual
+            .filter(NetworkProxySettings::has_endpoint)
+            .ok_or_else(|| corrupt_value(ConfigKey::NetworkProxySettings, InvalidManualProxy))?;
+        self.store
+            .set_with_json(
+                ConfigKey::NetworkProxyMode,
+                mode,
+                ConfigKey::NetworkProxySettings,
+                &manual,
+            )
+            .map_err(|error| {
+                ApplicationError::from_user_config_repository_error(RepositoryError::new(error))
+            })
+    }
+
     /// Returns the optional configured network proxy settings.
     pub fn network_proxy_settings(&self) -> Result<Option<NetworkProxySettings>, ApplicationError> {
         match self
