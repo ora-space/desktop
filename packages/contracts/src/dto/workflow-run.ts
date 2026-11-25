@@ -381,10 +381,11 @@ export type WorkflowDebugImpact = {
 
 export type WorkflowDebugOperation =
   & { operationId: string; requestId: string; baseRevision: number }
-  & ({ "state": "stopping" } | { "state": "stop_failed"; reason: string } | {
-    "state": "applied";
-    revision: number;
-  });
+  & ({ "state": "stopping" } | {
+    "state": "stop_failed";
+    reason: string;
+    unsettledNodeRunIds: Array<string>;
+  } | { "state": "applied"; revision: number });
 
 export type WorkflowDebugPatch = {
   "op": "replace";
@@ -395,6 +396,7 @@ export type WorkflowDebugPatch = {
 export type WorkflowDebugPhase = { "state": "stopping" } | {
   "state": "stop_failed";
   reason: string;
+  unsettledNodeRunIds: Array<string>;
 } | { "state": "applied"; revision: number };
 
 export type WorkflowDebugPreview = {

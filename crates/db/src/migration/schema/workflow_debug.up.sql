@@ -56,9 +56,12 @@ CREATE TABLE workflow_debug_operations (
     state TEXT NOT NULL CHECK(state IN ('stopping','stop_failed','applied')),
     revision INTEGER,
     failure TEXT,
+    -- JSON array of the attempts a failed stop could not prove settled.
+    unsettled_attempts TEXT NOT NULL DEFAULT '[]',
     released INTEGER NOT NULL DEFAULT 0 CHECK(released IN (0,1)),
     CHECK ((state = 'applied') = (revision IS NOT NULL)),
     CHECK ((state = 'stop_failed') = (failure IS NOT NULL)),
+    CHECK (state = 'stop_failed' OR unsettled_attempts = '[]'),
     UNIQUE(run_id, request_id),
     UNIQUE(run_id, revision),
     FOREIGN KEY(run_id, preview_id) REFERENCES workflow_debug_previews(run_id, id) ON DELETE CASCADE

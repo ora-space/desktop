@@ -382,23 +382,40 @@ fn double_click_has_one_owner_and_failed_stop_stays_fenced() {
             1
         );
     });
-    store
-        .record_stop_failure("F", "key", "still running")
-        .unwrap();
+    let unsettled = [ora_domain::WorkflowNodeRunId::new("t3")];
+    assert!(
+        store
+            .record_stop_failure("F", "key", "still running", &unsettled)
+            .unwrap()
+    );
     assert!(matches!(
         store.preview(&edit("next", 0), impact),
         Err(DatabaseError::WorkflowDebug(
             DebugRejection::OperationActive
         ))
     ));
-    let DebugClaim::Existing(failed) = store.claim(&commit).unwrap() else {
+    // A failed stop keeps its first reason; a later report cannot rewrite the receipt.
+    assert!(
+        !store
+            .record_stop_failure("F", "key", "late report", &[])
+            .unwrap()
+    );
+    let failed = WorkflowDebugPhase::StopFailed {
+        reason: "still running".into(),
+        unsettled_node_run_ids: vec!["t3".into()],
+    };
+    let DebugClaim::Existing(replayed) = store.claim(&commit).unwrap() else {
         panic!("replayed stop");
     };
+    assert_eq!(replayed.operation.phase, failed);
     assert_eq!(
-        failed.operation.phase,
-        WorkflowDebugPhase::StopFailed {
-            reason: "still running".into()
-        }
+        store
+            .history("F")
+            .unwrap()
+            .iter()
+            .map(|entry| entry.operation.phase.clone())
+            .collect::<Vec<_>>(),
+        vec![failed]
     );
     store.release_failed_stop("F", "key").unwrap();
     assert!(store.preview(&edit("next", 0), impact).is_ok());
@@ -472,7 +489,7 @@ fn active_operation_fences_new_confirmations_and_recovery_entries() {
     )));
     // A failed stop keeps the same fence until the coordinator releases it.
     store
-        .record_stop_failure("F", "key", "still running")
+        .record_stop_failure("F", "key", "still running", &[])
         .unwrap();
     assert!(fenced(repository.restart_run(&run, 3)));
     store.release_failed_stop("F", "key").unwrap();

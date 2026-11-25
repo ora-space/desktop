@@ -2,7 +2,8 @@ use super::*;
 use rusqlite::{Row, Transaction};
 
 const OPERATION: &str =
-    "SELECT o.id,o.request_id,p.base_revision,o.state,o.revision,o.failure,p.plan,p.patch
+    "SELECT o.id,o.request_id,p.base_revision,o.state,o.revision,o.failure,p.plan,p.patch,
+        o.unsettled_attempts
     FROM workflow_debug_operations o JOIN workflow_debug_previews p ON p.id=o.preview_id
     JOIN workflow_runs r ON r.id=o.run_id AND r.is_deleted=0";
 
@@ -111,17 +112,23 @@ impl WorkflowDebugStore {
     }
 
     /// Records failed quiescence without creating a revision. A fresh request stays fenced.
+    ///
+    /// `unsettled_attempts` are the attempts the coordinator could not prove stopped or isolated.
+    /// The receipt keeps them so the page can name what may still be running under the old
+    /// revision; the same request key reads the receipt again after a reconnect.
     pub fn record_stop_failure(
         &self,
         run: &str,
         request: &str,
         reason: &str,
+        unsettled_attempts: &[ora_domain::WorkflowNodeRunId],
     ) -> Result<bool, DatabaseError> {
+        let unsettled: Vec<&str> = unsettled_attempts.iter().map(AsRef::as_ref).collect();
         self.pool.with_connection(|db| {
             Ok(db.execute(
-                "UPDATE workflow_debug_operations SET state='stop_failed',failure=?3
+                "UPDATE workflow_debug_operations SET state='stop_failed',failure=?3,unsettled_attempts=?4
             WHERE run_id=?1 AND request_id=?2 AND state='stopping'",
-                params![run, request, reason],
+                params![run, request, reason, serde_json::to_string(&unsettled)?],
             )? == 1)
         })
     }
@@ -148,14 +155,20 @@ impl WorkflowDebugStore {
     }
 }
 
+/// Decodes typed JSON from a text column, naming the column when the stored value is corrupt.
+fn decoded<T: serde::de::DeserializeOwned>(row: &Row<'_>, index: usize) -> rusqlite::Result<T> {
+    let raw: String = row.get(index)?;
+    serde_json::from_str(&raw).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
+}
+
 /// Maps the persisted operation to the same receipt used for confirmation and history.
 fn history_row(row: &Row<'_>) -> rusqlite::Result<WorkflowDebugHistoryEntry> {
-    let json = |idx| -> rusqlite::Result<Value> {
-        let raw: String = row.get(idx)?;
-        serde_json::from_str(&raw).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(idx, rusqlite::types::Type::Text, Box::new(e))
-        })
-    };
     let phase = match row.get::<_, String>(3)?.as_str() {
         "applied" => WorkflowDebugPhase::Applied {
             revision: row.get(4)?,
@@ -163,11 +176,9 @@ fn history_row(row: &Row<'_>) -> rusqlite::Result<WorkflowDebugHistoryEntry> {
         "stopping" => WorkflowDebugPhase::Stopping,
         "stop_failed" => WorkflowDebugPhase::StopFailed {
             reason: row.get(5)?,
+            unsettled_node_run_ids: decoded(row, 8)?,
         },
         _ => return Err(rusqlite::Error::InvalidQuery),
-    };
-    let decode = |err| {
-        rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(err))
     };
     Ok(WorkflowDebugHistoryEntry {
         operation: WorkflowDebugOperation {
@@ -176,7 +187,7 @@ fn history_row(row: &Row<'_>) -> rusqlite::Result<WorkflowDebugHistoryEntry> {
             base_revision: row.get(2)?,
             phase,
         },
-        preview: serde_json::from_value(json(6)?).map_err(decode)?,
-        patch: serde_json::from_value(json(7)?).map_err(decode)?,
+        preview: decoded(row, 6)?,
+        patch: decoded(row, 7)?,
     })
 }

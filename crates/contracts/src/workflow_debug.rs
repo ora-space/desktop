@@ -110,11 +110,21 @@ pub enum WorkflowDebugWorkspace {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "workflow-run.ts")]
-#[serde(tag = "state", rename_all = "snake_case")]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum WorkflowDebugPhase {
     Stopping,
-    StopFailed { reason: String },
-    Applied { revision: u32 },
+    /// The attempts listed here could not be proven stopped or isolated; they keep the fence.
+    StopFailed {
+        reason: String,
+        unsettled_node_run_ids: Vec<String>,
+    },
+    Applied {
+        revision: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
