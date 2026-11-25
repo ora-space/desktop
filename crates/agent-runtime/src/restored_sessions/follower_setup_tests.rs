@@ -36,6 +36,7 @@ pub(super) enum State {
     Commands(Vec<String>),
     Model(String),
     NoOptions,
+    Mode(String),
 }
 
 /// Reads one update's session state, if it carries any.
@@ -54,6 +55,9 @@ pub(super) fn state(update: SessionUpdate) -> Option<State> {
         SessionUpdate::ConfigOptionUpdate(update) => Some(State::Model(
             crate::model_config::current_model(&update.config_options).unwrap_or_default(),
         )),
+        SessionUpdate::CurrentModeUpdate(update) => {
+            Some(State::Mode(update.current_mode_id.to_string()))
+        }
         _ => None,
     }
 }

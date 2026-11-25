@@ -3,6 +3,7 @@
 
 use super::follower_setup_tests::{State, model, options, state};
 use super::*;
+use agent_client_protocol_schema::v1::{ConfigOptionUpdate, CurrentModeUpdate};
 use ora_contracts::{LoadSessionEvent, LoadSessionRequest, StartSessionRequest};
 use pretty_assertions::assert_eq;
 
@@ -24,9 +25,18 @@ enum Intent {
 enum Acquired {
     Started,
     Switched,
+    /// Restored by the prompt, which carries the model.
+    Restored,
 }
 
-/// Answers setup on model `b`, pushing that snapshot right after it.
+/// Frames a mode change, which applying a model says nothing about.
+fn mode(session_id: &str) -> Value {
+    let update = CurrentModeUpdate::new("plan");
+    json!({"jsonrpc":"2.0", "method":"session/update", "params": SessionNotification::new(
+        session_id.to_string(), SessionUpdate::CurrentModeUpdate(update))})
+}
+
+/// Answers setup on model `b`, pushing that snapshot and a mode right after it.
 async fn pushing_agent(
     intent: Intent,
     mut reader: DuplexStream,
@@ -49,7 +59,9 @@ async fn pushing_agent(
             Some("session/new") => vec![
                 answer(json!({"sessionId":"created", "configOptions":model("b")})),
                 options("created", "b"),
+                mode("created"),
             ],
+            Some("session/load") => vec![answer(json!({"configOptions":model("b")}))],
             Some("session/set_config_option") => match intent {
                 Intent::Refused => vec![json!({"jsonrpc":"2.0", "id":id,
                     "error":{"code":-32000, "message":"refused"}})],
@@ -81,6 +93,7 @@ async fn views(acquired: Acquired, intent: Intent) -> (Vec<State>, Vec<State>, V
         Intent::NotOffered => Some("z".to_string()),
         Intent::Absent => None,
     };
+    let mut request_model = None;
     let (session_id, config_options) = match acquired {
         Acquired::Started => {
             let started = fixture
@@ -107,13 +120,21 @@ async fn views(acquired: Acquired, intent: Intent) -> (Vec<State>, Vec<State>, V
                 .unwrap();
             (switched.session.id, switched.config_options)
         }
+        Acquired::Restored => {
+            fixture.add_session("restored");
+            request_model = model;
+            ("restored".to_string(), Vec::new())
+        }
     };
-    let setup = state(SessionUpdate::ConfigOptionUpdate(
-        agent_client_protocol_schema::v1::ConfigOptionUpdate::new(config_options),
-    ));
+    let setup = state(SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+        config_options,
+    )));
     let mut turn = fixture
         .manager
-        .prompt_session(prompt(&session_id))
+        .prompt_session(PromptSessionRequest {
+            model: request_model,
+            ..prompt(&session_id)
+        })
         .await
         .unwrap();
     let mut prompted = Vec::new();
@@ -149,16 +170,38 @@ async fn views(acquired: Acquired, intent: Intent) -> (Vec<State>, Vec<State>, V
 #[test]
 fn a_snapshot_older_than_the_applied_model_does_not_undo_it() {
     let on = |model: &str| vec![State::Model(model.to_string())];
+    // What else was collected before the model was applied is as current as ever.
+    let mode = || State::Mode("plan".to_string());
+    let with_mode = |options: Vec<State>| [options, vec![mode()]].concat();
     for acquired in [Acquired::Started, Acquired::Switched] {
         for (intent, expected) in [
-            (Intent::Applied, (on("a"), Vec::new(), on("a"))),
-            (Intent::Refused, (on("b"), on("b"), on("b"))),
-            (Intent::NotOffered, (on("b"), on("b"), on("b"))),
-            (Intent::Absent, (on("b"), on("b"), on("b"))),
+            (Intent::Applied, (on("a"), with_mode(Vec::new()), on("a"))),
+            (Intent::Refused, (on("b"), with_mode(on("b")), on("b"))),
+            (Intent::NotOffered, (on("b"), with_mode(on("b")), on("b"))),
+            (Intent::Absent, (on("b"), with_mode(on("b")), on("b"))),
         ] {
             run_case(async move {
                 assert_eq!(views(acquired, intent).await, expected);
             });
         }
+    }
+}
+
+/// A restored session keeps the options it was restored with unless it answered with others.
+#[test]
+fn a_restored_session_is_on_the_model_its_agent_accepted() {
+    let on = |model: &str| vec![State::Model(model.to_string())];
+    for (intent, expected) in [
+        (Intent::Applied, "a"),
+        (Intent::Refused, "b"),
+        (Intent::NotOffered, "b"),
+        (Intent::Absent, "b"),
+    ] {
+        run_case(async move {
+            assert_eq!(
+                views(Acquired::Restored, intent).await,
+                (vec![State::NoOptions], on(expected), on(expected))
+            );
+        });
     }
 }

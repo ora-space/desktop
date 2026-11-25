@@ -2296,6 +2296,7 @@ mod restored_sessions {
     mod command_limit_tests;
     mod follower_retry_tests;
     mod follower_setup_tests;
+    mod set_config_tests;
     mod setup_options_tests;
     use super::*;
     use pretty_assertions::assert_eq;

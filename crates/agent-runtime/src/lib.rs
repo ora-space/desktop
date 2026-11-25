@@ -36,6 +36,7 @@ mod replay;
 mod restart_circuit;
 mod routing;
 mod scheduling;
+mod session_config;
 mod session_followers;
 mod session_setup;
 mod start;
@@ -102,16 +103,14 @@ use session_setup::LiveMcpState;
 use support::*;
 use title_acquisition::TitleAcquisition;
 
-use agent_client_protocol_schema::v1::{
-    ContentBlock, MessageId, SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
-};
+use agent_client_protocol_schema::v1::{ContentBlock, MessageId, SessionConfigOption};
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_contracts::{
     CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionResponse,
     LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest,
-    RespondToPermissionRequest, RespondToPermissionResponse, SetSessionConfigRequest,
-    SetSessionConfigResponse, StartSessionRequest, StartSessionResponse, StopSessionRequest,
-    StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
+    RespondToPermissionRequest, RespondToPermissionResponse, StartSessionRequest,
+    StartSessionResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest,
+    SwitchSessionAgentResponse,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_domain::{
@@ -334,42 +333,6 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 })
                 .collect(),
         }
-    }
-
-    /// Applies one configuration option to a persisted session.
-    pub async fn set_session_config(
-        &self,
-        request: SetSessionConfigRequest,
-    ) -> Result<SetSessionConfigResponse, RuntimeError> {
-        let config_id = SessionConfigId::new(request.config_id);
-        let value = SessionConfigOptionValue::value_id(request.value);
-        let session = self.find_session(&request.session_id)?;
-        // The live actor is asked which provider session to address rather than reading the row,
-        // because a session it rebuilt is not in the row until the transcript reaches it — writing
-        // configuration to the row's identity would reach the provider being replaced. A session
-        // with no actor holds no rebuilt binding, so its row is authoritative.
-        let agent_session_id = match self.lookup_actor(&session.id)? {
-            Some(handle) => {
-                let (response, claimed) = oneshot::channel();
-                handle
-                    .commands
-                    .send(RuntimeCommand::ClaimDirectProviderCall { response })
-                    .map_err(|_error| runtime_unavailable())?;
-                claimed.await.map_err(|_error| runtime_unavailable())?
-            }
-            None => session.agent_session_id.clone(),
-        };
-        // The provider request remains direct because it is independent of the actor's
-        // serialized prompt/load stream; only the title-polling attempt needs standing down.
-        let config_options = start::request_config_option(
-            &self.inner.connections,
-            &session.agent_ref,
-            &agent_session_id,
-            &config_id,
-            &value,
-        )
-        .await?;
-        Ok(SetSessionConfigResponse { config_options })
     }
 
     /// Locks first-title acquisition so a later agent title cannot overwrite a user rename.

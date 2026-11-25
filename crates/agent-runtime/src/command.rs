@@ -4,7 +4,7 @@ use crate::RuntimeError;
 use crate::end_cause::PromptEndReport;
 use crate::prompt::RecordedTurn;
 use crate::title_acquisition::PollAttempt;
-use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate};
+use agent_client_protocol_schema::v1::{ContentBlock, SessionConfigOption, SessionUpdate};
 use ora_contracts::{
     LoadSessionEvent, PromptSessionEvent, RespondToPermissionRequest, RespondToPermissionResponse,
     StopSessionResponse,
@@ -67,6 +67,15 @@ pub(crate) enum RuntimeCommand {
     /// because the reply is the point at which the caller starts using that identity.
     ClaimDirectProviderCall {
         response: oneshot::Sender<String>,
+    },
+    /// The provider answered a direct configuration call with its options after the change.
+    ///
+    /// Some agents say so nowhere else. The answer is for one provider session, which may have been
+    /// replaced while it was on its way. Replied to once the options are what a load answers with.
+    AdoptConfigOptions {
+        agent_session_id: String,
+        config_options: Vec<SessionConfigOption>,
+        response: oneshot::Sender<()>,
     },
     AdoptUserTitle {
         title: SessionTitle,
