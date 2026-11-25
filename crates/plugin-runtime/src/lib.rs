@@ -12,7 +12,7 @@ mod tests;
 pub use host_requests::{
     HostRequestError, HostRequestHandler, METHOD_NOT_FOUND_CODE, NoHostRequests,
 };
-pub use ora_plugin_protocol::{PluginEffectCoordination, PluginEffectResource, PluginRegistration};
+pub use ora_plugin_protocol::PluginRegistration;
 pub use plugin_log::{
     ACTIVE_LOG_FILE_NAME, DEFAULT_PLUGIN_TARGET, MAX_IDENTIFIER_BYTES, MAX_NESTING_DEPTH,
     MAX_QUEUE_BYTES, MAX_RECORD_BYTES, PLUGIN_LOG_ENVELOPE_V1_PREFIX, PluginLogSetup,

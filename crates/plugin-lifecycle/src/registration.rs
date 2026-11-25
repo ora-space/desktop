@@ -24,11 +24,6 @@ pub fn validate_registration(
     match contribution {
         PluginContribution::Agent(_) => Ok(()),
         PluginContribution::Workbench(_) => {
-            if !registration.effect_resources.is_empty() {
-                return Err(PluginRuntimeFailure::new(
-                    "workbench contract v1 does not accept Effect Resource declarations",
-                ));
-            }
             if let Some(emit) = registration.emits.iter().next() {
                 return Err(PluginRuntimeFailure::new(format!(
                     "workbench contract v1 does not accept emitted notifications (found {emit})"
@@ -95,17 +90,14 @@ mod tests {
         let with_emit = PluginRegistration {
             methods: HashSet::from(["counter/get".to_string()]),
             emits: HashSet::from(["counter/tick".to_string()]),
-            effect_resources: Vec::new(),
         };
         let bad_name = PluginRegistration {
             methods: HashSet::from(["Counter.Get".to_string()]),
             emits: HashSet::new(),
-            effect_resources: Vec::new(),
         };
         let superset = PluginRegistration {
             methods: HashSet::from(["counter/get".to_string(), "internal/reset".to_string()]),
             emits: HashSet::new(),
-            effect_resources: Vec::new(),
         };
         assert_eq!(
             (
@@ -124,25 +116,6 @@ mod tests {
                 Ok(()),
                 Ok(()),
             )
-        );
-    }
-
-    /// Runtime Effect consumers are Agent plugins; a page process cannot own that lifecycle.
-    #[test]
-    fn workbench_registrations_reject_effect_resources() {
-        let registration = PluginRegistration {
-            effect_resources: vec![ora_plugin_runtime::PluginEffectResource {
-                workspace_relative_path: ".agents/skills".to_string(),
-                materialization_format: "skill_directory.v1".to_string(),
-                coordination: ora_plugin_runtime::PluginEffectCoordination::Uninterrupted,
-            }],
-            ..PluginRegistration::default()
-        };
-        assert_eq!(
-            validate_registration(&workbench(), &registration),
-            Err(PluginRuntimeFailure::new(
-                "workbench contract v1 does not accept Effect Resource declarations",
-            )),
         );
     }
 

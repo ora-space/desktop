@@ -405,7 +405,10 @@ pub(super) fn resume_from_failure(
         pool,
         &run_id,
         request.snapshot_id.as_deref(),
-        |graph| dependencies.resolve_graph(graph),
+        |graph, frozen| match frozen {
+            Some(receipt) => dependencies.validate_frozen_graph(graph, receipt),
+            None => dependencies.resolve_graph(graph),
+        },
     )?;
     let pre_rollback_checkpoint = if mode == ResumeRollbackMode::Keep {
         None

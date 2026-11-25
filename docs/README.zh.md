@@ -43,9 +43,8 @@
 - [Agent 运行时](agents/agent-runtime.zh.md)：来自插件的 Agent、监督、会话、流控、限制、宿主预览
 - [会话历史](agents/session-history.zh.md)：记录、切换 Agent、降级的历史、删除
 - [Session MCP](agents/session-mcp.zh.md)：选择、投递、实时刷新、Host MCP 健康状态
-- [Agent 定义与 Skill](agents/agents-and-skills.zh.md)：角色、Skill 目录、包与导入
+- [Agent 定义与 Skill](agents/agents-and-skills.zh.md)：角色、Skill 目录、包、导入与会话交付
 - [Skill 插件配置](agents/skill-configuration.zh.md)：公开与敏感字段、启动环境快照、重启生效和安全边界
-- [Effect](agents/effects.zh.md)：Workspace Effect 收敛与 Skill 落地
 
 **插件**
 

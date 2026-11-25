@@ -8,16 +8,16 @@ the package model, the process lifecycle, host services and configuration. Where
 is in [Marketplace](marketplace.md); UI surfaces are in [Surfaces](surfaces.md); plugin logs are in
 [Plugin logging](plugin-logging.md).
 
-| Crate | Owns |
-|---|---|
-| `ora-plugin-manifest` | Parsing and validating `orax.toml` |
-| `ora-plugin-manager` | Discovering installed packages, host-side package validation, install, update, local import |
-| `ora-plugin-lifecycle` | The only owner of plugin processes; host request services; runtime state |
-| `ora-plugin-runtime` | Launching Deno, the stdio protocol, registration, calls and notifications |
-| `ora-plugin-protocol` | The wire contract shared with `packages/plugin-sdk` |
-| `ora-plugin-config` | Setting declarations, MCP and Hook configuration shapes, stored values |
-| `ora-plugin-registry` | Marketplace source sync and the available-plugin index |
-| `ora-backend` (`src/plugin`) | Composition: operations, packs, Hook lifecycle, marketplace sync |
+| Crate                        | Owns                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| `ora-plugin-manifest`        | Parsing and validating `orax.toml`                                                          |
+| `ora-plugin-manager`         | Discovering installed packages, host-side package validation, install, update, local import |
+| `ora-plugin-lifecycle`       | The only owner of plugin processes; host request services; runtime state                    |
+| `ora-plugin-runtime`         | Launching Deno, the stdio protocol, registration, calls and notifications                   |
+| `ora-plugin-protocol`        | The wire contract shared with `packages/plugin-sdk`                                         |
+| `ora-plugin-config`          | Setting declarations, MCP and Hook configuration shapes, stored values                      |
+| `ora-plugin-registry`        | Marketplace source sync and the available-plugin index                                      |
+| `ora-backend` (`src/plugin`) | Composition: operations, packs, Hook lifecycle, marketplace sync                            |
 
 ## Identity and layout
 
@@ -43,16 +43,16 @@ discovery issues and stay out of the snapshot. Only an explicit scan rebuilds th
 
 ## Kinds
 
-| Kind | Contributes | Process |
-|---|---|---|
-| `agent` | Exactly one agent, identified by the package's plugin id, see [Agent runtime](../agents/agent-runtime.md) | Deno `main.js`, broad permissions, may spawn host-managed child processes |
-| `workbench` | A page shipped in the package and shown as a surface | Deno `main.js` with no `--allow-*` permission, started by the page's first bridge call |
-| `webview` | An external HTTPS site shown as a surface | None |
-| `skill` | One or more Skills under `assets/<name>/SKILL.md` | None |
-| `mcp` | One MCP server from `assets/config.json`, see [Session MCP](../agents/session-mcp.md) | None (the agent runs the server) |
-| `hook` | A native executable with `init`/`deinit` lifecycle commands | None (the host runs commands only when authorized) |
-| `workflow` | Workflow documents imported into the library, see [Workflow packages](workflow-packages.md) | None |
-| `pack` | A list of other plugins from the same source, see [Marketplace](marketplace.md#packs) | None |
+| Kind        | Contributes                                                                                               | Process                                                                                |
+| ----------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `agent`     | Exactly one agent, identified by the package's plugin id, see [Agent runtime](../agents/agent-runtime.md) | Deno `main.js`, broad permissions, may spawn host-managed child processes              |
+| `workbench` | A page shipped in the package and shown as a surface                                                      | Deno `main.js` with no `--allow-*` permission, started by the page's first bridge call |
+| `webview`   | An external HTTPS site shown as a surface                                                                 | None                                                                                   |
+| `skill`     | One or more Skills under `assets/<name>/SKILL.md`                                                         | None                                                                                   |
+| `mcp`       | One MCP server from `assets/config.json`, see [Session MCP](../agents/session-mcp.md)                     | None (the agent runs the server)                                                       |
+| `hook`      | A native executable with `init`/`deinit` lifecycle commands                                               | None (the host runs commands only when authorized)                                     |
+| `workflow`  | Workflow documents imported into the library, see [Workflow packages](workflow-packages.md)               | None                                                                                   |
+| `pack`      | A list of other plugins from the same source, see [Marketplace](marketplace.md#packs)                     | None                                                                                   |
 
 The manifest crate checks shape (field types, the identifier grammar, that `[webview]` exists
 exactly for webview plugins and `[workbench]` only for workbench plugins) and ignores unknown fields
@@ -102,14 +102,14 @@ are verified by the agent runtime.
 
 `crates/plugin-protocol` owns the wire contract shared by the Rust host, test plugins and
 `packages/plugin-sdk`: framing, JSON-RPC method constants, registration and DTOs for agent control,
-Effects, storage, child processes and workbench calls. `task export-contracts` writes generated
+storage, child processes and workbench calls. `task export-contracts` writes generated
 bindings into `packages/plugin-sdk/src/protocol` (`constants.ts` and DTO modules); `index.ts`,
 `json.ts` and `transport.ts` stay hand-written. Never duplicate a wire name in the SDK: add it to
 `ora-plugin-protocol` and regenerate.
 
 Stdout carries only protocol frames: a four-byte big-endian length (including the type byte), a
 one-byte frame type and a UTF-8 JSON payload, at most 16 MiB. A protocol failure invalidates the
-process. Multi-word path segments are snake_case (`agent/list_models`, `effect/verify_ready`,
+process. Multi-word path segments are snake_case (`agent/list_models`,
 `ora/childprocess/close_stdin`). Stderr carries diagnostics, see [Plugin logging](plugin-logging.md).
 
 A plugin declares both traffic directions once, in `ora/register`:
@@ -118,20 +118,16 @@ A plugin declares both traffic directions once, in `ora/register`:
 {
   "method": "ora/register",
   "params": {
-    "methods": ["agent/start", "effect/coordinate", "effect/reactivate", "effect/verify_ready"],
+    "methods": ["agent/start", "agent/stop", "agent/list_models"],
     "emits": ["agent/acp"],
-    "effectResources": [{
-      "workspaceRelativePath": ".agents/skills",
-      "materializationFormat": "ora/skill-directory.v1",
-      "coordination": "quiesce_before_mutation"
-    }]
-  }
+  },
 }
 ```
 
 The host can invoke only listed `methods`; a notification outside `emits` invalidates the
-connection. `effectResources` declares the Workspace Resources an agent consumes, see
-[Effects](../agents/effects.md). Requests from the plugin to the host need no declaration.
+connection. Requests from the plugin to the host need no declaration. Older agent plugins that
+still include `effectResources` during `ora/register` continue to connect: the host ignores that
+legacy field and never calls `effect/*` methods.
 
 `agent/discover` takes `AgentDiscoverParams { cwd, includeCommands, deadline }`: the Workspace the
 discovery is for, whether the caller wants the agent's commands, and when the host stops waiting, in
@@ -165,15 +161,15 @@ from request parameters.
 
 ## Operations
 
-| Operation | Purpose |
-|---|---|
-| `listInstalledPlugins`, `scanPlugins` | The installed snapshot; an explicit rescan |
-| `installPlugin`, `updatePlugin`, `importPlugin` | Install or update from the marketplace; import a local `.orax` into the `local` namespace |
-| `activatePlugin`, `stopPlugin`, `uninstallPlugin` | Process control and removal (optionally deleting data) |
-| `getPluginConfiguration`, `savePluginConfiguration`, `resetPluginConfiguration` | Plugin settings, see below |
-| `listHookLifecycleReports`, `initializeHook` | Hook lifecycle results; a user-requested `init` |
-| `getPluginLogLevel`, `setPluginLogLevel` | See [Plugin logging](plugin-logging.md) |
-| `listMcpHealth`, `probeMcpHealth` | See [Session MCP](../agents/session-mcp.md#host-mcp-health) |
+| Operation                                                                       | Purpose                                                                                   |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `listInstalledPlugins`, `scanPlugins`                                           | The installed snapshot; an explicit rescan                                                |
+| `installPlugin`, `updatePlugin`, `importPlugin`                                 | Install or update from the marketplace; import a local `.orax` into the `local` namespace |
+| `activatePlugin`, `stopPlugin`, `uninstallPlugin`                               | Process control and removal (optionally deleting data)                                    |
+| `getPluginConfiguration`, `savePluginConfiguration`, `resetPluginConfiguration` | Plugin settings, see below                                                                |
+| `listHookLifecycleReports`, `initializeHook`                                    | Hook lifecycle results; a user-requested `init`                                           |
+| `getPluginLogLevel`, `setPluginLogLevel`                                        | See [Plugin logging](plugin-logging.md)                                                   |
+| `listMcpHealth`, `probeMcpHealth`                                               | See [Session MCP](../agents/session-mcp.md#host-mcp-health)                               |
 
 Installation downloads the `.orax` (verifying SHA-256 while downloading), extracts it safely into a
 staging directory and commits it with one rename into `installed/<namespace>/<name>/<version>`. The

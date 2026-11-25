@@ -1,5 +1,4 @@
 use crate::clock::SystemClock;
-use crate::effect_worker::EffectWorkerHandle;
 use crate::git_cleanup::GitCleanupHandle;
 use crate::repository_work::spawn_repository_work;
 use std::path::{Component, Path, PathBuf};
@@ -47,8 +46,6 @@ pub struct ProjectApi {
     list_branches: ProjectBranchListHandler,
     update: UpdateProjectHandler<SqliteProjectRepository, SystemClock>,
     clock: SystemClock,
-    /// Wakes Effect convergence for the Workspace a new project brings with it.
-    effect_reconcile: EffectWorkerHandle,
     git_cleanup: GitCleanupHandle,
 }
 
@@ -59,7 +56,6 @@ impl ProjectApi {
         sessions_root: PathBuf,
         relative_path_base: PathBuf,
         clock: SystemClock,
-        effect_reconcile: EffectWorkerHandle,
         git_cleanup: GitCleanupHandle,
     ) -> Self {
         let repository = SqliteProjectRepository::new(pool.clone());
@@ -68,7 +64,6 @@ impl ProjectApi {
             pool: pool.clone(),
             sessions_root,
             relative_path_base,
-            effect_reconcile,
             git_cleanup,
             create: CreateProjectHandler::new(
                 repository.clone(),
@@ -142,7 +137,6 @@ impl ProjectApi {
             ));
         }
         let response = self.create.handle(request)?;
-        self.effect_reconcile.notify();
         Ok(response)
     }
 
@@ -294,7 +288,7 @@ mod tests {
         let pool = DatabaseBootstrapper::new(crate::test_clock::TestClock)
             .bootstrap_repository_pool(&DatabaseLocation::path(database_path), &previous)
             .expect("bootstrap pre-0024 database");
-        SqliteProjectRepository::with_clock(pool, crate::test_clock::TestClock)
+        SqliteProjectRepository::new(pool)
             .create_project(
                 Project::new(
                     ProjectId::new("stranded"),

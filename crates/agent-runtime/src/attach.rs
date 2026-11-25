@@ -17,6 +17,7 @@ use crate::AgentRuntimeHost;
 use crate::RuntimeError;
 use crate::host::SessionSetup;
 use crate::host::SessionStore;
+use crate::host::SkillCatalogSource;
 use crate::session_setup::{LiveMcpState, SessionMcpRevision, SessionMcpSnapshot};
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AvailableCommand, AvailableCommandsUpdate, ConfigOptionUpdate,
@@ -202,7 +203,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// `session/load` is sent so the agent recovers the context it needs to answer the next
     /// prompt. Everything it recites on the way is discarded: what the user is shown came from
     /// Ora's record when the conversation was opened.
-    async fn restore_provider_session(
+    pub(crate) async fn restore_provider_session(
         &mut self,
         mut channel: SessionChannel,
         snapshot: &SessionMcpSnapshot,
@@ -211,9 +212,25 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let agent_session_id = self.provider_session_id().to_string();
         let mut servers = snapshot.servers().to_vec();
         servers.extend(self.session_mcp.host_mcp_servers());
-        let request =
+        let skill_entries = match self.skill_catalog.skill_catalog(&self.session.workspace_id) {
+            Ok(snapshot) => snapshot.entries,
+            Err(error) => {
+                ora_warn!(
+                    session_id = %self.session.id,
+                    workspace_id = %self.session.workspace_id,
+                    error = %error,
+                    "failed to read skill catalog for session/load; omitting skill directory metadata",
+                );
+                Vec::new()
+            }
+        };
+        let request = crate::skill_catalog::apply_skill_setup(
             AcpLoadSessionRequest::new(AcpSessionId::new(agent_session_id.clone()), &self.cwd)
-                .mcp_servers(servers);
+                .mcp_servers(servers),
+            channel.connection.additional_directories_supported,
+            self.skill_catalog.extra_read_roots(),
+            &skill_entries,
+        );
         record_session_mcp_boundary(
             &self.session_mcp,
             &self.session.id,
@@ -268,6 +285,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         }
                         let response = pending.finish(response).map_err(map_acp_error)?;
                         ora_debug!(session_id = %self.session.id, "session/load completed");
+                        self.forget_announced_skills();
                         self.channel = Some(channel);
                         return Ok(response.config_options.unwrap_or_default());
                     }
@@ -293,7 +311,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     ///
     /// The debt is only raised when none is outstanding: a switch that has not delivered its
     /// transcript yet already owes the same conversation and already keeps its own books.
-    pub(super) async fn rebuild_provider_session(
+    pub(crate) async fn rebuild_provider_session(
         &mut self,
         model: Option<&str>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
@@ -308,7 +326,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         } = create_provider_session(
             &self.connections,
             &self.session_mcp,
+            &self.skill_catalog,
             &self.session.id,
+            &self.session.workspace_id,
             &self.session.agent_ref,
             &self.cwd,
             model,
@@ -319,6 +339,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             agent_session_id,
             "provider session rebuilt under the same agent",
         );
+        self.forget_announced_skills();
         self.rebuilt_binding = Some(RebuiltBinding {
             agent_session_id,
             release,

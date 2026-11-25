@@ -13,7 +13,10 @@ pub enum NodeFailureKind {
     InvalidRunPayload,
     PromptTemplate,
     StructuredOutput,
-    MissingSkillMaterialization,
+    /// Preserves the persisted `"missing_skill_materialization"` wire value for compatibility
+    /// with existing node-run failure records and frontend translation keys.
+    #[serde(rename = "missing_skill_materialization")]
+    MissingRequiredSkill,
     SessionEndedWithoutStopReason,
     SessionBindingRejected,
     BaselinePersist,
@@ -45,7 +48,7 @@ impl NodeFailureKind {
             | Self::AgentRefusal
             | Self::PromptTemplate
             | Self::MissingAgentRef
-            | Self::MissingSkillMaterialization
+            | Self::MissingRequiredSkill
             | Self::InvalidRunPayload
             | Self::UnknownStopReason
             | Self::MultipleOutputs
@@ -68,7 +71,7 @@ impl NodeFailureKind {
             | Self::MissingAgentConfig
             | Self::InvalidRunPayload
             | Self::PromptTemplate
-            | Self::MissingSkillMaterialization
+            | Self::MissingRequiredSkill
             | Self::SessionEndedWithoutStopReason
             | Self::SessionBindingRejected
             | Self::BaselinePersist
@@ -96,7 +99,7 @@ impl NodeFailureKind {
             Self::PromptTemplate
             | Self::MissingAgentRef
             | Self::InvalidRunPayload
-            | Self::MissingSkillMaterialization
+            | Self::MissingRequiredSkill
             | Self::ConditionEvaluation
             | Self::MultipleOutputs
             | Self::AggregatorNoMatch
@@ -117,7 +120,7 @@ impl NodeFailureKind {
             Self::InvalidRunPayload => "invalid_run_payload",
             Self::PromptTemplate => "prompt_template",
             Self::StructuredOutput => "structured_output",
-            Self::MissingSkillMaterialization => "missing_skill_materialization",
+            Self::MissingRequiredSkill => "missing_skill_materialization",
             Self::SessionEndedWithoutStopReason => "session_ended_without_stop_reason",
             Self::SessionBindingRejected => "session_binding_rejected",
             Self::BaselinePersist => "baseline_persist",
@@ -239,10 +242,7 @@ mod tests {
         assert_eq!(NodeFailureKind::InvalidRunPayload.resumable(), false);
         assert_eq!(NodeFailureKind::PromptTemplate.resumable(), false);
         assert_eq!(NodeFailureKind::StructuredOutput.resumable(), false);
-        assert_eq!(
-            NodeFailureKind::MissingSkillMaterialization.resumable(),
-            false
-        );
+        assert_eq!(NodeFailureKind::MissingRequiredSkill.resumable(), false);
         assert_eq!(
             NodeFailureKind::SessionEndedWithoutStopReason.resumable(),
             true
@@ -283,7 +283,7 @@ mod tests {
         );
         assert_eq!(NodeFailureKind::PromptTemplate.inject_into_prompt(), false);
         assert_eq!(
-            NodeFailureKind::MissingSkillMaterialization.inject_into_prompt(),
+            NodeFailureKind::MissingRequiredSkill.inject_into_prompt(),
             false
         );
         assert_eq!(
@@ -326,7 +326,7 @@ mod tests {
             (NodeFailureKind::PromptTemplate, false),
             (NodeFailureKind::MissingAgentRef, false),
             (NodeFailureKind::InvalidRunPayload, false),
-            (NodeFailureKind::MissingSkillMaterialization, false),
+            (NodeFailureKind::MissingRequiredSkill, false),
             (NodeFailureKind::ConditionEvaluation, false),
             (NodeFailureKind::MultipleOutputs, false),
             (NodeFailureKind::WorkflowModelNotFound, false),
@@ -356,7 +356,7 @@ mod tests {
             NodeFailureKind::InvalidRunPayload,
             NodeFailureKind::PromptTemplate,
             NodeFailureKind::StructuredOutput,
-            NodeFailureKind::MissingSkillMaterialization,
+            NodeFailureKind::MissingRequiredSkill,
             NodeFailureKind::SessionEndedWithoutStopReason,
             NodeFailureKind::SessionBindingRejected,
             NodeFailureKind::BaselinePersist,

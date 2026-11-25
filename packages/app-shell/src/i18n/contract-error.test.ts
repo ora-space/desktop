@@ -5,7 +5,7 @@ import {
   localTransportErrorKinds,
   publicErrorSchema,
 } from "@ora/contracts";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { activeLocale, appI18n, translationResources } from "./i18n-instance";
 import {
   describeChatError,
@@ -15,6 +15,10 @@ import {
 
 const interpolationFields = (text: string): string[] =>
   [...text.matchAll(/{{(\w+)}}/g)].map((match) => match[1]).sort();
+
+afterEach(async () => {
+  await appI18n.changeLanguage("zh-CN");
+});
 
 describe("contract error translations", () => {
   it("covers every generated public code in Chinese and English with valid interpolation", () => {
@@ -121,6 +125,23 @@ describe("workflow dependency failures", () => {
       {},
     );
 
+    const ambiguous = new RemoteContractError(
+      {
+        code: "workflow_skill_ambiguous",
+        requestId: "00000000-0000-4000-8000-000000000007",
+        params: {
+          nodeId: "reviewer",
+          nodeTitle: "Code review",
+          skillRef: "code_review",
+          candidates: [
+            "local-uuid (local)",
+            "plugin:local/review-pack:code_review (local/review-pack)",
+          ],
+        },
+      },
+      {},
+    );
+
     expect(localizeContractError(skill, appI18n.t)).toBe(
       activeLocale() === "zh-CN"
         ? "节点「Code review」需要的技能 code_review 不可用，请安装或恢复该技能后重试。"
@@ -130,6 +151,36 @@ describe("workflow dependency failures", () => {
       activeLocale() === "zh-CN"
         ? "节点「Code review」需要的 MCP local/github 不可用，请安装或修复该 MCP 插件后重试。"
         : "The MCP local/github required by node 'Code review' is unavailable. Install or repair the MCP plugin, then retry.",
+    );
+    expect(localizeContractError(ambiguous, appI18n.t)).toBe(
+      activeLocale() === "zh-CN"
+        ? "节点「Code review」引用的技能名 code_review 存在歧义，匹配到多个技能（local-uuid (local)、plugin:local/review-pack:code_review (local/review-pack)），请在节点中指定具体技能后重试。"
+        : "The skill name 'code_review' referenced by node 'Code review' is ambiguous and matches multiple skills (local-uuid (local), plugin:local/review-pack:code_review (local/review-pack)). Select a specific skill for this node, then retry.",
+    );
+    expect(hasDiagnosticRequestId(ambiguous)).toBe(false);
+  });
+
+  it("joins ambiguous candidates with the English separator in en-US", async () => {
+    const ambiguous = new RemoteContractError(
+      {
+        code: "workflow_skill_ambiguous",
+        requestId: "00000000-0000-4000-8000-000000000008",
+        params: {
+          nodeId: "reviewer",
+          nodeTitle: "Code review",
+          skillRef: "code_review",
+          candidates: [
+            "local-uuid (local)",
+            "plugin:local/review-pack:code_review (local/review-pack)",
+          ],
+        },
+      },
+      {},
+    );
+
+    await appI18n.changeLanguage("en-US");
+    expect(localizeContractError(ambiguous, appI18n.t)).toBe(
+      "The skill name 'code_review' referenced by node 'Code review' is ambiguous and matches multiple skills (local-uuid (local), plugin:local/review-pack:code_review (local/review-pack)). Select a specific skill for this node, then retry.",
     );
   });
 });

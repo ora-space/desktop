@@ -583,6 +583,7 @@ where
         store: MemorySessionStore::default(),
         directory: CheckoutDirectory(checkout.clone()),
         session_setup,
+        skill_catalog: ora_agent_runtime::NoSkillCatalog,
         events: mirror.clone(),
         home_directory: agent_home,
         sessions_root: shared.sessions_root(),

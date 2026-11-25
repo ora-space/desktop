@@ -28,8 +28,6 @@ export type ContractError =
       "params": PluginLogLevelsFileParams;
     }
     | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
-    | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
-    | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
     | { "code": "plugin_package_invalid"; "params": PluginPackageInvalidParams }
     | { "code": "pack_member_duplicate"; "params": PackMemberParams }
     | { "code": "pack_self_reference"; "params": PackMemberParams }
@@ -190,6 +188,10 @@ export type ContractError =
       "code": "workflow_skill_not_found";
       "params": WorkflowSkillNotFoundParams;
     }
+    | {
+      "code": "workflow_skill_ambiguous";
+      "params": WorkflowSkillAmbiguousParams;
+    }
     | { "code": "workflow_mcp_not_found"; "params": WorkflowMcpNotFoundParams }
     | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
     | { "code": "workflow_run_start_failed"; "params": EmptyErrorParams }
@@ -301,8 +303,6 @@ export type PublicError =
     "params": PluginLogLevelsFileParams;
   }
   | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
-  | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
-  | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
   | { "code": "plugin_package_invalid"; "params": PluginPackageInvalidParams }
   | { "code": "pack_member_duplicate"; "params": PackMemberParams }
   | { "code": "pack_self_reference"; "params": PackMemberParams }
@@ -447,6 +447,10 @@ export type PublicError =
   | {
     "code": "workflow_skill_not_found";
     "params": WorkflowSkillNotFoundParams;
+  }
+  | {
+    "code": "workflow_skill_ambiguous";
+    "params": WorkflowSkillAmbiguousParams;
   }
   | { "code": "workflow_mcp_not_found"; "params": WorkflowMcpNotFoundParams }
   | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
@@ -623,6 +627,23 @@ export type WorkflowNodeTurnKey = { userSeq: number; endedSeq: number };
 export type WorkflowRunInputInvalidParams = {
   variable: string;
   reason: string;
+};
+
+/**
+ * Names the workflow node, ambiguous bare Skill reference, and matching catalog candidates.
+ *
+ * Raised when a workflow declares a bare Skill name matching multiple Skill catalog entries
+ * (for example a local Skill and a plugin Skill sharing the same name), so the operator can
+ * select a specific Skill instead of letting runtime guess.
+ */
+export type WorkflowSkillAmbiguousParams = {
+  nodeId: string;
+  /**
+   * Node label to show; equal to `node_id` when the node carries no title.
+   */
+  nodeTitle: string;
+  skillRef: string;
+  candidates: Array<string>;
 };
 
 /**

@@ -77,13 +77,14 @@ Completed 状态。actor、插件和恢复都不会启动，也不存在会话�
 [Node 插件](plugins.zh.md)），历史保存在旁边的 `sessions/` 下，但这个生命周期只报告和启动该执行的 Agent 插件，所以
 "只有指明的插件"和"身份只到达本执行的进程"在构造上就成立。
 
-| 运行时接口 | Node 的实现 |
-|---|---|
-| `SessionStore` | `MemorySessionStore`：Node 重启后从不恢复会话 |
-| `AgentAttach` | 该执行自己的单插件生命周期；没有 Effect 消费者（Node 不投射 Skill） |
-| `SessionSetup` | `NodeSessionMcp`：显式版本绑定与可选的代际更新；见[生命周期](session-stop.zh.md) |
-| `RuntimeEvents` | 每一行历史都变成 Thread 事件；标题和模型目录事件被丢弃 |
-| `WorkspaceDirectory` | checkout |
+| 运行时接口           | Node 的实现                                                                      |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `SessionStore`       | `MemorySessionStore`：Node 重启后从不恢复会话                                    |
+| `AgentAttach`        | 该执行自己的单插件生命周期                                                       |
+| `SessionSetup`       | `NodeSessionMcp`：显式版本绑定与可选的代际更新；见[生命周期](session-stop.zh.md) |
+| `Skills`             | `NoSkillCatalog`：空的 Skill 清单与可读根（Node 会话行为保持不变）               |
+| `RuntimeEvents`      | 每一行历史都变成 Thread 事件；标题和模型目录事件被丢弃                           |
+| `WorkspaceDirectory` | checkout                                                                         |
 
 没有人在场的宿主用运行时的入口代替用户操作：`wait_for_agent` 等待 Agent 连接变为 `Ready` 或它的监督者放弃，调用方不设
 上限时就一直等；`start_session_with_id` 用持久的执行身份命名会话（已被使用的身份会被拒绝）；

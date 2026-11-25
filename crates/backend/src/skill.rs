@@ -1,10 +1,9 @@
 use crate::BackendError;
 use crate::clock::SystemClock;
-use crate::effect_worker::EffectWorkerHandle;
 use ora_application::{
     CreateSkillHandler, DeleteSkillHandler, FilesystemSkillStorage, GetSkillHandler,
-    ListSkillsHandler, SkillImportConfig, SkillImportProgressEvent, SkillImportProgressPublisher,
-    SkillImportService, UpdateSkillHandler, UuidSkillIdGenerator, UuidSkillImportIdGenerator,
+    ListSkillsHandler, NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportService,
+    UpdateSkillHandler, UuidSkillIdGenerator, UuidSkillImportIdGenerator,
 };
 use ora_contracts::{
     CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest,
@@ -36,31 +35,13 @@ pub struct SkillApi {
         FilesystemSkillStorage,
         UuidSkillImportIdGenerator,
         SystemClock,
-        SkillEffectNotifier,
+        NoopSkillImportProgressPublisher,
     >,
-    effect_reconcile: EffectWorkerHandle,
-}
-
-/// Wakes Effect convergence after an asynchronous import has durably processed a candidate.
-#[derive(Clone, Debug)]
-struct SkillEffectNotifier {
-    effect_reconcile: EffectWorkerHandle,
-}
-
-impl SkillImportProgressPublisher for SkillEffectNotifier {
-    fn publish(&self, _event: SkillImportProgressEvent) {
-        self.effect_reconcile.notify();
-    }
 }
 
 impl SkillApi {
     /// Builds skill handlers from the shared repository pool and formal skills root.
-    pub(crate) fn new(
-        pool: RepositoryPool,
-        skills_root: PathBuf,
-        clock: SystemClock,
-        effect_reconcile: EffectWorkerHandle,
-    ) -> Self {
+    pub(crate) fn new(pool: RepositoryPool, skills_root: PathBuf, clock: SystemClock) -> Self {
         let repository = SqliteSkillRepository::new(pool);
         let storage = FilesystemSkillStorage::new(skills_root.clone());
 
@@ -80,20 +61,15 @@ impl SkillApi {
                 FilesystemSkillStorage::new(skills_root),
                 UuidSkillImportIdGenerator,
                 clock,
-                SkillEffectNotifier {
-                    effect_reconcile: effect_reconcile.clone(),
-                },
+                NoopSkillImportProgressPublisher,
                 SkillImportConfig::default(),
             ),
-            effect_reconcile,
         }
     }
 
     /// Executes skill creation through the application handler.
     pub fn create(&self, request: CreateSkillRequest) -> Result<CreateSkillResponse, BackendError> {
-        let response = self.create.handle(request)?;
-        self.effect_reconcile.notify();
-        Ok(response)
+        self.create.handle(request).map_err(BackendError::from)
     }
 
     /// Executes one skill lookup through the application handler.
@@ -108,16 +84,12 @@ impl SkillApi {
 
     /// Executes skill replacement through the application handler.
     pub fn update(&self, request: UpdateSkillRequest) -> Result<UpdateSkillResponse, BackendError> {
-        let response = self.update.handle(request)?;
-        self.effect_reconcile.notify();
-        Ok(response)
+        self.update.handle(request).map_err(BackendError::from)
     }
 
     /// Executes skill deletion through the application handler.
     pub fn delete(&self, request: DeleteSkillRequest) -> Result<DeleteSkillResponse, BackendError> {
-        let response = self.delete.handle(request)?;
-        self.effect_reconcile.notify();
-        Ok(response)
+        self.delete.handle(request).map_err(BackendError::from)
     }
 
     /// Prepares one import source into a previewed session.
@@ -323,8 +295,7 @@ mod tests {
                     &default_migration_catalog().unwrap(),
                 )
                 .unwrap();
-            let skill_repository =
-                SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
+            let skill_repository = SqliteSkillRepository::new(pool.clone());
             let agent_repository = SqliteAgentDefinitionRepository::new(pool);
             let promote = Arc::new(Barrier::new(2));
             let handler = CreateSkillHandler::new(

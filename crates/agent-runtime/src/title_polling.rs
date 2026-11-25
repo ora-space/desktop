@@ -12,7 +12,7 @@ use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{
     ConfigOptionUpdate, ListSessionsRequest, ListSessionsResponse, SessionConfigOption,
-    SessionUpdate,
+    SessionInfoUpdate, SessionUpdate,
 };
 use ora_contracts::StopSessionResponse;
 use ora_domain::SessionTitle;
@@ -109,15 +109,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
                             let _ = response.send(Err(permission_not_pending()));
-                            return;
-                        }
-                        RuntimeCommand::AgentProcessReplaced { agent } => {
-                            // The channel goes back first: the detach decision is about the live
-                            // registration this poll borrowed, and it cannot see one that is still
-                            // moved out. Ending the attempt either way costs at most a title.
-                            self.channel = Some(channel);
-                            self.title_acquisition.preempt_attempt(attempt);
-                            self.detach_replaced_agent(&agent);
                             return;
                         }
                         RuntimeCommand::McpDesiredMaybeChanged => {
@@ -320,8 +311,24 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             .start_polling(list_supported, first_handle, final_handle);
     }
 
-    /// Accepts an ACP session-info title only while the actor's acquisition window is open.
+    /// Observes live ACP session updates for titles, config options, and parent compaction.
     pub(crate) fn observe_session_update(&mut self, update: &SessionUpdate) {
+        self.observe_session_metadata(update);
+        if let SessionUpdate::SessionInfoUpdate(info) = update
+            && is_parent_compaction_completed(info)
+        {
+            self.forget_announced_skills();
+        }
+    }
+
+    /// Observes replayed ACP session updates during an in-session MCP refresh `session/load`
+    /// without letting historical compaction entries reset the live session's announced skills.
+    pub(crate) fn observe_replayed_session_update(&mut self, update: &SessionUpdate) {
+        self.observe_session_metadata(update);
+    }
+
+    /// Applies session title and config-option updates carried by an ACP notification.
+    fn observe_session_metadata(&mut self, update: &SessionUpdate) {
         match update {
             SessionUpdate::SessionInfoUpdate(info) => {
                 if let Some(title) = info.title.value() {
@@ -420,4 +427,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         }
     }
+}
+
+/// Reports whether a `SessionInfoUpdate` signals completed context compaction for the parent
+/// session itself (ignoring started/failed states and child-session projections).
+pub(crate) fn is_parent_compaction_completed(info: &SessionInfoUpdate) -> bool {
+    let Some(meta) = info.meta.as_ref() else {
+        return false;
+    };
+    if ora_history::child_source_id(Some(meta)).is_some() {
+        return false;
+    }
+    meta.get("opencode/compaction")
+        .and_then(|value| value.as_object())
+        .and_then(|compaction| compaction.get("status"))
+        .and_then(|status| status.as_str())
+        == Some("completed")
 }

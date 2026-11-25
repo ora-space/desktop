@@ -34,7 +34,9 @@ on-disk packages.
   uncommitted row write from
   a fully committed or superseded update.
 - `SkillRepository` supplies case-insensitive name lookups used for global uniqueness and import
-  conflict detection.
+  conflict detection. The active-name unique index is the only atomic arbiter of a name claim, so
+  a create it rejects is reported as `SkillNameClaimedError` and callers map that to their own
+  permanent conflict instead of a retryable storage failure.
 - A destination claimed by another in-flight package transaction is a `SkillFolderConflict`,
   whether the journal is observed before promotion or the rename loses its final race. A static
   untracked package remains recoverable through a journaled swap, while a missing formal directory

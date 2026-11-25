@@ -5,8 +5,7 @@ use ora_logging::ora_warn;
 use ora_plugin_protocol::{
     AGENT_DISCOVER_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_NOT_INSTALLED_CODE, AGENT_START_METHOD,
     AGENT_STOP_METHOD, AGENT_UNUSABLE_CODE, AgentProtocol, AgentStartContext, AgentStartResult,
-    EFFECT_COORDINATE_METHOD, EFFECT_REACTIVATE_METHOD, EFFECT_VERIFY_READY_METHOD,
-    PluginEffectCoordination, SUPPORTED_ACP_VERSION,
+    SUPPORTED_ACP_VERSION,
 };
 use ora_plugin_runtime::{PluginRegistration, PluginRuntime, PluginRuntimeError};
 use serde_json::json;
@@ -95,26 +94,6 @@ pub(super) fn verify_agent_contract(
         return Err(PluginAgentError::ContractIncomplete(format!(
             "missing emitted method {AGENT_ACP_METHOD}"
         )));
-    }
-    let requires_restart_coordination = registration
-        .effect_resources
-        .iter()
-        .any(|resource| resource.coordination == PluginEffectCoordination::QuiesceBeforeMutation);
-    if requires_restart_coordination {
-        let missing_effect_methods = [
-            EFFECT_COORDINATE_METHOD,
-            EFFECT_REACTIVATE_METHOD,
-            EFFECT_VERIFY_READY_METHOD,
-        ]
-        .into_iter()
-        .filter(|method| !registration.methods.contains(*method))
-        .collect::<Vec<_>>();
-        if !missing_effect_methods.is_empty() {
-            return Err(PluginAgentError::ContractIncomplete(format!(
-                "missing Effect methods {}",
-                missing_effect_methods.join(", ")
-            )));
-        }
     }
     Ok(())
 }

@@ -1,5 +1,4 @@
 mod agent_definition;
-mod effect;
 mod error;
 mod project;
 mod repository_error;
@@ -19,7 +18,6 @@ pub use agent_definition::{
     CreateAgentDefinitionHandler, DeleteAgentDefinitionHandler, GetAgentDefinitionHandler,
     ListAgentDefinitionsHandler, UpdateAgentDefinitionHandler, UuidAgentDefinitionIdGenerator,
 };
-pub use effect::{EffectApplicationError, EffectService};
 pub use error::ApplicationError;
 pub use project::{
     BranchLister, BranchListingError, BranchReference, Clock, CreateProjectHandler,
@@ -49,9 +47,9 @@ pub use session::{
 pub use skill::{
     BACKUP_DIR_NAME, CreateHandle, CreateSkillHandler, DeleteHandle, DeleteSkillHandler,
     FilesystemSkillStorage, GetSkillHandler, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
-    ListSkillsHandler, LocalSkillSourceRevision, STAGING_DIR_NAME, SkillIdGenerator,
-    SkillRepository, SkillStorage, SkillStorageError, SwapHandle, TransactionJournal,
-    UpdateSkillHandler, UuidSkillIdGenerator, has_usable_package, skill_package_is_usable,
+    ListSkillsHandler, STAGING_DIR_NAME, SkillIdGenerator, SkillNameClaimedError, SkillRepository,
+    SkillStorage, SkillStorageError, SwapHandle, TransactionJournal, UpdateSkillHandler,
+    UuidSkillIdGenerator, has_usable_package, skill_package_is_usable,
 };
 pub use skill_import::{
     DuplicateSkillName, NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportError,
@@ -87,22 +85,21 @@ pub use workflow::{
 };
 pub use workflow_run::{
     AUTO_RETRY_KEY, AdvanceWorkflowRunResult, AgentCompletion, AgentCompletionSignal, AgentConfig,
-    AgentExecutor, AgentMcp, AgentOutputContract, AgentRetryPolicy, AgentSkill, AgentSkillDelivery,
-    AgentSkillDeliveryError, AgentSkillDeliveryProvider, AuthoringParticipation,
-    BeginNodeRetryResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult, CompletionFile,
-    CompositeRegion, CreateWorkflowRunHandler, DeleteWorkflowRunHandler, DeleteWorkflowRunResult,
-    EngineError, ExecutionContext, FailurePropagation, FileChange, GetWorkflowRunHandler,
-    GraphError, INVALID_START_OPTION_DETAIL, IterationConfig, IterationErrorStrategy,
-    IterationLedger, IterationRoundContinuation, ListWorkflowNodeRunsHandler,
-    ListWorkflowRunsByWorkflowHandler, ListWorkflowRunsHandler, LoopCompletionReason, LoopConfig,
-    LoopExitCleanup, LoopExitState, LoopInitialValue, LoopMaxIterationsBehavior, LoopRoundAdvance,
-    LoopRoundDecision, LoopRoundError, LoopRoundExecutionState, LoopRoundToStart, LoopVariable,
-    MISSING_REQUIRED_START_DETAIL, MaterializedSkillBinding, NoRetryTimer, NoRunInvalidations,
-    NodeAutoRetry, NodeExecutor, NodeFailure, NodeFailureDetail, NodeFailureKind,
-    NodeRetryToSchedule, NodeRetryWait, NodeRunToStart, NodeType, RETRY_CHAIN_KEY, RETRY_WAIT_KEY,
-    RenameWorkflowRunHandler, RestartWorkflowRunResult, ResumeWorkflowRunResult, RoundOutcome,
-    RunInputRejection, RunInputRejectionReason, ScheduleNodeRetryResult, SkillDiscoveryRoots,
-    SkillMaterializationReceipt, SnapshotIncompatibility, SnapshotSwitchPlan,
+    AgentExecutor, AgentMcp, AgentOutputContract, AgentRetryPolicy, AgentSkill,
+    AuthoringParticipation, BeginNodeRetryResult, BindWorkflowNodeSessionResult,
+    CancelWorkflowRunResult, CompletionFile, CompositeRegion, CreateWorkflowRunHandler,
+    DeleteWorkflowRunHandler, DeleteWorkflowRunResult, EngineError, ExecutionContext,
+    FailurePropagation, FileChange, FrozenSkillBinding, GetWorkflowRunHandler, GraphError,
+    INVALID_START_OPTION_DETAIL, IterationConfig, IterationErrorStrategy, IterationLedger,
+    IterationRoundContinuation, ListWorkflowNodeRunsHandler, ListWorkflowRunsByWorkflowHandler,
+    ListWorkflowRunsHandler, LoopCompletionReason, LoopConfig, LoopExitCleanup, LoopExitState,
+    LoopInitialValue, LoopMaxIterationsBehavior, LoopRoundAdvance, LoopRoundDecision,
+    LoopRoundError, LoopRoundExecutionState, LoopRoundToStart, LoopVariable,
+    MISSING_REQUIRED_START_DETAIL, NoRetryTimer, NoRunInvalidations, NodeAutoRetry, NodeExecutor,
+    NodeFailure, NodeFailureDetail, NodeFailureKind, NodeRetryToSchedule, NodeRetryWait,
+    NodeRunToStart, NodeType, RETRY_CHAIN_KEY, RETRY_WAIT_KEY, RenameWorkflowRunHandler,
+    RestartWorkflowRunResult, ResumeWorkflowRunResult, RoundOutcome, RunInputRejection,
+    RunInputRejectionReason, ScheduleNodeRetryResult, SnapshotIncompatibility, SnapshotSwitchPlan,
     StartPrerequisitesError, StartWorkflowRunResult, StructuredOutputError, StructuredTextExposure,
     UnknownNodeType, UnrecognizedAuthoringNode, UpdateWorkflowRunInputResult,
     UuidWorkflowNodeRunIdGenerator, UuidWorkflowRunIdGenerator, VariableTemplateError,
@@ -110,11 +107,11 @@ pub use workflow_run::{
     WorkflowRetryTimer, WorkflowRunCallback, WorkflowRunControlHandler, WorkflowRunCreateOutcome,
     WorkflowRunEngine, WorkflowRunEngineRepository, WorkflowRunIdGenerator,
     WorkflowRunInvalidationPublisher, WorkflowRunPayload, WorkflowRunPayloadError,
-    WorkflowRunRepository, WorkflowRunWorkspaceInitializer, WorkflowValidationError,
-    WorkflowVariablePool, WorkflowVariablePoolError, WorkspaceRepository, extract_json_object,
-    plan_snapshot_switch, render_variable_template, resume_clear_node_ids, resume_unit_member_ids,
-    resume_unit_owner_id, retry_chain_from_payload, running_row_blocks_resume,
-    validate_against_schema,
+    WorkflowRunRepository, WorkflowRunWorkspaceInitializer, WorkflowSkillReceipt,
+    WorkflowValidationError, WorkflowVariablePool, WorkflowVariablePoolError, WorkspaceRepository,
+    extract_json_object, plan_snapshot_switch, render_variable_template, resume_clear_node_ids,
+    resume_unit_member_ids, resume_unit_owner_id, retry_chain_from_payload,
+    running_row_blocks_resume, validate_against_schema,
 };
 pub use workspace_diff::{
     CommitWorkspaceChangesHandler, CommitWorkspaceGitRequest, GitWorkspaceDiffReader,
