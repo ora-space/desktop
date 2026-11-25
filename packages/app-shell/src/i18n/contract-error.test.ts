@@ -5,7 +5,7 @@ import {
   localTransportErrorKinds,
   publicErrorSchema,
 } from "@ora/contracts";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { activeLocale, appI18n, translationResources } from "./i18n-instance";
 import {
   describeChatError,
@@ -15,6 +15,10 @@ import {
 
 const interpolationFields = (text: string): string[] =>
   [...text.matchAll(/{{(\w+)}}/g)].map((match) => match[1]).sort();
+
+afterEach(async () => {
+  await appI18n.changeLanguage("zh-CN");
+});
 
 describe("contract error translations", () => {
   it("covers every generated public code in Chinese and English with valid interpolation", () => {
@@ -154,6 +158,30 @@ describe("workflow dependency failures", () => {
         : "The skill name 'code_review' referenced by node 'Code review' is ambiguous and matches multiple skills (local-uuid (local), plugin:local/review-pack:code_review (local/review-pack)). Select a specific skill for this node, then retry.",
     );
     expect(hasDiagnosticRequestId(ambiguous)).toBe(false);
+  });
+
+  it("joins ambiguous candidates with the English separator in en-US", async () => {
+    const ambiguous = new RemoteContractError(
+      {
+        code: "workflow_skill_ambiguous",
+        requestId: "00000000-0000-4000-8000-000000000008",
+        params: {
+          nodeId: "reviewer",
+          nodeTitle: "Code review",
+          skillRef: "code_review",
+          candidates: [
+            "local-uuid (local)",
+            "plugin:local/review-pack:code_review (local/review-pack)",
+          ],
+        },
+      },
+      {},
+    );
+
+    await appI18n.changeLanguage("en-US");
+    expect(localizeContractError(ambiguous, appI18n.t)).toBe(
+      "The skill name 'code_review' referenced by node 'Code review' is ambiguous and matches multiple skills (local-uuid (local), plugin:local/review-pack:code_review (local/review-pack)). Select a specific skill for this node, then retry.",
+    );
   });
 });
 
