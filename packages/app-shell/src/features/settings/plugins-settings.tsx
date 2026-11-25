@@ -303,6 +303,14 @@ export function PluginsSettings({
     }
   };
 
+  /** Navigates from an unresolved workflow entry directly to the owning installed plugin card. */
+  const openInstalledPlugin = (pluginId: string) => {
+    setImportReport(null);
+    setConfigurationPlugin(null);
+    setManagerQuery(pluginId);
+    setManaging(true);
+  };
+
   const handleImport = async () => {
     setSelecting(true);
     try {
@@ -363,6 +371,11 @@ export function PluginsSettings({
             setReadmePlugin(null);
             onDetailClose?.();
             resolveImportDependency(dependency, fix);
+          }}
+          onOpenInstalledPlugin={(memberPluginId) => {
+            setReadmePlugin(null);
+            onDetailClose?.();
+            openInstalledPlugin(memberPluginId);
           }}
         />
       </PluginsScroll>
@@ -594,6 +607,7 @@ export function PluginsSettings({
           input={importReport}
           onClose={() => setImportReport(null)}
           onResolve={resolveImportDependency}
+          onOpenInstalledPlugin={openInstalledPlugin}
         />
       )}
     </>

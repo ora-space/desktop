@@ -456,9 +456,9 @@ function InstalledPluginRow({
               <McpHealthRow pluginId={plugin.id} />
             )}
           {plugin.kind === "workflow" && (
-            // A Workflow package retries the documents it could not import without reinstalling:
-            // handled paths stay handled, so this is the only way a temporarily failed document
-            // becomes a workflow once its cause is fixed.
+            // A Workflow package retries unrecorded and conflict-skipped documents without
+            // reinstalling: surviving copies stay untouched and copies deleted inside the current
+            // cycle stay deleted.
             <span className="mt-1 flex flex-wrap items-center gap-2">
               <Button
                 variant="ghost"

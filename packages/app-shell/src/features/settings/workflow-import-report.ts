@@ -55,15 +55,25 @@ export interface WorkflowImportReport {
 
 /** One document the operation left unimported because a workflow already uses its name. */
 export interface UnresolvedWorkflowEntry {
+  /** Canonical identifier of the plugin or Pack member that carried the document. */
+  pluginId: string;
   /** Package-relative path the document was read from. */
   sourceFile: string;
-  /** Workflow name the document declares, which the library already uses. */
+  /** Name of the surviving workflow in the library that blocks this document's import. */
   name: string;
   /**
    * Whether the record already carried this conflict before the operation ran. A known conflict was
    * reported once; an upgrade lists it as still unresolved instead of opening the report for it.
    */
   knownConflict: boolean;
+}
+
+/** One document whose previously imported copy was deleted during the running install cycle. */
+export interface DeletedWorkflowCopyEntry {
+  /** Canonical identifier of the plugin or Pack member that carried the document. */
+  pluginId: string;
+  /** Package-relative path whose copy was deleted. */
+  sourceFile: string;
 }
 
 /** The outcomes one import returned, plus the archive or plugin name to show for them. */
@@ -79,7 +89,7 @@ export interface WorkflowImportReportInput {
    * Documents whose copy the user deleted during the running install cycle. They are not a failure
    * and not something to retry from the card, so the report names them with their own recovery.
    */
-  deletedCopies?: readonly string[];
+  deletedCopies?: readonly DeletedWorkflowCopyEntry[];
 }
 
 /**
@@ -153,6 +163,7 @@ export function marketplaceWorkflowReportInput(
     outcome.state === "skipped_conflict"
       ? [
           {
+            pluginId: outcome.pluginId,
             sourceFile: outcome.sourceFile,
             name: outcome.name,
             knownConflict: outcome.knownConflict,
@@ -164,9 +175,16 @@ export function marketplaceWorkflowReportInput(
     trigger === "update"
       ? unresolved.some((entry) => !entry.knownConflict)
       : unresolved.length > 0;
-  const deletedCopies = workflows.flatMap((outcome) =>
-    outcome.state === "skipped_deleted_copy" ? [outcome.sourceFile] : [],
-  );
+  // An upgrade keeps deleted copies in its neutral summary only, even when the report opens for
+  // another reason; card retries still list them with the reinstall recovery hint.
+  const deletedCopies =
+    trigger === "update"
+      ? []
+      : workflows.flatMap((outcome) =>
+          outcome.state === "skipped_deleted_copy"
+            ? [{ pluginId: outcome.pluginId, sourceFile: outcome.sourceFile }]
+            : [],
+        );
   if (outcomes.length === 0 && !opensForConflict) return null;
   return {
     fileName: pluginId,

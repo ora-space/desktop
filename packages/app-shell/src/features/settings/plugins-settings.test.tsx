@@ -3917,3 +3917,177 @@ it("reports an upgrade's deleted copy as a neutral count", async () => {
   );
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+/**
+ * A Pack conflict report names each conflicting member even when members ship the same path,
+ * and clicking an entry opens that member's installed plugin card where the retry action lives.
+ */
+it("attributes Pack workflow conflicts to each member and navigates to its installed card", async () => {
+  const user = userEvent.setup();
+  const { state, client } = packClientWithWorkflowPackage();
+  const WORKFLOW_A_ID = "official/ora-space.workflow-a";
+  const WORKFLOW_B_ID = "official/ora-space.workflow-b";
+  state.packMemberPlugins.set(PACK_ID, [
+    { ...packMember(WORKFLOW_A_ID), kind: "workflow" },
+    { ...packMember(WORKFLOW_B_ID), kind: "workflow" },
+  ]);
+  state.installedWorkflows = [
+    {
+      state: "skipped_conflict",
+      pluginId: WORKFLOW_A_ID,
+      sourceFile: "assets/workflows/1.0.0.json",
+      name: "发布流程",
+      knownConflict: false,
+    },
+    {
+      state: "skipped_conflict",
+      pluginId: WORKFLOW_B_ID,
+      sourceFile: "assets/workflows/1.0.0.json",
+      name: "回归流程",
+      knownConflict: false,
+    },
+  ];
+  const warningToast = vi
+    .spyOn(toast, "warning")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  await waitFor(() => expect(warningToast).toHaveBeenCalled());
+  expect(successToast).not.toHaveBeenCalled();
+  expect(warningToast.mock.calls[0]?.[0]).toMatch(
+    /集合包已安装，但工作流未导入/,
+  );
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText("2 份未导入")).toBeVisible();
+  expect(within(report).getByText(WORKFLOW_A_ID)).toBeVisible();
+  expect(within(report).getByText(WORKFLOW_B_ID)).toBeVisible();
+  expect(within(report).getByText(/发布流程/)).toBeVisible();
+  expect(within(report).getByText(/回归流程/)).toBeVisible();
+
+  await user.click(
+    within(report).getByRole("button", {
+      name: `查看 ${WORKFLOW_B_ID} 的已安装卡片`,
+    }),
+  );
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("textbox", { name: "搜索插件" })).toHaveValue(
+    WORKFLOW_B_ID,
+  );
+  expect(screen.getByText(WORKFLOW_B_ID)).toBeVisible();
+  expect(screen.queryByText(WORKFLOW_A_ID)).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "重试导入未导入的文档" }),
+  ).toBeVisible();
+});
+
+/**
+ * When an upgrade opens the report for a first conflict, sibling known conflicts are listed as
+ * still unresolved while deleted copies stay out of the "not imported" section and its count.
+ */
+it("opens the report on an upgrade's first conflict, labels known ones as still unresolved, and excludes deleted copies", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins.push({ ...weatherInstalled(), version: "1.1.0" });
+  state.updatedWorkflows = [
+    {
+      state: "skipped_conflict",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/1.0.0.json",
+      name: "发布流程",
+      knownConflict: false,
+    },
+    {
+      state: "skipped_conflict",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/2.0.0.json",
+      name: "回归流程",
+      knownConflict: true,
+    },
+    {
+      state: "skipped_deleted_copy",
+      pluginId: "official/weather",
+      sourceFile: "assets/workflows/deleted.json",
+    },
+  ];
+  const warningToast = vi
+    .spyOn(toast, "warning")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  const successToast = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: "更新" }));
+
+  await waitFor(() => expect(warningToast).toHaveBeenCalled());
+  expect(successToast).not.toHaveBeenCalled();
+  expect(warningToast.mock.calls[0]?.[1]?.description).toMatch(
+    /1 份副本已删除，卸载后重装可恢复/,
+  );
+
+  const report = await screen.findByRole("dialog");
+  // Two conflict items are listed while the deleted copy stays in the neutral toast summary only.
+  expect(within(report).getByText("2 份未导入")).toBeVisible();
+  expect(within(report).queryByText("3 份未导入")).toBeNull();
+  expect(
+    within(report).getByText("与现有工作流「发布流程」同名"),
+  ).toBeVisible();
+  expect(
+    within(report).getByText("与现有工作流「回归流程」同名（仍未解决）"),
+  ).toBeVisible();
+  expect(within(report).queryByText(/此前已报告/)).toBeNull();
+  expect(
+    within(report).queryByText("assets/workflows/deleted.json"),
+  ).toBeNull();
+});
+
+/**
+ * Unlike an upgrade, a card retry keeps deleted copies inside the "not imported" section with their
+ * reinstall recovery guidance.
+ */
+it("lists deleted copies with reinstall guidance in a card retry report", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.installedPlugins = [workflowInstalled()];
+  state.availablePlugins = [];
+  state.retriedWorkflows = [
+    {
+      state: "skipped_conflict",
+      pluginId: WORKFLOW_PLUGIN_ID,
+      sourceFile: "assets/workflows/1.0.0.json",
+      name: "发布流程",
+      knownConflict: true,
+    },
+    {
+      state: "skipped_deleted_copy",
+      pluginId: WORKFLOW_PLUGIN_ID,
+      sourceFile: "assets/workflows/deleted.json",
+    },
+  ];
+  renderSettings(client);
+  await openManagePlugins(user);
+
+  await user.click(
+    await screen.findByRole("button", { name: "重试导入未导入的文档" }),
+  );
+
+  const report = await screen.findByRole("dialog");
+  expect(within(report).getByText("2 份未导入")).toBeVisible();
+  expect(
+    within(report).getByText("assets/workflows/deleted.json"),
+  ).toBeVisible();
+  expect(
+    within(report).getByText("副本已删除，卸载后重装可恢复"),
+  ).toBeVisible();
+});

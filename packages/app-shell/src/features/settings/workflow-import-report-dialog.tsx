@@ -44,6 +44,8 @@ interface WorkflowImportReportDialogProps {
     dependency: WorkflowDependency,
     fix: WorkflowDependencyFix,
   ) => void;
+  /** Opens the installed plugin card for the plugin or Pack member that owns an entry. */
+  onOpenInstalledPlugin?: (pluginId: string) => void;
 }
 
 /**
@@ -54,6 +56,7 @@ export function WorkflowImportReportDialog({
   input,
   onClose,
   onResolve,
+  onOpenInstalledPlugin,
 }: WorkflowImportReportDialogProps) {
   const { t } = useTranslation();
   const imported = useMemo(
@@ -135,36 +138,93 @@ export function WorkflowImportReportDialog({
                 })}
               </h3>
               <ul className="divide-y divide-border">
-                {unresolved.map((entry, index) => (
-                  <li
-                    key={`${entry.sourceFile}:${index}`}
-                    className="px-3 py-2 text-[12px]"
-                  >
-                    <p className="font-mono break-all">{entry.sourceFile}</p>
-                    <p>
-                      {t(
-                        entry.knownConflict
-                          ? "settings.plugins.importReportConflictKnown"
-                          : "settings.plugins.importReportConflict",
-                        { name: entry.name },
+                {unresolved.map((entry, index) => {
+                  const isPackMember = entry.pluginId !== input.fileName;
+                  return (
+                    <li
+                      key={`${entry.pluginId}:${entry.sourceFile}:${index}`}
+                      className="flex items-start justify-between gap-3 px-3 py-2 text-[12px]"
+                    >
+                      <div className="min-w-0">
+                        {isPackMember && (
+                          <p className="font-mono text-[11px] break-all text-muted-foreground">
+                            {entry.pluginId}
+                          </p>
+                        )}
+                        <p className="font-mono break-all">
+                          {entry.sourceFile}
+                        </p>
+                        <p>
+                          {t(
+                            entry.knownConflict
+                              ? "settings.plugins.importReportConflictKnown"
+                              : "settings.plugins.importReportConflict",
+                            { name: entry.name },
+                          )}
+                        </p>
+                        <p className="text-muted-foreground">
+                          {isPackMember
+                            ? t(
+                                "settings.plugins.importReportPackConflictRecovery",
+                                { pluginId: entry.pluginId },
+                              )
+                            : t(
+                                "settings.plugins.importReportConflictRecovery",
+                              )}
+                        </p>
+                      </div>
+                      {onOpenInstalledPlugin !== undefined && (
+                        <button
+                          type="button"
+                          aria-label={t(
+                            "settings.plugins.importReportOpenInstalledCardFor",
+                            { pluginId: entry.pluginId },
+                          )}
+                          className="shrink-0 text-[11.5px] text-blue-600 hover:underline dark:text-blue-400"
+                          onClick={() => onOpenInstalledPlugin(entry.pluginId)}
+                        >
+                          {t("settings.plugins.importReportOpenInstalledCard")}
+                        </button>
                       )}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {t("settings.plugins.importReportConflictRecovery")}
-                    </p>
-                  </li>
-                ))}
-                {deletedCopies.map((sourceFile, index) => (
-                  <li
-                    key={`${sourceFile}:${index}`}
-                    className="px-3 py-2 text-[12px]"
-                  >
-                    <p className="font-mono break-all">{sourceFile}</p>
-                    <p className="text-muted-foreground">
-                      {t("settings.plugins.workflowDocumentDeletedCopy")}
-                    </p>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
+                {deletedCopies.map((entry, index) => {
+                  const isPackMember = entry.pluginId !== input.fileName;
+                  return (
+                    <li
+                      key={`${entry.pluginId}:${entry.sourceFile}:${index}`}
+                      className="flex items-start justify-between gap-3 px-3 py-2 text-[12px]"
+                    >
+                      <div className="min-w-0">
+                        {isPackMember && (
+                          <p className="font-mono text-[11px] break-all text-muted-foreground">
+                            {entry.pluginId}
+                          </p>
+                        )}
+                        <p className="font-mono break-all">
+                          {entry.sourceFile}
+                        </p>
+                        <p className="text-muted-foreground">
+                          {t("settings.plugins.workflowDocumentDeletedCopy")}
+                        </p>
+                      </div>
+                      {isPackMember && onOpenInstalledPlugin !== undefined && (
+                        <button
+                          type="button"
+                          aria-label={t(
+                            "settings.plugins.importReportOpenInstalledCardFor",
+                            { pluginId: entry.pluginId },
+                          )}
+                          className="shrink-0 text-[11.5px] text-blue-600 hover:underline dark:text-blue-400"
+                          onClick={() => onOpenInstalledPlugin(entry.pluginId)}
+                        >
+                          {t("settings.plugins.importReportOpenInstalledCard")}
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           )}

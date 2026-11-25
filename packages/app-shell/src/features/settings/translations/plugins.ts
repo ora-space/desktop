@@ -278,9 +278,14 @@ export const pluginTranslations = {
     "settings.plugins.importReportSkippedTitle": "{{count}} 份未导入",
     "settings.plugins.importReportConflict": "与现有工作流「{{name}}」同名",
     "settings.plugins.importReportConflictKnown":
-      "仍与现有工作流「{{name}}」同名（此前已报告）",
+      "与现有工作流「{{name}}」同名（仍未解决）",
     "settings.plugins.importReportConflictRecovery":
       "把同名工作流改名或删除后，在插件卡片选择「重试导入未导入的文档」。",
+    "settings.plugins.importReportPackConflictRecovery":
+      "把同名工作流改名或删除后，在「{{pluginId}}」的已安装插件卡片选择「重试导入未导入的文档」。",
+    "settings.plugins.importReportOpenInstalledCard": "查看已安装卡片",
+    "settings.plugins.importReportOpenInstalledCardFor":
+      "查看 {{pluginId}} 的已安装卡片",
     "settings.plugins.importReportClose": "关闭",
     "settings.plugins.updateSuccess": "插件已升级。",
     "settings.plugins.updateSuccessDocumentsNotImported":
@@ -750,9 +755,14 @@ export const pluginTranslations = {
     "settings.plugins.importReportConflict":
       'Shares its name with the existing workflow "{{name}}"',
     "settings.plugins.importReportConflictKnown":
-      'Still shares its name with the existing workflow "{{name}}" (already reported)',
+      'Shares its name with the existing workflow "{{name}}" (still unresolved)',
     "settings.plugins.importReportConflictRecovery":
       'Rename or delete that workflow, then choose "Retry importing the missing documents" on the plugin card.',
+    "settings.plugins.importReportPackConflictRecovery":
+      'Rename or delete that workflow, then choose "Retry importing the missing documents" on the installed plugin card for {{pluginId}}.',
+    "settings.plugins.importReportOpenInstalledCard": "Open installed card",
+    "settings.plugins.importReportOpenInstalledCardFor":
+      "Open installed card for {{pluginId}}",
     "settings.plugins.importReportClose": "Close",
     "settings.plugins.updateSuccess": "Plugin updated.",
     "settings.plugins.updateSuccessDocumentsNotImported":

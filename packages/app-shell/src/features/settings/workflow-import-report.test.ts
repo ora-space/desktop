@@ -7,6 +7,7 @@ import type {
 import {
   buildWorkflowImportReport,
   importedArchiveName,
+  marketplaceWorkflowReportInput,
 } from "./workflow-import-report";
 
 /** One Agent node bound to the given Skills and MCPs, shaped like an exported graph envelope. */
@@ -190,5 +191,168 @@ describe("importedArchiveName", () => {
       "workflows.orax",
     );
     expect(importedArchiveName("workflows.orax")).toBe("workflows.orax");
+  });
+});
+
+describe("marketplaceWorkflowReportInput", () => {
+  it("preserves each Pack member id on unresolved and deleted entries", () => {
+    const report = marketplaceWorkflowReportInput(
+      "official/ora-space.pack",
+      [
+        {
+          state: "skipped_conflict",
+          pluginId: "official/ora-space.wf-a",
+          sourceFile: "assets/workflows/1.0.0.json",
+          name: "发布流程",
+          knownConflict: false,
+        },
+        {
+          state: "skipped_conflict",
+          pluginId: "official/ora-space.wf-b",
+          sourceFile: "assets/workflows/1.0.0.json",
+          name: "回归流程",
+          knownConflict: false,
+        },
+      ],
+      "install",
+    );
+
+    expect(report).toEqual({
+      fileName: "official/ora-space.pack",
+      outcomes: [],
+      unresolved: [
+        {
+          pluginId: "official/ora-space.wf-a",
+          sourceFile: "assets/workflows/1.0.0.json",
+          name: "发布流程",
+          knownConflict: false,
+        },
+        {
+          pluginId: "official/ora-space.wf-b",
+          sourceFile: "assets/workflows/1.0.0.json",
+          name: "回归流程",
+          knownConflict: false,
+        },
+      ],
+      deletedCopies: [],
+    });
+  });
+
+  it("drops deleted copies from upgrade reports while keeping them on card retries", () => {
+    const workflows = [
+      {
+        state: "skipped_conflict" as const,
+        pluginId: "official/weather",
+        sourceFile: "assets/workflows/1.0.0.json",
+        name: "发布流程",
+        knownConflict: false,
+      },
+      {
+        state: "skipped_deleted_copy" as const,
+        pluginId: "official/weather",
+        sourceFile: "assets/workflows/deleted.json",
+      },
+    ];
+
+    expect(
+      marketplaceWorkflowReportInput("official/weather", workflows, "update"),
+    ).toEqual({
+      fileName: "official/weather",
+      outcomes: [],
+      unresolved: [
+        {
+          pluginId: "official/weather",
+          sourceFile: "assets/workflows/1.0.0.json",
+          name: "发布流程",
+          knownConflict: false,
+        },
+      ],
+      deletedCopies: [],
+    });
+
+    expect(
+      marketplaceWorkflowReportInput("official/weather", workflows, "retry"),
+    ).toEqual({
+      fileName: "official/weather",
+      outcomes: [],
+      unresolved: [
+        {
+          pluginId: "official/weather",
+          sourceFile: "assets/workflows/1.0.0.json",
+          name: "发布流程",
+          knownConflict: false,
+        },
+      ],
+      deletedCopies: [
+        {
+          pluginId: "official/weather",
+          sourceFile: "assets/workflows/deleted.json",
+        },
+      ],
+    });
+  });
+
+  it("opens an upgrade report on a first conflict alongside known ones, and stays closed when only neutral skips exist", () => {
+    expect(
+      marketplaceWorkflowReportInput(
+        "official/weather",
+        [
+          {
+            state: "skipped_conflict",
+            pluginId: "official/weather",
+            sourceFile: "assets/workflows/1.0.0.json",
+            name: "发布流程",
+            knownConflict: true,
+          },
+          {
+            state: "skipped_deleted_copy",
+            pluginId: "official/weather",
+            sourceFile: "assets/workflows/deleted.json",
+          },
+        ],
+        "update",
+      ),
+    ).toBeNull();
+
+    expect(
+      marketplaceWorkflowReportInput(
+        "official/weather",
+        [
+          {
+            state: "skipped_conflict",
+            pluginId: "official/weather",
+            sourceFile: "assets/workflows/1.0.0.json",
+            name: "发布流程",
+            knownConflict: false,
+          },
+          {
+            state: "skipped_conflict",
+            pluginId: "official/weather",
+            sourceFile: "assets/workflows/2.0.0.json",
+            name: "回归流程",
+            knownConflict: true,
+          },
+        ],
+        "update",
+      ),
+    ).toEqual({
+      fileName: "official/weather",
+      outcomes: [],
+      unresolved: [
+        {
+          pluginId: "official/weather",
+          sourceFile: "assets/workflows/1.0.0.json",
+          name: "发布流程",
+          knownConflict: false,
+        },
+        {
+          pluginId: "official/weather",
+          sourceFile: "assets/workflows/2.0.0.json",
+          name: "回归流程",
+          knownConflict: true,
+        },
+      ],
+      deletedCopies: [],
+    });
   });
 });
