@@ -109,7 +109,7 @@ impl PreparedSwitch {
                 now,
             )
             .map_err(|error| {
-                BackendError::internal("failed to switch workflow run snapshot", error)
+                BackendError::from_debug_repository("failed to switch workflow run snapshot", error)
             })?;
         if !switched {
             return Err(BackendError::from(

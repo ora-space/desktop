@@ -69,7 +69,7 @@ describe("useSettingsStore", () => {
     });
   });
 
-  it("migrates the former implicit OpenCode default to no selection", () => {
+  it("preserves the legacy OpenCode selection", () => {
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -83,7 +83,7 @@ describe("useSettingsStore", () => {
     expect(useSettingsStore.getState().settings).toEqual({
       ...DEFAULT_SETTINGS,
       theme: "light",
-      agentCli: null,
+      agentCli: "ora-space.opencode",
     });
   });
 

@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "version": "0.4.0",
+  "date": "2026-10-15",
+  "entries": [
+    {
+      "category": "feature",
+      "zh-CN": "工作流的智能体节点可以持续等待耗时很长的任务。",
+      "en-US": "Agent nodes in workflows can keep waiting for long-running tasks."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "可以设置循环达到次数上限后的处理方式，条件判断支持变量模板。",
+      "en-US": "You can choose what happens when a loop reaches its limit, and conditions accept variable templates."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "智能体没有登录时会明确提示，变量列表为空时也会说明原因。",
+      "en-US": "Ora says clearly when an agent is not signed in, and explains an empty variable list."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "智能体输出内容时，界面其他部分更流畅。",
+      "en-US": "The rest of the app stays responsive while an agent is writing."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复断电后项目、任务和工作树可能丢失的问题。",
+      "en-US": "Fixed projects, tasks, and worktrees being lost after a power failure."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复打开第二个 Ora 窗口进程时，正在运行的工作流被中断的问题。",
+      "en-US": "Fixed running workflows being interrupted when a second Ora process started."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复内容异常的工作流打开后白屏的问题。",
+      "en-US": "Fixed a blank screen when opening a damaged workflow."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复工作流节点拖动不跟手、卡顿的问题。",
+      "en-US": "Fixed workflow nodes lagging behind while being dragged."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复任务草稿会在主工作区启动会话的问题。",
+      "en-US": "Fixed task drafts starting sessions in the main workspace."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复“添加来源”没有打开市场配置的问题，插件源更新会使用为它设置的代理。",
+      "en-US": "Fixed “Add source” not opening the marketplace settings; plugin sources now update through their configured proxy."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复工作流顶栏描述和对话框标题过长时的显示问题。",
+      "en-US": "Fixed overlong workflow descriptions and dialog titles."
+    }
+  ]
+}

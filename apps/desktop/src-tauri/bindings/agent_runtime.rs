@@ -9,8 +9,8 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Unary {
-        operation: "listAgentModels",
-        handler: "commands::agent_runtime::list_agent_models",
+        operation: "discoverAgent",
+        handler: "commands::agent_runtime::discover_agent",
         permission: Permission::MainWebview,
     },
 ];

@@ -3,7 +3,7 @@ use rusqlite::{Connection, Transaction, params};
 
 use crate::{DatabaseError, MigrationCatalog, MigrationDirection, TimestampSource};
 
-use super::AppliedMigration;
+use super::{AppliedMigration, DatabaseOrigin};
 
 const CREATE_MIGRATIONS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS migrations (
@@ -15,11 +15,14 @@ CREATE TABLE IF NOT EXISTS migrations (
 "#;
 
 /// Aligns the applied version sequence for application startup without inspecting SQL drift.
+///
+/// Reports whether the database had any applied migration before this call, because that history
+/// is gone from view once the migrations are applied.
 pub fn reconcile_database_versions<T>(
     connection: &mut Connection,
     catalog: &MigrationCatalog,
     timestamp_source: &T,
-) -> Result<(), DatabaseError>
+) -> Result<DatabaseOrigin, DatabaseError>
 where
     T: TimestampSource,
 {
@@ -48,9 +51,14 @@ where
     rollback_migration_suffix(connection, &applied_migrations, shared_version_count)?;
     apply_migration_suffix(connection, catalog, timestamp_source, shared_version_count)?;
 
-    if applied_migrations.is_empty() && pending_up_count > 0 {
-        apply_first_install_data(connection, catalog)?;
-    }
+    let origin = if applied_migrations.is_empty() {
+        DatabaseOrigin::Created
+    } else {
+        DatabaseOrigin::Existing
+    };
+    // Startup origin controls release-note presentation; durable pending work also resumes
+    // when an interrupted first launch already committed some or all migrations.
+    apply_first_install_data(connection, catalog)?;
 
     if pending_up_count == 0 && pending_down_count == 0 {
         ora_info!(
@@ -59,7 +67,7 @@ where
         );
     }
 
-    Ok(())
+    Ok(origin)
 }
 
 /// Reconciles SQL snapshot drift and target shortening by rebuilding the affected migration suffix.
@@ -98,9 +106,7 @@ where
 
     apply_migration_suffix(connection, catalog, timestamp_source, reconciliation_start)?;
 
-    if applied_migrations.is_empty() && pending_up_count > 0 && pending_down_count == 0 {
-        apply_first_install_data(connection, catalog)?;
-    }
+    apply_first_install_data(connection, catalog)?;
 
     if pending_up_count == 0 && pending_down_count == 0 {
         ora_info!(
@@ -118,7 +124,12 @@ fn apply_first_install_data(
     catalog: &MigrationCatalog,
 ) -> Result<(), DatabaseError> {
     let sql = catalog.first_install_sql();
-    if sql.is_empty() {
+    let pending: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM bootstrap_state WHERE key = 'first_install_data_pending')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !pending {
         return Ok(());
     }
 
@@ -129,7 +140,13 @@ fn apply_first_install_data(
         "first-install-data",
         &sql,
         MigrationDirection::Up,
-        |_| Ok(()),
+        |transaction| {
+            transaction.execute(
+                "DELETE FROM bootstrap_state WHERE key = 'first_install_data_pending'",
+                [],
+            )?;
+            Ok(())
+        },
     )
 }
 
@@ -237,8 +254,23 @@ where
 }
 
 /// Ensures the bookkeeping table exists before reconciliation starts reading or mutating migration state.
-fn ensure_migrations_table(connection: &Connection) -> Result<(), DatabaseError> {
-    connection.execute_batch(CREATE_MIGRATIONS_TABLE_SQL)?;
+fn ensure_migrations_table(connection: &mut Connection) -> Result<(), DatabaseError> {
+    // Provenance and migration history must become durable together, before any schema step.
+    // A failed migration or distribution hook can then resume first-install work on restart.
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let fresh: bool = transaction.query_row(
+        "SELECT NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%')",
+        [], |row| row.get(0),
+    )?;
+    transaction.execute_batch(CREATE_MIGRATIONS_TABLE_SQL)?;
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS bootstrap_state (key TEXT PRIMARY KEY NOT NULL);",
+    )?;
+    if fresh {
+        transaction.execute("INSERT INTO bootstrap_state (key) VALUES ('fresh_database'), ('first_install_data_pending')", [])?;
+    }
+    transaction.commit()?;
     Ok(())
 }
 

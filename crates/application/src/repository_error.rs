@@ -28,6 +28,11 @@ impl RepositoryError {
         self.source.is::<T>()
     }
 
+    /// Borrows the concrete adapter failure when it has the requested type.
+    pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
+        self.source.downcast_ref()
+    }
+
     #[doc(hidden)]
     pub fn from_message(message: impl Into<String>) -> Self {
         Self::new(std::io::Error::other(message.into()))

@@ -149,7 +149,7 @@ function renderThoughtLevelSelector(
       projectId: "p1",
       kind: "isolated" as const,
       lifecycle: "active" as const,
-      directory: { kind: "present" as const },
+      directory: { kind: "present" as const, git: "repository" as const },
     },
   ];
   seed(state);

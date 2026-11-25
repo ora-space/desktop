@@ -6,6 +6,28 @@ pub(super) fn prepare(
     db: &Connection,
     request: &PreviewWorkflowDebugRequest,
 ) -> Result<DebugPlanningInput, DatabaseError> {
+    if let WorkflowDebugSelection::NodeRunId(id) = &request.selection {
+        // An attempt recorded before the current snapshot baseline keeps its inputs as history
+        // only; the page has to select a position the current baseline has produced.
+        let recorded = db
+            .query_row(
+                "SELECT e.revision,COALESCE((SELECT MAX(b.revision) FROM workflow_debug_baselines b
+                    WHERE b.run_id=n.run_id),0)
+                 FROM workflow_node_runs n JOIN workflow_debug_attempts e ON e.node_run_id=n.id
+                 WHERE n.run_id=?1 AND n.id=?2 AND n.is_deleted=0",
+                params![request.run_id, id],
+                |row| Ok((row.get::<_, u32>(0)?, row.get::<_, u32>(1)?)),
+            )
+            .optional()?;
+        if let Some((revision, baseline)) = recorded
+            && revision < baseline
+        {
+            return Err(DebugRejection::MissingFact(format!(
+                "{id} was recorded under revision {revision}, before the current snapshot baseline {baseline}"
+            ))
+            .into());
+        }
+    }
     let (target, snapshot, entry, dispatch, kind, graph_json) = match &request.selection {
         WorkflowDebugSelection::PendingTarget(position) => super::pending::resolve(db, &request.run_id, position)?,
         WorkflowDebugSelection::NodeRunId(id) => db.query_row(
@@ -81,6 +103,24 @@ pub(super) fn prepare(
         })
         .and_then(|node| node.get_mut("data"))
         .ok_or(DebugRejection::InvalidTarget)?;
+    // The first run page only offers variables that are declared as arrays at the root. A path
+    // into a nested array is reported on its own field instead of failing graph validation as a
+    // whole.
+    for WorkflowDebugPatch::Replace { path, value } in &request.patch {
+        let root_variable = matches!(
+            value.as_array().map(Vec::as_slice),
+            Some([node, variable])
+                if node.as_str().is_some_and(|node| !node.is_empty())
+                    && variable.as_str().is_some_and(|variable| !variable.is_empty())
+        );
+        if path == "/iterationConfig/iteratorSelector" && !root_variable {
+            return Err(invalid(
+                path,
+                "expected the selector of a variable declared as an array at the root",
+            )
+            .into());
+        }
+    }
     replace(data, &kind, &request.patch)?;
     let candidate =
         WorkflowGraph::parse(&graph.to_string()).map_err(|e| invalid("", &e.to_string()))?;
@@ -179,6 +219,8 @@ pub(super) fn prepare(
 }
 
 /// Replays patches in revision order, preserving each field's container and suffix boundary.
+/// Revisions at or below the snapshot baseline belong to an earlier configuration lineage and
+/// stay history, also when a restart moves the target into a new root.
 pub(super) fn replay(
     db: &Connection,
     run: &str,
@@ -196,12 +238,11 @@ pub(super) fn replay(
         "SELECT p.patch,p.node_type,json_extract(p.plan,'$.target.nodeId') FROM workflow_debug_operations op
         JOIN workflow_debug_previews p ON p.id=op.preview_id
         WHERE op.run_id=?1 AND op.revision<=?2 AND p.snapshot_id=?3
+          AND op.revision>COALESCE((SELECT MAX(b.revision) FROM workflow_debug_baselines b
+              WHERE b.run_id=?1 AND b.revision<=?2),0)
           AND (json_extract(p.plan,'$.target.containerNodeRunId') IS NULL OR json_extract(p.plan,'$.target.containerNodeRunId')=?4)
           AND COALESCE(json_extract(p.plan,'$.target.index'),-1)<=COALESCE(?5,-1)
           AND COALESCE(json_extract(p.plan,'$.target.round'),-1)<=COALESCE(?6,-1)
-          AND p.root_scope=(SELECT COALESCE(owner.scope_id,scope.id)
-              FROM workflow_execution_scopes scope LEFT JOIN workflow_node_runs owner
-              ON owner.id=scope.parent_loop_node_run_id WHERE scope.id=?7)
         ORDER BY op.revision",
     )?;
     let mut rows = stmt.query(params![
@@ -210,8 +251,7 @@ pub(super) fn replay(
         snapshot,
         target.container_node_run_id,
         target.index,
-        target.round,
-        target.scope_id
+        target.round
     ])?;
     while let Some(row) = rows.next()? {
         let patch: Vec<WorkflowDebugPatch> = serde_json::from_str(&row.get::<_, String>(0)?)?;

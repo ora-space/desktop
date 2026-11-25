@@ -31,6 +31,7 @@ import {
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { localizeContractError } from "../../i18n/contract-error";
 import { useProjectBranches } from "../../state/hooks/use-project-branches";
+import { useWorkspaceGitAvailability } from "../../state/hooks/use-workspace-git";
 import { projectNameFromPath } from "./workspace-dialogs-utils";
 
 /**
@@ -206,9 +207,14 @@ function WorkspaceEntityDialog({
   const createTask = useCreateTask();
   const createSession = useCreateSession();
   const settingsAgentCli = useSettingsStore((state) => state.settings.agentCli);
-  const branchProjectId = dialog.kind === "task" ? dialog.projectId : null;
+  const taskProjectId = dialog.kind === "task" ? dialog.projectId : null;
+  // The sidebar hides the worktree entry for a plain folder, but the dialog can still be opened
+  // from stale state; explain instead of listing branches that cannot exist. Branches wait for
+  // the folder check so a plain folder never issues a Git branch listing.
+  const projectGit = useWorkspaceGitAvailability({ projectId: taskProjectId });
+  const worktreeUnavailable = projectGit === "notRepository";
   const { data: projectBranches = [], isLoading: branchesLoading } =
-    useProjectBranches(branchProjectId);
+    useProjectBranches(projectGit === "available" ? taskProjectId : null);
   let title: string;
   let description: string | undefined;
   let fields: EntityField[];
@@ -243,6 +249,12 @@ function WorkspaceEntityDialog({
         mainWorkspacePath: rootPath,
       });
     };
+  } else if (dialog.kind === "task" && worktreeUnavailable) {
+    title = t("dialog.createWorktree");
+    description = t("dialog.worktreeRequiresGitRepository");
+    submitLabel = t("dialog.createTask");
+    fields = [];
+    submit = async () => {};
   } else if (dialog.kind === "task") {
     title = t("dialog.createWorktree");
     description = t("dialog.worktreeDescription");
@@ -264,7 +276,7 @@ function WorkspaceEntityDialog({
           value: branch.refName,
           keywords: branch.name,
         })),
-        loading: branchesLoading,
+        loading: branchesLoading || projectGit === "checking",
       },
     ];
     submit = async (values) => {
@@ -306,6 +318,7 @@ function WorkspaceEntityDialog({
       submitLabel={submitLabel}
       pendingLabel={pendingLabel}
       fields={fields}
+      submitBlocked={worktreeUnavailable}
       onOpenChange={onOpenChange}
       onSubmit={submit}
     />

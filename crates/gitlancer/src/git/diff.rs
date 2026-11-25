@@ -355,7 +355,10 @@ fn build_untracked_diff_command(
         .into_iter()
         .map(str::to_string)
         .collect(),
-        GitEnv::default().with_variable("GIT_DIR", isolated_git_dir.to_string_lossy().into_owned()),
+        // `run_untracked_diff` recognizes a vanished file by Git's English stderr.
+        GitEnv::default()
+            .with_english_messages()
+            .with_variable("GIT_DIR", isolated_git_dir.to_string_lossy().into_owned()),
         GitIntent::ReadOnly,
     )
 }

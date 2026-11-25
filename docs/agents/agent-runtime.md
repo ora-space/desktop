@@ -106,22 +106,25 @@ turn locally until `startSession` returns.
 
 - **Start.** `startSession` is the only creation path. It calls `session/new` with the current
   Session MCP snapshot, applies the caller's optional model intent against the options that
-  handshake reported, persists the Session, opens its history and installs its actor. Until the
-  actor owns it, a guard releases the unexposed provider session (`session/delete` when supported,
-  otherwise `session/close`) on any error or cancellation, and failed persistence removes the
-  history file and soft-deletes any inserted row.
+  handshake reported (an applied intent outdates options the agent pushed before it), persists the
+  Session, opens its history and installs its actor. Until the actor owns it, a guard releases the
+  unexposed provider session (`session/delete` when supported, otherwise `session/close`) on any
+  error or cancellation, and failed persistence removes the history file and soft-deletes any
+  inserted row.
 - **Load.** Loading reads Ora's own record and touches no agent: it creates no provider session and
   changes no lifecycle state, so a conversation opens even if its agent is gone. If an actor exists
   it answers its own load (replaying the record and then following a prompt in flight) without
-  taking ownership of that prompt. While it is attached, the command catalog its provider last
-  reported precedes the replay; the catalog is not recorded and ends with the attachment.
+  taking ownership of that prompt. While it is attached, the options and the command catalog its
+  provider last reported precede the replay; neither is recorded and both end with the attachment.
 - **Attach.** A prompt is what acquires a provider session. A session holding no channel registers a
   route on the current connection and calls `session/load` with its private provider id and the
   current MCP snapshot, discards whatever the agent recites, and marks the row `Running`. Options
   and commands from that handshake reach the client as updates ahead of the turn. An agent usually
   reports its commands only after answering setup, so a command catalog that arrives while no prompt
-  runs is kept, newest only, and delivered at the start of the next prompt; other idle updates do
-  not cross into it. Admission waits for the attach and the MCP check, so a send that cannot reach an agent fails as a send.
+  runs is kept, newest only, and delivered at the start of the next prompt. Draining an idle session
+  discards its other updates, so they do not cross into that prompt; updates that arrive while a
+  title poll borrows the session are queued for it instead, again with only the newest catalog.
+  Admission waits for the attach and the MCP check, so a send that cannot reach an agent fails as a send.
 - **Rebuild.** An agent that cannot load the session, or fails to restore it, gets a replacement
   provider session from `session/new` with the same snapshot, and the next prompt carries the
   recorded transcript, exactly as an agent switch does. A load can also report success for a
@@ -132,9 +135,13 @@ turn locally until `startSession` returns.
   error. The retry only applies to a reusable `RequestFailed` before any output; a cancelled or
   otherwise finished first prompt consumes it. A load follower registered during that first
   attempt stays with the logical turn across the rebuild, so it receives exactly one terminal
-  boundary.
+  boundary, and it is told the options and commands of the replacement. Commands the stale session
+  had reported are withdrawn until the replacement reports its own, and so are its options when the
+  replacement offers none.
 - **Configure.** A session that holds a provider reports its own options and is configured through
-  `setSessionConfig`. A model chosen while a session held no provider is an intent applied at the
+  `setSessionConfig`. The actor takes the agent's answer before the caller gets it, so a view opened
+  later sees the options after the change; an answer for a provider session that was replaced
+  meanwhile is ignored. A model chosen while a session held no provider is an intent applied at the
   next attach. Reasoning effort is read only from the `thought_level` option a live session reports;
   there is no pre-session effort catalog.
 - **Stop and delete.** Explicit stop calls `session/close` when advertised, unloads the route and
@@ -143,13 +150,27 @@ turn locally until `startSession` returns.
 The frontend remembers, per agent and in browser storage only, the model last picked for a chat
 that had not started, and offers it only while the agent's current catalog still lists it.
 
-### Model discovery
+### Discovery
 
-Pre-session models come from the plugin's `agent/list_models`, called on demand with the
-Workspace's working directory and a 60-second budget. Ora does not cache the result; the plugin owns
-discovery and any cache, and if it needs ACP to discover models it launches a separate one-shot
-process through the host's child-process API rather than using Ora's shared connection. A failure
-affects only that request; empty lists are valid.
+Pre-session models and commands come from the plugin's `agent/discover` (or, for older plugins,
+`agent/list_models`, which knows no commands), called on demand with the Workspace's working directory
+and a 60-second budget. Ora does not cache the result; the plugin owns discovery and any cache, and if
+it needs ACP it launches a separate one-shot process through the host's child-process API rather than
+using Ora's shared connection. A failure affects only that request; empty lists are valid.
+
+A caller says whether it wants commands. The plugin then waits for the agent's first command report,
+at most two seconds after `session/new` answered and never into the time it keeps for cleanup, and
+answers without commands when none arrived. Callers that only need models (the workflow editor, a
+workflow node's model picker, scheduled-task validation) do not ask, so they never wait. They have
+their own frontend cache entry: an answer without commands must not hide them from the chat composer.
+
+The composer shows the commands the session reported; before any report, and while a move onto another
+agent is pending, it shows the discovered commands of the agent the next message goes to. Only a
+session's own report decides whether a typed command is unsupported, because discovery runs without MCP
+servers. Commands are untrusted text: the composer shows them as plain text, at most 500, drops names
+that are empty, over 128 bytes or contain whitespace, control or format characters, and cuts
+descriptions at 4096 bytes and hints at 256. Delivery is never cut, and a session that goes over 500
+commands leaves one warning in Desktop's log.
 
 ### Permissions
 
@@ -198,7 +219,7 @@ cancelled turn and keeps the actor reusable.
 | Bound | Value |
 |---|---|
 | `initialize` | 15 s |
-| Plugin model discovery | 60 s |
+| Plugin discovery | 60 s |
 | `session/new` / `session/load` inactivity | 30 s, or 120 s when MCP servers are delivered; rearmed by setup notifications |
 | Prompt inactivity windows | 45 s, then 60 s, 90 s and 120 s for up to three retries; paused by running tools and permission waits; subagent frames renew open CodeAgent delegations |
 | Cancellation settlement grace | 5 s |

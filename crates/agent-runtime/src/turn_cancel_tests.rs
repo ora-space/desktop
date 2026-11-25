@@ -2,7 +2,10 @@
 //!
 //! Evidence for specs/test-cases/node/protocol/cancel-turn-and-keep-session.md cases 24 and 25.
 use super::*;
-use agent_client_protocol_schema::v1::MessageId;
+use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
+use agent_client_protocol_schema::v1::{
+    AGENT_METHOD_NAMES, AvailableCommand, AvailableCommandsUpdate, MessageId, PromptRequest,
+};
 use pretty_assertions::assert_eq;
 use tokio::time::Instant;
 
@@ -180,6 +183,113 @@ fn a_prompt_that_ended_on_its_own_reports_no_applied_cancel() {
                 .is_some_and(|report| report.cancel_applied())
         );
         assert!(fixture.frames.try_recv().is_err(), "no cancel is written");
+        fixture.shutdown().await;
+    });
+}
+
+/// An answer that was already readable keeps its session, so a catalog queued ahead of that answer
+/// is still the one the session last reported.
+#[test]
+fn a_catalog_ahead_of_an_already_queued_answer_is_kept() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        let session = fixture.seed_session("answered");
+        let channel = fixture
+            .supervisor
+            .open_session_channel("answered", "answered")
+            .unwrap();
+        let client = channel.connection.client.clone();
+        let pending = client
+            .start_session_request::<_, PromptResponse>(
+                AcpSessionId::new("answered"),
+                AGENT_METHOD_NAMES.session_prompt,
+                &PromptRequest::new("answered", Vec::new()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        let update = AvailableCommandsUpdate::new(vec![AvailableCommand::new("late", "Runs it")]);
+        fixture
+            .agent
+            .send(AgentInput::Update(SessionNotification::new(
+                "answered",
+                SessionUpdate::AvailableCommandsUpdate(update.clone()),
+            )))
+            .unwrap();
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "answered".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        // No actor reads the channel, so once everything is quiet both are queued on it.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let inner = &fixture.manager.inner;
+        let (commands, receiver) = mpsc::unbounded_channel();
+        let mut actor = crate::RuntimeActor::<TestHost> {
+            cleanup_outcomes: HashMap::new(),
+            recorder: fixture.manager.open_recorder(&session).unwrap().recorder,
+            session,
+            cwd: fixture._directory.path().to_path_buf(),
+            repository: inner.store.clone(),
+            clock: inner.clock,
+            connection: fixture.supervisor.clone(),
+            channel: None,
+            commands: receiver,
+            sessions_root: inner.sessions_root.clone(),
+            connections: inner.connections.clone(),
+            handoff: crate::HandoffDebt::Settled,
+            rebuilt_binding: None,
+            load_restoration: Default::default(),
+            reported_config_options: Vec::new(),
+            commands_exceed_limit: false,
+            scheduler: inner.scheduler.clone(),
+            events: inner.events.clone(),
+            title_acquisition: crate::TitleAcquisition::disabled(),
+            command_sender: commands.downgrade(),
+            session_mcp: NoSessionMcp::default(),
+            barriers: inner.barriers.clone(),
+            live_mcp: LiveMcpState::Inactive,
+            turn_cancel: Default::default(),
+            #[cfg(feature = "test-support")]
+            test_prompt_inactivity_windows: None,
+            exit_probe: None,
+        };
+        actor
+            .turn_cancel
+            .request(Instant::now() + Duration::from_secs(15));
+        let (events, _owner) = mpsc::channel(/*buffer*/ 8);
+        let end_report = crate::PromptEndReport::new();
+        actor
+            .settle_prompt_cancel(
+                channel,
+                pending,
+                crate::turn_cancel::PromptStop {
+                    operation_id: 1,
+                    client: &client,
+                    permissions: &HashMap::new(),
+                    events: &events,
+                    end_report: &end_report,
+                    followers: &mut crate::session_followers::SessionFollowers::new(),
+                    tool_timings: &crate::tool_timing::ToolTimings::default(),
+                    saw_output: &mut false,
+                },
+                /*notify_owner*/ true,
+                /*completion*/ None,
+            )
+            .await;
+
+        assert!(!end_report.cancel_applied(), "the answer won the race");
+        assert_eq!(
+            actor
+                .channel
+                .as_ref()
+                .and_then(|channel| channel.reported_commands()),
+            Some(SessionUpdate::AvailableCommandsUpdate(update))
+        );
+        drop(actor);
         fixture.shutdown().await;
     });
 }

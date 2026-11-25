@@ -425,6 +425,199 @@ describe("Composer", () => {
     );
   });
 
+  it("shows discovered commands without judging typed ones by them", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <Composer
+        onSend={vi.fn()}
+        isResponding={false}
+        availableCommands={[{ name: "stale", description: "Other agent's" }]}
+        discoveredCommands={{
+          agentRef: "official/claude",
+          commands: [{ name: "review", description: "Review" }],
+          isLoading: false,
+        }}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+
+    await user.type(textarea, "/");
+    expect(await screen.findByRole("option", { name: /review/ })).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: /stale/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Agent 命令")).toBeVisible();
+
+    await user.type(textarea, "mcp-tool");
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
+  });
+
+  it("explains unknown commands only once discovery has answered", async () => {
+    const user = userEvent.setup();
+    const unknown = { agentRef: "official/claude", commands: null };
+    const view = renderWithI18n(
+      <Composer
+        onSend={vi.fn()}
+        isResponding={false}
+        availableCommands={null}
+        discoveredCommands={{ ...unknown, isLoading: true }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
+    expect(
+      within(screen.getByRole("listbox")).queryByRole("status"),
+    ).not.toBeInTheDocument();
+
+    view.rerender(
+      <Composer
+        onSend={vi.fn()}
+        isResponding={false}
+        availableCommands={null}
+        discoveredCommands={{ ...unknown, isLoading: false }}
+      />,
+    );
+    expect(
+      within(screen.getByRole("listbox")).getByRole("status"),
+    ).toBeVisible();
+  });
+
+  it("calls no reported command unsupported because the menu leaves it out", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <Composer
+        onSend={vi.fn()}
+        isResponding={false}
+        availableCommands={[
+          ...Array.from({ length: 500 }, (_, index) => ({
+            name: `c${index}`,
+            description: "",
+          })),
+          { name: "last", description: "" },
+        ]}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+
+    await user.type(textarea, "/last");
+    expect(
+      screen.queryByRole("option", { name: /last/ }),
+    ).not.toBeInTheDocument();
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
+
+    await user.type(textarea, "x");
+    expect(
+      textarea.querySelector("[data-unsupported-command='lastx']"),
+    ).not.toBeNull();
+  });
+
+  it("explains a catalog the Agent has not reported instead of calling a command unsupported", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(
+      <Composer
+        onSend={onSend}
+        isResponding={false}
+        availableCommands={null}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+
+    await user.type(textarea, "/mcp");
+
+    const menu = await screen.findByRole("listbox", { name: "快捷操作" });
+    expect(within(menu).getByRole("status")).toHaveTextContent(
+      "执行一轮对话后，Agent 自带命令和 skill 才会显示",
+    );
+    expect(within(menu).queryByRole("option")).not.toBeInTheDocument();
+    expect(textarea).not.toHaveAttribute("aria-activedescendant");
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
+
+    // The notice is not a choice, so Enter still belongs to the message.
+    await user.keyboard("{Enter}");
+    expect(onSend).toHaveBeenCalledWith("/mcp");
+  });
+
+  it("keeps the pending notice above the options and out of keyboard selection", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <Composer
+        onSend={vi.fn()}
+        isResponding={false}
+        availableCommands={null}
+        skills={[
+          {
+            id: "skill-1",
+            namespace: "local",
+            name: "code-review",
+            description: "Review the current diff",
+            source: { kind: "local" } as const,
+            availability: "available",
+          },
+        ]}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "/");
+
+    const menu = await screen.findByRole("listbox", { name: "快捷操作" });
+    const notice = within(menu).getByRole("status");
+    const option = within(menu).getByRole("option", { name: "code-review" });
+    expect(
+      notice.compareDocumentPosition(option) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await user.keyboard("{Enter}");
+    expect(composerText(textarea)).toContain("code-review");
+  });
+
+  it("shows the pending notice in the plus menu until the catalog arrives", async () => {
+    const user = userEvent.setup();
+    const view = renderWithI18n(
+      <Composer
+        onSend={vi.fn()}
+        isResponding={false}
+        availableCommands={null}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
+    expect(
+      within(screen.getByRole("listbox")).getByRole("status"),
+    ).toBeVisible();
+
+    view.rerender(
+      <Composer
+        onSend={vi.fn()}
+        isResponding={false}
+        availableCommands={[{ name: "review", description: "Review" }]}
+      />,
+    );
+
+    expect(await screen.findByRole("option", { name: /review/ })).toBeVisible();
+    expect(
+      within(screen.getByRole("listbox")).queryByRole("status"),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(["/usr/bin/parser", "/.env", "@parser"])(
+    "does not explain the pending catalog while typing %s",
+    async (text) => {
+      const user = userEvent.setup();
+      renderWithI18n(
+        <Composer
+          onSend={vi.fn()}
+          isResponding={false}
+          availableCommands={null}
+        />,
+      );
+
+      await user.type(screen.getByRole("textbox"), text);
+
+      expect(
+        screen.queryByText("执行一轮对话后，Agent 自带命令和 skill 才会显示"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
   it("does not mark a slash path as an unsupported command", async () => {
     const user = userEvent.setup();
     renderWithI18n(<Composer onSend={vi.fn()} isResponding={false} />);
@@ -573,7 +766,7 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
 
     expect(screen.getByText("Skills")).toBeVisible();
-    expect(screen.getByText("Commands")).toBeVisible();
+    expect(screen.getByText("Agent 命令")).toBeVisible();
     await user.click(screen.getByRole("option", { name: "code-review" }));
 
     expect(composerText(screen.getByRole("textbox"))).toBe("$code-review ");
@@ -2409,6 +2602,29 @@ describe("ChatView", () => {
     );
 
     expect(screen.queryByText("pick a project")).toBeNull();
+  });
+
+  it("treats an omitted catalog as not reported", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <ChatView
+        turns={[]}
+        userName="Eric"
+        isResponding={false}
+        error={null}
+        onSend={() => {}}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+
+    await user.type(textarea, "/mcp");
+
+    expect(
+      await screen.findByText(
+        "执行一轮对话后，Agent 自带命令和 skill 才会显示",
+      ),
+    ).toBeVisible();
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
   });
 
   it("renders execution context immediately above the composer surface", () => {

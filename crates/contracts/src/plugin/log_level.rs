@@ -34,6 +34,8 @@ pub struct PluginLogLevelResponse {
     pub plugin_id: String,
     pub level: RuntimeLogLevel,
     pub configured: bool,
+    /// File requiring repair/restart; null when ordinary edits are safe.
+    pub read_only_path: Option<String>,
 }
 
 /// Exports the Plugin log level DTO family into its own TypeScript module.
@@ -69,13 +71,14 @@ mod tests {
                     plugin_id: "official/example".to_string(),
                     level: RuntimeLogLevel::Info,
                     configured: false,
+                    read_only_path: None,
                 })
                 .unwrap(),
             ),
             (
                 json!({ "pluginId": "official/example" }),
                 json!({ "pluginId": "official/example", "level": "debug" }),
-                json!({ "pluginId": "official/example", "level": "info", "configured": false }),
+                json!({ "pluginId": "official/example", "level": "info", "configured": false, "readOnlyPath": null }),
             )
         );
     }

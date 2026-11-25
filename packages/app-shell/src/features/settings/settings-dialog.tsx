@@ -31,6 +31,7 @@ import {
   IconDeviceDesktop,
   IconFolder,
   IconLanguage,
+  IconListDetails,
   IconMoon,
   IconProng,
   IconCloud,
@@ -55,7 +56,9 @@ import {
   useSettingsStore,
   type SettingsPreferences,
 } from "../../state/stores/settings-store";
+import { ReleaseNotesHistory } from "../release-notes/release-notes-history";
 import { DesktopUpdateControl } from "../workspace/desktop-update-control";
+import { PendingUpdate } from "../workspace/pending-update";
 import type { ThemeMode } from "../../state/stores/settings-store";
 
 type PendingSettingsNavigation =
@@ -125,6 +128,11 @@ export function SettingsDialog() {
       icon: IconBug,
       label: t("settings.nav.developer"),
     },
+    {
+      id: "releaseNotes",
+      icon: IconListDetails,
+      label: t("releaseNotes.title"),
+    },
   ];
 
   return (
@@ -185,7 +193,15 @@ export function SettingsDialog() {
                 })}
               </nav>
               <div className="mt-auto hidden pt-6 sm:block">
-                <DesktopUpdateControl />
+                <DesktopUpdateControl
+                  onReview={() => {
+                    if (category !== "releaseNotes")
+                      requestNavigation({
+                        kind: "category",
+                        category: "releaseNotes",
+                      });
+                  }}
+                />
               </div>
             </aside>
 
@@ -223,6 +239,13 @@ export function SettingsDialog() {
                 {category === "proxy" && <ProxySettings />}
                 {category === "cloud" && <CloudConnectionSettings />}
                 {category === "privacy" && <PrivacySettings />}
+                {category === "releaseNotes" && (
+                  <div className="space-y-6">
+                    <SettingsHeading title={t("releaseNotes.title")} />
+                    <PendingUpdate />
+                    <ReleaseNotesHistory />
+                  </div>
+                )}
                 {category === "developer" && (
                   <DeveloperSettings
                     developerMode={developerMode}

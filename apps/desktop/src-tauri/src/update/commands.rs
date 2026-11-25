@@ -13,19 +13,22 @@ pub async fn get_desktop_update_status(
     Ok(state.update.status())
 }
 
-/// Installs the verified cached update through the updater service.
+/// Installs the verified cached update of the version the user confirmed.
 #[tauri::command]
 pub async fn install_desktop_update(
+    version: String,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<(), CommandError> {
     // Boxed for the same IPC-stack reason every deep domain future is; see
     // `commands::run_async_backend`.
-    Box::pin(state.update.install()).await.map_err(|error| {
-        CommandError::from_backend(BackendError::internal(
-            "failed to install Desktop update",
-            error,
-        ))
-    })
+    Box::pin(state.update.install(&version))
+        .await
+        .map_err(|error| {
+            CommandError::from_backend(BackendError::internal(
+                "failed to install Desktop update",
+                error,
+            ))
+        })
 }
 
 /// Runs an update check on demand, outside the scheduled delayed and cron checks.

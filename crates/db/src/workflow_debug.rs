@@ -13,6 +13,7 @@ pub use rusqlite::Transaction;
 
 mod attempts;
 mod configuration;
+pub(crate) mod fence;
 mod normalize;
 mod operations;
 mod pending;
@@ -22,7 +23,7 @@ pub use operations::DebugClaim;
 mod tests;
 
 /// Domain outcomes that callers can distinguish from storage failures.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum DebugRejection {
     #[error("missing_input_evidence")]
     MissingInputEvidence,
@@ -30,8 +31,8 @@ pub enum DebugRejection {
     StalePreview,
     #[error("request_conflict")]
     RequestConflict,
-    #[error("operation_in_progress")]
-    OperationInProgress,
+    #[error("debug_operation_active")]
+    OperationActive,
     #[error("missing_input_evidence: {0}")]
     MissingFact(String),
     #[error("invalid_target")]
@@ -76,9 +77,7 @@ impl WorkflowDebugStore {
     ) -> Result<WorkflowDebugPreview, DatabaseError> {
         self.pool.with_connection_mut(|connection| {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            if operations::blocked(&tx, &request.run_id)? {
-                return Err(DebugRejection::OperationInProgress.into());
-            }
+            fence::ensure_inactive(&tx, &request.run_id)?;
             let revision = run_version(&tx, &request.run_id)?;
             if revision != request.base_revision {
                 return Err(DebugRejection::StalePreview.into());
@@ -131,9 +130,10 @@ impl WorkflowDebugStore {
 }
 
 /// Reads the active configuration revision under the same transaction as the preview or claim.
+/// A snapshot switch raises it like an applied edit does, through a baseline revision.
 fn run_version(db: &Connection, run: &str) -> Result<u32, DatabaseError> {
     db.query_row(
-        "SELECT COALESCE((SELECT MAX(revision) FROM workflow_debug_operations WHERE run_id=r.id),0) FROM workflow_runs r WHERE r.id=?1 AND r.is_deleted=0 AND r.run_status<>0",
+        "SELECT COALESCE((SELECT MAX(revision) FROM workflow_debug_revisions WHERE run_id=r.id),0) FROM workflow_runs r WHERE r.id=?1 AND r.is_deleted=0 AND r.run_status<>0",
         [run], |row| row.get(0),
     ).optional()?.ok_or(DebugRejection::InvalidTarget.into())
 }

@@ -1,14 +1,23 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RemoteContractError } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { agentRuntimeKeys } from "../data/agent-runtime";
+import {
+  type AgentDiscoveryScope,
+  agentRuntimeKeys,
+} from "../data/agent-runtime";
 import { refreshWorkspaceDirectories } from "../data/workspace";
 import { useAgentRuntimeStatus } from "./use-agent-runtime-status";
 
-/** Discovers one plugin-owned model catalog without creating an Ora provider session. */
-export function useAgentModels(
+/**
+ * Discovers what one agent offers a chat without creating an Ora provider session.
+ *
+ * The model picker and the slash menu of a chat both read the default scope, so a chat surface
+ * starts one discovery. A surface that shows no discovered commands asks for models alone.
+ */
+export function useAgentDiscovery(
   agentRef: string | null,
   workspaceId: string | null,
+  scope: AgentDiscoveryScope = "modelsAndCommands",
 ) {
   const client = useContractsClient();
   const queryClient = useQueryClient();
@@ -18,12 +27,13 @@ export function useAgentModels(
   )?.status;
   const ready = runtimeStatus === "ready";
   const query = useQuery({
-    queryKey: agentRuntimeKeys.agentModels(agentRef, workspaceId),
+    queryKey: agentRuntimeKeys.agentDiscovery(agentRef, workspaceId, scope),
     queryFn: () =>
       client.agentRuntime
-        .listModels({
+        .discover({
           agentRef: agentRef!,
           workspaceId: workspaceId!,
+          includeCommands: scope === "modelsAndCommands",
         })
         .catch((error: unknown) => {
           // Discovery resolves the workspace folder before asking the plugin. A refusal here
@@ -49,6 +59,9 @@ export function useAgentModels(
   return {
     ...query,
     models: query.data?.models ?? [],
+    // Withheld while the agent cannot be reached, so what it once offered does not outlive it. Not
+    // knowing the commands stays `null`, which is not the same as the agent having none.
+    commands: ready ? (query.data?.commands ?? null) : null,
     isLoading:
       query.isLoading ||
       (agentRef !== null &&

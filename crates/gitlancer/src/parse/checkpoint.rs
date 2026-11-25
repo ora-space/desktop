@@ -183,7 +183,7 @@ mod tests {
         // `git diff-tree --numstat -z` embeds the path after a second tab. Renames use an empty
         // path field followed by the old path and the new path as separate NUL tokens.
         let stdout =
-            "1\t0\tadded.txt\02\t3\tmodified.txt\0-\t-\tbinary.bin\01\t1\t\0old.txt\0new.txt\0";
+            "1\t0\tadded.txt\x002\t3\tmodified.txt\0-\t-\tbinary.bin\x001\t1\t\0old.txt\0new.txt\0";
         assert_eq!(
             parse_numstat_z(stdout).unwrap(),
             vec![
@@ -201,7 +201,7 @@ mod tests {
         let entries =
             parse_name_status_z("A\0added.txt\0R100\0old.txt\0new.txt\0A\0binary.bin\0").unwrap();
         let stats =
-            parse_numstat_z("1\t0\tadded.txt\01\t1\t\0old.txt\0new.txt\0-\t-\tbinary.bin\0")
+            parse_numstat_z("1\t0\tadded.txt\x001\t1\t\0old.txt\0new.txt\0-\t-\tbinary.bin\0")
                 .unwrap();
         assert_eq!(
             combine_name_status_and_numstat(entries, stats),

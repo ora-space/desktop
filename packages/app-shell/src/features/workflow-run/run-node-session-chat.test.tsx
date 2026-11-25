@@ -13,6 +13,8 @@ import type {
   WorkflowNodeCompletionBlockerKind,
 } from "@ora/workflow-runtime";
 import { appI18n } from "../../i18n/i18n-instance";
+import { AGENT_REF } from "../../test/agent-identity";
+import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import {
   createTestQueryClient,
   createHookWrapper,
@@ -310,6 +312,58 @@ describe("RunNodeSessionChat", () => {
     ).toMatch(/描述一个任务/);
   });
 
+  it("never waits for commands it does not show", async () => {
+    const state = createFixtureState();
+    state.tasks = [
+      { id: "t1", projectId: "p1", workspaceId: "workspace-1", title: "Task" },
+    ];
+    state.workspaces = [
+      {
+        id: "workspace-1",
+        projectId: "p1",
+        kind: "isolated",
+        lifecycle: "active",
+        directory: { kind: "present", git: "repository" },
+      },
+    ];
+    state.sessions = [
+      {
+        id: sessionId,
+        workspaceId: "workspace-1",
+        title: null,
+        agentRef: AGENT_REF.opencode,
+        status: "stopped",
+        historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
+      },
+    ];
+    const client = createTestClient(createFixtureHandlers(state));
+    const discover = vi.spyOn(client.agentRuntime, "discover");
+    const chatStore = createChatStore(client.session);
+    chatStore.setState({
+      conversations: { [sessionId]: seededConversation(false) },
+    });
+    useWorkspaceSelectionStore.getState().selectTask("t1", "p1");
+
+    render(
+      <RunNodeSessionChat
+        sessionId={sessionId}
+        status="awaiting_input"
+        interaction={{ runId, nodeId }}
+      />,
+      {
+        wrapper: createHookWrapper(client, createTestQueryClient(), chatStore),
+      },
+    );
+
+    await waitFor(() => expect(discover).toHaveBeenCalled());
+    expect(
+      discover.mock.calls.map(([request]) => request.includeCommands),
+    ).toEqual([false]);
+    // The surface is still mounted and follows the selection.
+    act(() => useWorkspaceSelectionStore.getState().clearSelection());
+  });
+
   it("keeps the node session's authoritative model visible", async () => {
     const nodeSessionOptions: acp.SessionConfigOption[] = [
       {
@@ -340,6 +394,32 @@ describe("RunNodeSessionChat", () => {
 
     await userEvent.click(modelPicker);
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("explains commands a node session has not loaded yet", async () => {
+    const user = userEvent.setup();
+    const { chatStore } = renderDock("awaiting_input", false);
+    const setCatalog = (availableCommands: acp.AvailableCommand[] | null) =>
+      act(() =>
+        chatStore.setState(({ conversations }) => ({
+          conversations: {
+            [sessionId]: { ...conversations[sessionId]!, availableCommands },
+          },
+        })),
+      );
+    const textarea = screen.getByRole("textbox");
+    setCatalog(null);
+
+    await user.type(textarea, "/review");
+    const pending = appI18n.t("chat.actionMenu.commandsPending");
+    expect(await screen.findByText(pending)).toBeVisible();
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
+
+    setCatalog([]);
+    await waitFor(() => expect(screen.queryByText(pending)).toBeNull());
+    expect(
+      textarea.querySelector(".composer-unsupported-command"),
+    ).not.toBeNull();
   });
 
   it("places the shared conversation navigator inside the node session", () => {

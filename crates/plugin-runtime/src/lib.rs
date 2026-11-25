@@ -32,7 +32,7 @@ use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec};
 use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout, timeout_at};
 
 use crate::state::{PendingRequests, RuntimeInner, RuntimeStatus, SupervisorCommand};
 use ora_plugin_protocol::{JSON_RPC_VERSION, SHUTDOWN_METHOD};
@@ -114,6 +114,14 @@ impl Drop for RuntimeLease {
 pub struct PluginRuntime {
     inner: Arc<RuntimeInner>,
     _lease: Arc<RuntimeLease>,
+}
+
+/// How long one call may take.
+enum CallLimit {
+    /// Counted once the request was handed to the writer.
+    AfterSend(Duration),
+    /// Including any wait for the writer.
+    Until(Instant),
 }
 
 impl PluginRuntime {
@@ -274,20 +282,35 @@ impl PluginRuntime {
 
     /// Invokes one registered method and returns its JSON result.
     pub async fn invoke(&self, method: &str, params: Value) -> Result<Value, PluginRuntimeError> {
-        self.invoke_with_timeout(method, params, self.inner.call_timeout)
-            .await
+        self.call(
+            method,
+            params,
+            CallLimit::AfterSend(self.inner.call_timeout),
+        )
+        .await
     }
 
-    /// Invokes one registered method with a budget chosen for that operation.
+    /// Invokes one registered method and stops waiting at an instant the caller chose.
     ///
-    /// Heavy control operations such as model discovery may need to start a child process, so
-    /// forcing them through the short-call budget would either make discovery unreliable or
-    /// weaken the timeout applied to every ordinary control call.
-    pub async fn invoke_with_timeout(
+    /// Heavy control operations such as discovery may need to start a child process, so forcing
+    /// them through the short-call budget would either make discovery unreliable or weaken the
+    /// timeout applied to every ordinary control call. Time spent waiting to be written counts,
+    /// so a caller may tell the plugin this very instant.
+    pub async fn invoke_until(
         &self,
         method: &str,
         params: Value,
-        call_timeout: Duration,
+        deadline: Instant,
+    ) -> Result<Value, PluginRuntimeError> {
+        self.call(method, params, CallLimit::Until(deadline)).await
+    }
+
+    /// Correlates one request with its response within the limit.
+    async fn call(
+        &self,
+        method: &str,
+        params: Value,
+        limit: CallLimit,
     ) -> Result<Value, PluginRuntimeError> {
         self.ensure_ready()?;
         if !self
@@ -314,12 +337,26 @@ impl PluginRuntime {
             "method": method,
             "params": params,
         });
-        if self.inner.writer_tx.send(request).await.is_err() {
+        let send = self.inner.writer_tx.send(request);
+        let sent = match limit {
+            CallLimit::AfterSend(_) => Ok(send.await),
+            CallLimit::Until(deadline) => timeout_at(deadline, send).await,
+        };
+        let unsent = match sent {
+            Ok(Ok(())) => None,
+            Ok(Err(_)) => Some(PluginRuntimeError::RequestChannelClosed),
+            Err(_) => Some(PluginRuntimeError::CallTimeout),
+        };
+        if let Some(error) = unsent {
             self.inner.pending.lock().await.remove_active(request_id);
-            return Err(PluginRuntimeError::RequestChannelClosed);
+            return Err(error);
         }
 
-        match timeout(call_timeout, result_rx).await {
+        let answered = match limit {
+            CallLimit::AfterSend(budget) => timeout(budget, result_rx).await,
+            CallLimit::Until(deadline) => timeout_at(deadline, result_rx).await,
+        };
+        match answered {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(PluginRuntimeError::Unavailable(
                 "plugin stopped before responding".to_string(),

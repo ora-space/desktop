@@ -19,6 +19,14 @@ export type ContractError =
     | { "code": "agent_name_conflict"; "params": EmptyErrorParams }
     | { "code": "agent_not_found"; "params": EmptyErrorParams }
     | { "code": "plugin_not_found"; "params": EmptyErrorParams }
+    | {
+      "code": "plugin_log_levels_read_only";
+      "params": PluginLogLevelsFileParams;
+    }
+    | {
+      "code": "plugin_log_levels_write_failed";
+      "params": PluginLogLevelsFileParams;
+    }
     | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
     | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
     | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
@@ -82,6 +90,7 @@ export type ContractError =
       "params": EmptyErrorParams;
     }
     | { "code": "workspace_diff_too_large"; "params": EmptyErrorParams }
+    | { "code": "workspace_not_git_repository"; "params": EmptyErrorParams }
     | { "code": "session_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_not_installed"; "params": EmptyErrorParams }
     | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
@@ -210,6 +219,17 @@ export type ContractError =
       "code": "workflow_node_signal_changed";
       "params": WorkflowNodeSignalChangedParams;
     }
+    | { "code": "workflow_debug_stale_preview"; "params": EmptyErrorParams }
+    | { "code": "workflow_debug_operation_active"; "params": EmptyErrorParams }
+    | { "code": "workflow_debug_request_conflict"; "params": EmptyErrorParams }
+    | {
+      "code": "workflow_debug_patch_invalid";
+      "params": WorkflowDebugPatchInvalidParams;
+    }
+    | {
+      "code": "workflow_debug_target_rejected";
+      "params": WorkflowDebugTargetRejectedParams;
+    }
   );
 
 /**
@@ -253,6 +273,11 @@ export type PluginConfigurationValidationParams = {
 };
 
 /**
+ * Host configuration path that needs repair; excludes the stored configuration contents.
+ */
+export type PluginLogLevelsFileParams = { path: string };
+
+/**
  * Names the package field a plugin install or import rejected, with its technical reason.
  *
  * `field` is a stable manifest path — `description`, `webview.allowed_origins[0]`, or the
@@ -278,6 +303,14 @@ export type PublicError =
   | { "code": "agent_name_conflict"; "params": EmptyErrorParams }
   | { "code": "agent_not_found"; "params": EmptyErrorParams }
   | { "code": "plugin_not_found"; "params": EmptyErrorParams }
+  | {
+    "code": "plugin_log_levels_read_only";
+    "params": PluginLogLevelsFileParams;
+  }
+  | {
+    "code": "plugin_log_levels_write_failed";
+    "params": PluginLogLevelsFileParams;
+  }
   | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
   | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
   | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
@@ -338,6 +371,7 @@ export type PublicError =
     "params": EmptyErrorParams;
   }
   | { "code": "workspace_diff_too_large"; "params": EmptyErrorParams }
+  | { "code": "workspace_not_git_repository"; "params": EmptyErrorParams }
   | { "code": "session_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_not_installed"; "params": EmptyErrorParams }
   | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
@@ -453,6 +487,17 @@ export type PublicError =
   | {
     "code": "workflow_node_signal_changed";
     "params": WorkflowNodeSignalChangedParams;
+  }
+  | { "code": "workflow_debug_stale_preview"; "params": EmptyErrorParams }
+  | { "code": "workflow_debug_operation_active"; "params": EmptyErrorParams }
+  | { "code": "workflow_debug_request_conflict"; "params": EmptyErrorParams }
+  | {
+    "code": "workflow_debug_patch_invalid";
+    "params": WorkflowDebugPatchInvalidParams;
+  }
+  | {
+    "code": "workflow_debug_target_rejected";
+    "params": WorkflowDebugTargetRejectedParams;
   };
 
 /**
@@ -482,6 +527,23 @@ export type SkillFolderConflictParams = { name: string };
  * Carries the user-selected base branch name when Git cannot resolve it.
  */
 export type TaskBaseBranchNotFoundParams = { branchName: string };
+
+/**
+ * Names the field of a run-local debug patch that the server refused, and why.
+ */
+export type WorkflowDebugPatchInvalidParams = {
+  /**
+   * Path relative to the normalized data of the edited node, such as `/agentConfig/prompt`.
+   */
+  path: string;
+  reason: string;
+};
+
+/**
+ * Explains why a run-local debug target cannot be previewed, such as which recorded input is
+ * missing or which position field the page still has to supply.
+ */
+export type WorkflowDebugTargetRejectedParams = { reason: string };
 
 /**
  * Names the workflow node and the MCP plugin its frozen graph declares, for a run that cannot

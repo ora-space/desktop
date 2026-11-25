@@ -49,6 +49,24 @@ fn accepts_a_complete_agent_contract() {
     assert_eq!(verify_agent_contract(&complete_registration()), Ok(()));
 }
 
+/// Either discovery method satisfies the contract, so plugins built before and after the rename work.
+#[test]
+fn accepts_either_discovery_method() {
+    for registered in [
+        &["agent/discover"][..],
+        &["agent/list_models"][..],
+        &["agent/discover", "agent/list_models"][..],
+    ] {
+        let mut registration = complete_registration();
+        registration.methods.remove("agent/list_models");
+        registration
+            .methods
+            .extend(registered.iter().map(ToString::to_string));
+
+        assert_eq!(verify_agent_contract(&registration), Ok(()));
+    }
+}
+
 /// Every missing control method is named at once so one restart surfaces the whole gap.
 #[test]
 fn rejects_a_registration_missing_control_methods() {
@@ -67,7 +85,7 @@ fn rejects_a_registration_missing_control_methods() {
             methods.sort_unstable();
             methods
         }),
-        Some(vec!["agent/list_models", "agent/stop"])
+        Some(vec!["agent/discover", "agent/stop"])
     );
 }
 

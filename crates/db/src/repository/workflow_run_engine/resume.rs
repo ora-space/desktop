@@ -27,6 +27,9 @@ pub(super) fn resume_from_failure(
         let Some((status, serialized_payload)) = run else {
             return Ok(ResumeWorkflowRunResult::NotFound);
         };
+        // Recovery re-dispatches under the current revision; it must not overtake a confirmation
+        // that is still stopping or holds an unreleased fence.
+        crate::workflow_debug::fence::ensure_inactive(&transaction, run_id.as_ref())?;
         if !matches!(
             WorkflowRunStatus::from_database_value(status)?,
             WorkflowRunStatus::Failed | WorkflowRunStatus::Cancelled

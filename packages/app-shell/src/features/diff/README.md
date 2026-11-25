@@ -5,6 +5,9 @@ Task Changes panel: parsed worktree patches, file tree, and git commit/push acti
 ## Responsibilities
 
 - Render unified/split diffs for a task scope (`branch` / staged / unstaged / commit).
+- For a workspace whose folder the backend reports as `notRepository`, render
+  `TaskDiffNotGitState` instead and issue no diff or status query; chat jumps
+  resolve to the Files panel through `onFileNotFound`.
 - Collapse distant unchanged context and restore it on demand.
 - Scroll a selected file to the viewport top through the single programmatic
   scroll runner (`task-diff-scroll-run.ts`), shared by file-tree clicks and

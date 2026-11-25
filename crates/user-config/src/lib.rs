@@ -13,6 +13,7 @@ pub enum ConfigKey {
     DeveloperMode,
     LogLevel,
     NetworkProxySettings,
+    NetworkProxyCheckUrl,
     WorktreeRoot,
 }
 
@@ -23,6 +24,7 @@ impl ConfigKey {
             Self::CloudServer => "cloud_server",
             Self::DeveloperMode => "developer_mode",
             Self::NetworkProxySettings => "network_proxy_settings",
+            Self::NetworkProxyCheckUrl => "network_proxy_check_url",
             Self::LogLevel => "log_level",
             Self::WorktreeRoot => "worktree_root",
         }

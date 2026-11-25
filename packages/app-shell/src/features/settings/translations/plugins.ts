@@ -2,6 +2,12 @@
 export const pluginTranslations = {
   "zh-CN": {
     "errors.plugin_not_found": "未找到该插件。",
+    "errors.plugin_log_levels_read_only":
+      "插件日志设置处于只读保护状态。请修复 {{path}} 后重启应用，再修改日志级别。",
+    "errors.plugin_log_levels_write_failed":
+      "无法保存插件日志设置到 {{path}}。请检查文件访问权限和可用空间后重试。",
+    "settings.plugins.logLevelReadOnly":
+      "日志设置只读。请修复 {{path}} 后重启应用；原配置已保留。",
     "errors.plugin_host_incompatible": "当前主机不支持此插件的发布制品。",
     "errors.plugin_package_invalid":
       "插件包内容不合法（{{field}}）：{{message}}",
@@ -409,6 +415,12 @@ export const pluginTranslations = {
   },
   "en-US": {
     "errors.plugin_not_found": "The plugin was not found.",
+    "errors.plugin_log_levels_read_only":
+      "Plugin log settings are protected as read-only. Repair {{path}} and restart the app before editing log levels.",
+    "errors.plugin_log_levels_write_failed":
+      "Could not save plugin log settings to {{path}}. Check file access and available space, then retry.",
+    "settings.plugins.logLevelReadOnly":
+      "Log settings are read-only. Repair {{path}} and restart the app; saved settings have been preserved.",
     "errors.plugin_host_incompatible":
       "This plugin's release artifact is not supported on the current host.",
     "errors.plugin_package_invalid":

@@ -1,11 +1,11 @@
 import { useMemo } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { WorkflowAgentModel } from "@ora/workflow-mock";
 import { useContractsClient } from "../../contracts-client-context";
 import type { AgentEntry } from "./use-agent-catalog";
 import { useAvailableAgents } from "./use-available-agents";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
-import { agentRuntimeKeys } from "../data/agent-runtime";
+import { agentRuntimeKeys, reusableChatDiscovery } from "../data/agent-runtime";
 import { useProjects } from "./use-projects";
 import { useTasks } from "./use-tasks";
 import { useWorkspaces } from "./use-workspaces";
@@ -40,6 +40,7 @@ export interface WorkflowAgentModelsCatalog {
  */
 export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
   const client = useContractsClient();
+  const queryClient = useQueryClient();
   const agents = useAvailableAgents();
   const selection = useWorkspaceSelectionStore((state) => state.selection);
   const projectsQuery = useProjects();
@@ -58,12 +59,24 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
 
   const modelQueries = useQueries({
     queries: agents.map((agent) => ({
-      queryKey: agentRuntimeKeys.agentModels(agent.agentRef, workspaceId),
+      queryKey: agentRuntimeKeys.agentDiscovery(
+        agent.agentRef,
+        workspaceId,
+        "models",
+      ),
       enabled: workspaceId !== null,
+      // A discovery made for a chat answers this too, so opening the editor right after one does
+      // not start the agent again. The reverse never holds.
+      initialData: () =>
+        reusableChatDiscovery(queryClient, agent.agentRef, workspaceId)?.data,
+      initialDataUpdatedAt: () =>
+        reusableChatDiscovery(queryClient, agent.agentRef, workspaceId)
+          ?.dataUpdatedAt,
       queryFn: () =>
-        client.agentRuntime.listModels({
+        client.agentRuntime.discover({
           workspaceId: workspaceId!,
           agentRef: agent.agentRef,
+          includeCommands: false,
         }),
       retry: false,
     })),

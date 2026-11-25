@@ -3881,6 +3881,7 @@ name = "ora-desktop"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "chrono-tz",
  "getrandom 0.3.4",
  "iana-time-zone",

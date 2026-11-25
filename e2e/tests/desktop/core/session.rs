@@ -20,7 +20,7 @@ mod tests {
     };
     use ora_backend::{Backend, BackendError, SessionEventStream};
     use ora_contracts::{
-        AgentStatus, CreateProjectRequest, GetAgentRuntimeStatusRequest, ListAgentModelsRequest,
+        AgentStatus, CreateProjectRequest, DiscoverAgentRequest, GetAgentRuntimeStatusRequest,
         ListSessionsRequest, ListWorkspacesRequest, LoadSessionEvent, LoadSessionRequest,
         PromptSessionEvent, PromptSessionRequest, StartSessionRequest, WorkspaceKind,
     };
@@ -79,9 +79,10 @@ mod tests {
         let workspace_id = main_workspace_id(&backend)?;
 
         let runtime = current_thread_runtime()?;
-        let models = runtime.block_on(backend.agent_runtime().models(ListAgentModelsRequest {
+        let models = runtime.block_on(backend.agent_runtime().discover(DiscoverAgentRequest {
             agent_ref: agent_ref(),
             workspace_id,
+            include_commands: false,
         }))?;
 
         assert!(
@@ -119,9 +120,10 @@ mod tests {
         let workspace_id = main_workspace_id(&backend)?;
         let runtime = current_thread_runtime()?;
         let chosen = runtime
-            .block_on(backend.agent_runtime().models(ListAgentModelsRequest {
+            .block_on(backend.agent_runtime().discover(DiscoverAgentRequest {
                 agent_ref: agent_ref(),
                 workspace_id: workspace_id.clone(),
+                include_commands: false,
             }))?
             .models
             .into_iter()
@@ -305,9 +307,10 @@ mod tests {
         // The catalog a picker offers for an unattached session comes from the agent itself, not
         // from the session, so the intent is expressed in the agent's own vocabulary.
         let chosen = runtime
-            .block_on(backend.agent_runtime().models(ListAgentModelsRequest {
+            .block_on(backend.agent_runtime().discover(DiscoverAgentRequest {
                 agent_ref: agent_ref(),
                 workspace_id,
+                include_commands: false,
             }))?
             .models
             .into_iter()

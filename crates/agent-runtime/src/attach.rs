@@ -333,6 +333,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         self.live_mcp = LiveMcpState::Active(mcp_revision);
         self.persist_session_status(SessionStatus::Running);
         self.reported_config_options = config_options.clone();
+        // Setup already recorded the replacement's own excess.
+        self.commands_exceed_limit =
+            crate::discovery::exceeds_shown_commands(available_commands.len());
         Ok(setup_updates(config_options, available_commands))
     }
 
@@ -354,9 +357,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             &self.session.agent_ref,
             self.provider_session_id(),
             model,
-            config_options,
+            &config_options,
         )
         .await
+        .unwrap_or(config_options)
     }
 
     /// Persists a rebuilt binding once the prompt that carried the transcript was accepted.

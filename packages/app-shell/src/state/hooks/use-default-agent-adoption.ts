@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useSettingsStore } from "../stores/settings-store";
 import { useAgentRuntimeStatus } from "./use-agent-runtime-status";
 import { useAvailableAgents } from "./use-available-agents";
+import { useAgentCatalog } from "./use-agent-catalog";
 
 /**
  * Gives an installation that has never chosen an agent one to start on.
@@ -29,12 +30,25 @@ export function useDefaultAgentAdoption(): void {
   const updateSettings = useSettingsStore((state) => state.updateSettings);
   const { data: statuses } = useAgentRuntimeStatus();
   const availableAgents = useAvailableAgents();
+  const catalog = useAgentCatalog();
+  // Older preferences stored a package name without its source namespace. Resolve only
+  // an unambiguous installed identity; unavailable or ambiguous choices remain untouched.
+  const legacyMatches =
+    typeof agentCli === "string" && !agentCli.includes("/")
+      ? catalog.filter((entry) => entry.agentRef.split("/")[1] === agentCli)
+      : [];
+  const legacyReplacement =
+    legacyMatches.length === 1 ? legacyMatches[0]?.agentRef : undefined;
   // Catalog order is the backend's stable identifier order, so which agent a fresh installation
   // lands on does not depend on how quickly each one answered.
   const adoptable = statuses === undefined ? undefined : availableAgents[0];
 
   useEffect(() => {
+    if (legacyReplacement !== undefined) {
+      updateSettings({ agentCli: legacyReplacement });
+      return;
+    }
     if (agentCli !== null || adoptable === undefined) return;
     updateSettings({ agentCli: adoptable.agentRef });
-  }, [agentCli, adoptable, updateSettings]);
+  }, [agentCli, adoptable, legacyReplacement, updateSettings]);
 }

@@ -56,21 +56,8 @@ export const useSettingsStore = create<SettingsState>()(
       name: SETTINGS_STORAGE_KEY,
       version: 2,
       storage: createJSONStorage(() => window.localStorage),
-      // Version 1 persisted the implicit OpenCode default together with unrelated
-      // preference changes, so that value cannot prove the user selected it. A
-      // different CLI could only have been written by an explicit picker action
-      // and is retained; the former default becomes the new unselected state.
-      migrate: (persisted, version) => {
-        if (version >= 2) return persisted as SettingsState;
-        const previous = persisted as Partial<SettingsState> | undefined;
-        const previousSettings = previous?.settings;
-        if (previousSettings?.agentCli !== "ora-space.opencode")
-          return persisted as SettingsState;
-        return {
-          ...previous,
-          settings: { ...previousSettings, agentCli: null },
-        } as SettingsState;
-      },
+      // Preserve old defaults because they may be explicit user selections.
+      migrate: (persisted) => persisted as SettingsState,
       // Tolerate partial/corrupt persisted state by merging over defaults. A stored agent
       // identity is carried forward unexamined: agents arrive with installed plugins, so this
       // build cannot know which identities are real, and the pickers already resolve a stored one

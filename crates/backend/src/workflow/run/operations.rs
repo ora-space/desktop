@@ -24,6 +24,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(test)]
+mod debug_fence_tests;
+#[cfg(test)]
 mod precheck_tests;
 #[cfg(test)]
 mod tests;
@@ -83,12 +85,9 @@ impl WorkflowRuns {
         request: GetWorkflowDebugAttemptRequest,
     ) -> Result<GetWorkflowDebugAttemptResponse, BackendError> {
         let store = ora_db::workflow_debug::WorkflowDebugStore::new(self.pool.clone());
-        store.attempt(&request).map_err(|error| {
-            ApplicationError::WorkflowRunRepository {
-                source: ora_application::RepositoryError::new(error),
-            }
-            .into()
-        })
+        store
+            .attempt(&request)
+            .map_err(BackendError::from_debug_store)
     }
 
     /// Reads durable workflow debug confirmations in order.
@@ -100,12 +99,7 @@ impl WorkflowRuns {
         store
             .history(&request.run_id)
             .map(|entries| GetWorkflowDebugHistoryResponse { entries })
-            .map_err(|error| {
-                ApplicationError::WorkflowRunRepository {
-                    source: ora_application::RepositoryError::new(error),
-                }
-                .into()
-            })
+            .map_err(BackendError::from_debug_store)
     }
 
     /// Plans a read-only debug preview of an edit from a selected execution position.
@@ -568,7 +562,9 @@ impl WorkflowRuns {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
         self.debug.ensure_no_fence(&request.run_id)?;
         self.precheck_dependencies(&request.run_id, StartOperation::Restart)?;
-        self.engine.restart(request).map_err(BackendError::from)
+        self.engine
+            .restart(request)
+            .map_err(BackendError::from_run_use_case)
     }
 
     /// Resumes a failed or cancelled workflow run from its failed nodes.

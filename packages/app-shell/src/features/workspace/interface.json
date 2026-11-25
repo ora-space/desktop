@@ -5,6 +5,10 @@
       "exports": ["DesktopUpdateControl"],
       "purpose": "Settings and workspace share the native update control and version stamp."
     },
+    "./pending-update": {
+      "exports": ["PendingUpdate"],
+      "purpose": "The release notes pane shows the offered release above the installed history."
+    },
     "./location-actions-button": {
       "exports": ["LocationActionsButton"],
       "purpose": "Workflow-run reuses explicit location actions for its workspace."

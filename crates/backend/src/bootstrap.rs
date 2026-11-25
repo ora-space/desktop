@@ -18,7 +18,10 @@ use crate::workflow::run::{
 };
 use crate::workspace::WorkspaceApi;
 use ora_application::ApplicationError;
-use ora_db::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
+use ora_db::{
+    BootstrappedDatabase, DatabaseBootstrapper, DatabaseLocation, DatabaseOrigin,
+    default_migration_catalog,
+};
 use ora_scheduler::Scheduler;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -94,6 +97,7 @@ pub struct Backend {
     workflow: Arc<WorkflowApi>,
     workflow_run: Arc<WorkflowRuns>,
     app_events: Arc<AppEventHub>,
+    database_origin: DatabaseOrigin,
     /// Keeps the loopback completion MCP server alive for this backend composition.
     _completion_server: Arc<crate::workflow::run::interactive::CompletionMcpServer>,
 }
@@ -133,8 +137,11 @@ impl Backend {
         ensure_directory(&paths.app_data_directory)?;
         ensure_directory(&scheduled_artifacts_root)?;
         let catalog = default_migration_catalog().map_err(BackendBootstrapError::Database)?;
-        let pool = DatabaseBootstrapper::system()
-            .bootstrap_repository_pool(&DatabaseLocation::path(&database_path), &catalog)
+        let BootstrappedDatabase {
+            pool,
+            origin: database_origin,
+        } = DatabaseBootstrapper::system()
+            .bootstrap_database(&DatabaseLocation::path(&database_path), &catalog)
             .map_err(BackendBootstrapError::Database)?;
         let settings = Arc::new(Settings::new(pool.clone()));
         let stored_worktree_root = settings
@@ -342,6 +349,7 @@ impl Backend {
             workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
             workflow_run,
             app_events,
+            database_origin,
             _completion_server: completion_server,
             effect: Effects::new(pool, effect_reconcile),
         })
@@ -412,6 +420,11 @@ impl Backend {
         self.app_events.clone()
     }
 
+    /// Reports whether this process created the database, which is true only on a fresh installation.
+    pub fn database_origin(&self) -> DatabaseOrigin {
+        self.database_origin
+    }
+
     /// Shares readiness and model discovery without exposing supervisor or actor internals.
     pub fn agent_runtime(&self) -> AgentRuntime {
         self.agent_runtime.clone()
@@ -437,9 +450,30 @@ mod tests {
         ListProjectsRequest, ListSkillsRequest, UpdateAgentRequest, UpdateProjectRequest,
         UpdateSkillRequest,
     };
+    use ora_db::DatabaseOrigin;
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::TempDir;
+
+    /// Verifies that only the composition that created the data root reports a fresh installation.
+    #[test]
+    fn reports_whether_this_process_created_the_database() {
+        ora_logging::with_trace_logging(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(async {
+                    let temporary = TempDir::new().expect("create temporary backend directory");
+                    let origins = [(), ()].map(|()| {
+                        Backend::open(backend_paths(temporary.path(), temporary.path()))
+                            .expect("open backend")
+                            .database_origin()
+                    });
+                    assert_eq!(origins, [DatabaseOrigin::Created, DatabaseOrigin::Existing]);
+                });
+        });
+    }
 
     /// Verifies the shared composition owns storage bootstrap and complete non-Git CRUD flows.
     #[test]

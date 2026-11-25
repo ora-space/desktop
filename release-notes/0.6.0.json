@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "version": "0.6.0",
+  "date": "2026-11-20",
+  "entries": [
+    {
+      "category": "important",
+      "zh-CN": "0.6.0 是最后一个支持 macOS 的版本，之后不再提供 macOS 安装包和更新。",
+      "en-US": "0.6.0 is the last version that supports macOS. Later versions have no macOS installers or updates."
+    },
+    {
+      "category": "important",
+      "zh-CN": "使用了“声明产出文件”的交互式工作流，需要 0.6.0 或更高版本才能打开。",
+      "en-US": "Interactive workflows that declare output files need version 0.6.0 or later to open."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "交互式工作流支持首轮确认、声明产出文件，智能体可以主动报告完成。",
+      "en-US": "Interactive workflows support first-turn confirmation and declared output files, and agents can report completion themselves."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "从插件市场安装或升级工作流时会报告它依赖的插件；卸载时列出会保留的工作流。",
+      "en-US": "Installing or upgrading a workflow from the marketplace reports the plugins it needs, and uninstalling lists the workflows that stay."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "工作流画布支持复制粘贴、右键菜单、多选、对齐和定位节点。",
+      "en-US": "The workflow canvas supports copy and paste, a context menu, multi-select, alignment, and jumping to a node."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "支持显示 CodeAgent 子代理的进度。",
+      "en-US": "CodeAgent subagent progress is shown."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "定时任务可以交付产物文件。",
+      "en-US": "Scheduled tasks can deliver artifact files."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "项目文件夹被删除或移动后，会提示缺失的路径并可以重新检查，不再只显示空的模型列表。",
+      "en-US": "When a project folder is deleted or moved, Ora names the missing path and offers a re-check instead of showing an empty model list."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "恢复的会话首次发送没有得到回复时，会自动重试一次。",
+      "en-US": "A restored session retries its first message once when it gets no reply."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "在 Windows 上，Skill 文件被占用时会给出更清楚的提示。",
+      "en-US": "On Windows, Ora explains more clearly when Skill files are in use."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复取消重试后，正在查看的对话与历史记录不一致的问题。",
+      "en-US": "Fixed an open chat disagreeing with its history after a retry was cancelled."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复智能体只返回空内容时，工作流节点被误判为完成的问题。",
+      "en-US": "Fixed workflow nodes being marked complete when an agent returned nothing."
+    }
+  ]
+}

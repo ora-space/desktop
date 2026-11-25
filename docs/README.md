@@ -98,6 +98,7 @@ module boundaries. Implementation details inside a crate or package live in that
 - [Local development](development/local-development.md)
 - [Testing](development/testing.md)
 - [Changing the code](development/changing-the-code.md)
+- [Release notes](development/release-notes.md)
 
 ## Maintenance rules
 

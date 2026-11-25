@@ -26,6 +26,7 @@ const TASK: ScheduledTask = {
   prompt: "Review the current changes",
   revision: 1n,
   approval: { policy: "full_auto_in_worktree", consentedAt: 10n },
+  worktreeBaseBranch: "main",
   createdAt: 10n,
   updatedAt: 10n,
 };
@@ -68,6 +69,7 @@ function scheduledTaskHandlers(tasks: ScheduledTask[]): TestHandlers {
           request.approvalPolicy === null
             ? null
             : { policy: request.approvalPolicy, consentedAt: 20n },
+        worktreeBaseBranch: "main",
         createdAt: 20n,
         updatedAt: 20n,
       };

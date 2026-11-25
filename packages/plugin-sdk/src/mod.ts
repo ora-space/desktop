@@ -2,7 +2,10 @@ export {
   type AcpSender,
   AGENT_NOT_INSTALLED,
   AGENT_UNUSABLE,
+  type AgentCommand,
   type AgentDefinition,
+  type AgentDiscovery,
+  type AgentDiscoveryContext,
   type AgentEffectCoordinationContext,
   type AgentEffectDefinition,
   type AgentEffectReadinessContext,
@@ -10,6 +13,11 @@ export {
   type AgentStartContext,
   defineAgent,
 } from "./agent.ts";
+export {
+  AGENT_DISCOVERY_CLEANUP_RESERVE_MS,
+  type AgentCommandsWait,
+  waitForAgentCommands,
+} from "./discovery.ts";
 export {
   type AgentInvocation,
   type AgentProgram,

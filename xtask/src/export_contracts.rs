@@ -275,22 +275,27 @@ mod tests {
         });
 
         let dto_directory = package_source_directory.join("dto");
-        let generated_files = ["client.generated.ts", "dto.generated.ts", "endpoints.ts"]
-            .map(|file| package_source_directory.join(file))
-            .into_iter()
-            .chain(
-                [
-                    "agent.ts",
-                    "file-system.ts",
-                    "project.ts",
-                    "session.ts",
-                    "skill.ts",
-                    "task.ts",
-                    "workflow.ts",
-                    "workspace-diff.ts",
-                ]
-                .map(|file| dto_directory.join(file)),
-            );
+        let generated_files = [
+            "client.generated.ts",
+            "constants.generated.ts",
+            "dto.generated.ts",
+            "endpoints.ts",
+        ]
+        .map(|file| package_source_directory.join(file))
+        .into_iter()
+        .chain(
+            [
+                "agent.ts",
+                "file-system.ts",
+                "project.ts",
+                "session.ts",
+                "skill.ts",
+                "task.ts",
+                "workflow.ts",
+                "workspace-diff.ts",
+            ]
+            .map(|file| dto_directory.join(file)),
+        );
 
         for output_path in generated_files {
             assert!(
