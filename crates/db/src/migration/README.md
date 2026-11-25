@@ -79,9 +79,9 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   - **Automatic pre-`0025` backup**: before `0025` runs on an existing pre-`0025` database, both
     packaged Desktop bootstrap (`Backend::open`) and `cargo xtask reconcile-migrations` write a
     self-contained SQLite backup into a sibling temporary file (`VACUUM INTO`) and atomically
-    replace `ora.sqlite3.pre-0025.bak` in the same data directory. Every startup while the
-    database is still pre-`0025` refreshes that backup (so a zero-byte leftover or an earlier
-    downgrade-and-reupgrade cycle never leaves a stale copy), while fresh and post-`0025`
+    replace `ora.sqlite3.pre-0025.bak` in the same data directory. Every startup while the legacy
+    `effect_*` tables still exist refreshes that backup (so a zero-byte leftover or an earlier
+    downgrade-and-reupgrade cycle never leaves a stale copy), while fresh and already-migrated
     databases skip backup creation.
   - **Downgrade recovery**: upgrading past `0025` cannot be downgraded in place. To return to an
     older Desktop release, quit Ora Desktop, remove `ora.sqlite3`, `ora.sqlite3-wal`, and

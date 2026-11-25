@@ -714,6 +714,78 @@ fn refreshes_self_contained_pre_0025_backup_and_skips_fresh_or_post_0025_databas
 }
 
 #[test]
+fn keys_pre_0025_backup_on_legacy_effect_tables_instead_of_recorded_version() {
+    with_trace_logging(|| {
+        let temp = TempDir::new().expect("temp dir");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).expect("create workspace");
+
+        // A recorded `0025` row does not prove the retirement ran: as long as the legacy ledger
+        // tables remain, the database is still upgradable and must be backed up. Keying on the
+        // version row would silently skip this backup when a later migration takes the `0025`
+        // number.
+        let recorded_but_unmigrated = temp.path().join("recorded-but-unmigrated.sqlite3");
+        setup_pre_0025_database(&recorded_but_unmigrated, &workspace);
+        let connection = Connection::open(&recorded_but_unmigrated).expect("open pre-0025 db");
+        connection
+            .execute(
+                "INSERT INTO migrations (version, up_sql, down_sql, executed_at)
+                 VALUES ('0025', '', '', 1)",
+                [],
+            )
+            .expect("record 0025 row without running the migration");
+        drop(connection);
+
+        let recorded_backup = pre_0025_backup_path(&recorded_but_unmigrated);
+        assert_eq!(
+            backup_database_before_0025(&recorded_but_unmigrated)
+                .expect("legacy effect tables must still trigger a backup")
+                .expect("backup path returned"),
+            recorded_backup
+        );
+        let backup = Connection::open(&recorded_backup).expect("open recorded backup");
+        let backup_effect_tables: i64 = backup
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'effect_managed_items'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            backup_effect_tables, 1,
+            "backup of an unmigrated database must carry the legacy Effect tables"
+        );
+        drop(backup);
+
+        // An already-migrated database dropped the ledger in `0025`, so nothing is left to back
+        // up even though it was pre-`0025` a moment ago.
+        let migrated = temp.path().join("migrated.sqlite3");
+        setup_pre_0025_database(&migrated, &workspace);
+        let pool = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(&migrated),
+                &default_migration_catalog().expect("latest catalog"),
+            )
+            .expect("upgrade through 0025");
+        drop(pool);
+        assert_eq!(backup_database_before_0025(&migrated).unwrap(), None);
+        assert!(!pre_0025_backup_path(&migrated).exists());
+
+        // A fresh installation never creates a backup.
+        let fresh = temp.path().join("fresh.sqlite3");
+        let fresh_pool = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(&fresh),
+                &default_migration_catalog().expect("latest catalog"),
+            )
+            .expect("bootstrap fresh database");
+        drop(fresh_pool);
+        assert_eq!(backup_database_before_0025(&fresh).unwrap(), None);
+        assert!(!pre_0025_backup_path(&fresh).exists());
+    });
+}
+
+#[test]
 fn clears_stale_temp_file_and_replaces_existing_backup() {
     with_trace_logging(|| {
         let temp = TempDir::new().expect("temp dir");

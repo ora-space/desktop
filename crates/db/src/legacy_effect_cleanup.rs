@@ -42,8 +42,8 @@ pub fn pre_0025_backup_path(database_path: &Path) -> PathBuf {
 ///
 /// Uses `VACUUM INTO` to fold committed WAL frames into a standalone sibling temporary file and
 /// atomically replaces `<db>.pre-0025.bak` so partial backups are never left behind. Missing
-/// databases, uninitialized empty files, and databases that already applied `0025` return
-/// `Ok(None)`. While the database is still pre-`0025`, every run refreshes the backup so a
+/// databases, uninitialized empty files, and databases whose legacy `effect_*` ledger tables are
+/// already gone return `Ok(None)`. While those tables remain, every run refreshes the backup so a
 /// zero-byte leftover or a backup from an earlier downgrade-and-reupgrade cycle never goes stale.
 pub fn backup_database_before_0025(database_path: &Path) -> Result<Option<PathBuf>, DatabaseError> {
     let backup_path = pre_0025_backup_path(database_path);
@@ -112,19 +112,19 @@ fn needs_pre_0025_backup(connection: &Connection) -> Result<bool, DatabaseError>
     if !has_table(connection, "migrations")? {
         return Ok(false);
     }
-    let applied_count: i64 =
-        connection.query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))?;
-    if applied_count == 0 {
-        return Ok(false);
-    }
-    let has_0025: Option<i64> = connection
-        .query_row(
-            "SELECT 1 FROM migrations WHERE version = '0025' LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(has_0025.is_none())
+    has_legacy_effect_tables(connection)
+}
+
+/// Returns whether the legacy `effect_*` ledger tables that migration `0025` drops still exist.
+///
+/// The pre-`0025` backup and the legacy directory cleanup both key on these tables instead of the
+/// recorded `0025` version row, so adding or renumbering later migrations cannot silently skip
+/// either upgrade step. Every released build creates them in `0006` and only `0025` removes them.
+fn has_legacy_effect_tables(connection: &Connection) -> Result<bool, DatabaseError> {
+    Ok(
+        has_table(connection, "effect_managed_items")?
+            && has_table(connection, "effect_resources")?,
+    )
 }
 
 fn append_path_suffix(path: &Path, suffix: &str) -> PathBuf {
@@ -205,9 +205,7 @@ pub fn read_legacy_managed_skills(
     }
     let connection = Connection::open(database_path)?;
     connection.busy_timeout(Duration::from_secs(5))?;
-    if !has_table(&connection, "effect_managed_items")?
-        || !has_table(&connection, "effect_resources")?
-    {
+    if !has_legacy_effect_tables(&connection)? {
         return Ok(Vec::new());
     }
     let mut statement = connection.prepare(
