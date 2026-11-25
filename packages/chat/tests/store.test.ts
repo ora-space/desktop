@@ -13,6 +13,7 @@ import {
   type ChatSessionClient,
   type ChatToolCall,
   type ChatTurn,
+  type SessionConversation,
 } from "../src/index.ts";
 
 /** Builds one ACP text update without exposing protocol transport details to the tests. */
@@ -302,6 +303,39 @@ test("publishes an active prompt incrementally while its session loads", async (
   assert.equal(completed?.turns[0]?.stopReason, "end_turn");
 });
 
+/** Builds a promise its test resolves at one point of a scripted stream. */
+function gate() {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+/** Waits until the conversation satisfies the predicate, however long its preview takes. */
+function conversationReaches(
+  store: ReturnType<typeof createChatStore>,
+  reached: (conversation: SessionConversation) => boolean,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const check = () => {
+      const conversation = store.getState().conversations["ora-1"];
+      if (conversation === undefined || !reached(conversation)) return;
+      unsubscribe();
+      resolve();
+    };
+    const unsubscribe = store.subscribe(check);
+    check();
+  });
+}
+
+/** Reads what the agent has said so far in the last turn. */
+function said(conversation: SessionConversation): string {
+  return (conversation.turns.at(-1)?.items ?? [])
+    .map((item) => (item.kind === "message" ? item.content : ""))
+    .join("");
+}
+
 for (const ending of ["completed", "failed"] as const) {
   test(`keeps a model chosen while following a turn that ${ending}`, async () => {
     const on = (currentValue: string): acp.SessionConfigOption[] => [
@@ -324,19 +358,17 @@ for (const ending of ["completed", "failed"] as const) {
         configOptions: on("a"),
       },
     } as const;
-    let resume: () => void = () => {};
-    const chosen = new Promise<void>((resolve) => {
-      resume = resolve;
-    });
+    const chosen = gate();
+    const checked = gate();
     const client: ChatSessionClient = {
       load: () => ({
         async *[Symbol.asyncIterator]() {
           yield joined;
           yield textEvent("user_message_chunk", "prompt", "user-1");
           yield textEvent("agent_message_chunk", "partial", "agent-1");
-          await chosen;
+          await chosen.promise;
           yield textEvent("agent_message_chunk", " rest", "agent-1");
-          await new Promise<void>((resolve) => setTimeout(resolve, 25));
+          await checked.promise;
           if (ending === "failed") throw new Error("stream lost");
           yield { type: "turn_ended", stopReason: "end_turn" } as const;
           yield { type: "completed" } as const;
@@ -352,15 +384,16 @@ for (const ending of ["completed", "failed"] as const) {
       store.getState().conversations["ora-1"]?.configOptions;
 
     const loading = store.getState().loadSession("ora-1");
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    await conversationReaches(store, (state) => said(state) === "partial");
     assert.deepEqual(current(), on("a"));
 
     await store.getState().setSessionConfig("ora-1", "model", "b");
     assert.deepEqual(current(), on("b"));
-    resume();
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    chosen.resolve();
+    await conversationReaches(store, (state) => said(state) === "partial rest");
     assert.deepEqual(current(), on("b"));
 
+    checked.resolve();
     if (ending === "failed") await assert.rejects(loading);
     else await loading;
     assert.deepEqual(current(), on("b"));
@@ -377,15 +410,14 @@ test("an option change the agent reports while following a turn wins over an ear
       options: [{ value: currentValue, name: currentValue }],
     },
   ];
-  let resume: () => void = () => {};
-  const chosen = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const following = gate();
+  const chosen = gate();
   const client: ChatSessionClient = {
     load: () => ({
       async *[Symbol.asyncIterator]() {
         yield textEvent("user_message_chunk", "prompt", "user-1");
-        await chosen;
+        following.resolve();
+        await chosen.promise;
         yield {
           type: "session_update",
           update: {
@@ -403,9 +435,9 @@ test("an option change the agent reports while following a turn wins over an ear
   };
   const store = createChatStore(client);
   const loading = store.getState().loadSession("ora-1");
-  await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  await following.promise;
   await store.getState().setSessionConfig("ora-1", "model", "b");
-  resume();
+  chosen.resolve();
   await loading;
 
   assert.deepEqual(
