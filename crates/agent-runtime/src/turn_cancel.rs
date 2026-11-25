@@ -222,6 +222,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         if reusable && owner_notified && !session_invalid {
             self.channel = Some(channel);
         } else {
+            if reusable && !session_invalid {
+                self.accept_changes_on(&mut channel);
+            }
             self.isolate_channel(channel).await;
         }
         let result = if reusable {
@@ -268,7 +271,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// reason, an ACP error is the prompt's failure (marked answered when it is a request error).
     async fn finish_answered_prompt(
         &mut self,
-        channel: SessionChannel,
+        mut channel: SessionChannel,
         answer: Result<PromptResponse, ora_acp::AcpError>,
         operation_id: u64,
         end: PromptEnd<'_>,
@@ -314,6 +317,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 if reusable && delivered && !session_invalid {
                     self.channel = Some(channel);
                 } else {
+                    if reusable && !session_invalid {
+                        self.accept_changes_on(&mut channel);
+                    }
                     self.isolate_channel(channel).await;
                 }
             }
@@ -357,7 +363,7 @@ async fn ready_response<H: AgentRuntimeHost>(
                     )
                     .await;
             }
-            SessionEvent::Response(_) => {}
+            SessionEvent::Response(response) => actor.settle_config_change(channel, response),
         }
     }
     response

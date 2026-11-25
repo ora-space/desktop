@@ -143,6 +143,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let channel = self
             .connection
             .open_session_channel(self.provider_session_id(), self.session.id.as_ref())?;
+        // Whatever an earlier attachment reported describes that one.
+        self.reported_config_options.clear();
         let restored = if channel.connection.load_session_supported {
             // Resolved before the restore because `session/load` is the frame that carries MCP: an
             // agent restored without it would serve the turn against a stale server set. A Snapshot
@@ -150,12 +152,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             let snapshot = self.resolve_mcp_snapshot()?;
             *attempted = Some(snapshot.revision().clone());
             match self.restore_provider_session(channel, &snapshot).await {
-                Ok(config_options) => {
+                Ok(()) => {
                     self.load_restoration = LoadRestoration::Restored;
                     self.record_loaded_mcp(&snapshot);
                     // Applied against what this restore reported rather than the catalog the
                     // picker offered: only the agent can say whether it still serves that model.
-                    Some(self.apply_restored_model(model, config_options).await)
+                    self.apply_restored_model(model).await;
+                    true
                 }
                 Err(error) => {
                     if self.session_mcp.preserve_provider_identity() {
@@ -169,7 +172,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         error = %error,
                         "provider session could not be restored; rebuilding it",
                     );
-                    None
+                    false
                 }
             }
         } else {
@@ -183,15 +186,17 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 session_id = %self.session.id,
                 "agent does not support session/load; rebuilding the provider session",
             );
-            None
+            false
         };
         match restored {
-            Some(config_options) => {
+            true => {
                 self.persist_session_status(SessionStatus::Running);
-                self.reported_config_options = config_options.clone();
-                Ok(setup_updates(config_options, Vec::new()))
+                Ok(setup_updates(
+                    self.reported_config_options.clone(),
+                    Vec::new(),
+                ))
             }
-            None => {
+            false => {
                 self.load_restoration = LoadRestoration::NotRestored;
                 self.rebuild_provider_session(model).await
             }
@@ -207,7 +212,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         &mut self,
         mut channel: SessionChannel,
         snapshot: &SessionMcpSnapshot,
-    ) -> Result<Vec<SessionConfigOption>, RuntimeError> {
+    ) -> Result<(), RuntimeError> {
         let client = channel.connection.client.clone();
         let agent_session_id = self.provider_session_id().to_string();
         let mut servers = snapshot.servers().to_vec();
@@ -287,7 +292,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         ora_debug!(session_id = %self.session.id, "session/load completed");
                         self.forget_announced_skills();
                         self.channel = Some(channel);
-                        return Ok(response.config_options.unwrap_or_default());
+                        if let Some(config_options) = response.config_options {
+                            self.adopt_config_options(config_options);
+                        }
+                        return Ok(());
                     }
                     None => return Err(super::support::runtime_unavailable()),
                 },
@@ -365,23 +373,32 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// `session/new` applies its caller's intent inside the handshake, so only the restore path
     /// needs this. Nothing is owed when no choice was pending, which is every prompt after the
     /// first one a reopened conversation sends.
-    async fn apply_restored_model(
-        &self,
-        model: Option<&str>,
-        config_options: Vec<SessionConfigOption>,
-    ) -> Vec<SessionConfigOption> {
+    async fn apply_restored_model(&mut self, model: Option<&str>) {
         let Some(model) = model else {
-            return config_options;
+            return;
         };
-        apply_model_intent(
-            &self.connections,
-            &self.session.agent_ref,
-            self.provider_session_id(),
+        let Some(mut channel) = self.channel.take() else {
+            return;
+        };
+        let agent_ref = self.session.agent_ref.clone();
+        let agent_session_id = self.provider_session_id().to_string();
+        let offered = self.reported_config_options.clone();
+        let applied = apply_model_intent(
+            &mut channel,
+            &agent_ref,
+            &agent_session_id,
             model,
-            &config_options,
+            &offered,
+            |channel, notification| {
+                channel.retain_commands(&notification);
+                self.observe_session_update(&notification.update);
+            },
         )
-        .await
-        .unwrap_or(config_options)
+        .await;
+        if let Some(config_options) = applied {
+            self.adopt_config_options(config_options);
+        }
+        self.channel = Some(channel);
     }
 
     /// Persists a rebuilt binding once the prompt that carried the transcript was accepted.

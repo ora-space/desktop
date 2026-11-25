@@ -9,6 +9,7 @@ mod actor;
 mod attach;
 mod clock;
 mod command;
+mod config_changes;
 mod connection;
 mod discovery;
 mod end_cause;

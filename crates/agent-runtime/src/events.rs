@@ -11,19 +11,18 @@ use agent_client_protocol_schema::v1::{
 use ora_contracts::PromptSessionEvent;
 use tokio::sync::mpsc;
 
-/// Drains an idle session's event FIFO while preserving titles for the actor and the command
-/// catalog for the next prompt.
+/// Drains an idle session's event FIFO while preserving titles and options for the actor and the
+/// command catalog for the next prompt.
 ///
 /// Idle traffic must not leak into the next prompt, but dropping `SessionInfoUpdate` here would
 /// lose a push title that arrived after attach and before the first eligible prompt, and dropping
 /// `AvailableCommandsUpdate` would lose the only report an Agent sends after answering setup.
 ///
 /// Returns whether any drained event was turn traffic, so an idle actor can report it.
-pub(super) async fn drain_idle_events(
+pub(super) async fn drain_idle_events<H: AgentRuntimeHost>(
+    actor: &mut RuntimeActor<H>,
     channel: &mut SessionChannel,
-    title_updates: &mpsc::WeakUnboundedSender<RuntimeCommand>,
 ) -> bool {
-    let client = channel.connection.client.clone();
     let mut traffic = false;
     // Bound the synchronous snapshot so a noisy provider cannot keep an idle actor
     // from returning to its command loop forever.
@@ -33,26 +32,36 @@ pub(super) async fn drain_idle_events(
             break;
         };
         traffic |= is_turn_traffic(&event);
-        preserve_idle_update(channel, &event, title_updates);
-        settle_idle_event(&client, event).await;
+        consume_idle_event(actor, channel, event).await;
     }
     traffic
 }
 
-/// Keeps the parts of one idle event that outlive it, before the event itself is settled.
-pub(super) fn preserve_idle_update(
+/// Keeps the parts of one idle event that outlive it, then settles the event itself.
+///
+/// Options are taken here, at the event's turn: passing them on as a command would let a frame the
+/// agent sent later overtake them.
+pub(super) async fn consume_idle_event<H: AgentRuntimeHost>(
+    actor: &mut RuntimeActor<H>,
     channel: &mut SessionChannel,
-    event: &SessionEvent,
-    title_updates: &mpsc::WeakUnboundedSender<RuntimeCommand>,
+    event: SessionEvent,
 ) {
-    let SessionEvent::Update(update, _) = event else {
-        return;
-    };
-    channel.retain_commands(update);
-    if let Some(title_updates) = title_updates.upgrade() {
-        let _ = title_updates.send(RuntimeCommand::TitleUpdate {
-            update: Box::new(update.update.clone()),
-        });
+    match event {
+        SessionEvent::Update(update, _) => {
+            channel.retain_commands(&update);
+            if matches!(update.update, SessionUpdate::ConfigOptionUpdate(_)) {
+                actor.observe_session_update(&update.update);
+            } else if let Some(title_updates) = actor.command_sender.upgrade() {
+                let _ = title_updates.send(RuntimeCommand::TitleUpdate {
+                    update: Box::new(update.update),
+                });
+            }
+        }
+        SessionEvent::Response(response) => actor.settle_config_change(channel, response),
+        event @ SessionEvent::Permission(_) => {
+            let client = channel.connection.client.clone();
+            settle_idle_event(&client, event).await;
+        }
     }
 }
 
@@ -133,6 +142,7 @@ where
             }
             Some(SessionEvent::Response(response)) => {
                 if !pending.matches_response(&response) {
+                    actor.settle_config_change(channel, response);
                     continue;
                 }
                 return Some(pending.finish(response));
@@ -178,7 +188,7 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
                     )
                     .await;
             }
-            SessionEvent::Response(_) => {}
+            SessionEvent::Response(response) => actor.settle_config_change(channel, response),
         }
     }
 }
