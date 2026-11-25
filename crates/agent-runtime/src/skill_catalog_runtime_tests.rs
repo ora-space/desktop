@@ -1602,6 +1602,7 @@ async fn run_direct_attach_reset_scenario() {
         rebuilt_binding: None,
         load_restoration: Default::default(),
         reported_config_options: Vec::new(),
+        direct_config_changes: Vec::new(),
         commands_exceed_limit: false,
         scheduler: scheduler.clone(),
         events: RecordedEvents::default(),

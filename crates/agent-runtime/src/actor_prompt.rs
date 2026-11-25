@@ -495,7 +495,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {
-                        self.settle_config_change(&mut channel, response);
+                        if let Some(update) = self.settle_config_change(&mut channel, response) {
+                            followers.send_update(&update, None);
+                            let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                                update,
+                                tool_timing: None,
+                            }));
+                        }
                         continue;
                     }
                     if !permissions.pending.is_empty() {

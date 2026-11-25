@@ -363,7 +363,14 @@ async fn ready_response<H: AgentRuntimeHost>(
                     )
                     .await;
             }
-            SessionEvent::Response(response) => actor.settle_config_change(channel, response),
+            SessionEvent::Response(response) => {
+                if let Some(update) = actor.settle_config_change(channel, response) {
+                    let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                        update,
+                        tool_timing: None,
+                    }));
+                }
+            }
         }
     }
     response

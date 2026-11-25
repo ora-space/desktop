@@ -236,7 +236,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             }
                         }
                         Some(SessionEvent::Response(response)) => {
-                            self.settle_config_change(&mut channel, response);
+                            let _ = self.settle_config_change(&mut channel, response);
                         }
                         Some(event) => {
                             settle_idle_event(&client, event).await;

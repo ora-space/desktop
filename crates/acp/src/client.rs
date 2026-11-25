@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -195,6 +196,32 @@ where
         Request: Serialize,
         Response: DeserializeOwned,
     {
+        let (mut pending, write) = self.prepare_session_request(session_id, method, params);
+        if let Err(error) = write.await {
+            lock_pending(&self.pending).remove_active(&pending.request_id);
+            pending.unregister_on_drop = false;
+            return Err(error);
+        }
+        Ok(pending)
+    }
+
+    /// Registers a session request and leaves writing its frame to the caller.
+    ///
+    /// For a caller that has to own the response before anyone waits for the transport. Dropping the
+    /// write leaves the request unwritten, and dropping the handle retires it either way.
+    pub fn prepare_session_request<Request, Response>(
+        &self,
+        session_id: SessionId,
+        method: &str,
+        params: &Request,
+    ) -> (
+        PendingSessionRequest<Response>,
+        impl Future<Output = Result<(), AcpError>> + Send + use<Transport, Request, Response>,
+    )
+    where
+        Request: Serialize,
+        Response: DeserializeOwned,
+    {
         let request_id = RequestId::Number(self.next_request_id.fetch_add(1, Ordering::Relaxed));
         lock_pending(&self.pending).insert(
             request_id.clone(),
@@ -208,17 +235,15 @@ where
             "method": method,
             "params": params,
         });
-        if let Err(error) = self.send(frame).await {
-            lock_pending(&self.pending).remove_active(&request_id);
-            return Err(error);
-        }
-        Ok(PendingSessionRequest {
+        let pending = PendingSessionRequest {
             request_id,
             session_id,
             pending: self.pending.clone(),
             unregister_on_drop: true,
             response: PhantomData,
-        })
+        };
+        let client = self.clone();
+        (pending, async move { client.send(frame).await })
     }
 
     /// Sends a notification that intentionally has no JSON-RPC response.

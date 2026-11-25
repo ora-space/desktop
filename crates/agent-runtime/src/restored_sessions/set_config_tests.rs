@@ -14,6 +14,7 @@ const SESSION: &str = "restored";
 /// Reports every request to the test and sends the answers it is given.
 async fn answered_by_the_test(
     mut answers: mpsc::UnboundedReceiver<Value>,
+    reading: watch::Receiver<bool>,
     mut reader: DuplexStream,
     mut writer: DuplexStream,
     frames: mpsc::UnboundedSender<Value>,
@@ -22,14 +23,16 @@ async fn answered_by_the_test(
     let registration = json!({"jsonrpc":"2.0","method":"ora/register",
         "params":{"methods":[],"emits":["agent/acp"]}});
     write_message(&mut writer, &registration).await.unwrap();
+    let mut changed = reading.clone();
     loop {
         tokio::select! {
-            envelope = read_message(&mut reader) => match envelope {
+            envelope = read_message(&mut reader), if *reading.borrow() => match envelope {
                 Ok(Some(envelope)) if envelope["method"] != "ora/shutdown" => {
                     frames.send(envelope["params"].clone()).unwrap();
                 }
                 _ => break,
             },
+            Ok(()) = changed.changed() => {}
             Some(answer) = answers.recv() => {
                 let envelope = json!({"jsonrpc":"2.0", "method":"agent/acp", "params":answer});
                 write_message(&mut writer, &envelope).await.unwrap();
@@ -43,17 +46,23 @@ async fn answered_by_the_test(
 struct Driven {
     fixture: ReviewDrainFixture,
     answers: mpsc::UnboundedSender<Value>,
+    reading: watch::Sender<bool>,
 }
 
 impl Driven {
     /// Connects the agent without seeding a session.
     async fn new() -> Self {
         let (answers, given) = mpsc::unbounded_channel();
+        let (reading, read) = watch::channel(true);
         let fixture = ReviewDrainFixture::new_with(move |reader, writer, _, frames, exited| {
-            answered_by_the_test(given, reader, writer, frames, exited)
+            answered_by_the_test(given, read, reader, writer, frames, exited)
         })
         .await;
-        Self { fixture, answers }
+        Self {
+            fixture,
+            answers,
+            reading,
+        }
     }
 
     /// Waits for the agent to be asked this, and returns the request.
@@ -446,6 +455,111 @@ fn a_refused_change_leaves_the_options_alone() {
         let view = driven.load().await;
         driven.fixture.manager.stop_session(stop()).await.unwrap();
         assert_eq!(loaded(view).await, on("b"));
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// The turn that is running when such an answer comes shows it, because its caller no longer can.
+#[test]
+fn an_answer_after_the_caller_timed_out_reaches_the_views_of_a_turn() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        let mut view = driven.load().await;
+        let (choice, request) = driven.choose().await;
+        tokio::time::advance(crate::SESSION_SETUP_TIMEOUT).await;
+        assert!(choice.await.unwrap().is_err());
+
+        driven.answer_choice(&request);
+        driven.end_turn(&running);
+        let mut owned = Vec::new();
+        while let Some(event) = turn.recv().await {
+            match event.unwrap() {
+                PromptSessionEvent::SessionUpdate { update, .. } => owned.extend(state(update)),
+                PromptSessionEvent::Completed { .. } => break,
+                unexpected => panic!("unexpected prompt event: {unexpected:?}"),
+            }
+        }
+        let mut followed = Vec::new();
+        while let Some(event) = view.recv().await {
+            if let LoadSessionEvent::SessionUpdate { update, .. } = event.unwrap() {
+                followed.extend(state(update));
+            }
+        }
+
+        assert_eq!(owned, [on("b"), on("a")].concat());
+        assert_eq!(followed, [on("b"), on("a")].concat());
+        drop((turn, view));
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// An agent that stops reading holds up the callers waiting to ask it, not the session.
+#[test]
+fn a_session_stops_while_its_agent_reads_nothing() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        driven.reading.send_replace(false);
+        // More than the pipe and the queue ahead of it take together.
+        let choices: Vec<_> = (0..128)
+            .map(|_| {
+                let manager = driven.fixture.manager.clone();
+                let change = SetSessionConfigRequest {
+                    value: "a".repeat(65536),
+                    ..change()
+                };
+                tokio::spawn(async move { manager.set_session_config(change).await })
+            })
+            .collect();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        let asked = tokio::time::Instant::now();
+
+        driven.fixture.manager.stop_session(stop()).await.unwrap();
+
+        let mut made = 0;
+        for choice in choices {
+            made += usize::from(choice.await.unwrap().is_ok());
+        }
+        // Those the agent was never asked for fail at once as well.
+        assert!((1..128).contains(&made), "{made}");
+        assert_eq!(asked.elapsed(), Duration::ZERO);
+        driven.reading.send_replace(true);
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// A session that is asked directly while it holds no provider is not attached meanwhile, so that
+/// what the agent restores it with comes after what it was asked for.
+#[test]
+fn attaching_waits_for_a_change_asked_directly() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (choice, request) = driven.choose().await;
+        let admitted = driven.prompt();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        let early = driven.fixture.frames.try_recv();
+        assert!(early.is_err(), "restored too early: {early:?}");
+        assert_eq!(driven.accept(choice, &request).await, Some("a".to_string()));
+
+        let restore = driven.asked("session/load").await;
+        driven.answer(&restore, json!({"configOptions":model("a")}));
+        let mut turn = admitted.await.unwrap();
+        let running = driven.asked("session/prompt").await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        assert_eq!(loaded(driven.load().await).await, on("a"));
         drop(turn);
         driven.fixture.shutdown().await;
     });

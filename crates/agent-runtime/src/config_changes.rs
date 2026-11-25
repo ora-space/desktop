@@ -12,18 +12,33 @@ use agent_client_protocol_schema::v1::{
     SetSessionConfigOptionResponse,
 };
 use ora_acp::{PendingSessionRequest, SessionResponse};
+use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
 /// What a caller waiting for a configuration change is told.
 pub(crate) type ConfigChangeOutcome = Result<Vec<SessionConfigOption>, RuntimeError>;
 
+/// Writes one request the actor did not wait for.
+pub(crate) type ConfigChangeWrite = Pin<Box<dyn Future<Output = Result<(), RuntimeError>> + Send>>;
+
 /// How a configuration change is on its way to the agent.
 pub(crate) enum ConfigChangeRoute {
     /// The session holds no provider, so the caller asks the agent itself.
-    Direct { agent_session_id: String },
-    /// The actor asked, and tells the caller what came of it.
-    Sent(oneshot::Receiver<ConfigChangeOutcome>),
+    ///
+    /// Attaching waits until `_finished` is dropped: an answer that raced it could not be placed
+    /// among the frames of the session being attached.
+    Direct {
+        agent_session_id: String,
+        _finished: Option<oneshot::Sender<()>>,
+    },
+    /// The actor waits for the answer, and tells the caller what came of it.
+    Asked {
+        /// What is left of writing the request, when the agent was not reading.
+        write: Option<ConfigChangeWrite>,
+        outcome: oneshot::Receiver<ConfigChangeOutcome>,
+    },
 }
 
 /// The changes one provider session was asked for and has not answered.
@@ -71,27 +86,30 @@ impl UnansweredChange {
     }
 }
 
-/// Asks a provider session for one option on the stream that carries its other frames.
-async fn ask(
+/// Registers a change on the stream that carries a provider session's other frames, and returns what
+/// is left to write.
+fn prepare(
     channel: &SessionChannel,
     agent_session_id: &str,
     config_id: &SessionConfigId,
     value: &SessionConfigOptionValue,
-) -> Result<PendingSessionRequest<SetSessionConfigOptionResponse>, RuntimeError> {
-    channel
-        .connection
-        .client
-        .start_session_request(
-            agent_client_protocol_schema::v1::SessionId::new(agent_session_id.to_string()),
-            AGENT_METHOD_NAMES.session_set_config_option,
-            &SetSessionConfigOptionRequest::new(
-                agent_session_id.to_string(),
-                config_id.clone(),
-                value.clone(),
-            ),
-        )
-        .await
-        .map_err(map_acp_error)
+) -> (
+    PendingSessionRequest<SetSessionConfigOptionResponse>,
+    ConfigChangeWrite,
+) {
+    let (pending, write) = channel.connection.client.prepare_session_request(
+        agent_client_protocol_schema::v1::SessionId::new(agent_session_id.to_string()),
+        AGENT_METHOD_NAMES.session_set_config_option,
+        &SetSessionConfigOptionRequest::new(
+            agent_session_id.to_string(),
+            config_id.clone(),
+            value.clone(),
+        ),
+    );
+    (
+        pending,
+        Box::pin(async move { write.await.map_err(map_acp_error) }),
+    )
 }
 
 /// Asks a provider session being set up for one option, reading its frames up to the answer.
@@ -105,29 +123,30 @@ pub(crate) async fn ask_during_setup(
     value: &SessionConfigOptionValue,
     mut observe: impl FnMut(&mut SessionChannel, SessionNotification),
 ) -> ConfigChangeOutcome {
-    let pending = ask(channel, agent_session_id, config_id, value).await?;
+    let (pending, write) = prepare(channel, agent_session_id, config_id, value);
     let read = timeout(SESSION_SETUP_TIMEOUT, async {
+        write.await?;
         loop {
             match channel.events.recv().await {
                 Some(SessionEvent::Update(update, _)) => observe(channel, update),
                 Some(SessionEvent::Response(response)) if pending.matches_response(&response) => {
-                    return Some(response);
+                    return Ok(response);
                 }
                 Some(event) => {
                     let client = channel.connection.client.clone();
                     settle_idle_event(&client, event).await;
                 }
-                None => return None,
+                None => return Err(runtime_unavailable()),
             }
         }
     })
     .await;
     match read {
-        Ok(Some(response)) => Ok(pending
+        Ok(Ok(response)) => Ok(pending
             .finish(response)
             .map_err(map_acp_error)?
             .config_options),
-        Ok(None) => Err(runtime_unavailable()),
+        Ok(Err(error)) => Err(error),
         Err(_elapsed) => {
             channel.config_changes.unanswered.push(UnansweredChange {
                 pending,
@@ -142,7 +161,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Asks the provider behind `channel` for one option, or leaves that to a caller when there is
     /// none.
     pub(crate) async fn change_config(
-        &self,
+        &mut self,
         channel: Option<&mut SessionChannel>,
         request: ConfigChangeRequest,
     ) {
@@ -156,38 +175,56 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             return;
         }
         let Some(channel) = channel else {
+            let (finished, done) = oneshot::channel();
+            self.direct_config_changes.push(done);
             let _ = accepted.send(Ok(ConfigChangeRoute::Direct {
                 agent_session_id: self.provider_session_id().to_string(),
+                _finished: Some(finished),
             }));
             return;
         };
-        match ask(channel, self.provider_session_id(), &config_id, &value).await {
-            Ok(pending) => {
-                let (caller, outcome) = oneshot::channel();
-                channel.config_changes.unanswered.push(UnansweredChange {
-                    pending,
-                    caller: Some(caller),
-                });
-                let _ = accepted.send(Ok(ConfigChangeRoute::Sent(outcome)));
-            }
-            Err(error) => {
-                let _ = accepted.send(Err(error));
-            }
+        let (pending, mut write) = prepare(channel, self.provider_session_id(), &config_id, &value);
+        // Written here while the agent reads, which keeps changes in the order they were asked for.
+        // An agent that does not must hold up its caller alone: this actor still has to stop.
+        let write = tokio::select! {
+            biased;
+            written = &mut write => match written {
+                Ok(()) => None,
+                Err(error) => {
+                    let _ = accepted.send(Err(error));
+                    return;
+                }
+            },
+            () = std::future::ready(()) => Some(write),
+        };
+        let (caller, outcome) = oneshot::channel();
+        channel.config_changes.unanswered.push(UnansweredChange {
+            pending,
+            caller: Some(caller),
+        });
+        let _ = accepted.send(Ok(ConfigChangeRoute::Asked { write, outcome }));
+    }
+
+    /// Waits for the changes whose callers are asking a session that holds no provider.
+    ///
+    /// Each caller gives up after its own timeout.
+    pub(crate) async fn finish_direct_changes(&mut self) {
+        for finished in std::mem::take(&mut self.direct_config_changes) {
+            let _ = finished.await;
         }
     }
 
     /// Settles the change this response answers, if it answers one.
     ///
-    /// Called from every place that reads a session's frames, at the answer's turn among them.
+    /// Called from every place that reads a session's frames, at the answer's turn among them. Returns
+    /// the options to show when its caller is gone, because nobody else tells the views then.
     pub(crate) fn settle_config_change(
         &mut self,
         channel: &mut SessionChannel,
         response: SessionResponse,
-    ) {
-        let Some(change) = channel.config_changes.answered_by(&response) else {
-            return;
-        };
-        let UnansweredChange { pending, caller } = change;
+    ) -> Option<SessionUpdate> {
+        let UnansweredChange { pending, caller } = channel.config_changes.answered_by(&response)?;
+        let caller = caller.filter(|caller| !caller.is_closed());
         let outcome = match pending.finish(response) {
             Ok(answer) => {
                 self.adopt_config_options(answer.config_options);
@@ -195,8 +232,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
             Err(error) => Err(map_acp_error(error)),
         };
-        if let Some(caller) = caller {
-            let _ = caller.send(outcome);
+        match (caller, outcome) {
+            (Some(caller), outcome) => {
+                // One that goes just now is as good as told.
+                let _ = caller.send(outcome);
+                None
+            }
+            (None, Ok(options)) => Some(SessionUpdate::ConfigOptionUpdate(
+                ConfigOptionUpdate::new(options),
+            )),
+            (None, Err(_)) => None,
         }
     }
 

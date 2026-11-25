@@ -57,7 +57,10 @@ pub(super) async fn consume_idle_event<H: AgentRuntimeHost>(
                 });
             }
         }
-        SessionEvent::Response(response) => actor.settle_config_change(channel, response),
+        SessionEvent::Response(response) => {
+            // An idle session has no stream to show it on.
+            let _ = actor.settle_config_change(channel, response);
+        }
         event @ SessionEvent::Permission(_) => {
             let client = channel.connection.client.clone();
             settle_idle_event(&client, event).await;
@@ -142,7 +145,13 @@ where
             }
             Some(SessionEvent::Response(response)) => {
                 if !pending.matches_response(&response) {
-                    actor.settle_config_change(channel, response);
+                    if let Some(update) = actor.settle_config_change(channel, response) {
+                        followers.send_update(&update, None);
+                        let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                            update,
+                            tool_timing: None,
+                        }));
+                    }
                     continue;
                 }
                 return Some(pending.finish(response));
@@ -188,7 +197,15 @@ pub(super) async fn drain_queued_prompt_events<H: AgentRuntimeHost>(
                     )
                     .await;
             }
-            SessionEvent::Response(response) => actor.settle_config_change(channel, response),
+            SessionEvent::Response(response) => {
+                if let Some(update) = actor.settle_config_change(channel, response) {
+                    followers.send_update(&update, None);
+                    let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                        update,
+                        tool_timing: None,
+                    }));
+                }
+            }
         }
     }
 }

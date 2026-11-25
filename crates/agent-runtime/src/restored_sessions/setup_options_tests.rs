@@ -206,7 +206,10 @@ fn a_snapshot_older_than_the_applied_model_does_not_undo_it() {
         for (intent, expected) in [
             (Intent::Applied, (on("a"), vec![mode()], on("a"))),
             (Intent::AppliedAfterPush, (on("a"), vec![mode()], on("a"))),
-            (Intent::AppliedLate, (on("b"), vec![mode()], on("a"))),
+            (
+                Intent::AppliedLate,
+                (on("b"), [vec![mode()], on("a")].concat(), on("a")),
+            ),
             (Intent::Refused, (on("b"), vec![mode()], on("b"))),
             (Intent::RefusedAfterPush, (on("a"), vec![mode()], on("a"))),
             (Intent::NotOffered, (on("b"), vec![mode()], on("b"))),
@@ -224,18 +227,18 @@ fn a_snapshot_older_than_the_applied_model_does_not_undo_it() {
 fn a_restored_session_is_on_the_model_its_agent_accepted() {
     let on = |model: &str| vec![State::Model(model.to_string())];
     for (intent, prompted, expected) in [
-        (Intent::Applied, "a", "a"),
-        (Intent::AppliedAfterPush, "a", "a"),
-        (Intent::AppliedLate, "b", "a"),
-        (Intent::Refused, "b", "b"),
-        (Intent::RefusedAfterPush, "a", "a"),
-        (Intent::NotOffered, "b", "b"),
-        (Intent::Absent, "b", "b"),
+        (Intent::Applied, on("a"), "a"),
+        (Intent::AppliedAfterPush, on("a"), "a"),
+        (Intent::AppliedLate, [on("b"), on("a")].concat(), "a"),
+        (Intent::Refused, on("b"), "b"),
+        (Intent::RefusedAfterPush, on("a"), "a"),
+        (Intent::NotOffered, on("b"), "b"),
+        (Intent::Absent, on("b"), "b"),
     ] {
         run_case(async move {
             assert_eq!(
                 views(Acquired::Restored, intent).await,
-                (vec![State::NoOptions], on(prompted), on(expected))
+                (vec![State::NoOptions], prompted, on(expected))
             );
         });
     }

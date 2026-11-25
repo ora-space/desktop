@@ -1,7 +1,7 @@
 //! Configures a persisted session through the actor that reads its provider's frames.
 
 use crate::command::{ConfigChangeRequest, RuntimeCommand};
-use crate::config_changes::ConfigChangeRoute;
+use crate::config_changes::{ConfigChangeOutcome, ConfigChangeRoute, ConfigChangeWrite};
 use crate::support::{agent_timed_out, runtime_unavailable};
 use crate::{AgentRuntimeHost, AgentRuntimeManager, RuntimeError, SESSION_SETUP_TIMEOUT, start};
 use agent_client_protocol_schema::v1::{SessionConfigId, SessionConfigOptionValue};
@@ -37,10 +37,14 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             }
             None => ConfigChangeRoute::Direct {
                 agent_session_id: session.agent_session_id.clone(),
+                _finished: None,
             },
         };
         let config_options = match route {
-            ConfigChangeRoute::Direct { agent_session_id } => {
+            ConfigChangeRoute::Direct {
+                agent_session_id,
+                _finished,
+            } => {
                 start::request_config_option(
                     &self.inner.connections,
                     &session.agent_ref,
@@ -52,11 +56,28 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             }
             // Giving up here does not withdraw the change: the agent may still make it, and the
             // actor adopts its answer then.
-            ConfigChangeRoute::Sent(outcome) => timeout(SESSION_SETUP_TIMEOUT, outcome)
-                .await
-                .map_err(|_elapsed| agent_timed_out("agent configuration timed out"))?
-                .map_err(|_lost| runtime_unavailable())??,
+            ConfigChangeRoute::Asked { write, outcome } => {
+                timeout(SESSION_SETUP_TIMEOUT, answered(write, outcome))
+                    .await
+                    .map_err(|_elapsed| agent_timed_out("agent configuration timed out"))??
+            }
         };
         Ok(SetSessionConfigResponse { config_options })
     }
+}
+
+/// Writes what is left of a change and waits for what came of it.
+async fn answered(
+    write: Option<ConfigChangeWrite>,
+    mut outcome: oneshot::Receiver<ConfigChangeOutcome>,
+) -> ConfigChangeOutcome {
+    if let Some(write) = write {
+        tokio::select! {
+            biased;
+            written = write => written?,
+            // Its session went first, so the agent was never asked.
+            _ = &mut outcome => return Err(runtime_unavailable()),
+        }
+    }
+    outcome.await.map_err(|_lost| runtime_unavailable())?
 }

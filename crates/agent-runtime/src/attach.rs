@@ -140,6 +140,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             self.session_mcp.mcp_failed(&error);
             return Err(error);
         }
+        self.finish_direct_changes().await;
         let channel = self
             .connection
             .open_session_channel(self.provider_session_id(), self.session.id.as_ref())?;

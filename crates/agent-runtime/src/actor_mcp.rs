@@ -371,7 +371,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {
-                        self.settle_config_change(&mut channel, response);
+                        let _ = self.settle_config_change(&mut channel, response);
                         continue;
                     }
                     return match pending.finish(response) {
