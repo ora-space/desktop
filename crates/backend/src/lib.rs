@@ -6,7 +6,6 @@ mod clock;
 mod error;
 mod git_cleanup;
 mod identity;
-mod legacy_skill_cleanup;
 mod marketplace_sources;
 mod plugin;
 mod plugin_configuration;

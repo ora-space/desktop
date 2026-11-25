@@ -1,5 +1,5 @@
 use super::cleanup_legacy_managed_skills;
-use ora_db::{DatabaseBootstrapper, DatabaseLocation, MigrationCatalog, default_migration_catalog};
+use crate::{DatabaseBootstrapper, DatabaseLocation, MigrationCatalog, default_migration_catalog};
 use ora_logging::with_trace_logging;
 use ora_utils::directory::fingerprint_directory;
 use pretty_assertions::assert_eq;
