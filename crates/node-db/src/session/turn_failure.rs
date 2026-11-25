@@ -39,7 +39,7 @@ impl<G: WriteGuard> SessionJournal<G> {
         }
         let mut last = current.last_sequence;
         guard.before_write(WritePoint::Progress)?;
-        last = write_failure_settlement(
+        let recorded = write_failure_settlement(
             &tx,
             &guard,
             &current,
@@ -48,8 +48,8 @@ impl<G: WriteGuard> SessionJournal<G> {
                 turn_id: turn.clone(),
                 outcome,
             },
-        )?
-        .value();
+        )?;
+        last = recorded.value();
         // A kept failure settles its merged cancels as `already_ended`; an ending one settles them
         // as `session_ending`, so both stay consistent with the failure outcome.
         let cancel_outcome = match outcome {
@@ -71,7 +71,7 @@ impl<G: WriteGuard> SessionJournal<G> {
             .value();
         }
         tx.commit()?;
-        Ok(Sequence::new(last))
+        Ok(recorded)
     }
 
     /// The settlement already recorded for a failed turn, if any.
