@@ -281,33 +281,48 @@ pub(super) fn map_acp_error(error: ora_acp::AcpError) -> RuntimeError {
 
 /// Maps a prompt rejection that has one known authentication meaning onto a stable public error.
 ///
-/// ACP request errors otherwise contain provider-authored free text, so only the exact observed
-/// login refusal is classified. Every other message stays on the generic protocol failure path and
-/// never becomes user-visible text.
+/// Authentication is recognized by the ACP code `-32000` or the two known texts; the text match is
+/// kept for Agents that do not use the code. The failure's sanitized, bounded reason is carried so
+/// the turn records it, while only the code and `acp_code` reach logs.
 pub(super) fn map_prompt_error(error: ora_acp::AcpError) -> RuntimeError {
-    if matches!(
-        &error,
-        ora_acp::AcpError::RequestFailed(message)
-            if matches!(message.trim(), "Authentication required" | "Not logged in")
-    ) {
-        return RuntimeError::with_source(
-            ErrorClassification::Unprocessable,
-            PublicError::AgentAuthenticationRequired(EmptyErrorParams {}),
-            "agent authentication is required",
-            error,
-        );
+    match &error {
+        ora_acp::AcpError::RequestFailed(request) => {
+            let auth = request.code == -32000
+                || matches!(
+                    request.message.trim(),
+                    "Authentication required" | "Not logged in"
+                );
+            let failure = crate::turn_failure::acp_failure(
+                request.code,
+                &request.message,
+                &request.data,
+                auth,
+            );
+            crate::turn_failure::log_turn_failure("prompt_failed", &failure);
+            let runtime_error = if auth {
+                RuntimeError::with_source(
+                    ErrorClassification::Unprocessable,
+                    PublicError::AgentAuthenticationRequired(EmptyErrorParams {}),
+                    "agent authentication is required",
+                    error,
+                )
+            } else {
+                map_acp_error(error)
+            };
+            runtime_error.with_turn_failure(failure)
+        }
+        _ => map_acp_error(error),
     }
-    map_acp_error(error)
 }
 
 /// A provider can reject a prompt after dropping its session while keeping the ACP transport
 /// alive. Detach that registration so the next turn restores it before sending another prompt.
 /// Ordinary request failures (rate limits, model errors, authentication) keep the live channel.
 pub(super) fn provider_session_invalid(error: &ora_acp::AcpError) -> bool {
-    let ora_acp::AcpError::RequestFailed(message) = error else {
+    let ora_acp::AcpError::RequestFailed(request) = error else {
         return false;
     };
-    let message = message.trim().to_ascii_lowercase();
+    let message = request.message.trim().to_ascii_lowercase();
     matches!(
         message.as_str(),
         "session is closed"

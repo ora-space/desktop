@@ -48,6 +48,7 @@ mod suspend;
 mod title_acquisition;
 mod tool_timing;
 mod turn_cancel;
+mod turn_failure;
 
 #[cfg(feature = "test-support")]
 mod test_support;

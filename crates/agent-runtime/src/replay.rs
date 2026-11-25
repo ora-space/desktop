@@ -31,7 +31,11 @@ fn map_record(record: HistoryRecord, recorded_at: Option<String>) -> Option<Load
                 duration_ms: timing.duration_ms,
             }),
         }),
-        HistoryRecord::TurnEnded { stop_reason } => Some(LoadSessionEvent::TurnEnded {
+        HistoryRecord::TurnEnded {
+            stop_reason,
+            ended_by: _,
+            failure: _,
+        } => Some(LoadSessionEvent::TurnEnded {
             stop_reason,
             recorded_at,
         }),

@@ -17,6 +17,7 @@ use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
+use ora_history::TurnEndedBy;
 use ora_logging::{ora_debug, ora_warn};
 use stale_load::{describes_provider, stale_load_retry_allowed};
 
@@ -394,7 +395,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         // provider session.
                         end_report.record(PromptEndCause::UserStopped);
                         end_report.mark_cancel_applied();
-                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                        self.end_timed_turn_with(
+                            StopReason::Cancelled,
+                            &tool_timings,
+                            Some(TurnEndedBy::CallerCancel),
+                            None,
+                        );
                         followers.finish(StopReason::Cancelled);
                         if reusable {
                             self.record_cleanup(operation_id, Ok(()));
@@ -415,7 +421,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         // The inactivity schedule gave up: this is a system timeout, never the
                         // user's own stop, even though both end the turn as `Cancelled`.
                         end_report.record(PromptEndCause::InactivityTimeout);
-                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                        let turn_failure = error.turn_failure().cloned();
+                        self.end_timed_turn_with(
+                            StopReason::Cancelled,
+                            &tool_timings,
+                            None,
+                            turn_failure,
+                        );
                         followers.finish(StopReason::Cancelled);
                         let _ = events.try_send(Err(error));
                         self.isolate_channel(channel).await;
@@ -591,9 +603,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             }
                             ora_debug!(session_id = %self.session.id, code = "agent_turn_failed", reusable = reusable, "prompt failed");
                             end_report.record(PromptEndCause::Unknown);
-                            self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                            followers.finish(StopReason::Cancelled);
-                            self.load_restoration = LoadRestoration::NotRestored;
                             let failure = map_prompt_error(error);
                             // A request error is the Agent's own answer; a transport failure is not.
                             let failure = if reusable {
@@ -601,6 +610,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             } else {
                                 failure
                             };
+                            let turn_failure = failure.turn_failure().cloned();
+                            self.end_timed_turn_with(
+                                StopReason::Cancelled,
+                                &tool_timings,
+                                None,
+                                turn_failure,
+                            );
+                            followers.finish(StopReason::Cancelled);
+                            self.load_restoration = LoadRestoration::NotRestored;
                             let delivered = events.try_send(Err(failure)).is_ok();
                             self.end_on_channel(channel, reusable && !session_invalid, delivered)
                                 .await;

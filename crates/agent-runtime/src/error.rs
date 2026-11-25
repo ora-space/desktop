@@ -1,4 +1,5 @@
 use ora_contracts::{EmptyErrorParams, PublicError};
+use ora_history::TurnFailure;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -39,6 +40,9 @@ pub struct RuntimeError {
     /// The Agent answered the prompt (with an error, or after a watchdog cancel) before this
     /// failure, so its main flow reached the response fence.
     answered: bool,
+    /// The bounded reason this turn failed, recorded on its `TurnEnded`. Set only when the runtime
+    /// observed a failure first; turns that were cancelled or ended by the session carry none.
+    turn_failure: Option<TurnFailure>,
 }
 
 impl RuntimeError {
@@ -109,6 +113,7 @@ impl RuntimeError {
             context: context.into(),
             source: None,
             answered: false,
+            turn_failure: None,
         }
     }
 
@@ -135,6 +140,7 @@ impl RuntimeError {
             context: context.to_string(),
             source: Some(Arc::new(source)),
             answered: false,
+            turn_failure: None,
         }
     }
 
@@ -151,7 +157,19 @@ impl RuntimeError {
             context,
             source,
             answered: false,
+            turn_failure: None,
         }
+    }
+
+    /// Attaches the bounded reason this turn failed, recorded on its `TurnEnded`.
+    pub(crate) fn with_turn_failure(mut self, failure: TurnFailure) -> Self {
+        self.turn_failure = Some(failure);
+        self
+    }
+
+    /// The bounded reason this turn failed, if the runtime observed a failure first.
+    pub fn turn_failure(&self) -> Option<&TurnFailure> {
+        self.turn_failure.as_ref()
     }
 
     /// Returns the category a host maps into native status and logging semantics.

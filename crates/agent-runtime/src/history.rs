@@ -6,7 +6,7 @@ use agent_client_protocol_schema::v1::StopReason;
 use ora_domain::{AgentRef, HistoryState, Session, SessionId};
 use ora_history::{
     AgentSwitch, AssembledRecord, HistoryAssembler, HistoryClock, HistoryError, HistoryRecord,
-    HistoryWriter, SCHEMA_VERSION, SessionMeta, ToolCallTiming,
+    HistoryWriter, SCHEMA_VERSION, SessionMeta, ToolCallTiming, TurnEndedBy, TurnFailure,
 };
 use ora_logging::ora_warn;
 use std::path::{Path, PathBuf};
@@ -188,9 +188,15 @@ impl<E: RuntimeEvents, C: HistoryClock> SessionRecorder<E, C> {
         self.append(&records)
     }
 
-    /// Closes the turn, flushing every item still open.
-    pub(super) fn record_turn_end(&mut self, stop_reason: StopReason) -> RecordOutcome {
-        let records = self.assembler.end_turn(stop_reason);
+    /// Closes the turn, flushing every item still open, and records why a turn that did not
+    /// complete ended: `ended_by` for a caller cancel or session end, `failure` for a failed turn.
+    pub(super) fn record_turn_end_with(
+        &mut self,
+        stop_reason: StopReason,
+        ended_by: Option<TurnEndedBy>,
+        failure: Option<TurnFailure>,
+    ) -> RecordOutcome {
+        let records = self.assembler.end_turn(stop_reason, ended_by, failure);
         let outcome = self.append(&records);
         if self.events.wants_record_previews() {
             self.events.record_preview(&self.session_id, &[]);

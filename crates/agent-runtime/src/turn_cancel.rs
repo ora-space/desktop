@@ -18,6 +18,7 @@ use crate::{AgentRuntimeHost, PromptEndCause, PromptEndReport, RuntimeActor, Run
 use agent_client_protocol_schema::v1::{
     PromptResponse, RequestId, RequestPermissionOutcome, RequestPermissionResponse, StopReason,
 };
+use ora_history::TurnEndedBy;
 use ora_contracts::PromptSessionEvent;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -116,7 +117,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         end_report.record(PromptEndCause::UserStopped);
         end_report.mark_unsent();
         end_report.mark_cancel_applied();
-        self.end_turn(StopReason::Cancelled);
+        self.end_turn_with(StopReason::Cancelled, Some(TurnEndedBy::CallerCancel), None);
         followers.finish(StopReason::Cancelled);
         let _ = events.try_send(Ok(PromptSessionEvent::Completed {
             stop_reason: StopReason::Cancelled,
@@ -212,7 +213,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
         // Every answer once `session/cancel` is written answers the cancel.
         let stop_reason = StopReason::Cancelled;
-        self.end_timed_turn(stop_reason, tool_timings);
+        self.end_timed_turn_with(stop_reason, tool_timings, Some(TurnEndedBy::CallerCancel), None);
         followers.finish(stop_reason);
         let owner_notified = !notify_owner
             || if turn_deadline.is_some() && !reusable {
@@ -307,14 +308,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     self.record_cleanup(operation_id, Ok(()));
                 }
                 end_report.record(PromptEndCause::Unknown);
-                self.end_timed_turn(StopReason::Cancelled, tool_timings);
-                followers.finish(StopReason::Cancelled);
                 let failure = map_prompt_error(error);
                 let failure = if reusable {
                     failure.answered()
                 } else {
                     failure
                 };
+                let turn_failure = failure.turn_failure().cloned();
+                self.end_timed_turn_with(StopReason::Cancelled, tool_timings, None, turn_failure);
+                followers.finish(StopReason::Cancelled);
                 let delivered = events.try_send(Err(failure)).is_ok();
                 self.end_on_channel(channel, reusable && !session_invalid, delivered)
                     .await;
