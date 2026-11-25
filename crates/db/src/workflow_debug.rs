@@ -19,7 +19,7 @@ pub use operations::DebugClaim;
 mod tests;
 
 /// Domain outcomes that callers can distinguish from storage failures.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum DebugRejection {
     #[error("missing_input_evidence")]
     MissingInputEvidence,

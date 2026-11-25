@@ -13,6 +13,8 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+mod workflow_debug;
+
 type SharedError = Arc<dyn Error + Send + Sync + 'static>;
 
 /// Classifies public failures without coupling the shared runtime to adapter-specific status codes.
