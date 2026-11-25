@@ -144,7 +144,7 @@ BEGIN
                        THEN json_remove(r.payload,'$.iterationLedger') ELSE r.payload END,
                    'ledgerRefs', (SELECT json_group_object(owner.key,json((
                        SELECT json_group_object(item.key,o.id) FROM json_each(owner.value) item
-                       JOIN workflow_debug_outcomes o ON o.run_id=r.id AND o.outcome=item.value
+                       CROSS JOIN workflow_debug_outcomes o ON o.run_id=r.id AND o.outcome=item.value
                    ))) FROM json_each(CASE WHEN json_valid(r.payload) THEN r.payload END,'$.iterationLedger') owner
                    HAVING json_type(CASE WHEN json_valid(r.payload) THEN r.payload END,'$.iterationLedger')='object'),
                    'scopeState', s.state,
