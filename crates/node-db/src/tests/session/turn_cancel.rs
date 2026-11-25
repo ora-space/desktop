@@ -52,7 +52,7 @@ fn cancel(command: &str, turn: &str) -> SessionCommandInput {
 }
 
 /// Every settlement event in the outbox, in sequence order.
-fn settlements<G: WriteGuard>(db: &NodeDatabase<G>) -> Vec<(u64, TurnCancelSettled)> {
+pub(super) fn settlements<G: WriteGuard>(db: &NodeDatabase<G>) -> Vec<(u64, TurnCancelSettled)> {
     let mut statement = db
         .connection
         .prepare("SELECT sequence,event FROM execution_events ORDER BY sequence")
