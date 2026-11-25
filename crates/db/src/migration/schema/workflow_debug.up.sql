@@ -96,10 +96,38 @@ CREATE VIEW workflow_debug_revisions AS
     SELECT run_id,revision FROM workflow_debug_baselines
     UNION ALL SELECT run_id,revision FROM workflow_debug_operations WHERE revision IS NOT NULL;
 
+-- Intern settled outcomes inside their run. Attempt-local maps retain the exact outcome
+-- versions that were visible, even if a later attempt overwrites the same iteration.
+CREATE TABLE workflow_debug_outcomes (
+    id INTEGER PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    outcome TEXT NOT NULL,
+    UNIQUE(run_id, outcome)
+);
+
+-- Rehydrate the entry only when planning a preview. Entries without a ledger retain
+-- their original payload representation; empty owner ledgers remain empty objects.
+CREATE VIEW workflow_debug_entries AS
+SELECT a.node_run_id,
+    CASE WHEN json_type(a.entry_state,'$.ledgerRefs')='object' THEN
+        json_remove(json_set(a.entry_state,'$.runPayload',CAST(json_set(
+            json_extract(a.entry_state,'$.runPayload'),'$.iterationLedger',
+            json((SELECT json_group_object(owner.key,json((
+                SELECT json_group_object(item.key,json(o.outcome))
+                FROM json_each(owner.value) item JOIN workflow_debug_outcomes o ON o.id=item.value
+            ))) FROM json_each(a.entry_state,'$.ledgerRefs') owner))
+        ) AS TEXT)), '$.ledgerRefs') ELSE a.entry_state END AS entry_state
+FROM workflow_debug_attempts a;
+
 -- A waiting retry captures its own entry state. Until dispatch, preview can use its replaced
 -- attempt's proven input; history never presents this as a new dispatch.
 CREATE TRIGGER workflow_debug_admit AFTER INSERT ON workflow_node_runs
 BEGIN
+    INSERT OR IGNORE INTO workflow_debug_outcomes(run_id,outcome)
+    SELECT r.id,item.value FROM workflow_runs r,
+        json_each(CASE WHEN json_valid(r.payload) THEN r.payload END,'$.iterationLedger') owner,
+        json_each(owner.value) item
+    WHERE r.id=NEW.run_id AND NEW.node_type IN ('agent','condition','loop','iteration');
     INSERT INTO workflow_debug_attempts(node_run_id, snapshot_id, revision, container_attempt, entry_state)
     SELECT NEW.id, r.snapshot_id,
            COALESCE((SELECT MAX(revision) FROM workflow_debug_revisions WHERE run_id = r.id), 0),
@@ -111,7 +139,15 @@ BEGIN
                WHERE NEW.iteration IS NOT NULL AND json_extract(n.value,'$.id') = NEW.node_id
            )),
            CASE WHEN NEW.node_type IN ('agent','condition','loop','iteration') THEN
-               json_object('runInput', r.input, 'runPayload', r.payload, 'scopeState', s.state,
+               json_object('runInput', r.input, 'runPayload',
+                   CASE WHEN json_type(CASE WHEN json_valid(r.payload) THEN r.payload END,'$.iterationLedger')='object'
+                       THEN json_remove(r.payload,'$.iterationLedger') ELSE r.payload END,
+                   'ledgerRefs', (SELECT json_group_object(owner.key,json((
+                       SELECT json_group_object(item.key,o.id) FROM json_each(owner.value) item
+                       JOIN workflow_debug_outcomes o ON o.run_id=r.id AND o.outcome=item.value
+                   ))) FROM json_each(CASE WHEN json_valid(r.payload) THEN r.payload END,'$.iterationLedger') owner
+                   HAVING json_type(CASE WHEN json_valid(r.payload) THEN r.payload END,'$.iterationLedger')='object'),
+                   'scopeState', s.state,
                        'scopeId', NEW.scope_id, 'round', s.round_index, 'index', NEW.iteration,
                        'completedAttempts', (SELECT json_group_array(id) FROM workflow_node_runs
                             WHERE run_id = r.id AND scope_id = NEW.scope_id AND is_deleted = 0 AND status = 2)) END

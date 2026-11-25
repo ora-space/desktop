@@ -1,11 +1,12 @@
 use super::*;
+use pretty_assertions::assert_eq;
 
 /// Measures allocated SQLite pages with the same growing ledger, with and without recording
 /// debug evidence. This is a manual sizing fixture, not a platform-dependent CI budget.
 #[test]
 #[ignore = "manual storage measurement"]
 fn foreach_storage_growth() {
-    for width in [32, 1024] {
+    for width in [32, 1024, 4096, 10240, 32768] {
         for evidence in [false, true] {
             let (_temp, _, store) = fixture();
             store.pool.with_connection(|db| {
@@ -24,6 +25,10 @@ fn foreach_storage_growth() {
                     db.execute("UPDATE workflow_runs SET payload=?1 WHERE id='other'", [payload.to_string()])?;
                     let id = format!("agent-{i}");
                     insert_attempt(db,&id,"agent","agent",Some(i as u32))?;
+                    if evidence {
+                        let restored: String = db.query_row("SELECT json_extract(entry_state,'$.runPayload') FROM workflow_debug_entries WHERE node_run_id=?1",[&id], |row| row.get(0))?;
+                        assert_eq!(serde_json::from_str::<Value>(&restored)?, payload);
+                    }
                     if evidence { db.execute("UPDATE workflow_debug_attempts SET dispatch_input=?2 WHERE node_run_id=?1",params![id,json!({"variablePool":pool,"prompt":item}).to_string()])?; }
                     db.execute("UPDATE workflow_node_runs SET status=2,output=?2 WHERE id=?1",params![id,output])?;
                     ledger.insert(i.to_string(),json!({"status":"succeeded","item":item,"output":output}));
@@ -33,4 +38,36 @@ fn foreach_storage_growth() {
             }).unwrap();
         }
     }
+}
+
+/// An overwrite of the same logical item must preserve each member's historical payload on reopen.
+#[test]
+fn reopened_members_keep_their_own_ledger_and_pool() {
+    let (_temp, location, store) = fixture();
+    let first = json!({"iterationLedger":{"loop.x":{"0":{"output":"old"}},"empty":{}},"variablePool":{"values":{"x":"first"}}});
+    let second = json!({"iterationLedger":{"loop.x":{"0":{"output":"new"}},"empty":{}},"variablePool":{"values":{"x":"second"}}});
+    store
+        .pool
+        .with_connection(|db| {
+            for (id, kind, payload) in [("a", "agent", &first), ("b", "condition", &second)] {
+                db.execute(
+                    "UPDATE workflow_runs SET payload=?1 WHERE id='other'",
+                    [payload.to_string()],
+                )?;
+                insert_attempt(db, id, kind, kind, Some(0))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    let pool = DatabaseBootstrapper::system()
+        .bootstrap_repository_pool(&location, &default_migration_catalog().unwrap())
+        .unwrap();
+    pool.with_connection(|db| {
+        for (id,expected) in [("a",first),("b",second)] {
+            let raw: String = db.query_row("SELECT json_extract(entry_state,'$.runPayload') FROM workflow_debug_entries WHERE node_run_id=?1",[id],|row|row.get(0))?;
+            assert_eq!(serde_json::from_str::<Value>(&raw)?,expected);
+        }
+        Ok(())
+    }).unwrap();
 }
