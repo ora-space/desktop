@@ -12,6 +12,7 @@ type Evidence = (
     Option<String>,
     String,
     String,
+    Option<String>,
 );
 
 pub(super) fn resolve(
@@ -229,5 +230,6 @@ pub(super) fn resolve(
         Some(json!({"variablePool":pool}).to_string()),
         kind.into(),
         raw,
+        None,
     ))
 }

@@ -411,6 +411,10 @@ export type WorkflowDebugPhase = { "state": "stopping" } | {
 } | { "state": "applied"; revision: number };
 
 export type WorkflowDebugPreview = {
+  /**
+   * Earlier physical attempt supplying dispatch input for a waiting retry.
+   */
+  inputSourceNodeRunId?: string;
   previewId: string;
   baseRevision: number;
   target: WorkflowDebugTarget;

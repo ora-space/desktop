@@ -41,6 +41,7 @@ pub enum DebugRejection {
 
 /// The immutable attempt inputs and candidate graph supplied to the server's node strategy.
 pub struct DebugPlanningInput {
+    evidence_source: Option<String>,
     read_nodes: std::collections::BTreeSet<String>,
     pub target: WorkflowDebugTarget,
     pub candidate: WorkflowGraph,
@@ -89,6 +90,7 @@ impl WorkflowDebugStore {
                 preview_id: Uuid::new_v4().to_string(),
                 base_revision: revision,
                 target: input.target,
+                input_source_node_run_id: input.evidence_source,
                 member_configurations: (!input.member_configurations.is_empty()).then_some(input.member_configurations),
                 impact,
                 workspace: WorkflowDebugWorkspace::Keep,

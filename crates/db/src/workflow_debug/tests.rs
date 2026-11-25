@@ -55,6 +55,7 @@ fn waiting_retry_uses_its_predecessor_until_the_timer_starts_it() {
             .unwrap()
             .input_recorded
     );
+    assert_eq!(p.input_source_node_run_id.as_deref(), Some("t3"));
     repo.begin_node_retry(&waiting, 30).unwrap();
     assert!(matches!(
         store.claim(&CommitWorkflowDebugRequest {
@@ -65,6 +66,51 @@ fn waiting_retry_uses_its_predecessor_until_the_timer_starts_it() {
         Err(DatabaseError::WorkflowDebug(DebugRejection::StalePreview))
     ));
     assert!(store.preview(&request, impact).is_err());
+    // This retry failed before recording a dispatch. The next wait can prove its input from t3.
+    let second = ora_domain::WorkflowNodeRunId::new("second");
+    repo.schedule_node_retry(
+        &waiting,
+        &NodeFailure::new(NodeFailureKind::Session, "startup"),
+        &NodeRetryToSchedule {
+            node_run_id: second.clone(),
+            retry: 2,
+            max_retries: 2,
+            delay_ms: 20,
+            due_at: 60,
+        },
+        40,
+    )
+    .unwrap();
+    request.selection = WorkflowDebugSelection::NodeRunId(second.to_string());
+    assert_eq!(
+        store
+            .preview(&request, impact)
+            .unwrap()
+            .input_source_node_run_id
+            .as_deref(),
+        Some("t3")
+    );
+    for invalid in [
+        "revision=1",
+        "container_attempt='retry'",
+        "snapshot_id='other-snapshot'",
+    ] {
+        store.pool.with_connection(|db| {
+            db.execute("INSERT OR IGNORE INTO workflow_snapshots(id,workflow_id,version,graph,created_at) SELECT 'other-snapshot',workflow_id,'2',graph,1 FROM workflow_snapshots WHERE id='snap'", [])?;
+            db.execute(&format!("UPDATE workflow_debug_attempts SET {invalid} WHERE node_run_id='t3'"), [])?;
+            Ok(())
+        }).unwrap();
+        assert!(matches!(
+            store.preview(&request, impact),
+            Err(DatabaseError::WorkflowDebug(
+                DebugRejection::MissingInputEvidence
+            ))
+        ));
+        store.pool.with_connection(|db| {
+            db.execute("UPDATE workflow_debug_attempts SET revision=0,container_attempt=NULL,snapshot_id='snap' WHERE node_run_id='t3'", [])?;
+            Ok(())
+        }).unwrap();
+    }
 }
 
 /// Seeds a real migrated database with two runs of the same published definition.

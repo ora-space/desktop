@@ -28,21 +28,27 @@ pub(super) fn prepare(
             .into());
         }
     }
-    let (target, snapshot, entry, dispatch, kind, graph_json) = match &request.selection {
+    let (target, snapshot, entry, dispatch, kind, graph_json, evidence_source) = match &request.selection {
         WorkflowDebugSelection::PendingTarget(position) => super::pending::resolve(db, &request.run_id, position)?,
         WorkflowDebugSelection::NodeRunId(id) => db.query_row(
         "SELECT n.node_id,n.scope_id,n.iteration,s.round_index,e.container_attempt,
                 e.snapshot_id,e.entry_state,CASE WHEN n.node_type='condition' AND json_valid(n.payload)
-                    THEN json_extract(n.payload,'$.debugCondition') ELSE COALESCE(e.dispatch_input, prior.dispatch_input) END AS observed_input,n.node_type,snap.graph,n.id
+                    THEN json_extract(n.payload,'$.debugCondition') ELSE COALESCE(e.dispatch_input, prior.dispatch_input) END AS observed_input,n.node_type,snap.graph,n.id,CASE WHEN e.dispatch_input IS NULL THEN prior.node_run_id END AS evidence_source
          FROM workflow_node_runs n JOIN workflow_runs r ON r.id=n.run_id
          JOIN workflow_run_root_scopes root ON root.run_id=r.id
          JOIN workflow_execution_scopes s ON s.id=n.scope_id
          LEFT JOIN workflow_node_runs parent ON parent.id=s.parent_loop_node_run_id
           LEFT JOIN workflow_debug_attempts e ON e.node_run_id=n.id
-          LEFT JOIN workflow_node_runs replaced ON replaced.id=json_extract(CASE WHEN json_valid(n.payload) THEN n.payload END,'$.retry_wait.previous_node_run_id')
-            AND n.status=1 AND n.started_at IS NULL AND replaced.is_deleted=1 AND replaced.status=3
-            AND replaced.run_id=n.run_id AND replaced.scope_id=n.scope_id AND replaced.node_id=n.node_id AND replaced.iteration IS n.iteration
-          LEFT JOIN workflow_debug_attempts prior ON prior.node_run_id=replaced.id AND prior.snapshot_id=e.snapshot_id AND prior.container_attempt IS e.container_attempt
+          LEFT JOIN workflow_debug_attempts prior ON prior.node_run_id=(
+            SELECT candidate.id FROM json_each(CASE WHEN json_valid(n.payload) THEN n.payload END,'$.retry_chain') chain
+            JOIN workflow_node_runs candidate ON candidate.id=chain.value
+            JOIN workflow_debug_attempts evidence ON evidence.node_run_id=candidate.id
+            WHERE n.status=1 AND n.started_at IS NULL AND json_extract(CASE WHEN json_valid(n.payload) THEN n.payload END,'$.retry_wait.previous_node_run_id') IS NOT NULL
+              AND candidate.is_deleted=1 AND candidate.status=3 AND candidate.run_id=n.run_id
+              AND candidate.scope_id=n.scope_id AND candidate.node_id=n.node_id AND candidate.iteration IS n.iteration
+              AND evidence.snapshot_id=e.snapshot_id AND evidence.revision=e.revision
+              AND evidence.container_attempt IS e.container_attempt AND evidence.dispatch_input IS NOT NULL
+            ORDER BY chain.key DESC LIMIT 1)
          JOIN workflow_snapshots snap ON snap.id=r.snapshot_id
          WHERE n.run_id=?1 AND n.id=?2 AND n.is_deleted=0
            AND (n.scope_id=root.scope_id OR (parent.scope_id=root.scope_id AND parent.is_deleted=0))
@@ -55,6 +61,7 @@ pub(super) fn prepare(
             row.get::<_, Option<String>>("observed_input")?,
             row.get::<_, String>("node_type")?,
             row.get::<_, String>("graph")?,
+            row.get::<_, Option<String>>("evidence_source")?,
         )),
     ).optional()?.ok_or(DebugRejection::InvalidTarget)?,
     };
@@ -208,6 +215,7 @@ pub(super) fn prepare(
     let mut read_nodes = super::read_set::nodes(&previous, &target.node_id);
     read_nodes.extend(super::read_set::nodes(&candidate, &target.node_id));
     Ok(DebugPlanningInput {
+        evidence_source,
         read_nodes,
         member_configurations,
         target,
