@@ -11,7 +11,9 @@ use ora_db::workflow_debug::{DebugPlanningInput, DebugRejection, Transaction};
 use ora_domain::WorkflowNodeStatus;
 
 /// Plans a top-level edit: the target plus its transitive successors are the recompute scope.
-pub(super) fn plan(input: &DebugPlanningInput) -> Result<WorkflowDebugImpact, DebugRejection> {
+pub(in crate::workflow::run) fn plan(
+    input: &DebugPlanningInput,
+) -> Result<WorkflowDebugImpact, DebugRejection> {
     // Container members are scoped by their round/item, not the root DAG; the container strategies
     // (#1431/#1432) own them. Refuse here rather than mis-scope a member as a top-level node.
     if input.target.container_node_run_id.is_some() {

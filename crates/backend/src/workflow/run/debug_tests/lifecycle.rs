@@ -103,6 +103,11 @@ fn cancellation_wins_while_stop_acknowledgement_is_in_flight() {
 /// Runs the production sweep in a new OS process using only the database path. No engine,
 /// executor registry, timer or lock is shared with the process which accepted the operation.
 fn boot_process(temp: &tempfile::TempDir, expected_calls: usize) {
+    boot_with_calls(temp, if expected_calls == 0 { "" } else { "x" });
+}
+
+/// Pass the ordered dispatch expectation to the isolated restart worker.
+fn boot_with_calls(temp: &tempfile::TempDir, expected: &str) {
     let result = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -113,7 +118,7 @@ fn boot_process(temp: &tempfile::TempDir, expected_calls: usize) {
             "ORA_DEBUG_RESTART_FIXTURE",
             temp.path().join("repository.sqlite3"),
         )
-        .env("ORA_DEBUG_RESTART_CALLS", expected_calls.to_string())
+        .env("ORA_DEBUG_RESTART_CALLS", expected)
         .output()
         .unwrap();
     assert!(
@@ -146,13 +151,14 @@ fn restart_worker() {
             SystemClock,
         );
         assert_eq!(
-            executor.records().len(),
-            std::env::var("ORA_DEBUG_RESTART_CALLS")
-                .unwrap()
-                .parse::<usize>()
-                .unwrap()
+            executor
+                .records()
+                .iter()
+                .map(|r| r.node_id.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            std::env::var("ORA_DEBUG_RESTART_CALLS").unwrap()
         );
-        assert!(executor.records().iter().all(|r| r.node_id == "x"));
     });
 }
 
@@ -369,6 +375,70 @@ fn restart_finishes_a_provably_quiet_intent_without_expanding_its_scope() {
             f.store.history(f.run_id.as_ref()).unwrap()[0]
                 .operation
                 .phase,
+            WorkflowDebugPhase::Applied { revision: 1 }
+        );
+    });
+}
+
+/// An actual backoff wake arriving on either side of restart must not claim the retired row.
+#[test]
+fn delayed_retry_cannot_reclaim_the_old_attempt_after_boot() {
+    use super::super::retry_tests::Harness;
+    run_test(async {
+        let graph = GRAPH
+            .replace(
+                "\"enabled\":false,\"maxRetries\":0",
+                "\"enabled\":true,\"maxRetries\":2",
+            )
+            .replace(
+                r#""source":"start","target":"x""#,
+                r#""source":"s","target":"x""#,
+            );
+        let h = Harness::start(&graph);
+        let store = WorkflowDebugStore::new(h.pool.clone());
+        let s = h.running("s");
+        store
+            .record_agent_dispatch(
+                h.run_id.as_ref(),
+                s.id.as_ref(),
+                &json!({"variablePool":WorkflowVariablePool::default()}),
+            )
+            .unwrap();
+        h.complete(&s.id, "ok", 50);
+        let first = h.running("x");
+        h.fail(&first.id, ora_application::NodeFailureKind::Session, 60);
+        let waiting = h.running("x");
+        assert_ne!(waiting.id, first.id);
+        assert!(Harness::wait_of(&waiting).is_some());
+        // Edit S, the successful predecessor of X. The normal plan must include its waiting retry.
+        let req=serde_json::from_value(json!({"runId":h.run_id.as_ref(),"nodeRunId":s.id.as_ref(),"baseRevision":0,"patch":[{"op":"replace","path":"/agentConfig/prompt","value":"next"}]})).unwrap();
+        let plan = store
+            .preview(&req, super::super::debug::strategy::plan)
+            .unwrap();
+        assert_eq!(plan.impact.stop, vec![waiting.id.to_string()]);
+        store
+            .claim(&CommitWorkflowDebugRequest {
+                run_id: h.run_id.to_string(),
+                preview_id: plan.preview_id,
+                request_id: "k".into(),
+            })
+            .unwrap();
+        h.wake(&waiting.id, 10000);
+        assert_eq!(h.dispatched("x"), vec![first.id.to_string()]);
+        boot_with_calls(&h.temp, "s");
+        h.wake(&waiting.id, 15000);
+        assert!(h.rows_of("x").is_empty());
+        h.complete(&h.running("s").id, "new", 16000);
+        let replacement = h.running("x");
+        assert_ne!(replacement.id, waiting.id);
+        h.wake(&waiting.id, 20000);
+        assert_eq!(h.running("x").id, replacement.id);
+        assert_eq!(
+            h.dispatched("x"),
+            vec![first.id.to_string(), replacement.id.to_string()]
+        );
+        assert_eq!(
+            store.history(h.run_id.as_ref()).unwrap()[0].operation.phase,
             WorkflowDebugPhase::Applied { revision: 1 }
         );
     });
