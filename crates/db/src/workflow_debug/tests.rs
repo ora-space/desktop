@@ -1031,3 +1031,58 @@ fn restart_keeps_top_level_revisions_but_not_container_overrides() {
         )
     );
 }
+
+/// The run page only offers variables that are declared as arrays at the root. A path into a
+/// nested array is reported on its own field and leaves nothing to confirm.
+#[test]
+fn iteration_source_must_name_a_root_array_variable() {
+    let (_temp, _path, store) = fixture();
+    let graph = json!({"nodes":[
+        {"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
+        {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["agent","output"]}}},
+        {"id":"agent","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"old"}}}],
+        "edges":[{"source":"start","target":"iter"},{"source":"iter","target":"agent"}]});
+    let mut payload = ora_application::WorkflowRunPayload::default();
+    payload
+        .variable_pool
+        .declare("start.items", "array[string]", "start");
+    payload
+        .variable_pool
+        .set("start.items", "start", json!(["a", "b", "c"]))
+        .unwrap();
+    store
+        .pool
+        .with_connection(|db| {
+            bind_graph(db, graph)?;
+            db.execute(
+                "UPDATE workflow_runs SET payload=?1 WHERE id='other'",
+                [serde_json::to_string(&payload)?],
+            )?;
+            insert_attempt(db, "it", "iter", "iteration", None)
+        })
+        .unwrap();
+    let request = |value: Value| PreviewWorkflowDebugRequest {
+        run_id: "other".into(),
+        selection: WorkflowDebugSelection::NodeRunId("it".into()),
+        base_revision: 0,
+        patch: vec![WorkflowDebugPatch::Replace {
+            path: "/iterationConfig/iteratorSelector".into(),
+            value,
+        }],
+    };
+    let field_error = |value: Value| {
+        matches!(
+            store.preview(&request(value), impact),
+            Err(DatabaseError::WorkflowDebug(DebugRejection::InvalidPatch { path, .. }))
+                if path == "/iterationConfig/iteratorSelector"
+        )
+    };
+    assert!(field_error(json!(["start", "items", 0])));
+    assert!(field_error(json!(["start"])));
+    assert!(field_error(json!("start.items")));
+    assert!(store.history("other").unwrap().is_empty());
+    // A variable declared as an array at the root stays editable.
+    store
+        .preview(&request(json!(["start", "items"])), impact)
+        .unwrap();
+}

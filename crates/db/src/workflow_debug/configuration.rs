@@ -103,6 +103,24 @@ pub(super) fn prepare(
         })
         .and_then(|node| node.get_mut("data"))
         .ok_or(DebugRejection::InvalidTarget)?;
+    // The first run page only offers variables that are declared as arrays at the root. A path
+    // into a nested array is reported on its own field instead of failing graph validation as a
+    // whole.
+    for WorkflowDebugPatch::Replace { path, value } in &request.patch {
+        let root_variable = matches!(
+            value.as_array().map(Vec::as_slice),
+            Some([node, variable])
+                if node.as_str().is_some_and(|node| !node.is_empty())
+                    && variable.as_str().is_some_and(|variable| !variable.is_empty())
+        );
+        if path == "/iterationConfig/iteratorSelector" && !root_variable {
+            return Err(invalid(
+                path,
+                "expected the selector of a variable declared as an array at the root",
+            )
+            .into());
+        }
+    }
     replace(data, &kind, &request.patch)?;
     let candidate =
         WorkflowGraph::parse(&graph.to_string()).map_err(|e| invalid("", &e.to_string()))?;
