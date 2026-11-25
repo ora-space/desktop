@@ -1,16 +1,46 @@
+//! Exercises fail-closed MCP recovery for both live and rebuilt workflow Session actors.
+
 use super::{
     TestResult, acp_calls, create_pending_run, current_thread_runtime, dirty_worktree, follow_up,
     graph, install_fake_opencode_plugin, install_mcp_plugin, mcp_calls, open_ready_backend,
     parked_nodes, publish_graph, seed_workspace, uninstall_mcp,
 };
 use crate::setup::DesktopTestSetup;
-use ora_backend::BackendError;
+use ora_backend::{Backend, BackendError};
 use ora_contracts::{
     CancelWorkflowRunRequest, PublicError, ScanPluginsRequest, SessionMcpSetupFailedParams,
     StartWorkflowRunRequest, StopSessionRequest, UpdateDraftRequest,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+use std::path::Path;
+
+/// A missing member must reject the whole selection before the provider sees any request.
+async fn assert_missing_mcp_rejects_follow_up(
+    backend: &Backend,
+    session_id: &str,
+    package_root: &Path,
+    before: &[String],
+) -> TestResult {
+    let error = follow_up(backend, session_id)
+        .await
+        .err()
+        .ok_or("an incomplete persisted selection must reject the continuation")?;
+    let error = error
+        .downcast_ref::<BackendError>()
+        .ok_or(error.to_string())?;
+    assert_eq!(
+        error.public_error(),
+        &PublicError::SessionMcpSetupFailed(Box::new(SessionMcpSetupFailedParams {
+            error_code: "mcp_selected_plugin_unavailable".into(),
+            plugin_id: Some("official/first".into()),
+            setting_id: None,
+            transport: None,
+        }))
+    );
+    assert_eq!(acp_calls(package_root), before);
+    Ok(())
+}
 
 /// Restoring an existing workflow Session must resolve its whole persisted MCP selection.
 #[test]
@@ -23,6 +53,7 @@ fn restoring_a_workflow_session_after_mcp_uninstall_fails_closed() -> TestResult
         install_mcp_plugin(home, "second")?;
         let backend = open_ready_backend(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
+        // Initialize a real checkout so the workflow can record its normal Git checkpoints.
         dirty_worktree(&setup)?;
 
         let mut graph: Value = serde_json::from_str(&graph())?;
@@ -68,25 +99,14 @@ fn restoring_a_workflow_session_after_mcp_uninstall_fails_closed() -> TestResult
         uninstall_mcp(&backend, "official/first").await?;
 
         let before = acp_calls(&package_root);
-        let error = follow_up(&backend, &session_id)
-            .await
-            .err()
-            .ok_or("an incomplete persisted selection must reject the continuation")?;
-        let error = error
-            .downcast_ref::<BackendError>()
-            .ok_or(error.to_string())?;
-        assert_eq!(
-            error.public_error(),
-            &PublicError::SessionMcpSetupFailed(Box::new(SessionMcpSetupFailedParams {
-                error_code: "mcp_selected_plugin_unavailable".into(),
-                plugin_id: Some("official/first".into()),
-                setting_id: None,
-                transport: None,
-            }))
-        );
-        assert_eq!(acp_calls(&package_root), before);
+        assert_missing_mcp_rejects_follow_up(&backend, &session_id, &package_root, &before).await?;
 
-        // Retrying with the dependency restored proves the stop/prompt route really uses load.
+        // Stopping leaves the actor registered. Reopen to force reconstruction from storage.
+        drop(backend);
+        let backend = open_ready_backend(&setup)?;
+        assert_missing_mcp_rejects_follow_up(&backend, &session_id, &package_root, &before).await?;
+
+        // With the dependency restored, the rebuilt actor loads the original provider Session.
         install_mcp_plugin(home, "first")?;
         backend.plugins().scan(ScanPluginsRequest {}).await?;
         follow_up(&backend, &session_id).await?;
