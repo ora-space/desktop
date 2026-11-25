@@ -16,13 +16,16 @@ import { ReleaseNoteList } from "../release-notes/release-note-list";
 import { useDesktopUpdate } from "./use-desktop-update";
 
 /**
- * Presents the release an update would bring, with its notes, before the user installs it. Nothing is
- * rendered unless a release is ready or must be installed by other means.
+ * Presents the release an update would bring, with its notes, before the user installs it, and why an
+ * update failed. Nothing is rendered unless a release is ready or must be installed by other means, or
+ * the last attempt failed.
  */
 export function PendingUpdate() {
   const { t } = useTranslation();
   const { updates, status } = useDesktopUpdate();
   const [confirming, setConfirming] = useState(false);
+  // The host refuses an installation by rejecting; its status alone looks as if nothing happened.
+  const [failedInstall, setFailedInstall] = useState<string | null>(null);
   const installable = status.kind === "ready" ? status.version : null;
   const [lastInstallable, setLastInstallable] = useState(installable);
   // A confirmation is for the release the user was reading; a background check can replace it.
@@ -30,10 +33,41 @@ export function PendingUpdate() {
     setLastInstallable(installable);
     setConfirming(false);
   }
-  if (
-    updates === undefined ||
-    (status.kind !== "ready" && status.kind !== "manual_update")
-  ) {
+  if (updates === undefined) return null;
+  if (status.kind === "failed") {
+    // The host's own status text, as in the version control's tooltip; it is not a thrown error.
+    const { message: reason } = status;
+    const title =
+      failedInstall === null
+        ? t("update.failedTitle")
+        : t("update.installFailed", { version: failedInstall });
+    return (
+      <section
+        aria-label={title}
+        className="flex items-start justify-between gap-4 rounded-xl border border-border bg-muted/30 p-5"
+      >
+        <div role="alert" className="min-w-0">
+          <h3 className="text-sm font-semibold">{title}</h3>
+          <p className="mt-1 text-xs leading-5 wrap-anywhere text-muted-foreground">
+            {t("update.failedReason", { reason })}
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          onClick={() => {
+            setFailedInstall(null);
+            void updates.check();
+          }}
+        >
+          {t("common.retry")}
+        </Button>
+      </section>
+    );
+  }
+  if (status.kind !== "ready" && status.kind !== "manual_update") {
     return null;
   }
   const { version, notes } = status;
@@ -66,6 +100,11 @@ export function PendingUpdate() {
           </Button>
         )}
       </div>
+      {failedInstall !== null && (
+        <p role="alert" className="mt-3 text-xs leading-5 text-destructive">
+          {t("update.installFailedRetry", { version: failedInstall })}
+        </p>
+      )}
       {notes.length > 0 && (
         <div className="mt-4 border-t border-border/70 pt-4">
           <ReleaseNoteList notes={notes} />
@@ -90,7 +129,8 @@ export function PendingUpdate() {
             <AlertDialogAction
               onClick={() => {
                 setConfirming(false);
-                void updates.install(version);
+                setFailedInstall(null);
+                updates.install(version).catch(() => setFailedInstall(version));
               }}
             >
               {t("update.confirmAction")}

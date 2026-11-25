@@ -93,17 +93,22 @@ describe("DesktopUpdateControl", () => {
     expect(screen.queryByTestId("desktop-update-badge")).toBeNull();
   });
 
-  it("does not advertise a release after a failed check", async () => {
+  it("shows a failed check and leads to its reason without advertising a release", async () => {
+    const user = userEvent.setup();
     const { updates } = createUpdates({
       kind: "failed",
       message: "endpoint unreachable",
     });
-    renderControl(updates);
+    const onReview = vi.fn();
+    renderControl(updates, onReview);
 
-    await screen.findByRole("button", {
+    const trigger = await screen.findByRole("button", {
       name: "检查更新失败：endpoint unreachable",
     });
+    expect(screen.getByRole("status").textContent).toBe("检查更新失败");
     expect(screen.queryByTestId("desktop-update-badge")).toBeNull();
+    await user.click(trigger);
+    expect(onReview).toHaveBeenCalledTimes(1);
   });
 
   it("triggers a manual check when the refresh button is clicked", async () => {

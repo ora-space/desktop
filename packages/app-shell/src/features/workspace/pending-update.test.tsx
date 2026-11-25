@@ -23,12 +23,13 @@ const NOTES: ReleaseNote[] = [
 /** Renders the pane on a host whose updater reports one status. */
 function renderPending(status: DesktopUpdateStatus) {
   const install = vi.fn().mockResolvedValue(undefined);
+  const check = vi.fn().mockResolvedValue(undefined);
   const getStatus = vi.fn(async () => status);
   let publish: (next: DesktopUpdateStatus) => void = () => undefined;
   const updates: DesktopUpdateCapability = {
     getStatus,
     install,
-    check: async () => undefined,
+    check,
     onStatus: async (listener) => {
       publish = listener;
       return () => undefined;
@@ -42,6 +43,7 @@ function renderPending(status: DesktopUpdateStatus) {
     </AppI18nProvider>,
   );
   return {
+    check,
     container,
     getStatus,
     install,
@@ -146,6 +148,74 @@ describe("PendingUpdate", () => {
     await screen.findByText(/请用软件包管理器更新/);
     expect(screen.getByText(MARKUP)).not.toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("reports a rejected installation until it is confirmed again", async () => {
+    const user = userEvent.setup();
+    const { install } = renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: NOTES,
+    });
+    const confirm = async () => {
+      await user.click(await screen.findByRole("button", { name: "立即更新" }));
+      const dialog = await screen.findByRole("alertdialog");
+      await user.click(
+        within(dialog).getByRole("button", { name: "立即更新" }),
+      );
+    };
+
+    install.mockRejectedValueOnce(new Error("rejected"));
+    await confirm();
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "安装 Ora 0.3.0 失败",
+    );
+
+    await confirm();
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(install).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports an installation whose package had to be discarded", async () => {
+    const user = userEvent.setup();
+    const { check, install, publish } = renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: NOTES,
+    });
+    install.mockImplementationOnce(() => {
+      publish({ kind: "failed", message: "signature is invalid" });
+      return Promise.reject(new Error("rejected"));
+    });
+    await user.click(await screen.findByRole("button", { name: "立即更新" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "立即更新" }));
+
+    const region = await screen.findByRole("region", {
+      name: "安装 Ora 0.3.0 失败",
+    });
+    expect(
+      within(region).getByText("原因：signature is invalid"),
+    ).not.toBeNull();
+    await user.click(within(region).getByRole("button", { name: "重试" }));
+    expect(check).toHaveBeenCalledTimes(1);
+    // The retry is a check, so a further failure is no longer the installation's.
+    await screen.findByRole("region", { name: "检查更新失败" });
+  });
+
+  it("explains a failed check and retries it", async () => {
+    const user = userEvent.setup();
+    const { check } = renderPending({
+      kind: "failed",
+      message: "update operation failed: connection refused",
+    });
+
+    const region = await screen.findByRole("region", { name: "检查更新失败" });
+    expect(within(region).getByRole("alert").textContent).toContain(
+      "connection refused",
+    );
+    await user.click(within(region).getByRole("button", { name: "重试" }));
+    expect(check).toHaveBeenCalledTimes(1);
   });
 
   it("stays absent while there is nothing to review", async () => {
