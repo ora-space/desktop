@@ -279,7 +279,8 @@ discover: (async (context) => {
 });
 ```
 
-`deadline` in the context is when Ora stops waiting for the answer.
+`deadline` in the context is when Ora stops waiting for the answer, as Ora said
+when it asked; pass that same context on.
 `waitForAgentCommands` takes a promise for the first `available_commands_update`
 of the probe session, and stops at Ora's cap or where the cleanup reserve before
 that deadline begins. A plugin with an earlier deadline of its own passes it as

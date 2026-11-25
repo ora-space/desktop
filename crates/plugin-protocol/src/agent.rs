@@ -17,9 +17,10 @@ pub const AGENT_ACP_METHOD: &str = "agent/acp";
 pub const AGENT_NOT_INSTALLED_CODE: i64 = -32001;
 /// Error returned when the executable bundled by an agent package cannot run.
 pub const AGENT_UNUSABLE_CODE: i64 = -32002;
-/// How long the host waits for one discovery, from sending it to reading its answer.
+/// How long the host gives one discovery.
 ///
-/// Published so a plugin can keep part of it for cleanup rather than waiting it out.
+/// The host states when that ends in [`AgentDiscoverParams::deadline`], which is what a plugin goes
+/// by. It is published only for [`AGENT_LIST_MODELS_METHOD`], whose params carry no deadline.
 pub const AGENT_DISCOVERY_BUDGET_MS: u64 = 60_000;
 /// Longest a plugin may wait for an agent's first command report, from its `session/new` response.
 ///
@@ -106,6 +107,9 @@ pub struct AgentDiscoverParams {
     pub cwd: PathBuf,
     /// Whether the caller wants commands; a plugin must not wait for them when it does not.
     pub include_commands: bool,
+    /// When the host stops waiting for the answer, in Unix milliseconds. Cleanup has to fit too.
+    #[ts(type = "number")]
+    pub deadline: i64,
 }
 
 /// What an agent offers before any session exists.
@@ -208,9 +212,14 @@ mod tests {
             serde_json::to_value(AgentDiscoverParams {
                 cwd: PathBuf::from("/projects/ora"),
                 include_commands: true,
+                deadline: 1_700_000_060_000,
             })
             .expect("serialize discovery params"),
-            json!({ "cwd": "/projects/ora", "includeCommands": true }),
+            json!({
+                "cwd": "/projects/ora",
+                "includeCommands": true,
+                "deadline": 1_700_000_060_000_i64,
+            }),
         );
     }
 

@@ -133,8 +133,10 @@ The host can invoke only listed `methods`; a notification outside `emits` invali
 connection. `effectResources` declares the Workspace Resources an agent consumes, see
 [Effects](../agents/effects.md). Requests from the plugin to the host need no declaration.
 
-`agent/discover` takes `AgentDiscoverParams { cwd, includeCommands }`: the Workspace the discovery is
-for and whether the caller wants the agent's commands. It answers with models and, when known,
+`agent/discover` takes `AgentDiscoverParams { cwd, includeCommands, deadline }`: the Workspace the
+discovery is for, whether the caller wants the agent's commands, and when the host stops waiting, in
+Unix milliseconds. The host times out at that same moment, time spent waiting to be written included,
+and the plugin measures waiting and cleanup against it. It answers with models and, when known,
 commands; an absent command list means nobody knows, an empty one that the agent has none. A malformed
 command is dropped alone. The host calls it on demand with a longer budget than ordinary control calls.
 

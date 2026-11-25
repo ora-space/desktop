@@ -17,9 +17,9 @@ export interface AgentCommandsWait {
 /**
  * Waits for the first command report of a discovery's probe session.
  *
- * Call it once `session/new` has answered, with the context `discover` received and a promise for
- * the first `available_commands_update` of that session, which may already have settled. It
- * resolves to `undefined` — commands unknown — when nothing arrives in time or the report fails,
+ * Call it once `session/new` has answered. `context` is the one `discover` received, whose deadline
+ * is Ora's; `report` is a promise for the first `available_commands_update` of that session, which
+ * may already have settled. It resolves to `undefined` — commands unknown — when nothing arrives in time or the report fails,
  * so a missing report never costs the models already read. The wait ends at Ora's cap or where the
  * cleanup reserve before the deadline begins, whichever is first.
  */

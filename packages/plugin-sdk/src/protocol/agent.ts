@@ -21,6 +21,10 @@ export type AgentDiscoverParams = {
    * Whether the caller wants commands; a plugin must not wait for them when it does not.
    */
   includeCommands: boolean;
+  /**
+   * When the host stops waiting for the answer, in Unix milliseconds. Cleanup has to fit too.
+   */
+  deadline: number;
 };
 
 /**

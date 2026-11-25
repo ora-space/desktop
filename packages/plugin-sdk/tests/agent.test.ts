@@ -397,14 +397,26 @@ Deno.test("gives discover the host's deadline, before which cleanup keeps its ti
   const { now } = Date;
   const { setTimeout: schedule } = globalThis;
   const asked = 1_000_000;
-  const requests: { method: string; params: JsonValue }[] = [
+  // Less than a whole budget away: the request spent the rest of it on its way here.
+  const stated = asked + AGENT_DISCOVERY_BUDGET_MS / 2;
+  const discover = (deadline: number) => ({
+    method: "agent/discover",
+    params: { cwd: "/p", includeCommands: true, deadline },
+  });
+  const requests: {
+    request: { method: string; params: JsonValue };
+    expected: number;
+    allowed: number;
+  }[] = [
+    { request: discover(stated), expected: stated, allowed: 100 },
+    { request: discover(asked - 1), expected: asked, allowed: 0 },
     {
-      method: "agent/discover",
-      params: { cwd: "/p", includeCommands: true },
+      request: { method: "agent/list_models", params: { cwd: "/p" } },
+      expected: asked + AGENT_DISCOVERY_BUDGET_MS,
+      allowed: 100,
     },
-    { method: "agent/list_models", params: { cwd: "/p" } },
   ];
-  for (const request of requests) {
+  for (const { request, expected, allowed } of requests) {
     let deadline: number | undefined;
     let waited: number | undefined;
     const plugin = defineAgent({
@@ -413,9 +425,7 @@ Deno.test("gives discover the host's deadline, before which cleanup keeps its ti
       discover: async (context) => {
         deadline = context.deadline;
         // `session/new` answers a tenth of a second before the reserve begins.
-        Date.now = () =>
-          asked + AGENT_DISCOVERY_BUDGET_MS -
-          AGENT_DISCOVERY_CLEANUP_RESERVE_MS - 100;
+        Date.now = () => expected - AGENT_DISCOVERY_CLEANUP_RESERVE_MS - allowed;
         globalThis.setTimeout = ((fire: () => void, delay: number) => {
           waited = delay;
           return schedule(fire, 0);
@@ -436,7 +446,7 @@ Deno.test("gives discover the host's deadline, before which cleanup keeps its ti
       Date.now = now;
       globalThis.setTimeout = schedule;
     }
-    assertEquals([deadline, waited], [asked + AGENT_DISCOVERY_BUDGET_MS, 100]);
+    assertEquals([deadline, waited], [expected, allowed]);
     await harness.send({ jsonrpc: "2.0", method: "ora/shutdown", params: {} });
     await run;
   }

@@ -64,7 +64,7 @@ export interface AgentDiscoveryContext {
   /** Whether the caller wants commands. When it does not, do not wait for them. */
   includeCommands: boolean;
   /**
-   * When Ora stops waiting for the answer, in `Date.now()` time.
+   * When Ora stops waiting for the answer, in `Date.now()` time, as Ora stated it.
    *
    * Cleanup has to fit before it too; {@link waitForAgentCommands} leaves room for that.
    */
@@ -154,11 +154,12 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     return {};
   });
   plugin.registerMethod(AGENT_METHODS.discover, async (params) => {
-    const { cwd, includeCommands } = params as AgentDiscoverParams;
+    const { cwd, includeCommands, deadline } = params as AgentDiscoverParams;
     const { models, commands } = await definition.discover({
       cwd,
       includeCommands,
-      deadline: discoveryDeadline(),
+      // One already past leaves no time, rather than a negative amount of it.
+      deadline: Math.max(deadline, Date.now()),
     });
     return {
       models: models.map(wireModel),
@@ -170,7 +171,8 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     const { models } = await definition.discover({
       cwd,
       includeCommands: false,
-      deadline: discoveryDeadline(),
+      // This method carries no deadline.
+      deadline: Date.now() + AGENT_DISCOVERY_BUDGET_MS,
     });
     return { models: models.map(wireModel) } satisfies AgentListModelsResult;
   });
@@ -198,11 +200,6 @@ export function defineAgent(definition: AgentDefinition): Plugin {
   }
 
   return plugin;
-}
-
-/** Reads when the host gives up on the discovery it just asked for. */
-function discoveryDeadline(): number {
-  return Date.now() + AGENT_DISCOVERY_BUDGET_MS;
 }
 
 /** Spells out the default flag the host requires. */
