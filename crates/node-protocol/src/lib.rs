@@ -21,6 +21,7 @@ pub use domain::{
 pub use message::{
     CancelTurn, CancelTurnMessage, TurnCancelOutcome, TurnCancelSettled, TurnCancelSettledMessage,
 };
+pub use message::{TurnFailureOutcome, TurnFailureSettled, TurnFailureSettledMessage};
 pub use message::{
     GetSessionMcpState, GetSessionMcpStateMessage, ProbeSessionMcp, ProbeSessionMcpMessage,
     SessionMcpMessage, SessionMcpReply, SessionMcpReplyMessage, SessionMcpResult,
