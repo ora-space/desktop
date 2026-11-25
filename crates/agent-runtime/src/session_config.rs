@@ -34,7 +34,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         };
         // The provider request remains direct because it is independent of the actor's
         // serialized prompt/load stream; only the title-polling attempt needs standing down.
-        let config_options = start::request_config_option(
+        let mut config_options = start::request_config_option(
             &self.inner.connections,
             &session.agent_ref,
             &agent_session_id,
@@ -50,8 +50,10 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 response,
             };
             // The provider has already changed, so an actor that ended meanwhile fails nothing.
-            if handle.commands.send(command).is_ok() {
-                let _ = adopted.await;
+            if handle.commands.send(command).is_ok()
+                && let Ok(current) = adopted.await
+            {
+                config_options = current;
             }
         }
         Ok(SetSessionConfigResponse { config_options })
