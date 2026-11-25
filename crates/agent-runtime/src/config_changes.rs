@@ -14,7 +14,7 @@ use agent_client_protocol_schema::v1::{
 use ora_acp::{PendingSessionRequest, SessionResponse};
 use std::future::Future;
 use std::pin::Pin;
-use tokio::sync::oneshot;
+use tokio::sync::oneshot::{self, error::TryRecvError};
 use tokio::time::timeout;
 
 /// What a caller waiting for a configuration change is told.
@@ -54,6 +54,8 @@ pub(crate) struct ConfigChanges {
 struct UnansweredChange {
     pending: PendingSessionRequest<SetSessionConfigOptionResponse>,
     caller: Option<oneshot::Sender<ConfigChangeOutcome>>,
+    /// Told once the request is written, when that was left to the caller.
+    written: Option<oneshot::Receiver<()>>,
 }
 
 impl ConfigChanges {
@@ -65,6 +67,22 @@ impl ConfigChanges {
         for change in self.unanswered.drain(..) {
             change.tell(Ok(options.to_vec()));
         }
+    }
+
+    /// Forgets the changes whose callers gave up before the agent was asked.
+    fn forget_unasked(&mut self) {
+        self.unanswered
+            .retain_mut(|change| match change.written.as_mut() {
+                Some(written) => match written.try_recv() {
+                    Ok(()) => {
+                        change.written = None;
+                        true
+                    }
+                    Err(TryRecvError::Empty) => true,
+                    Err(TryRecvError::Closed) => false,
+                },
+                None => true,
+            });
     }
 
     /// Takes out the change this response answers.
@@ -151,6 +169,7 @@ pub(crate) async fn ask_during_setup(
             channel.config_changes.unanswered.push(UnansweredChange {
                 pending,
                 caller: None,
+                written: None,
             });
             Err(agent_timed_out("agent configuration timed out"))
         }
@@ -197,10 +216,24 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             },
             () = std::future::ready(()) => Some(write),
         };
+        let (write, written) = match write {
+            Some(write) => {
+                let (report, written) = oneshot::channel();
+                let write: ConfigChangeWrite = Box::pin(async move {
+                    write.await?;
+                    let _ = report.send(());
+                    Ok(())
+                });
+                (Some(write), Some(written))
+            }
+            None => (None, None),
+        };
+        channel.config_changes.forget_unasked();
         let (caller, outcome) = oneshot::channel();
         channel.config_changes.unanswered.push(UnansweredChange {
             pending,
             caller: Some(caller),
+            written,
         });
         let _ = accepted.send(Ok(ConfigChangeRoute::Asked { write, outcome }));
     }
@@ -223,8 +256,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         channel: &mut SessionChannel,
         response: SessionResponse,
     ) -> Option<SessionUpdate> {
-        let UnansweredChange { pending, caller } = channel.config_changes.answered_by(&response)?;
-        let caller = caller.filter(|caller| !caller.is_closed());
+        let UnansweredChange {
+            pending, caller, ..
+        } = channel.config_changes.answered_by(&response)?;
         let outcome = match pending.finish(response) {
             Ok(answer) => {
                 self.adopt_config_options(answer.config_options);
@@ -232,17 +266,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
             Err(error) => Err(map_acp_error(error)),
         };
-        match (caller, outcome) {
-            (Some(caller), outcome) => {
-                // One that goes just now is as good as told.
-                let _ = caller.send(outcome);
-                None
-            }
-            (None, Ok(options)) => Some(SessionUpdate::ConfigOptionUpdate(
-                ConfigOptionUpdate::new(options),
-            )),
-            (None, Err(_)) => None,
-        }
+        let untold = match caller {
+            Some(caller) => caller.send(outcome).err()?,
+            None => outcome,
+        };
+        let options = untold.ok()?;
+        Some(SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+            options,
+        )))
     }
 
     /// Takes the options one answer carries, as if the agent had reported them.
@@ -255,5 +286,57 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Reports the unanswered changes of a session the host gives up as made.
     pub(crate) fn accept_changes_on(&self, channel: &mut SessionChannel) {
         channel.config_changes.accept(&self.reported_config_options);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConfigChanges, UnansweredChange};
+    use ora_acp::{AcpError, AcpPeer, AcpTransport};
+    use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
+    use tokio::sync::{mpsc, oneshot};
+
+    /// Takes every frame, because nothing here is answered.
+    struct Sink;
+
+    impl AcpTransport for Sink {
+        async fn send(&self, _message: Value) -> Result<(), AcpError> {
+            Ok(())
+        }
+    }
+
+    /// Only a change that can no longer be written is forgotten, however often that is looked at.
+    #[tokio::test]
+    async fn only_changes_that_were_never_written_are_forgotten() {
+        let (_inbound, messages) = mpsc::unbounded_channel();
+        let peer = AcpPeer::spawn(messages, Sink);
+        let mut changes = ConfigChanges::default();
+        let mut expect = |written| {
+            let (pending, _write) = peer.client.prepare_session_request(
+                agent_client_protocol_schema::v1::SessionId::new("session-1"),
+                "session/set_config_option",
+                &json!({}),
+            );
+            changes.unanswered.push(UnansweredChange {
+                pending,
+                caller: None,
+                written,
+            });
+        };
+        let (done, written) = oneshot::channel();
+        done.send(()).unwrap();
+        let (_waiting, unwritten) = oneshot::channel();
+        let (gone, given_up) = oneshot::channel::<()>();
+        drop(gone);
+        expect(Some(written));
+        expect(Some(unwritten));
+        expect(Some(given_up));
+        expect(None);
+
+        for _ in 0..2 {
+            changes.forget_unasked();
+            assert_eq!(changes.unanswered.len(), 3);
+        }
     }
 }

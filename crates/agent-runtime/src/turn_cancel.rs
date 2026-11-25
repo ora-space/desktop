@@ -154,8 +154,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         // stop button keeps the runtime's short grace.
         let turn_deadline = self.turn_cancel.deadline().filter(|_| notify_owner);
         if turn_deadline.is_some()
-            && let Some(response) =
-                ready_response(self, &mut channel, client, &pending, events, saw_output).await
+            && let Some(response) = ready_response(
+                self,
+                &mut channel,
+                client,
+                &pending,
+                events,
+                saw_output,
+                followers,
+            )
+            .await
         {
             // The prompt had already ended on its own: the cancel did not act on it, and the
             // answer keeps its own meaning, success or failure.
@@ -336,6 +344,7 @@ async fn ready_response<H: AgentRuntimeHost>(
     pending: &ora_acp::PendingSessionRequest<PromptResponse>,
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     saw_output: &mut bool,
+    followers: &mut SessionFollowers,
 ) -> Option<ora_acp::SessionResponse> {
     let (before, response) = take_ready_response(&mut channel.events, |response| {
         pending.matches_response(response)
@@ -365,6 +374,7 @@ async fn ready_response<H: AgentRuntimeHost>(
             }
             SessionEvent::Response(response) => {
                 if let Some(update) = actor.settle_config_change(channel, response) {
+                    followers.send_update(&update, None);
                     let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
                         update,
                         tool_timing: None,

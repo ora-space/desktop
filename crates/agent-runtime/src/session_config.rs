@@ -74,10 +74,34 @@ async fn answered(
     if let Some(write) = write {
         tokio::select! {
             biased;
-            written = write => written?,
-            // Its session went first, so the agent was never asked.
+            // Its session went first, so the agent was never asked and is not asked any more.
             _ = &mut outcome => return Err(runtime_unavailable()),
+            written = write => written?,
         }
     }
     outcome.await.map_err(|_lost| runtime_unavailable())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::answered;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::sync::oneshot;
+
+    /// Room to write that comes with the end of the session is not used any more.
+    #[tokio::test]
+    async fn a_settled_change_is_not_written() {
+        let (caller, outcome) = oneshot::channel();
+        caller.send(Ok(Vec::new())).unwrap();
+        let written = Arc::new(AtomicBool::new(false));
+        let report = written.clone();
+        let write = Box::pin(async move {
+            report.store(true, Ordering::Relaxed);
+            Ok(())
+        });
+
+        assert!(answered(Some(write), outcome).await.is_err());
+        assert!(!written.load(Ordering::Relaxed));
+    }
 }

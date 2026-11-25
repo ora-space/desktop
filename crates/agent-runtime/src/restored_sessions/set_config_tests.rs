@@ -120,6 +120,25 @@ impl Driven {
         (choice, request)
     }
 
+    /// Has the agent stop reading, and returns choices that fill everything ahead of it, the last
+    /// ones waiting for room.
+    async fn stop_reading(&self) -> Vec<Choice> {
+        self.reading.send_replace(false);
+        let choices = (0..80)
+            .map(|index| {
+                let manager = self.fixture.manager.clone();
+                let change = SetSessionConfigRequest {
+                    // The first ones fill the pipe, the others the queue ahead of it.
+                    value: "a".repeat(if index < 4 { 65536 } else { 1 }),
+                    ..change()
+                };
+                tokio::spawn(async move { manager.set_session_config(change).await })
+            })
+            .collect();
+        settle().await;
+        choices
+    }
+
     /// Has the agent push its options on its own.
     fn push(&self, current: &str) {
         self.answers.send(options(SESSION, current)).unwrap();
@@ -505,21 +524,8 @@ fn a_session_stops_while_its_agent_reads_nothing() {
         let (mut turn, running) = driven.restored(model("b")).await;
         driven.end_turn(&running);
         assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
-        driven.reading.send_replace(false);
-        // More than the pipe and the queue ahead of it take together.
-        let choices: Vec<_> = (0..128)
-            .map(|_| {
-                let manager = driven.fixture.manager.clone();
-                let change = SetSessionConfigRequest {
-                    value: "a".repeat(65536),
-                    ..change()
-                };
-                tokio::spawn(async move { manager.set_session_config(change).await })
-            })
-            .collect();
-        for _ in 0..8 {
-            tokio::task::yield_now().await;
-        }
+        let choices = driven.stop_reading().await;
+        let asked_for = choices.len();
         let asked = tokio::time::Instant::now();
 
         driven.fixture.manager.stop_session(stop()).await.unwrap();
@@ -529,7 +535,7 @@ fn a_session_stops_while_its_agent_reads_nothing() {
             made += usize::from(choice.await.unwrap().is_ok());
         }
         // Those the agent was never asked for fail at once as well.
-        assert!((1..128).contains(&made), "{made}");
+        assert!((1..asked_for).contains(&made), "{made}");
         assert_eq!(asked.elapsed(), Duration::ZERO);
         driven.reading.send_replace(true);
         drop(turn);
@@ -687,31 +693,95 @@ fn a_change_answered_while_a_turn_is_cancelled_is_kept() {
     });
 }
 
-/// So does one whose own answer is already there when the cancel is about to be written.
+/// So does one whose own answer is already there when the cancel is about to be written, and it
+/// shows every view an answer whose caller is gone.
 #[test]
 fn a_change_answered_just_before_a_cancelled_turn_is_kept() {
-    // Which of the ready inputs the turn reads first is not fixed.
-    for _ in 0..16 {
-        run_case(async {
+    // The turn finds both answers and the cancel ready together, and reads either first.
+    for attempt in 0..8 {
+        run_case(async move {
             let mut driven = Driven::new().await;
             driven.fixture.add_session(SESSION);
             let (mut turn, running) = driven.restored(model("b")).await;
+            let mut view = driven.load().await;
             let (choice, request) = driven.choose().await;
+            tokio::time::advance(crate::SESSION_SETUP_TIMEOUT).await;
+            assert!(choice.await.unwrap().is_err());
+            // Granting a permission holds the turn up until the agent reads again.
+            let stuck = driven.stop_reading().await;
+            driven
+                .answers
+                .send(json!({"jsonrpc":"2.0", "id":"permission",
+                    "method":"session/request_permission", "params":{"sessionId":SESSION,
+                        "toolCall":{"toolCallId":"tool"}, "options":[
+                            {"optionId":"allow","name":"Allow","kind":"allow_once"}]}}))
+                .unwrap();
+            settle().await;
             driven.answer_choice(&request);
             driven.end_turn(&running);
+            settle().await;
             let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
             driven
                 .fixture
                 .manager
                 .cancel_turn_prompt(SESSION, deadline)
                 .unwrap();
-            assert_eq!(chosen(choice).await, Some("a".to_string()));
-            completion(&mut turn).await;
-            assert_eq!(loaded(driven.load().await).await, on("a"));
-            drop(turn);
+            driven.reading.send_replace(true);
+
+            let mut owned = Vec::new();
+            while let Some(event) = turn.recv().await {
+                match event.unwrap() {
+                    PromptSessionEvent::SessionUpdate { update, .. } => owned.extend(state(update)),
+                    PromptSessionEvent::Completed { .. } => break,
+                    _ => {}
+                }
+            }
+            let mut followed = Vec::new();
+            while let Some(event) = view.recv().await {
+                if let LoadSessionEvent::SessionUpdate { update, .. } = event.unwrap() {
+                    followed.extend(state(update));
+                }
+            }
+            let expected = [on("b"), on("a")].concat();
+            assert_eq!(owned, expected, "{attempt}");
+            assert_eq!(followed, expected, "{attempt}");
+            for choice in stuck {
+                choice.abort();
+            }
+            drop((turn, view));
             driven.fixture.shutdown().await;
         });
     }
+}
+
+/// A request that waited for the agent to read is answered like any other.
+#[test]
+fn a_change_written_late_is_answered() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        let stuck = driven.stop_reading().await;
+        driven.reading.send_replace(true);
+        let mut requests = Vec::new();
+        for _ in &stuck {
+            requests.push(driven.asked("session/set_config_option").await);
+        }
+        // Asking once more is when what was never written is forgotten.
+        let (choice, request) = driven.choose().await;
+        requests.push(request);
+
+        for request in &requests {
+            driven.answer_choice(request);
+        }
+        for choice in stuck.into_iter().chain([choice]) {
+            assert_eq!(chosen(choice).await, Some("a".to_string()));
+        }
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
 }
 
 /// How a provider session goes while a change is on its way to it.
@@ -869,6 +939,13 @@ fn a_change_in_flight_is_settled_when_its_session_goes() {
             drop(turn);
             driven.fixture.shutdown().await;
         });
+    }
+}
+
+/// Lets every task run as far as it can without the clock.
+async fn settle() {
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
     }
 }
 
