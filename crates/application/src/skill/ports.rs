@@ -1,9 +1,26 @@
 use crate::RepositoryError;
 use ora_domain::{Namespace, Skill, SkillId};
+use thiserror::Error;
+
+/// Signals that a create lost the race for a namespace/name another visible skill owns.
+///
+/// The active-name unique index is the only atomic arbiter of a name claim, so adapters must
+/// report its rejection through this error instead of a generic storage failure: callers cannot
+/// rely on a preceding lookup to keep concurrent same-name creates exclusive.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error("visible skill `{namespace}/{name}` already claims this name")]
+pub struct SkillNameClaimedError {
+    pub namespace: String,
+    pub name: String,
+}
 
 /// Defines catalog persistence required by skill CRUD and import sessions.
 pub trait SkillRepository {
     /// Persists a new visible skill snapshot.
+    ///
+    /// A name already owned by another visible skill must be reported as
+    /// [`SkillNameClaimedError`], including when a concurrent writer claims it after the caller's
+    /// last lookup.
     fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError>;
 
     /// Loads one visible skill by its stable identifier.

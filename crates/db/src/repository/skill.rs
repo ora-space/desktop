@@ -1,4 +1,4 @@
-use ora_application::{RepositoryError, SkillRepository};
+use ora_application::{RepositoryError, SkillNameClaimedError, SkillRepository};
 use ora_domain::{AuditFields, Namespace, PluginId, Skill, SkillId, SkillOrigin};
 use rusqlite::{Row, TransactionBehavior, params};
 use std::path::PathBuf;
@@ -118,6 +118,7 @@ impl SqliteSkillRepository {
 impl SkillRepository for SqliteSkillRepository {
     fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
         let package_root = origin_package_root(&skill.origin);
+        let claimed_name = (skill.namespace.as_ref().to_string(), skill.name.clone());
         self.pool
             .with_connection(|connection| {
                 connection.execute(
@@ -137,7 +138,7 @@ impl SkillRepository for SqliteSkillRepository {
                 )?;
                 Ok(skill)
             })
-            .map_err(skill_repository_error_from_database)
+            .map_err(|error| skill_create_error_from_database(error, claimed_name))
     }
 
     fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError> {
@@ -282,4 +283,22 @@ fn map_skill_row(row: &Row<'_>) -> Result<Skill, crate::DatabaseError> {
 /// Converts database failures into application-port errors.
 fn skill_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
     RepositoryError::new(error)
+}
+
+/// Converts a rejected skill insert into a typed name claim when the active-name index fired.
+///
+/// `skills_active_namespace_name_unique` covers visible rows only, so a UNIQUE violation of this
+/// insert is exactly a lost race for the name another visible skill now owns. A primary-key
+/// collision keeps surfacing as a storage failure because it means the generated id collided.
+fn skill_create_error_from_database(
+    error: crate::DatabaseError,
+    (namespace, name): (String, String),
+) -> RepositoryError {
+    if let crate::DatabaseError::Sqlite(rusqlite::Error::SqliteFailure(failure, _)) = &error
+        && failure.code == rusqlite::ErrorCode::ConstraintViolation
+        && failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+    {
+        return RepositoryError::new(SkillNameClaimedError { namespace, name });
+    }
+    skill_repository_error_from_database(error)
 }

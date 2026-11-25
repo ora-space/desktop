@@ -3,8 +3,8 @@ use super::ports::{
     ImportSessionState, SkillImportProgressEvent,
 };
 use crate::skill::{
-    SkillStorage, commit_existing_package, commit_restored_package, commit_unclaimed_package,
-    has_usable_package, next_updated_at, persist_promoted_package,
+    SkillNameClaimedError, SkillStorage, commit_existing_package, commit_restored_package,
+    commit_unclaimed_package, has_usable_package, next_updated_at, persist_promoted_package,
 };
 use crate::{ApplicationError, Clock, SkillRepository};
 use ora_domain::{AuditFields, Namespace, Skill, SkillId};
@@ -270,12 +270,15 @@ where
     } else {
         persist_promoted_package(storage, &promoted, || repository.create_skill(skill))
     };
-    if persisted.is_err() {
-        return CandidateOutcome::Failed {
+    match persisted {
+        Ok(_) => CandidateOutcome::Imported,
+        // The active-name index is the atomic arbiter: a concurrent import claimed the name
+        // after the lookup above, so the package this candidate promoted was rolled back.
+        Err(error) if error.is::<SkillNameClaimedError>() => CandidateOutcome::StaleConflict,
+        Err(_) => CandidateOutcome::Failed {
             error_code: "skill_repository_error".to_string(),
-        };
+        },
     }
-    CandidateOutcome::Imported
 }
 
 /// Overwrites an existing skill, revalidating the frozen id/updatedAt before writing.
