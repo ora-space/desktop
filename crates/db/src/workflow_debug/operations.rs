@@ -121,7 +121,14 @@ impl WorkflowDebugStore {
                 [run], |row| row.get(0),
             )?;
             settle(&tx, &entry.preview)?;
-            tx.execute("INSERT OR REPLACE INTO workflow_debug_dispatch(run_id,operation_id) VALUES (?1,?2)",params![run,entry.operation.operation_id])?;
+            // Keep the first applied operation as the baseline until the run ends. A later
+            // confirmation records its own acceptance state, but extends this dispatch scope.
+            tx.execute(
+                "INSERT INTO workflow_debug_dispatch(run_id,operation_id)
+                 SELECT id,?2 FROM workflow_runs WHERE id=?1 AND run_status=?3
+                 ON CONFLICT(run_id) DO NOTHING",
+                params![run, entry.operation.operation_id, ora_domain::WorkflowRunStatus::Running.database_value()],
+            )?;
             // An invalidated fact can represent zero or several physical attempts. Record the
             // rows the strategy actually retired, including successful siblings on an old path.
             tx.execute(

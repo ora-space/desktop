@@ -143,10 +143,30 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         &self,
         run: &WorkflowRunId,
     ) -> Result<Option<Vec<String>>, RepositoryError> {
-        self.pool.with_connection(|db| {
-            let raw:Option<String>=db.query_row("SELECT json_extract(p.plan,'$.schedule') FROM workflow_debug_dispatch d JOIN workflow_debug_operations o ON o.id=d.operation_id JOIN workflow_debug_previews p ON p.id=o.preview_id WHERE d.run_id=?1 AND o.prior_status IN (2,3,4)",[run.as_ref()],|r|r.get(0)).optional()?;
-            Ok(raw.map(|v|serde_json::from_str(&v)).transpose()?)
-        }).map_err(RepositoryError::new)
+        self.pool
+            .with_connection(|db| {
+                // A live terminal baseline can span several applied edits. Keep each receipt's
+                // preview intact and derive the union only for the scheduler.
+                let schedule: Option<String> = db
+                    .query_row(
+                        "SELECT (
+                    SELECT json_group_array(DISTINCT node.value)
+                    FROM workflow_debug_operations edit
+                    JOIN workflow_debug_previews p ON p.id=edit.preview_id
+                    JOIN json_each(p.plan,'$.schedule') node
+                    WHERE edit.run_id=d.run_id AND edit.id>=d.operation_id AND edit.state='applied'
+                 ) FROM workflow_debug_dispatch d
+                 JOIN workflow_debug_operations baseline ON baseline.id=d.operation_id
+                 WHERE d.run_id=?1 AND baseline.prior_status IN (2,3,4)",
+                        [run.as_ref()],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                Ok(schedule
+                    .map(|json| serde_json::from_str(&json))
+                    .transpose()?)
+            })
+            .map_err(RepositoryError::new)
     }
 
     fn restore_debug_outcome(&self, run: &WorkflowRunId, now: i64) -> Result<(), RepositoryError> {

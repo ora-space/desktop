@@ -380,6 +380,88 @@ fn restart_finishes_a_provably_quiet_intent_without_expanding_its_scope() {
     });
 }
 
+/// Overlapping edits keep the first terminal outcome and authorize both previews' positions.
+#[test]
+fn overlapping_confirmations_preserve_terminal_outcome_and_schedule() {
+    run_test(async {
+        for second_target in ["x", "s"] {
+            let f = Fixture::new(Arc::new(NoSessions));
+            let complete = |node| {
+                f.engine
+                    .complete_node(
+                        &f.run_id,
+                        &f.row(node).id,
+                        Some("done".into()),
+                        None,
+                        None,
+                        vec![],
+                    )
+                    .unwrap();
+            };
+            complete("x");
+            f.engine
+                .fail_node(
+                    &f.run_id,
+                    &f.row("s").id,
+                    ora_application::NodeFailure::new(
+                        ora_application::NodeFailureKind::Session,
+                        "independent failure",
+                    ),
+                )
+                .unwrap();
+            let repository = SqliteWorkflowRunRepository::new(f.pool.clone());
+            let original = repository.find_run(&f.run_id).unwrap().unwrap();
+            assert_eq!(original.status, WorkflowRunStatus::Failed);
+            let first = f.preview(f.row("x").id.as_ref(), 0);
+            f.coordinator
+                .commit(f.commit_request(&first, "first"))
+                .await
+                .unwrap();
+            let active_x = f.row("x");
+            SqliteWorkflowRunEngineRepository::new(f.pool.clone())
+                .bind_node_run_session(&active_x.id, &SessionId::new("session-1"), 60)
+                .unwrap();
+            f.store
+                .record_agent_dispatch(
+                    f.run_id.as_ref(),
+                    active_x.id.as_ref(),
+                    &json!({"variablePool":WorkflowVariablePool::default()}),
+                )
+                .unwrap();
+            let second = f.preview(f.row(second_target).id.as_ref(), 1);
+            let receipt = f
+                .coordinator
+                .commit(f.commit_request(&second, "second"))
+                .await
+                .unwrap();
+            assert_eq!(receipt.phase, WorkflowDebugPhase::Applied { revision: 2 });
+            complete("x");
+            if second_target == "x" {
+                let actual = repository.find_run(&f.run_id).unwrap().unwrap();
+                assert_eq!(
+                    (
+                        actual.status,
+                        actual.error,
+                        actual.output,
+                        actual.finished_at
+                    ),
+                    (
+                        original.status,
+                        original.error,
+                        original.output,
+                        original.finished_at
+                    )
+                );
+                assert_eq!(f.row("s").status, WorkflowNodeStatus::Failed);
+            } else {
+                assert_eq!(f.row("out").status, WorkflowNodeStatus::Succeeded);
+                complete("s");
+                assert_eq!(f.run_status(), WorkflowRunStatus::Succeeded);
+            }
+        }
+    });
+}
+
 /// An actual backoff wake arriving on either side of restart must not claim the retired row.
 #[test]
 fn delayed_retry_cannot_reclaim_the_old_attempt_after_boot() {
