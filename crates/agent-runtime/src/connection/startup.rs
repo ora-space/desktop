@@ -17,7 +17,7 @@ use agent_client_protocol_schema::v1::{
     ClientCapabilities, ClientSessionCapabilities, Implementation, InitializeRequest,
     InitializeResponse, SessionConfigOptionsCapabilities,
 };
-use ora_acp::{AcpInboundEvent, AcpMessages, AcpPeer};
+use ora_acp::{AcpMessages, AcpPeer, ReadEvent};
 use ora_domain::PluginId;
 use ora_plugin_lifecycle::ConnectionError;
 use std::path::Path;
@@ -53,7 +53,7 @@ struct StartedAgent<A: AgentAttach> {
 pub(super) struct SharedProcess<A: AgentAttach> {
     pub process: AgentProcess<A>,
     pub client: AgentAcpClient,
-    pub inbound: mpsc::UnboundedReceiver<AcpInboundEvent>,
+    pub inbound: mpsc::UnboundedReceiver<ReadEvent>,
     pub load_session_supported: bool,
     pub http_mcp_supported: bool,
     pub list_session_supported: bool,

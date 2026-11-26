@@ -19,6 +19,7 @@ use crate::session_setup::{
     resolve_session_mcp_revision,
 };
 use crate::skill_catalog::DesktopSkillCatalog;
+use crate::skill_revision::SkillRevision;
 use crate::task::resolve_workspace_cwd;
 use ora_agent_runtime::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, AgentSessionMcpCapabilities,
@@ -61,6 +62,12 @@ impl AgentRuntime {
         }
     }
 
+    /// Reports the Skill revision a discovery would be given now.
+    #[cfg(test)]
+    pub(crate) fn skill_revision(&self) -> u64 {
+        self.inner.skill_revision()
+    }
+
     /// Reports whether each application-scoped CLI runtime is ready, starting, or unavailable.
     pub fn status(
         &self,
@@ -97,6 +104,7 @@ pub(crate) struct AgentRuntimeSetup {
     pub pool: RepositoryPool,
     pub home_directory: PathBuf,
     pub skills_root: PathBuf,
+    pub skill_revision: SkillRevision,
     pub relative_path_base: PathBuf,
     pub sessions_root: PathBuf,
     pub scheduler: Scheduler,
@@ -114,13 +122,15 @@ pub(crate) fn open_agent_runtime(
         pool,
         home_directory,
         skills_root,
+        skill_revision,
         relative_path_base,
         sessions_root,
         scheduler,
         app_events,
         host_mcp_servers,
     } = setup;
-    let skill_catalog = DesktopSkillCatalog::new(pool.clone(), skills_root, &home_directory);
+    let skill_catalog =
+        DesktopSkillCatalog::new(pool.clone(), skills_root, &home_directory, skill_revision);
     Ok(AgentRuntimeManager::new(
         ora_agent_runtime::AgentRuntimeSetup {
             session_setup: SessionMcpHost::from_plugin_api(plugin_host.clone())

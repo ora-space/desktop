@@ -7,6 +7,7 @@ import {
   type AgentCommand,
   type AgentDiscoverParams,
   type AgentDiscoverResult,
+  type AgentDiscoverSkills,
   type AgentListModelsParams,
   type AgentListModelsResult,
   type AgentModel as WireAgentModel,
@@ -19,7 +20,7 @@ import {
 } from "./protocol/index.ts";
 import { parseModelContext, verifyModelApplied } from "./model_context.ts";
 
-export type { AgentCommand, AgentStartContext };
+export type { AgentCommand, AgentDiscoverSkills, AgentStartContext };
 
 /**
  * The error code that tells Ora the agent CLI is absent from this machine.
@@ -56,6 +57,13 @@ export interface AgentDiscoveryContext {
    * Cleanup has to fit before it too; {@link waitForAgentCommands} leaves room for that.
    */
   deadline: number;
+  /**
+   * The Skills a session set up now would be given, when the caller wants commands.
+   *
+   * Set the probe session up with {@link skillSessionSetup}, or it lacks the commands that come from
+   * Skills. `revision` differs after every change to them, so it belongs in a cache key as well.
+   */
+  skills?: AgentDiscoverSkills;
 }
 
 /** What the agent offers before any session exists. */
@@ -125,12 +133,14 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     return {};
   });
   plugin.registerMethod(AGENT_METHODS.discover, async (params) => {
-    const { cwd, includeCommands, deadline } = params as AgentDiscoverParams;
+    const { cwd, includeCommands, deadline, skills } =
+      params as AgentDiscoverParams;
     const { models, commands } = await definition.discover({
       cwd,
       includeCommands,
       // One already past leaves no time, rather than a negative amount of it.
       deadline: Math.max(deadline, Date.now()),
+      ...(includeCommands && skills !== undefined ? { skills } : {}),
     });
     return {
       models: models.map(wireModel),

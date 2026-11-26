@@ -52,6 +52,7 @@ fn open_plugin_api(root: &Path) -> PluginApi {
         SystemClock,
         AppEventHub::new().publisher(),
         Arc::new(Settings::new(pool)),
+        Default::default(),
     )
     .expect("open plugin host")
 }

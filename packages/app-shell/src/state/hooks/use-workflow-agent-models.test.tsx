@@ -16,7 +16,10 @@ import {
   createWorkspaceMemory,
   workspaceHandlers,
 } from "../../test/memory/workspaces";
-import { invalidateAgentModels } from "../data/agent-runtime";
+import {
+  invalidateAgentCommands,
+  invalidateAgentModels,
+} from "../data/agent-runtime";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { useAgentDiscovery } from "./use-agent-discovery";
 import { useWorkflowAgentModels } from "./use-workflow-agent-models";
@@ -98,6 +101,21 @@ describe("the editor's model catalog and a chat's discovery", () => {
 
     expect(asked()).toEqual([true]);
   });
+
+  it.each(["editor", "chat"] as const)(
+    "does not ask the editor's agents again when Skills change after the %s asked",
+    async (first) => {
+      const { editor, chat, asked, queryClient } = surfaces();
+
+      await (first === "editor" ? editor() : chat());
+      await invalidateAgentCommands(queryClient, AGENT_REF.opencode);
+      await editor();
+      expect(asked()).toEqual([first === "chat"]);
+
+      await chat();
+      expect(asked()).toEqual([first === "chat", true]);
+    },
+  );
 
   it("asks again when the chat's discovery was outdated", async () => {
     const { editor, chat, asked, queryClient } = surfaces();

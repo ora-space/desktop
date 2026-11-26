@@ -100,7 +100,8 @@ fn resolves_usable_local_and_plugin_skill_paths_and_excludes_broken_packages() {
         )
         .expect("insert plugin skills");
 
-        let catalog = DesktopSkillCatalog::new(pool, skills_root.clone(), &home_dir);
+        let catalog =
+            DesktopSkillCatalog::new(pool, skills_root.clone(), &home_dir, Default::default());
         assert_eq!(
             catalog.extra_read_roots(),
             vec![skills_root.clone(), plugins_installed]
@@ -164,7 +165,7 @@ fn returns_error_when_skill_repository_query_fails() {
             .expect("drop skills table");
         drop(conn);
 
-        let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir);
+        let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir, Default::default());
         let error = catalog
             .skill_catalog(&WorkspaceId::new("ws-1"))
             .expect_err("database read failure must return an error rather than an empty catalog");
@@ -225,7 +226,7 @@ fn marks_unreadable_skill_manifest_unknown_without_hiding_readable_skills() {
         )
         .expect("insert locked skill");
 
-        let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir);
+        let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir, Default::default());
 
         #[cfg(windows)]
         let _lock = {
@@ -312,7 +313,7 @@ fn strips_windows_verbatim_prefix_from_persisted_plugin_package_roots() {
         )
         .expect("insert plugin skill");
 
-        let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir);
+        let catalog = DesktopSkillCatalog::new(pool, skills_root, &home_dir, Default::default());
         let snapshot = catalog
             .skill_catalog(&WorkspaceId::new("ws-1"))
             .expect("read plugin skill catalog");

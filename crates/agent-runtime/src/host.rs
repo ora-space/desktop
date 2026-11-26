@@ -248,7 +248,7 @@ pub trait RuntimeEvents: Clone + Send + Sync + 'static {
     /// A session's persisted title changed.
     fn session_title_updated(&self, session_id: &SessionId);
 
-    /// A replaced agent process may expose a different model catalog.
+    /// Commands discovered from this agent were discovered with other Skills.
     fn agent_models_invalidated(&self, agent_ref: &AgentRef);
 
     /// One line was just appended to a session's history file.
@@ -312,6 +312,12 @@ pub trait SkillCatalogSource: Clone + Send + Sync + 'static {
         &self,
         workspace_id: &WorkspaceId,
     ) -> Result<SkillCatalogSnapshot, RuntimeError>;
+
+    /// Counts the changes to the catalog or to what of it is available, within this process.
+    ///
+    /// It advances with every such change and never returns to an earlier value. Reading the catalog
+    /// may be what notices one.
+    fn revision(&self) -> u64;
 
     /// Lists stable parent directories under which Skill packages reside.
     fn extra_read_roots(&self) -> Vec<PathBuf>;

@@ -6,13 +6,18 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, PoisonError};
 use tokio::sync::oneshot;
 
+use crate::events::ReadOrder;
+
 // Bound per-connection stale-id memory; responses older than this window are protocol failures.
 const ABANDONED_REQUEST_CAPACITY: usize = 256;
 
 pub(super) type PendingResponse = Result<Value, RpcError>;
 
+/// A direct response together with the order its frame was read in.
+pub(super) type DirectResponse = (ReadOrder, PendingResponse);
+
 pub(super) enum PendingRequest {
-    Direct(oneshot::Sender<PendingResponse>),
+    Direct(oneshot::Sender<DirectResponse>),
     Session { session_id: SessionId },
 }
 

@@ -224,7 +224,8 @@ attempt, so Ora reports it once and stops retrying that agent.
 inspector — never as part of bringing the agent up, and it receives the
 Workspace directory it answers for. Ora keeps no copy of the answer: the plugin
 owns it and decides when its own cache is stale. A plugin that caches must key
-the cache by the whole context, keep it in memory only, and never cache a
+the cache by the whole context except `deadline` — with `skills`, including its
+`revision`, when commands are wanted — keep it in memory only, and never cache a
 failure. Returning no models is a valid answer for an agent that has none to
 offer before a session exists; its models then arrive with the session's ACP
 `config_options` instead.
@@ -245,7 +246,9 @@ discover: (async (context) => {
     packageCommand: "bin/opencode",
     command: "opencode",
   }, { args: ["acp", "--cwd", cwd], cwd });
-  // initialize → session/new(cwd, no MCP servers) → read config_options
+  // initialize → declared = sessionCapabilities.additionalDirectories is present
+  const setup = skillSessionSetup(context.skills, declared);
+  // session/new({ cwd, mcpServers: [], ...setup }) → read config_options
   const commands = includeCommands
     ? await waitForAgentCommands(context, firstCommandReport)
     : undefined;
@@ -255,14 +258,22 @@ discover: (async (context) => {
 ```
 
 `deadline` in the context is when Ora stops waiting for the answer, as Ora said
-when it asked; pass that same context on.
-`waitForAgentCommands` takes a promise for the first `available_commands_update`
-of the probe session, and stops at Ora's cap or where the cleanup reserve before
-that deadline begins. A plugin with an earlier deadline of its own passes it as
-`{ deadline }`. It resolves to `undefined` when nothing arrives, and then
-`commands` stays out of the answer: an absent list means nobody knows, an empty
-one means the agent said it has none. Relay the commands in the agent's order
-and wording; Ora decides what to show.
+when it asked; pass that same context on. `waitForAgentCommands` takes a promise
+for the first `available_commands_update` of the probe session, and stops at
+Ora's cap or where the cleanup reserve before that deadline begins. A plugin
+with an earlier deadline of its own passes it as `{ deadline }`. It resolves to
+`undefined` when nothing arrives, and then `commands` stays out of the answer:
+an absent list means nobody knows, an empty one means the agent said it has
+none. Relay the commands in the agent's order and wording; Ora decides what to
+show.
+
+`skills` is there when commands are wanted. An agent may offer Ora's Skills as
+commands, so the probe session has to be set up with the ones a session would be
+given: `skillSessionSetup` builds that part of `session/new`. `revision` is
+opaque and differs after every change to the Skills, also one that leaves the
+directories alone, such as an edit in place. An older Ora sends no `skills` even
+when it wants commands; `skillSessionSetup(undefined, …)` then returns `{}`, and
+the probe session is set up without Skills.
 
 Two constraints, both load-bearing:
 

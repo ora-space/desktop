@@ -23,6 +23,7 @@ use crate::marketplace_sources::{
 use crate::proxy;
 use crate::session_setup::McpHealthStore;
 use crate::settings::Settings;
+use crate::skill_revision::{CountedSkillRepository, SkillRevision};
 use ora_application::{Clock, WorkflowDocument};
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest,
@@ -147,7 +148,7 @@ pub(crate) struct PluginApi {
     installer: Installer<ReqwestDownloader>,
     notifications: BroadcastNotificationSink,
     pub(crate) configuration: ConfigurationService,
-    skill_repository: SqliteSkillRepository,
+    skill_repository: CountedSkillRepository,
     /// Durable pack → member relationships recorded by pack installations (D3-A).
     pack_installations: SqlitePackInstallationRepository,
     /// Admits at most one marketplace index rebuild at a time.
@@ -222,6 +223,7 @@ impl PluginApi {
         clock: SystemClock,
         publisher: AppEventPublisher,
         settings: Arc<Settings>,
+        skill_revision: SkillRevision,
     ) -> Result<Self, BackendError> {
         let plugins_directory = home_directory.join("plugins");
         let marketplace_sources = MarketplaceSourceStore::open(
@@ -271,7 +273,10 @@ impl PluginApi {
             installer,
             notifications,
             configuration,
-            skill_repository: SqliteSkillRepository::new(pool.clone()),
+            skill_repository: CountedSkillRepository::new(
+                SqliteSkillRepository::new(pool.clone()),
+                skill_revision,
+            ),
             pack_installations: SqlitePackInstallationRepository::new(pool),
             rebuilding: Mutex::new(()),
             mcp_wakeup: OnceLock::new(),

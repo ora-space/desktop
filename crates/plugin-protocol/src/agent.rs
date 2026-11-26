@@ -26,6 +26,8 @@ pub const AGENT_DISCOVERY_BUDGET_MS: u64 = 60_000;
 ///
 /// Every plugin may lower it and none may raise it, so one slow agent cannot hold up the pickers.
 pub const AGENT_COMMANDS_WAIT_CAP_MS: u64 = 2_000;
+/// Key of the ACP session setup `_meta` that lists the directories of the Skills Ora makes available.
+pub const SKILL_DIRECTORIES_META_KEY: &str = "ora/skillDirectories";
 /// ACP major version carried over the agent plugin channel.
 pub const SUPPORTED_ACP_VERSION: u32 = 1;
 /// OpenCode shared project configuration materialization format.
@@ -102,6 +104,20 @@ pub struct AgentCommand {
     pub input_hint: Option<String>,
 }
 
+/// The Skills a session set up now would be given, in the values its setup would carry.
+#[derive(Debug, Clone, Deserialize, Serialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "agent.ts")]
+pub struct AgentDiscoverSkills {
+    /// The session's `additionalDirectories`, for an agent that declares support for them.
+    #[ts(type = "Array<string>")]
+    pub read_roots: Vec<PathBuf>,
+    /// The session's `_meta` entry under `ora/skillDirectories`, absent there when empty.
+    pub directories: Vec<String>,
+    /// Differs after every change to the Skills, also one that leaves the other two alone.
+    pub revision: String,
+}
+
 /// Supplies the workspace and the caller's needs for pre-session discovery.
 #[derive(Debug, Clone, Deserialize, Serialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +130,10 @@ pub struct AgentDiscoverParams {
     /// When the host stops waiting for the answer, in Unix milliseconds. Cleanup has to fit too.
     #[ts(type = "number")]
     pub deadline: i64,
+    /// Present exactly when commands are wanted, because only they depend on Skills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub skills: Option<AgentDiscoverSkills>,
 }
 
 /// What an agent offers before any session exists.
@@ -177,6 +197,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AgentStartResult::export(config)?;
     AgentModel::export(config)?;
     AgentCommand::export(config)?;
+    AgentDiscoverSkills::export(config)?;
     AgentDiscoverParams::export(config)?;
     AgentDiscoverResult::export(config)?;
     AgentListModelsParams::export(config)?;
@@ -187,7 +208,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentCommand, AgentDiscoverParams, AgentDiscoverResult, AgentListModelsParams, AgentModel,
+        AgentCommand, AgentDiscoverParams, AgentDiscoverResult, AgentDiscoverSkills,
+        AgentListModelsParams, AgentModel,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -212,16 +234,35 @@ mod tests {
     /// The wire plugins built against a published SDK read, pinned for the same reason.
     #[test]
     fn discover_params_say_whether_commands_are_wanted() {
+        let params = |skills: Option<AgentDiscoverSkills>| AgentDiscoverParams {
+            cwd: PathBuf::from("/projects/ora"),
+            include_commands: skills.is_some(),
+            deadline: 1_700_000_060_000,
+            skills,
+        };
         assert_eq!(
-            serde_json::to_value(AgentDiscoverParams {
-                cwd: PathBuf::from("/projects/ora"),
-                include_commands: true,
-                deadline: 1_700_000_060_000,
-            })
+            serde_json::to_value(params(Some(AgentDiscoverSkills {
+                read_roots: vec![PathBuf::from("/data/skills")],
+                directories: vec!["/data/skills/review".to_string()],
+                revision: "7".to_string(),
+            })))
             .expect("serialize discovery params"),
             json!({
                 "cwd": "/projects/ora",
                 "includeCommands": true,
+                "deadline": 1_700_000_060_000_i64,
+                "skills": {
+                    "readRoots": ["/data/skills"],
+                    "directories": ["/data/skills/review"],
+                    "revision": "7",
+                },
+            }),
+        );
+        assert_eq!(
+            serde_json::to_value(params(None)).expect("serialize discovery params"),
+            json!({
+                "cwd": "/projects/ora",
+                "includeCommands": false,
                 "deadline": 1_700_000_060_000_i64,
             }),
         );

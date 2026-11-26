@@ -69,6 +69,7 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> Plugins {
             SystemClock,
             events.publisher(),
             Arc::new(Settings::new(pool.clone())),
+            Default::default(),
         )
         .expect("open plugin host"),
     );
@@ -78,6 +79,7 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> Plugins {
             pool: pool.clone(),
             home_directory: root.to_path_buf(),
             skills_root: root.join("atoms").join("skills"),
+            skill_revision: Default::default(),
             relative_path_base: root.to_path_buf(),
             sessions_root: root.join("sessions"),
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
@@ -213,6 +215,7 @@ fn pack_test_host(root: &Path, pool: &RepositoryPool) -> Arc<PluginApi> {
             SystemClock,
             AppEventHub::new().publisher(),
             Arc::new(Settings::new(pool.clone())),
+            Default::default(),
         )
         .expect("open plugin host"),
     )
@@ -365,6 +368,7 @@ fn pack_test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, Arc<Plugin
             SystemClock,
             events.publisher(),
             Arc::new(Settings::new(pool.clone())),
+            Default::default(),
         )
         .expect("open plugin host"),
     );
@@ -374,6 +378,7 @@ fn pack_test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, Arc<Plugin
             pool: pool.clone(),
             home_directory: root.to_path_buf(),
             skills_root: root.join("atoms").join("skills"),
+            skill_revision: Default::default(),
             relative_path_base: root.to_path_buf(),
             sessions_root: root.join("sessions"),
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),

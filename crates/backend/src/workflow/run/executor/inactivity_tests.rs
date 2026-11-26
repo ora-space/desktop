@@ -91,6 +91,7 @@ fn wait_policy_preserves_real_session_failures_and_frozen_policy_across_retries(
                 SystemClock,
                 events.publisher(),
                 Arc::new(Settings::new(pool.clone())),
+                Default::default(),
             )
             .unwrap(),
         );
@@ -100,6 +101,7 @@ fn wait_policy_preserves_real_session_failures_and_frozen_policy_across_retries(
             pool: pool.clone(),
             home_directory: temp.path().to_path_buf(),
             skills_root: temp.path().join("atoms").join("skills"),
+            skill_revision: Default::default(),
             relative_path_base: temp.path().to_path_buf(),
             sessions_root: temp.path().join("sessions"),
             scheduler: scheduler.clone(),

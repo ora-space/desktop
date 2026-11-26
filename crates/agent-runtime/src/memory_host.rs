@@ -192,6 +192,10 @@ impl SkillCatalogSource for NoSkillCatalog {
         Ok(SkillCatalogSnapshot::default())
     }
 
+    fn revision(&self) -> u64 {
+        0
+    }
+
     fn extra_read_roots(&self) -> Vec<PathBuf> {
         Vec::new()
     }

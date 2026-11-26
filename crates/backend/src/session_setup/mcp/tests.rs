@@ -526,6 +526,7 @@ async fn resolves_the_plugin_behind_the_agent_identity_the_runtime_supervises() 
             SystemClock,
             AppEventHub::new().publisher(),
             Arc::new(Settings::new(pool.clone())),
+            Default::default(),
         )
         .expect("open plugin host"),
     );
@@ -560,6 +561,7 @@ fn resolves_nothing_for_an_agent_no_package_supplies() {
             SystemClock,
             AppEventHub::new().publisher(),
             Arc::new(Settings::new(pool.clone())),
+            Default::default(),
         )
         .expect("open plugin host"),
     );

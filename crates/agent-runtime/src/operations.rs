@@ -26,6 +26,12 @@ impl<H: AgentRuntimeHost> AgentRuntime<H> {
         Self { manager }
     }
 
+    /// Reports the Skill revision a discovery would be given now.
+    #[cfg(feature = "test-support")]
+    pub fn skill_revision(&self) -> u64 {
+        self.manager.skill_revision()
+    }
+
     /// Reports whether each application-scoped CLI runtime is ready, starting, or unavailable.
     pub fn status(
         &self,

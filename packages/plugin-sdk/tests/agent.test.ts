@@ -207,8 +207,14 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     jsonrpc: "2.0" as const,
     id,
     method: "agent/discover",
-    params: { cwd: "/home/user/project", includeCommands },
+    // Ora leaves these out when commands are not wanted, and so must the context.
+    params: { cwd: "/home/user/project", includeCommands, skills },
   });
+  const skills = {
+    readRoots: ["/data/skills"],
+    directories: ["/data/skills/review"],
+    revision: "7",
+  };
   const models = [{ id: "opus", displayName: "Opus", default: false }];
   await harness.send(discoverMessage(20, true));
   assertEquals((await harness.responses.next()).value, {
@@ -229,7 +235,7 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
   // telling a plugin which project it is answering for. The old name never asks for commands.
   assertEquals(discoveryContexts, [
     { cwd: "/home/user/project", includeCommands: false },
-    { cwd: "/home/user/project", includeCommands: true },
+    { cwd: "/home/user/project", includeCommands: true, skills },
     { cwd: "/home/user/project", includeCommands: false },
   ]);
   assertEquals(received, [{ jsonrpc: "2.0", id: 7, method: "initialize" }]);
@@ -352,7 +358,8 @@ Deno.test("gives discover the host's deadline, before which cleanup keeps its ti
       discover: async (context) => {
         deadline = context.deadline;
         // `session/new` answers a tenth of a second before the reserve begins.
-        Date.now = () => expected - AGENT_DISCOVERY_CLEANUP_RESERVE_MS - allowed;
+        Date.now = () =>
+          expected - AGENT_DISCOVERY_CLEANUP_RESERVE_MS - allowed;
         globalThis.setTimeout = ((fire: () => void, delay: number) => {
           waited = delay;
           return schedule(fire, 0);

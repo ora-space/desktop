@@ -4,16 +4,21 @@
 //! and `specs/test-cases/desktop/core/agent/session/skill/session-setup-and-hosts.md`.
 
 use super::{
-    AnnouncedSkills, SKILL_DIRECTORIES_META_KEY, apply_skill_setup, insert_catalog_block,
-    prepare_skill_catalog_injection, skill_directories_meta,
+    AnnouncedSkills, SKILL_DIRECTORIES_META_KEY, apply_skill_setup, discovery_skills,
+    insert_catalog_block, prepare_skill_catalog_injection, skill_directories_meta,
 };
-use crate::host::{SkillCatalogEntry, SkillCatalogSnapshot};
+use crate::RuntimeError;
+use crate::host::{SkillCatalogEntry, SkillCatalogSnapshot, SkillCatalogSource};
 use agent_client_protocol_schema::v1::{
     ContentBlock, ImageContent, LoadSessionRequest, NewSessionRequest, TextContent,
 };
+use ora_domain::WorkspaceId;
+use ora_plugin_protocol::AgentDiscoverSkills;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 fn snapshot(entries: Vec<SkillCatalogEntry>) -> SkillCatalogSnapshot {
     SkillCatalogSnapshot {
@@ -389,5 +394,89 @@ fn setup_requests_follow_capability_negotiation_and_preserve_empty_wire_shape() 
     assert_eq!(
         serde_json::to_value(&node_load).unwrap(),
         serde_json::to_value(LoadSessionRequest::new("provider-1", "/workspace")).unwrap()
+    );
+}
+
+/// Reads as a catalog that changes during its first `changes` reads.
+#[derive(Clone)]
+struct ChangingCatalog {
+    reads: Arc<AtomicU64>,
+    changes: u64,
+    fails: bool,
+}
+
+impl SkillCatalogSource for ChangingCatalog {
+    fn skill_catalog(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<SkillCatalogSnapshot, RuntimeError> {
+        assert_eq!(workspace_id, &WorkspaceId::new("workspace"));
+        // Names what was there when the read began; the change lands right after.
+        let read = self.reads.fetch_add(1, Ordering::Relaxed);
+        if self.fails {
+            return Err(RuntimeError::internal(
+                "unreadable",
+                std::io::Error::other("disk unavailable"),
+            ));
+        }
+        let name = format!("/skills/{read}");
+        Ok(snapshot(vec![
+            entry("b", "", "/skills/b/SKILL.md", "/skills/b"),
+            entry("a", "", &format!("{name}/SKILL.md"), &name),
+        ]))
+    }
+
+    fn revision(&self) -> u64 {
+        self.reads.load(Ordering::Relaxed).min(self.changes)
+    }
+
+    fn extra_read_roots(&self) -> Vec<PathBuf> {
+        vec![PathBuf::from("/skills")]
+    }
+}
+
+/// Discovery is told the values session setup carries, under a revision no newer than they are.
+#[test]
+fn discovery_is_given_what_session_setup_carries() {
+    for (changes, read, revision) in [(0, 0, 0), (1, 1, 1), (2, 2, 2), (9, 2, 2)] {
+        let source = ChangingCatalog {
+            reads: Arc::default(),
+            changes,
+            fails: false,
+        };
+        let skills = discovery_skills(&source, &WorkspaceId::new("workspace"));
+
+        let newest = format!("/skills/{read}");
+        assert_eq!(
+            skills,
+            AgentDiscoverSkills {
+                read_roots: vec![PathBuf::from("/skills")],
+                directories: vec![newest.clone(), "/skills/b".to_string()],
+                revision: revision.to_string(),
+            },
+            "{changes}"
+        );
+        let meta = skill_directories_meta(&[
+            entry("b", "", "/skills/b/SKILL.md", "/skills/b"),
+            entry("a", "", &format!("{newest}/SKILL.md"), &newest),
+        ]);
+        assert_eq!(
+            meta.unwrap()[SKILL_DIRECTORIES_META_KEY],
+            serde_json::json!(skills.directories)
+        );
+    }
+}
+
+/// A catalog that cannot be read costs discovery its Skill directories, as it does session setup.
+#[test]
+fn an_unreadable_catalog_leaves_discovery_without_directories() {
+    let source = ChangingCatalog {
+        reads: Arc::default(),
+        changes: 0,
+        fails: true,
+    };
+    assert_eq!(
+        discovery_skills(&source, &WorkspaceId::new("workspace")).directories,
+        Vec::<String>::new()
     );
 }
