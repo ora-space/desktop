@@ -40,7 +40,7 @@ pub enum HostProxyError {
 /// One operation's proxy configuration. Redirects select a route from the same snapshot.
 #[derive(Clone)]
 pub struct HostProxy {
-    settings: StaticProxy,
+    settings: Result<StaticProxy, HostProxyError>,
     origin: ProxyOrigin,
 }
 
@@ -80,7 +80,7 @@ impl HostProxy {
     /// Creates a policy that ignores every ambient proxy source.
     pub fn direct() -> Self {
         Self {
-            settings: StaticProxy::default(),
+            settings: Ok(StaticProxy::default()),
             origin: ProxyOrigin::Direct,
         }
     }
@@ -93,70 +93,91 @@ impl HostProxy {
     /// Uses the explicitly configured endpoint for non-loopback hosts.
     pub fn manual(endpoint: Url) -> Self {
         Self {
-            settings: StaticProxy {
+            settings: Ok(StaticProxy {
                 default: Some(endpoint.into()),
                 ..StaticProxy::default()
-            },
+            }),
             origin: ProxyOrigin::Manual,
         }
     }
 
-    /// Reads current-user static settings, falling back to the Linux process environment only
-    /// when no supported native backend is available.
-    pub fn system() -> Result<Self, HostProxyError> {
+    /// Snapshots current-user settings or the Linux environment. A native read failure is
+    /// kept in the snapshot so a request that never needs the proxy can still go direct.
+    pub fn system() -> Self {
         #[cfg(windows)]
         {
-            Ok(Self {
-                settings: windows::read()?,
+            Self {
+                settings: windows::read(),
                 origin: ProxyOrigin::System,
-            })
+            }
         }
         #[cfg(not(windows))]
         {
             #[cfg(all(target_os = "linux", feature = "desktop-proxy"))]
-            if let Some(settings) = linux::read()? {
-                return Ok(Self {
-                    settings,
-                    origin: ProxyOrigin::System,
-                });
+            match linux::read() {
+                Ok(Some(settings)) => {
+                    return Self {
+                        settings: Ok(settings),
+                        origin: ProxyOrigin::System,
+                    };
+                }
+                Err(error) => {
+                    return Self {
+                        settings: Err(error),
+                        origin: ProxyOrigin::System,
+                    };
+                }
+                Ok(None) => {}
             }
-            Ok(Self {
-                settings: StaticProxy {
+            Self {
+                settings: Ok(StaticProxy {
                     http: env_proxy("http_proxy", "HTTP_PROXY"),
                     https: env_proxy("https_proxy", "HTTPS_PROXY"),
                     default: env_proxy("all_proxy", "ALL_PROXY"),
                     bypass: env_proxy("no_proxy", "NO_PROXY")
                         .map(|value| value.split(',').map(str::trim).map(str::to_owned).collect())
                         .unwrap_or_default(),
-                },
+                }),
                 origin: ProxyOrigin::Environment,
-            })
+            }
         }
     }
 
     /// Selects the proxy for one HTTP(S) hop, preserving explicit bypasses.
     pub fn route(&self, url: &Url) -> Result<HostRoute, HostProxyError> {
-        let bypassed = ProxyBypass::new(self.settings.bypass.iter().cloned()).matches(url)
+        let loopback = match url.host() {
+            Some(url::Host::Domain(host)) => {
+                host.trim_end_matches('.').eq_ignore_ascii_case("localhost")
+            }
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => false,
+        };
+        if loopback {
+            return Ok(HostRoute {
+                origin: ProxyOrigin::Direct,
+                endpoint: None,
+            });
+        }
+        let settings = self.settings.as_ref().map_err(|error| *error)?;
+        let bypassed = ProxyBypass::new(settings.bypass.iter().cloned()).matches(url)
             || url.host_str().is_some_and(|host| {
-                let host = host.trim_matches(['[', ']']);
-                host.parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-                    || self.settings.bypass.iter().any(|pattern| {
-                        let pattern = pattern.trim().to_ascii_lowercase();
-                        let host = host.to_ascii_lowercase();
-                        (pattern == "<local>" && !host.contains('.') && !host.contains(':'))
-                            || (pattern.contains('*') && wildcard_matches(&pattern, &host))
-                    })
+                let host = host.trim_matches(['[', ']']).to_ascii_lowercase();
+                settings.bypass.iter().any(|pattern| {
+                    let pattern = pattern.trim().to_ascii_lowercase();
+                    (pattern == "<local>" && !host.contains('.') && !host.contains(':'))
+                        || (pattern.contains('*') && wildcard_matches(&pattern, &host))
+                })
             });
         let endpoint = if bypassed {
             None
         } else {
             match url.scheme() {
-                "http" => self.settings.http.as_deref(),
-                "https" => self.settings.https.as_deref(),
+                "http" => settings.http.as_deref(),
+                "https" => settings.https.as_deref(),
                 _ => return Err(HostProxyError::InvalidEndpoint),
             }
-            .or(self.settings.default.as_deref())
+            .or(settings.default.as_deref())
             .map(proxy_endpoint)
             .transpose()?
         };
@@ -223,4 +244,36 @@ fn env_proxy(lower: &str, upper: &str) -> Option<String> {
         .ok()
         .or_else(|| env::var(upper).ok())
         .filter(|value| !value.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// A broken native proxy setting cannot block loopback or become a public direct route.
+    #[test]
+    fn host_proxy_loopback_bypasses_resolution_errors() {
+        for error in [HostProxyError::Automatic, HostProxyError::SystemRead] {
+            let policy = HostProxy {
+                settings: Err(error),
+                origin: ProxyOrigin::System,
+            };
+            for address in [
+                "http://localhost/",
+                "http://localhost./",
+                "http://127.0.0.1/",
+                "http://[::1]/",
+            ] {
+                let route = policy
+                    .route(&address.parse().expect("loopback URL"))
+                    .expect("direct route");
+                assert_eq!((route.origin, route.endpoint), (ProxyOrigin::Direct, None));
+            }
+            assert!(matches!(
+                policy.route(&"https://github.com/".parse().expect("public URL")),
+                Err(HostProxyError::Automatic | HostProxyError::SystemRead)
+            ));
+        }
+    }
 }

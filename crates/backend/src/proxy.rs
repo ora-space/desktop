@@ -14,7 +14,7 @@ const PROXY_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) fn host_proxy(preferences: &NetworkProxyPreferences) -> Result<HostProxy, BackendError> {
     match preferences.mode {
         NetworkProxyMode::Direct => Ok(HostProxy::direct()),
-        NetworkProxyMode::System => HostProxy::system().map_err(proxy_error),
+        NetworkProxyMode::System => Ok(HostProxy::system()),
         NetworkProxyMode::Manual => {
             let settings = preferences
                 .manual
