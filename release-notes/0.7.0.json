@@ -85,8 +85,8 @@
     },
     {
       "category": "fix",
-      "zh-CN": "更新检查或安装失败时会显示原因，并可以重试。",
-      "en-US": "A failed update check or installation now shows why and offers a retry."
+      "zh-CN": "更新失败时会说明失败的是检查更新还是安装哪个版本，并显示原因，可以重试；安装失败不会再被标成检查失败。如果确认安装的版本已被更新的版本替换，会直接显示新版本供你查看和安装，不再报内部错误。",
+      "en-US": "When an update fails, the notice says whether checking for updates or installing a version failed and shows the reason, and you can retry; a failed installation is no longer reported as a failed check. If the release you confirmed was replaced by a newer one, the new version is shown for you to review and install instead of an internal error."
     }
   ]
 }
