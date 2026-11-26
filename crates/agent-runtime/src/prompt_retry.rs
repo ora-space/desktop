@@ -11,7 +11,7 @@ use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{PromptRequest, PromptResponse, RequestId, StopReason};
 use ora_contracts::PromptSessionEvent;
 use ora_domain::PromptInactivityPolicy;
-use ora_history::{TurnFailure, TurnFailureAnswer, TurnFailureCode};
+use ora_history::{TurnFailure, TurnFailureAnswer};
 use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;
 use std::sync::Arc;

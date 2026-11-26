@@ -6,7 +6,6 @@ use super::{RuntimeActor, agent_timed_out};
 use crate::AgentRuntimeHost;
 use agent_client_protocol_schema::v1::{PromptResponse, StopReason};
 use ora_domain::PromptInactivityPolicy;
-use ora_history::{TurnFailure, TurnFailureCode};
 use ora_logging::ora_warn;
 
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
