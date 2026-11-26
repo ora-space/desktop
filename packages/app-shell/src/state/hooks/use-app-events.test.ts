@@ -86,16 +86,15 @@ describe("useAppEvents", () => {
         });
       };
     const queryClient = createTestQueryClient();
-    const keys = (["agent-a", "agent-b"] as const).map((agentRef) =>
-      agentRuntimeKeys.agentDiscovery(
-        agentRef,
-        "workspace-1",
-        "modelsAndCommands",
-      ),
-    );
-    for (const key of keys) queryClient.setQueryData(key, { models: [] });
-    const invalidated = () =>
-      keys.map((key) => queryClient.getQueryState(key)?.isInvalidated);
+    const keys = (scope: "models" | "modelsAndCommands") =>
+      (["agent-a", "agent-b"] as const).map((agentRef) =>
+        agentRuntimeKeys.agentDiscovery(agentRef, "workspace-1", scope),
+      );
+    for (const key of [...keys("models"), ...keys("modelsAndCommands")])
+      queryClient.setQueryData(key, { models: [] });
+    const invalidatedIn = (scope: "models" | "modelsAndCommands") =>
+      keys(scope).map((key) => queryClient.getQueryState(key)?.isInvalidated);
+    const invalidated = () => invalidatedIn("modelsAndCommands");
 
     const { unmount } = renderHookWithClient(
       () => useAppEvents(client),
@@ -103,12 +102,15 @@ describe("useAppEvents", () => {
       queryClient,
     );
     await waitFor(() => expect(invalidated()).toEqual([true, false]));
+    expect(invalidatedIn("models")).toEqual([false, false]);
 
     await act(async () => {
       disconnect();
       await vi.advanceTimersByTimeAsync(1_000);
     });
     await waitFor(() => expect(invalidated()).toEqual([true, true]));
+    // Skills say nothing about models, so what was discovered for models alone stays valid.
+    expect(invalidatedIn("models")).toEqual([false, false]);
 
     unmount();
     disconnect();

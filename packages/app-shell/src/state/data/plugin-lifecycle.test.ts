@@ -119,6 +119,75 @@ describe("plugin lifecycle cache ownership", () => {
     },
   );
 
+  it("shows no commands from before a Skill change, while refreshing or after a failed refresh", async () => {
+    const client = new QueryClient();
+    const queryKey = agentRuntimeKeys.agentDiscovery(
+      "agent-a",
+      "workspace-1",
+      "modelsAndCommands",
+    );
+    const before = { models: [{ id: "m", displayName: "m" }], commands: [] };
+    const refreshes: ((error: Error) => void)[] = [];
+    const observer = new QueryObserver(client, {
+      queryKey,
+      queryFn: () =>
+        refreshes.length === 0 && client.getQueryData(queryKey) === undefined
+          ? Promise.resolve(before)
+          : new Promise<object>((_resolve, reject) => {
+              refreshes.push(reject);
+            }),
+      retry: false,
+      staleTime: 5 * 60 * 1000,
+    });
+    const leave = observer.subscribe(() => {});
+    await observer.refetch();
+    const discoveredAt = client.getQueryState(queryKey)?.dataUpdatedAt;
+    expect(observer.getCurrentResult().data).toEqual(before);
+
+    const refreshed = invalidateAgentCommands(client, "agent-a");
+    expect(refreshes).toHaveLength(1);
+    const refreshing = { models: before.models };
+    expect(observer.getCurrentResult().data).toEqual(refreshing);
+    expect(client.getQueryState(queryKey)?.dataUpdatedAt).toBe(discoveredAt);
+
+    refreshes[0]?.(new Error("agent unavailable"));
+    await refreshed;
+    expect(observer.getCurrentResult()).toMatchObject({
+      data: refreshing,
+      status: "error",
+    });
+    leave();
+    client.clear();
+  });
+
+  it("shows no commands from before a Skill change that interrupts a running refresh", async () => {
+    const client = new QueryClient();
+    const queryKey = agentRuntimeKeys.agentDiscovery(
+      "agent-a",
+      "workspace-1",
+      "modelsAndCommands",
+    );
+    const before = { models: [{ id: "m", displayName: "m" }], commands: [] };
+    client.setQueryData(queryKey, before);
+    const observer = new QueryObserver(client, {
+      queryKey,
+      queryFn: () => new Promise<object>(() => {}),
+      retry: false,
+      staleTime: 5 * 60 * 1000,
+    });
+    const leave = observer.subscribe(() => {});
+    void observer.refetch();
+    expect(client.getQueryState(queryKey)?.fetchStatus).toBe("fetching");
+
+    void invalidateAgentCommands(client, "agent-a");
+
+    expect(observer.getCurrentResult().data).toEqual({
+      models: before.models,
+    });
+    leave();
+    client.clear();
+  });
+
   it("keeps no models that the agent itself has outdated", async () => {
     const { client } = caches();
     await invalidateAgentModels(client, "agent-a");

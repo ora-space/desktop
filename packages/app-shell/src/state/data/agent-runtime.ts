@@ -58,7 +58,9 @@ export function invalidateAgentModels(
  * Refreshes the commands discovered from one agent in any workspace, which depend on Skills.
  *
  * Its models do not, so answers given for models alone stand, and so do the models of those that
- * came with commands: they are kept for whoever asks for models only.
+ * came with commands: they are kept for whoever asks for models only. The commands themselves are
+ * dropped at once rather than kept until the refresh answers: they were found before the change,
+ * and a refresh that is slow or fails must not leave them on show.
  */
 export function invalidateAgentCommands(
   queryClient: QueryClient,
@@ -69,11 +71,19 @@ export function invalidateAgentCommands(
     predicate: ({ queryKey }: { queryKey: readonly unknown[] }) =>
       queryKey.at(-1) === commandsScope,
   };
+  // A running request answers from before the change too, so it is abandoned first.
+  void queryClient.cancelQueries(filters);
   for (const { queryKey, state } of queryClient
     .getQueryCache()
     .findAll(filters)) {
     const discovered = state.data as DiscoverAgentResponse | undefined;
-    if (discovered === undefined || state.isInvalidated) continue;
+    if (discovered === undefined) continue;
+    const models = { models: discovered.models };
+    if (discovered.commands !== undefined)
+      queryClient.setQueryData<DiscoverAgentResponse>(queryKey, models, {
+        updatedAt: state.dataUpdatedAt,
+      });
+    if (state.isInvalidated) continue;
     const modelsKey = [...queryKey.slice(0, -1), modelsScope];
     const kept = queryClient.getQueryState(modelsKey);
     if (
@@ -82,13 +92,10 @@ export function invalidateAgentCommands(
       kept.dataUpdatedAt >= state.dataUpdatedAt
     )
       continue;
-    queryClient.setQueryData<DiscoverAgentResponse>(
-      modelsKey,
-      { models: discovered.models },
-      { updatedAt: state.dataUpdatedAt },
-    );
+    queryClient.setQueryData<DiscoverAgentResponse>(modelsKey, models, {
+      updatedAt: state.dataUpdatedAt,
+    });
   }
-  void queryClient.cancelQueries(filters);
   return queryClient.invalidateQueries(filters);
 }
 
