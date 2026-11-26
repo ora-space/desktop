@@ -705,7 +705,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
         <WindowControls />
       </header>
       {run && run.status !== "pending" && (
-        <RunDebugHistory key={runId} runId={runId} />
+        <RunDebugHistory key={`debug-history:${runId}`} runId={runId} />
       )}
       {unrecognizedNodes.length > 0 && (
         <p
