@@ -166,11 +166,7 @@ pub(crate) fn claim_node_for_completion(
                 && row.status == WorkflowNodeStatus::Pending
         })
         .ok_or_else(rejected)?;
-    if repository
-        .debug_dispatch_fence(run_id)
-        .map_err(repository_error)?
-        .is_some_and(|fence| fence.affected_attempts.contains(&attempt))
-    {
+    if completion_is_fenced(&repository, run_id, &attempt)? {
         return Err(rejected().into());
     }
     if approval.force && approval.confirm_initial_turn {
@@ -186,6 +182,18 @@ pub(crate) fn claim_node_for_completion(
         return Err(rejected().into());
     }
     Ok(node_run.id)
+}
+
+/// A parked attempt is unavailable at every completion stage while its debug fence holds.
+fn completion_is_fenced(
+    repository: &SqliteWorkflowRunEngineRepository,
+    run_id: &WorkflowRunId,
+    attempt: &WorkflowNodeRunId,
+) -> Result<bool, BackendError> {
+    Ok(repository
+        .debug_dispatch_fence(run_id)
+        .map_err(repository_error)?
+        .is_some_and(|fence| fence.affected_attempts.contains(attempt)))
 }
 
 /// Rejects a combined first-turn confirmation and force before the node is claimed.
@@ -238,10 +246,7 @@ pub(crate) fn revalidate_completion(
         || &node_run.run_id != run_id
         || node_run.node_id != node_id
         || node_run.status != WorkflowNodeStatus::Pending
-        || repository
-            .debug_dispatch_fence(run_id)
-            .map_err(repository_error)?
-            .is_some_and(|fence| fence.affected_attempts.contains(node_run_id))
+        || completion_is_fenced(&repository, run_id, node_run_id)?
     {
         return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
             node_id: node_id.to_string(),
@@ -288,7 +293,9 @@ pub(crate) fn prepare_completion(
         .ok_or_else(|| ApplicationError::WorkflowNodeNotAwaitingInput {
             node_id: node_id.to_string(),
         })?;
-    if node_run.status != WorkflowNodeStatus::Pending {
+    if node_run.status != WorkflowNodeStatus::Pending
+        || completion_is_fenced(&repository, run_id, attempt)?
+    {
         return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
             node_id: node_run.node_id,
         }

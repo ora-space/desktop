@@ -66,6 +66,33 @@ fn stopping_and_unreleased_failure_reject_parked_completions() {
             let rejected = PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {});
             assert_eq!(claim().unwrap_err().public_error(), &rejected);
             assert_eq!(
+                prepare_completion(
+                    &f.runs.pool,
+                    &f.runs.sessions_root,
+                    &f.runs.baselines_root,
+                    &f.workspace,
+                    &run,
+                    ("agent", &claimed),
+                    CompletionApproval::FORCE
+                )
+                .unwrap_err()
+                .public_error(),
+                &rejected
+            );
+            // The fence can also arrive after prepare's read and before its repair UPDATE.
+            let repository = SqliteWorkflowRunEngineRepository::new(f.runs.pool.clone());
+            let original = repository.find_node_run_by_id(&claimed).unwrap();
+            assert!(
+                !repository
+                    .repair_node_payload(
+                        &claimed,
+                        &serde_json::json!({"completionPolicy": "agent"}),
+                        /*now*/ 60
+                    )
+                    .unwrap()
+            );
+            assert_eq!(repository.find_node_run_by_id(&claimed).unwrap(), original);
+            assert_eq!(
                 revalidate_completion(&f.runs.pool, &run, ("agent", &claimed))
                     .unwrap_err()
                     .public_error(),
