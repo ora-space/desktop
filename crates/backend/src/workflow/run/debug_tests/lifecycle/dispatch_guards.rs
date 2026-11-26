@@ -1,27 +1,31 @@
 use super::*;
+use crate::workflow::run::{interactive::begin_human_turn, test_fixture};
+use ora_contracts::{EmptyErrorParams, PublicError};
 use pretty_assertions::assert_eq;
+
+/// Parks an interactive attempt while its original session is still bound.
+fn parked_fixture() -> Fixture {
+    let mut graph: serde_json::Value = serde_json::from_str(GRAPH).unwrap();
+    graph["nodes"][1]["data"]["agentConfig"]["interactive"] = json!(true);
+    let f = Fixture::with_graph(Arc::new(NoSessions), &graph.to_string());
+    SqliteWorkflowRunEngineRepository::new(f.pool.clone())
+        .transition_node_run_status(
+            &f.row("x").id,
+            WorkflowNodeStatus::Running,
+            WorkflowNodeStatus::Pending,
+            /*now*/ 50,
+        )
+        .unwrap();
+    f
+}
 
 /// A parked interactive attempt needs no stop acknowledgement, but its old session cannot
 /// start another turn until a failed operation releases the fence.
 #[test]
 fn parked_session_rejects_followup_until_the_fence_is_released() {
-    use crate::workflow::run::{interactive::begin_human_turn, test_fixture};
-    use ora_contracts::{EmptyErrorParams, PublicError};
-
     run_test(async {
-        let mut graph: serde_json::Value = serde_json::from_str(GRAPH).unwrap();
-        graph["nodes"][1]["data"]["agentConfig"]["interactive"] = json!(true);
-        let f = Fixture::with_graph(Arc::new(NoSessions), &graph.to_string());
+        let f = parked_fixture();
         let old = f.row("x");
-        let repository = SqliteWorkflowRunEngineRepository::new(f.pool.clone());
-        repository
-            .transition_node_run_status(
-                &old.id,
-                WorkflowNodeStatus::Running,
-                WorkflowNodeStatus::Pending,
-                50,
-            )
-            .unwrap();
         let preview = f.preview(old.id.as_ref(), /*base_revision*/ 0);
         assert!(preview.impact.stop.is_empty());
         assert!(preview.impact.invalidate.contains(&old.id.to_string()));
@@ -53,6 +57,114 @@ fn parked_session_rejects_followup_until_the_fence_is_released() {
         );
         prompt().await.unwrap();
         assert_eq!(f.row("x").status, WorkflowNodeStatus::Running);
+    });
+}
+
+/// Applying the edit retires the parked attempt, but its session still belongs to the workflow.
+#[test]
+fn retired_parked_session_is_not_admitted_after_apply() {
+    run_test(async {
+        let f = parked_fixture();
+        let old = f.row("x");
+        let preview = f.preview(old.id.as_ref(), /*base_revision*/ 0);
+        assert!(preview.impact.stop.is_empty());
+        let receipt = f
+            .coordinator
+            .commit(f.commit_request(&preview, "edit"))
+            .await
+            .unwrap();
+        assert_eq!(receipt.phase, WorkflowDebugPhase::Applied { revision: 1 });
+        let replacement = f.row("x");
+        assert_ne!(replacement.id, old.id);
+        let (locks, completing) = test_fixture::locks();
+        let (transitions, events) = test_fixture::recording_transitions(&f.pool);
+        let result =
+            begin_human_turn(&f.pool, &locks, &completing, &transitions, "session-1").await;
+        assert_eq!(
+            result.unwrap_err().public_error(),
+            &PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {})
+        );
+        assert_eq!(f.row("x"), replacement);
+        assert!(events.published.lock().unwrap().is_empty());
+
+        // A live binding takes precedence even when this session also has a retired owner.
+        let repository = SqliteWorkflowRunEngineRepository::new(f.pool.clone());
+        repository
+            .bind_node_run_session(
+                &replacement.id,
+                &SessionId::new("session-1"),
+                /*now*/ 60,
+            )
+            .unwrap();
+        repository
+            .transition_node_run_status(
+                &replacement.id,
+                WorkflowNodeStatus::Running,
+                WorkflowNodeStatus::Pending,
+                /*now*/ 61,
+            )
+            .unwrap();
+        begin_human_turn(&f.pool, &locks, &completing, &transitions, "session-1")
+            .await
+            .unwrap();
+        assert_eq!(f.row("x").status, WorkflowNodeStatus::Running);
+    });
+}
+
+/// A prompt already queued at the run gate must observe a fence claimed while it waited.
+#[test]
+fn prompt_rechecks_the_fence_under_the_gate() {
+    run_test(async {
+        let f = parked_fixture();
+        let req = f.commit_request(
+            &f.preview(f.row("x").id.as_ref(), /*base_revision*/ 0),
+            "race",
+        );
+        let (locks, completing) = test_fixture::locks();
+        let (transitions, _) = test_fixture::recording_transitions(&f.pool);
+        let key = f.run_id.as_ref();
+        let reader = locks.acquire_shared(key);
+        let prompt = tokio::spawn({
+            let pool = f.pool.clone();
+            let locks = locks.clone();
+            async move { begin_human_turn(&pool, &locks, &completing, &transitions, "session-1").await }
+        });
+        // With a shared lease held, a second reader is refused only once the prompt queues as a writer.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while locks.try_acquire_shared(key).is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("prompt queued at the run gate");
+        f.store.claim(&req).unwrap();
+        drop(reader);
+        assert_eq!(
+            prompt.await.unwrap().unwrap_err().public_error(),
+            &PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {})
+        );
+        assert_eq!(f.row("x").status, WorkflowNodeStatus::Pending);
+    });
+}
+
+/// A cancelled baseline restricts the new scheduling wave to the explicitly confirmed nodes.
+#[test]
+fn editing_a_cancelled_run_keeps_the_confirmed_schedule() {
+    run_test(async {
+        let f = Fixture::with_graph(Arc::new(NoSessions), INDEPENDENT_BRANCH_GRAPH);
+        terminal(&f, WorkflowRunStatus::Cancelled);
+        let preview = f.preview(f.row("x").id.as_ref(), /*base_revision*/ 0);
+        let receipt = f
+            .coordinator
+            .commit(f.commit_request(&preview, "edit"))
+            .await
+            .unwrap();
+        assert_eq!(receipt.phase, WorkflowDebugPhase::Applied { revision: 1 });
+        let repository = SqliteWorkflowRunEngineRepository::new(f.pool.clone());
+        assert_eq!(
+            repository.terminal_debug_schedule(&f.run_id).unwrap(),
+            Some(preview.impact.schedule)
+        );
     });
 }
 
