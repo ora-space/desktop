@@ -142,7 +142,7 @@ Migration `0026` records evidence for new workflow attempts and run-local debug 
 
 Migration `0027` adds three objects for workflow debug recovery.
 
-- The `workflow_debug_boot_protected` view identifies attempts in the stop set and their enclosing
+- The `workflow_debug_boot_protected` view identifies attempts to invalidate or stop and their enclosing
   container attempts. Startup cleanup preserves them while a stop is in progress or a failed stop
   still holds its fence.
 - The `workflow_debug_dispatch` table points each run to the applied operation whose schedule

@@ -1,6 +1,61 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+/// A parked interactive attempt needs no stop acknowledgement, but its old session cannot
+/// start another turn until a failed operation releases the fence.
+#[test]
+fn parked_session_rejects_followup_until_the_fence_is_released() {
+    use crate::workflow::run::{interactive::begin_human_turn, test_fixture};
+    use ora_contracts::{EmptyErrorParams, PublicError};
+
+    run_test(async {
+        let mut graph: serde_json::Value = serde_json::from_str(GRAPH).unwrap();
+        graph["nodes"][1]["data"]["agentConfig"]["interactive"] = json!(true);
+        let f = Fixture::with_graph(Arc::new(NoSessions), &graph.to_string());
+        let old = f.row("x");
+        let repository = SqliteWorkflowRunEngineRepository::new(f.pool.clone());
+        repository
+            .transition_node_run_status(
+                &old.id,
+                WorkflowNodeStatus::Running,
+                WorkflowNodeStatus::Pending,
+                50,
+            )
+            .unwrap();
+        let preview = f.preview(old.id.as_ref(), /*base_revision*/ 0);
+        assert!(preview.impact.stop.is_empty());
+        assert!(preview.impact.invalidate.contains(&old.id.to_string()));
+        f.store
+            .claim(&f.commit_request(&preview, "parked"))
+            .unwrap();
+        let (locks, completing) = test_fixture::locks();
+        let (transitions, _) = test_fixture::recording_transitions(&f.pool);
+        let prompt = || begin_human_turn(&f.pool, &locks, &completing, &transitions, "session-1");
+        for state in ["stopping", "stop_failed"] {
+            if state == "stop_failed" {
+                assert!(
+                    f.store
+                        .record_stop_failure(f.run_id.as_ref(), "parked", "isolation pending", &[])
+                        .unwrap()
+                );
+            }
+            assert_eq!(
+                prompt().await.unwrap_err().public_error(),
+                &PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {}),
+                "{state}"
+            );
+            assert_eq!(f.row("x").status, WorkflowNodeStatus::Pending);
+        }
+        assert!(
+            f.store
+                .release_failed_stop(f.run_id.as_ref(), "parked")
+                .unwrap()
+        );
+        prompt().await.unwrap();
+        assert_eq!(f.row("x").status, WorkflowNodeStatus::Running);
+    });
+}
+
 /// The dispatch pointer must end with the run. After a terminal debug restores Failed, an
 /// ordinary resume-from-failure must schedule the failed independent node again.
 #[test]

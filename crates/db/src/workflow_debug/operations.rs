@@ -178,7 +178,7 @@ impl WorkflowDebugStore {
     }
 
     /// Reads the active dispatch fence: the newest stopping or unreleased failed operation's
-    /// stop-set and schedule scope. The scheduler holds these positions until the operation
+    /// affected attempts and schedule scope. The scheduler holds these positions until the operation
     /// applies (or the failed fence is released); independent branches are not listed.
     pub fn dispatch_fence(
         &self,
@@ -211,7 +211,7 @@ impl WorkflowDebugStore {
             };
             Ok(Some(ora_application::DebugDispatchFence {
                 blocked_nodes: strings("schedule"),
-                stopped_attempts: db.prepare("SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1")?.query_map([run], |r|Ok(ora_domain::WorkflowNodeRunId::new(r.get::<_,String>(0)?)))?.collect::<Result<_,_>>()?,
+                affected_attempts: db.prepare("SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1")?.query_map([run], |r|Ok(ora_domain::WorkflowNodeRunId::new(r.get::<_,String>(0)?)))?.collect::<Result<_,_>>()?,
             }))
         })
     }
