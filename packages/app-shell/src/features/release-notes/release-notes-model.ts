@@ -54,8 +54,8 @@ export interface ReleaseNotesPrompt {
  *
  * Returns null when nothing may be shown or remembered: the version predates release notes, the build
  * has no notes of its own version, so its version says nothing about releases, or the version was
- * already prompted. An empty list means
- * the version is remembered without prompting, which is how a fresh installation starts.
+ * already prompted. An empty list means the version is remembered without prompting, which is how a
+ * fresh installation starts.
  */
 export function planReleaseNotesPrompt({
   notes,

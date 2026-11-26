@@ -1,13 +1,14 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RemoteContractError } from "@ora/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PlatformProvider,
   type DesktopUpdateCapability,
   type DesktopUpdateStatus,
 } from "../../platform";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { appI18n } from "../../i18n/i18n-instance";
 import type { ReleaseNote } from "../../lib/release-note";
 import { createStubPlatform } from "../../test/stub-platform";
 import { PendingUpdate } from "./pending-update";
@@ -55,7 +56,31 @@ function renderPending(status: DesktopUpdateStatus) {
   };
 }
 
+beforeEach(async () => {
+  await appI18n.changeLanguage("zh-CN");
+});
+
 describe("PendingUpdate", () => {
+  it("shows the offered notes in the interface language", async () => {
+    await appI18n.changeLanguage("en-US");
+    renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: [
+        {
+          version: "0.3.0",
+          date: "2026-12-10",
+          entries: [
+            {
+              category: "fix",
+              "zh-CN": "修复了登录",
+              "en-US": "Fixed signing in",
+            },
+          ],
+        },
+      ],
+    });
+
     const region = await screen.findByRole("region", {
       name: "Ora 0.3.0 is available",
     });
