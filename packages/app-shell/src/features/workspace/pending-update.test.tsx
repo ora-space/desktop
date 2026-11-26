@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { RemoteContractError } from "@ora/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   PlatformProvider,
@@ -271,6 +272,34 @@ describe("PendingUpdate", () => {
       { kind: "failed", operation: "check", message: "connection refused" },
     );
     expect(screen.getByRole("region", { name: "检查更新失败" })).not.toBeNull();
+  });
+
+  it("does not report a confirmation that a newer release replaced", async () => {
+    const user = userEvent.setup();
+    const { install, publish } = renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: NOTES,
+    });
+    const payload = {
+      code: "desktop_update_release_replaced",
+      params: {},
+      requestId: "00000000-0000-4000-8000-000000000001",
+    } as const;
+    install.mockRejectedValueOnce(new RemoteContractError(payload, payload));
+    await user.click(await screen.findByRole("button", { name: "立即更新" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "立即更新" }));
+
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+    // Even before the replacement's own status arrives, nothing blames the installation.
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    publish({ kind: "ready", version: "0.4.0", notes: NOTES });
+    expect(
+      screen.getByRole("region", { name: "可更新到 Ora 0.4.0" }),
+    ).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("drops a rejected installation once another release replaces it", async () => {

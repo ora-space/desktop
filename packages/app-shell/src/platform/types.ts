@@ -110,7 +110,10 @@ export type DesktopUpdateFailure =
 /** Exposes update status and installation without coupling shared UI to Tauri IPC. */
 export interface DesktopUpdateCapability {
   getStatus(): Promise<DesktopUpdateStatus>;
-  /** Installs the confirmed version; the host refuses when another release replaced it. */
+  /**
+   * Installs the confirmed version. When another release replaced it, the host rejects with the
+   * `desktop_update_release_replaced` contract error and has already published the replacement.
+   */
   install(version: string): Promise<void>;
   /** Runs an update check on demand, outside the scheduled delayed and cron checks. */
   check(): Promise<void>;

@@ -545,3 +545,85 @@ fn manual_update_reasons_serialize_as_the_webview_discriminants() {
         json!(["system_package", "unpackaged_binary"]) as Value
     );
 }
+
+/// A replaced release is refused with its own code at WARN; other refusals stay internal faults.
+#[test]
+fn a_replaced_release_is_refused_as_a_conflict() {
+    use crate::update::commands::install_command_error;
+
+    let recorder = CompletionRecorder::default();
+    let (replaced, missing) = ora_logging::with_recorded_trace_logging(recorder.clone(), || {
+        (
+            install_command_error(UpdateError::ReleaseReplaced),
+            install_command_error(UpdateError::NoPendingUpdate),
+        )
+    });
+    let code = |error| {
+        serde_json::to_value(error).expect("command error serializes")["code"]
+            .as_str()
+            .expect("command error has a code")
+            .to_owned()
+    };
+
+    assert_eq!(
+        (code(replaced), code(missing), recorder.completions()),
+        (
+            "desktop_update_release_replaced".to_owned(),
+            "internal_error".to_owned(),
+            vec![
+                (
+                    tracing::Level::WARN,
+                    "desktop_update_release_replaced".to_owned()
+                ),
+                (tracing::Level::ERROR, "internal_error".to_owned()),
+            ],
+        )
+    );
+}
+
+/// Records the level and error code of every request completion event.
+#[derive(Clone, Default)]
+struct CompletionRecorder(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+
+impl CompletionRecorder {
+    /// Returns the recorded completions in emission order.
+    fn completions(&self) -> Vec<(tracing::Level, String)> {
+        self.0.lock().expect("recorded completions").clone()
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CompletionRecorder {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        /// Collects the event's message and `error.code` fields.
+        #[derive(Default)]
+        struct Fields {
+            message: String,
+            code: Option<String>,
+        }
+        impl tracing::field::Visit for Fields {
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                if field.name() == "error.code" {
+                    self.code = Some(value.to_owned());
+                }
+            }
+
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.message = format!("{value:?}");
+                }
+            }
+        }
+        let mut fields = Fields::default();
+        event.record(&mut fields);
+        if let (true, Some(code)) = (fields.message == "request completed", fields.code) {
+            self.0
+                .lock()
+                .expect("recorded completions")
+                .push((*event.metadata().level(), code));
+        }
+    }
+}

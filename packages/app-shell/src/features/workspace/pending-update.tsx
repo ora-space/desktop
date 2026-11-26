@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { RemoteContractError } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -137,7 +138,11 @@ export function PendingUpdate() {
               onClick={() => {
                 setConfirming(false);
                 setFailedInstall(null);
-                updates.install(version).catch(() => setFailedInstall(version));
+                updates.install(version).catch((error: unknown) => {
+                  // The host has already offered the release that replaced this one.
+                  if (isReleaseReplaced(error)) return;
+                  setFailedInstall(version);
+                });
               }}
             >
               {t("update.confirmAction")}
@@ -149,3 +154,10 @@ export function PendingUpdate() {
   );
 }
 
+/** Recognizes the refusal of a confirmation whose release a newer one replaced. */
+function isReleaseReplaced(error: unknown): boolean {
+  return (
+    error instanceof RemoteContractError &&
+    error.code === "desktop_update_release_replaced"
+  );
+}
