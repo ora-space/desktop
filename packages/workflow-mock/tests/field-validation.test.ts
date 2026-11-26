@@ -73,6 +73,8 @@ describe("feedback declaration compatibility", () => {
     ["boolean", "any", true],
     ["object", "file", true],
     ["array", "array[file]", true],
+    ["array[object]", "array[file]", true],
+    ["array[string]", "array[file]", false],
     ["array[any]", "array[number]", true],
     ["array[number]", "array[string]", false],
     ["array[string]", "array", false],

@@ -89,6 +89,37 @@ it("isolates a draft, discards cancel and reopens the selected execution at its 
   });
 });
 
+it("drops the pending member's draft when only its foreach index changes", async () => {
+  const user = userEvent.setup();
+  const input = props({
+    kind: "agent",
+    config: {
+      prompt: "Original",
+      executor: { agentCli: "cli", modelId: "one" },
+    },
+  });
+  const item = (index: number) => ({
+    runId: "run-7",
+    pendingTarget: {
+      rootScopeId: "root",
+      scopeId: "body",
+      containerNodeRunId: "iteration-attempt",
+      nodeId: "agent",
+      index,
+    },
+  });
+  const view = render(<RunNodeConfigForm {...input} target={item(3)} />);
+  const prompt = () => screen.getByLabelText("Custom prompt");
+  await user.clear(prompt());
+  await user.type(prompt(), "Only for item 3");
+  expect(submit()).toBeEnabled();
+
+  view.rerender(<RunNodeConfigForm {...input} target={item(4)} />);
+  expect(prompt()).toHaveTextContent("Original");
+  expect(submit()).toBeDisabled();
+  expect(input.onSubmit).not.toHaveBeenCalled();
+});
+
 it("blocks a model edit with an out-of-scope prompt token, then emits the corrected edit", async () => {
   const user = userEvent.setup();
   const input = props({
@@ -517,6 +548,19 @@ it("filters nested arrays and edits the iteration failure strategy", async () =>
       value: "continue",
     },
   ]);
+  await user.click(
+    screen.getByLabelText(
+      appI18n.t("settings.workflow.field.iterationErrorStrategy"),
+    ),
+  );
+  await user.click(
+    await screen.findByRole("option", {
+      name: appI18n.t("settings.workflow.iteration.failStrategy"),
+    }),
+  );
+  expect(submit()).toBeDisabled();
+  await user.click(submit());
+  expect(input.onSubmit).toHaveBeenCalledTimes(1);
 });
 
 it.each([
