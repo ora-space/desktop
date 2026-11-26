@@ -629,8 +629,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 // A lost connection both reports itself and closes the queue, and either may be read
                 // first, so both end the turn the same way.
                 lost @ (ActiveInput::Control(SessionControl::ConnectionLost(_))
-                | ActiveInput::EventsClosed
-                | ActiveInput::ControlsClosed) => {
+                | ActiveInput::EventsClosed) => {
                     let error = match lost {
                         ActiveInput::Control(SessionControl::ConnectionLost(error)) => error,
                         _ => runtime_unavailable(),
@@ -663,6 +662,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         "session event queue overflowed",
                     )));
                     self.isolate_channel(channel).await;
+                    return;
+                }
+                ActiveInput::ControlsClosed => {
+                    end_report.record(PromptEndCause::SessionCrashed);
+                    // The host stopped controlling this turn, which only happens when the session
+                    // is ending: the turn is attributed to the session end (D1).
+                    self.end_timed_turn_with(
+                        StopReason::Cancelled,
+                        &tool_timings,
+                        Some(TurnEndedBy::SessionEnd),
+                        None,
+                    );
+                    followers.finish(StopReason::Cancelled);
+                    self.fail_prompt(&events, runtime_unavailable());
                     return;
                 }
                 ActiveInput::Command(RuntimeCommand::RespondToPermission { request, response }) => {
