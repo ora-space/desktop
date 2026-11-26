@@ -193,6 +193,7 @@ function renderDock(
       interaction={{
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         ...(completion !== undefined ? { completion } : {}),
         ...(nextNodeTitles !== undefined ? { nextNodeTitles } : {}),
       }}
@@ -354,7 +355,7 @@ describe("RunNodeSessionChat", () => {
       <RunNodeSessionChat
         sessionId={sessionId}
         status="awaiting_input"
-        interaction={{ runId, nodeId }}
+        interaction={{ runId, nodeId, nodeRunId: "shown-attempt" }}
       />,
       {
         wrapper: createHookWrapper(client, createTestQueryClient(), chatStore),
@@ -742,6 +743,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: false,
       }),
     );
@@ -823,6 +825,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: false,
       }),
     );
@@ -858,6 +861,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: false,
       }),
     );
@@ -1014,6 +1018,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: false,
       }),
     );
@@ -1048,6 +1053,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: false,
         confirmInitialTurn: true,
       }),
@@ -1142,6 +1148,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: false,
         confirmInitialTurn: true,
       }),
@@ -1187,6 +1194,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: false,
         confirmAgentCompletion: { signalId: "signal-1" },
       }),
@@ -1225,6 +1233,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: true,
         confirmInitialTurn: true,
       }),
@@ -1267,6 +1276,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: false,
         confirmInitialTurn: true,
         confirmAgentCompletion: { signalId: "signal-1" },
@@ -1517,6 +1527,7 @@ describe("RunNodeSessionChat", () => {
       expect(completeSpy).toHaveBeenCalledWith({
         runId,
         nodeId,
+        nodeRunId: "shown-attempt",
         force: true,
       }),
     );
