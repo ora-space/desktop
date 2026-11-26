@@ -271,9 +271,9 @@ show.
 commands, so the probe session has to be set up with the ones a session would be
 given: `skillSessionSetup` builds that part of `session/new`. `revision` is
 opaque and differs after every change to the Skills, also one that leaves the
-directories alone, such as an edit in place. An older Ora sends no `skills`
-even when it wants commands; `skillSessionSetup(undefined, …)` then returns
-`{}`, and the probe session is set up without Skills.
+directories alone, such as an edit in place. An older Ora sends no `skills` even
+when it wants commands; `skillSessionSetup(undefined, …)` then returns `{}`, and
+the probe session is set up without Skills.
 
 Two constraints, both load-bearing:
 
