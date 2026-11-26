@@ -35,14 +35,16 @@ pub enum ErrorClassification {
 pub struct RuntimeError {
     classification: ErrorClassification,
     public_error: PublicError,
-    context: String,
+    /// Boxed with `turn_failure` so the error stays small enough to return by value.
+    context: Box<str>,
     source: Option<SharedError>,
     /// The Agent answered the prompt (with an error, or after a watchdog cancel) before this
     /// failure, so its main flow reached the response fence.
     answered: bool,
     /// The bounded reason this turn failed, recorded on its `TurnEnded`. Set only when the runtime
     /// observed a failure first; turns that were cancelled or ended by the session carry none.
-    turn_failure: Option<TurnFailure>,
+    /// Boxed so the error stays small enough to return by value across the runtime's API.
+    turn_failure: Option<Box<TurnFailure>>,
 }
 
 impl RuntimeError {
@@ -110,7 +112,7 @@ impl RuntimeError {
         Self {
             classification,
             public_error,
-            context: context.into(),
+            context: context.into().into_boxed_str(),
             source: None,
             answered: false,
             turn_failure: None,
@@ -137,7 +139,7 @@ impl RuntimeError {
         Self {
             classification,
             public_error,
-            context: context.to_string(),
+            context: Box::from(context),
             source: Some(Arc::new(source)),
             answered: false,
             turn_failure: None,
@@ -154,7 +156,7 @@ impl RuntimeError {
         Self {
             classification,
             public_error,
-            context,
+            context: context.into_boxed_str(),
             source,
             answered: false,
             turn_failure: None,
@@ -163,13 +165,13 @@ impl RuntimeError {
 
     /// Attaches the bounded reason this turn failed, recorded on its `TurnEnded`.
     pub(crate) fn with_turn_failure(mut self, failure: TurnFailure) -> Self {
-        self.turn_failure = Some(failure);
+        self.turn_failure = Some(Box::new(failure));
         self
     }
 
     /// The bounded reason this turn failed, if the runtime observed a failure first.
     pub fn turn_failure(&self) -> Option<&TurnFailure> {
-        self.turn_failure.as_ref()
+        self.turn_failure.as_deref()
     }
 
     /// Returns the category a host maps into native status and logging semantics.
@@ -194,7 +196,7 @@ impl RuntimeError {
         (
             self.classification,
             self.public_error,
-            self.context,
+            self.context.into_string(),
             self.source,
         )
     }
