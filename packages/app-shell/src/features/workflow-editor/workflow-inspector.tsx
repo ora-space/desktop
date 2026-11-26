@@ -78,6 +78,8 @@ interface WorkflowInspectorProps {
   onCloseNode: () => void;
   /** Whole-graph nodes, for detail panels whose configuration reads graph structure. */
   graphNodes?: Node<WorkflowNodeData, "workflow">[];
+  /** Nodes included by backend reachability analysis, for launch conflict hints only. */
+  executionNodes?: Node<WorkflowNodeData, "workflow">[];
   /** Workflow-wide declarations used by graph-aware detail panels. */
   globalVariables?: WorkflowGlobalVariable[];
 }
@@ -106,6 +108,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
       onDelete={props.onDelete}
       onClose={props.onCloseNode}
       graphNodes={props.graphNodes}
+      executionNodes={props.executionNodes}
       globalVariables={props.globalVariables}
     />
   );
@@ -158,6 +161,7 @@ function WorkflowNodeInspector({
   onDelete,
   onClose,
   graphNodes,
+  executionNodes,
   globalVariables,
 }: {
   node: Node<WorkflowNodeData, "workflow">;
@@ -178,6 +182,8 @@ function WorkflowNodeInspector({
   onClose: () => void;
   /** Whole-graph nodes, for detail panels whose configuration reads graph structure. */
   graphNodes?: Node<WorkflowNodeData, "workflow">[];
+  /** Nodes included by backend reachability analysis, for launch conflict hints only. */
+  executionNodes?: Node<WorkflowNodeData, "workflow">[];
   globalVariables?: WorkflowGlobalVariable[];
 }) {
   const { t } = useTranslation();
@@ -239,7 +245,7 @@ function WorkflowNodeInspector({
                 catalogsLoading={agentCatalogsLoading}
                 catalogsError={agentCatalogsError}
                 onRetryCatalogs={onRetryAgentCatalogs}
-                graphNodes={graphNodes}
+                executionNodes={executionNodes}
                 iterationMember={node.parentId !== undefined}
                 onChange={(config) =>
                   onUpdate({
@@ -426,7 +432,7 @@ function AgentConfigurationFields({
   catalogsError,
   onRetryCatalogs,
   iterationMember,
-  graphNodes = [],
+  executionNodes = [],
   onChange,
 }: {
   config: WorkflowAgentConfig;
@@ -442,7 +448,7 @@ function AgentConfigurationFields({
   catalogsLoading: boolean;
   catalogsError: boolean;
   onRetryCatalogs?: () => void;
-  graphNodes?: Node<WorkflowNodeData, "workflow">[];
+  executionNodes?: Node<WorkflowNodeData, "workflow">[];
   iterationMember: boolean;
   onChange: (config: WorkflowAgentConfig) => void;
 }) {
@@ -466,7 +472,7 @@ function AgentConfigurationFields({
     (skill) => !configuredSkillIds.has(skill.value),
   );
   const invocations = new Map<string, Set<string>>();
-  for (const node of graphNodes) {
+  for (const node of executionNodes) {
     for (const binding of node.data.agentConfig?.skills ?? []) {
       if (!binding.enabled) continue;
       const resolved = capabilities.resolveSkill?.(binding.skillId);

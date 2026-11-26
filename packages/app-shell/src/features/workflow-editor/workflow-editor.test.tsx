@@ -2821,6 +2821,50 @@ describe("WorkflowEditor", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });
+
+  it("shows the converted local Skill reference in both draft and published export lists", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    renderEditor(undefined, state, () => {
+      const record = state.workflows[0]!;
+      for (const snapshot of [record.draft, ...record.published]) {
+        const graph = JSON.parse(snapshot.graph);
+        const node = graph.nodes.find(
+          (node: { data: WorkflowNodeData }) => node.data.kind === "agent",
+        );
+        node.data.title =
+          snapshot === record.draft
+            ? "Draft export dependency"
+            : "Published export dependency";
+        node.data.agentConfig.skills = [
+          { skillId: "uuid-archive-change", enabled: true },
+        ];
+        snapshot.graph = JSON.stringify(graph);
+      }
+    });
+    await screen.findByLabelText("工作流画布");
+    await user.click(screen.getByRole("button", { name: "导出" }));
+    const dialog = await screen.findByRole("dialog");
+    const assertConverted = () => {
+      const list = within(dialog).getByRole("region", {
+        name: "随文件记录的插件引用",
+      });
+      expect(
+        within(list).getAllByText("openspec-archive-change").length,
+      ).toBeGreaterThan(0);
+      expect(dialog).toHaveTextContent('"skillId": "openspec-archive-change"');
+      expect(dialog).not.toHaveTextContent("uuid-archive-change");
+    };
+    await waitFor(assertConverted);
+    const [, version] = within(dialog).getAllByRole("radio");
+    await user.click(version);
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent(
+        '"title": "Published export dependency"',
+      );
+      assertConverted();
+    });
+  });
 });
 
 describe("useCreateWorkflow", () => {

@@ -992,7 +992,7 @@ it("warns about different graph Skills sharing an invocation without blocking ed
     <AppI18nProvider>
       <WorkflowInspector
         node={node}
-        graphNodes={[node, other]}
+        executionNodes={[node, other]}
         capabilities={capabilities}
         variableCatalog={[]}
         onUpdate={(value) => {
@@ -1010,4 +1010,46 @@ it("warns about different graph Skills sharing an invocation without blocking ed
   expect(saved.data.agentConfig!.skills).toEqual([
     { skillId: "skill-a", enabled: false },
   ]);
+});
+
+it("does not scan unused canvas nodes for invocation conflicts", async () => {
+  await appI18n.changeLanguage("zh-CN");
+  const capabilities = createMockWorkflowCapabilities("zh-CN");
+  capabilities.resolveSkill = (reference) => ({
+    value: reference,
+    label: reference,
+    catalogId: reference,
+    invocationName: "review",
+    status: "installed",
+  });
+  const node = createAgentNode();
+  node.data.agentConfig!.skills = [{ skillId: "local-review", enabled: true }];
+  const unused = {
+    ...node,
+    id: "unused",
+    data: {
+      ...node.data,
+      agentConfig: {
+        ...node.data.agentConfig!,
+        skills: [{ skillId: "plugin-review", enabled: true }],
+      },
+    },
+  };
+  render(
+    <AppI18nProvider>
+      <WorkflowInspector
+        node={node}
+        graphNodes={[node, unused]}
+        executionNodes={[node]}
+        capabilities={capabilities}
+        variableCatalog={[]}
+        onUpdate={() => undefined}
+        onDelete={() => undefined}
+        onCloseNode={() => undefined}
+      />
+    </AppI18nProvider>,
+  );
+  expect(
+    screen.queryByText(/不同 Skill 使用了相同调用名/),
+  ).not.toBeInTheDocument();
 });

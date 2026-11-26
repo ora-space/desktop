@@ -769,66 +769,26 @@ function WorkflowEditorContent({
     exportRequestId,
     exportVersion,
   );
-  /** Plugin references of the export source, resolved against local catalogs. */
-  const exportDependencies = useMemo(() => {
-    if (exportRequestId === null) {
-      return [];
-    }
-    const nodes =
-      exportVersion === null
-        ? (workflow?.nodes ?? [])
-        : exportVersionQuery.data === undefined
-          ? []
-          : parseWorkflowGraph(exportVersionQuery.data.graph).nodes;
-    return collectWorkflowDependencies(
-      nodes,
-      pluginsQuery.data ?? [],
-      skillsQuery.data ?? [],
-      skillsQuery.retiredSkillIds,
-    );
-  }, [
-    exportRequestId,
-    exportVersion,
-    exportVersionQuery.data,
-    pluginsQuery.data,
-    skillsQuery.data,
-    workflow?.nodes,
-    skillsQuery.retiredSkillIds,
-  ]);
-
-  /** The exact document export will write, shown in the dialog's structure preview. */
-  const exportPreviewJson = useMemo(() => {
-    if (exportRequestId === null || workflow === null) {
-      return null;
-    }
-    if (exportVersion === null) {
-      return JSON.stringify(
-        workflowExportDocument(
-          workflow,
-          null,
-          skillsQuery.localSkillNamesForExport,
-        ),
-        null,
-        2,
-      );
-    }
-    if (exportVersionQuery.data === undefined) {
-      return null;
-    }
-    const envelope = parseWorkflowGraph(exportVersionQuery.data.graph);
-    return JSON.stringify(
-      workflowExportDocument(
+  /** One converted document owns both the reference list and the JSON preview. */
+  const exportDocument = useMemo(() => {
+    if (exportRequestId === null || workflow === null) return null;
+    if (exportVersion === null)
+      return workflowExportDocument(
         workflow,
-        {
-          ...envelope,
-          globalVariables: normalizeWorkflowGlobalVariables(
-            envelope.globalVariables,
-          ),
-        },
+        null,
         skillsQuery.localSkillNamesForExport,
-      ),
-      null,
-      2,
+      );
+    if (exportVersionQuery.data === undefined) return null;
+    const envelope = parseWorkflowGraph(exportVersionQuery.data.graph);
+    return workflowExportDocument(
+      workflow,
+      {
+        ...envelope,
+        globalVariables: normalizeWorkflowGlobalVariables(
+          envelope.globalVariables,
+        ),
+      },
+      skillsQuery.localSkillNamesForExport,
     );
   }, [
     exportRequestId,
@@ -837,6 +797,26 @@ function WorkflowEditorContent({
     workflow,
     skillsQuery.localSkillNamesForExport,
   ]);
+  const exportDependencies = useMemo(
+    () =>
+      collectWorkflowDependencies(
+        exportDocument?.nodes ?? [],
+        pluginsQuery.data ?? [],
+        skillsQuery.data ?? [],
+        skillsQuery.retiredSkillIds,
+      ),
+    [
+      exportDocument,
+      pluginsQuery.data,
+      skillsQuery.data,
+      skillsQuery.retiredSkillIds,
+    ],
+  );
+  const exportPreviewJson = useMemo(
+    () =>
+      exportDocument === null ? null : JSON.stringify(exportDocument, null, 2),
+    [exportDocument],
+  );
   /** Plugin references of the previewed import file. */
   const importDependencies = useMemo(
     () =>
@@ -3067,6 +3047,13 @@ function WorkflowEditorContent({
                 capabilities={capabilities}
                 variableCatalog={variableCatalog}
                 graphNodes={workflow?.nodes ?? []}
+                executionNodes={
+                  analysis.data === undefined
+                    ? []
+                    : (workflow?.nodes ?? []).filter(
+                        (node) => !excludedNodeIds.includes(node.id),
+                      )
+                }
                 globalVariables={normalizeWorkflowGlobalVariables(
                   workflow?.globalVariables,
                 )}
