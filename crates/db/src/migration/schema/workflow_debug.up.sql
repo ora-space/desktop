@@ -155,7 +155,7 @@ SELECT node_run_id,kind,CASE WHEN refs IS NULL THEN body ELSE
 CREATE VIEW workflow_debug_envelopes AS
 SELECT a.node_run_id,
     CASE WHEN a.entry_state IS NOT NULL THEN json_remove(json_set(a.entry_state,
-        '$.runInput',i.outcome,'$.runPayload',r.body,'$.scopeState',s.body),'$.inputRef') END AS entry_state,
+        '$.runInput',i.outcome,'$.runPayload',r.body || '', '$.scopeState',s.body || ''),'$.inputRef') END AS entry_state,
     CASE WHEN a.dispatch_input IS NOT NULL THEN COALESCE(d.body,a.dispatch_input) END AS dispatch_input
 FROM workflow_debug_attempts a
 LEFT JOIN workflow_debug_outcomes i ON i.id=json_extract(a.entry_state,'$.inputRef')
@@ -166,13 +166,13 @@ LEFT JOIN workflow_debug_restored_documents d ON d.node_run_id=a.node_run_id AND
 CREATE VIEW workflow_debug_entries AS
 SELECT a.node_run_id,a.dispatch_input,
     CASE WHEN json_type(a.entry_state,'$.ledgerRefs')='object' THEN
-        json_remove(json_set(a.entry_state,'$.runPayload',CAST(json_set(
+        json_remove(json_set(a.entry_state,'$.runPayload',json_set(
             json_extract(a.entry_state,'$.runPayload'),'$.iterationLedger',
             json((SELECT json_group_object(owner.key,json((
                 SELECT json_group_object(item.key,json(o.outcome))
                 FROM json_each(owner.value) item JOIN workflow_debug_outcomes o ON o.id=item.value
             ))) FROM json_each(a.entry_state,'$.ledgerRefs') owner))
-        ) AS TEXT)), '$.ledgerRefs') ELSE a.entry_state END AS entry_state
+        ) || ''), '$.ledgerRefs') ELSE a.entry_state END AS entry_state
 FROM workflow_debug_envelopes a;
 
 -- A waiting retry captures its own entry state. Until dispatch, preview can use its replaced

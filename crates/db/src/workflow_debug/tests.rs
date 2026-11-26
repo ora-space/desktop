@@ -965,16 +965,30 @@ fn condition_preview_uses_the_observed_input_and_preserves_the_old_decision() {
         .with_connection(|db| {
             bind_graph(db, graph)?;
             insert_attempt(db, "c1", "condition", "condition", /*index*/ None)?;
-            let mut pool = WorkflowVariablePool::default();
-            pool.declare("start.flag", "boolean", "start");
-            pool.set("start.flag", "start", json!(true)).unwrap();
-            db.execute(
-                "UPDATE workflow_node_runs SET status=2,payload=?1 WHERE id='c1'",
-                [json!({"debugCondition":{"branch":"A","variablePool":pool}}).to_string()],
-            )?;
             Ok(())
         })
         .unwrap();
+    let mut pool = WorkflowVariablePool::default();
+    pool.declare("start.flag", "boolean", "start");
+    pool.set("start.flag", "start", json!(true)).unwrap();
+    crate::SqliteWorkflowRunEngineRepository::new(store.pool.clone())
+        .complete_node(
+            &ora_domain::WorkflowNodeRunId::new("c1"),
+            Some("A".into()),
+            None,
+            None,
+            vec![],
+            Some(&json!({"debugCondition":{"branch":"A","variablePool":pool}})),
+            2,
+        )
+        .unwrap();
+    store.pool.with_connection(|db| {
+        let payload: String = db.query_row("SELECT payload FROM workflow_node_runs WHERE id='c1'",[],|r|r.get(0))?;
+        assert_eq!(serde_json::from_str::<Value>(&payload)?["debugCondition"],json!({"branch":"A"}));
+        let packed: bool = db.query_row("SELECT json_type(body,'$.variablePool.values') IS NULL AND refs <> '{}' FROM workflow_debug_documents WHERE node_run_id='c1' AND kind='condition'",[],|r|r.get(0))?;
+        assert!(packed);
+        Ok(())
+    }).unwrap();
     let mut request: PreviewWorkflowDebugRequest =
         serde_json::from_value(json!({"runId":"other","nodeRunId":"c1","baseRevision":0,
         "patch":[{"op":"replace","path":"/cases/0/conditions/0/value","value":false}]}))
@@ -1318,9 +1332,11 @@ fn iteration_source_must_name_a_root_array_variable() {
     let (_temp, _path, store) = fixture();
     let graph = json!({"nodes":[
         {"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
+        {"id":"prior","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["worker","output"]}}},
+        {"id":"worker","parentId":"prior","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"prior"}}},
         {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["agent","output"]}}},
         {"id":"agent","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"old"}}}],
-        "edges":[{"source":"start","target":"iter"},{"source":"iter","target":"agent"}]});
+        "edges":[{"source":"start","target":"prior"},{"source":"prior","target":"worker"},{"source":"prior","target":"iter"},{"source":"iter","target":"agent"}]});
     let mut payload = ora_application::WorkflowRunPayload::default();
     payload
         .variable_pool
@@ -1333,9 +1349,17 @@ fn iteration_source_must_name_a_root_array_variable() {
         .pool
         .with_connection(|db| {
             bind_graph(db, graph)?;
+            insert_attempt(db, "first", "prior", "iteration", None)?;
+            db.execute(
+                "UPDATE workflow_node_runs SET status=2 WHERE id='first'",
+                [],
+            )?;
+            let mut state = serde_json::to_value(&payload)?;
+            state["iterationLedger"] =
+                json!({"prior":{"0":{"status":"succeeded","item":"a","output":"done"}}});
             db.execute(
                 "UPDATE workflow_runs SET payload=?1 WHERE id='other'",
-                [serde_json::to_string(&payload)?],
+                [state.to_string()],
             )?;
             insert_attempt(db, "it", "iter", "iteration", None)
         })

@@ -18,6 +18,25 @@ pub use operations::DebugClaim;
 #[cfg(test)]
 mod tests;
 
+/// Stores the pool seen by the Condition evaluator in the node completion transaction.
+pub(crate) fn record_condition_pool(
+    db: &Connection,
+    run_id: &str,
+    node_run_id: &str,
+    pool: Value,
+) -> Result<(), DatabaseError> {
+    db.execute(
+        "INSERT INTO workflow_debug_document_input(node_run_id,run_id,kind,body)
+         VALUES(?1,?2,'condition',?3)",
+        params![
+            node_run_id,
+            run_id,
+            serde_json::json!({"variablePool":pool}).to_string()
+        ],
+    )?;
+    Ok(())
+}
+
 /// Domain outcomes that callers can distinguish from storage failures.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum DebugRejection {

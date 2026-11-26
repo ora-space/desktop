@@ -13,6 +13,7 @@ fn foreach_storage_growth() {
         ("output", 10240),
         ("output", 32768),
         ("large-input", 32),
+        ("condition-large-input", 32),
         ("chained", 32),
         ("upstream", 32),
     ] {
@@ -24,10 +25,11 @@ fn foreach_storage_growth() {
                 // Migration 0025 frees pages. Start both measurements without that reserve.
                 db.execute_batch("VACUUM")?;
                 let before = size()?;
-                let items: Vec<_> = (0..100).map(|i| if shape == "large-input" { format!("{i:03}{}", "x".repeat(10237)) } else { format!("{i:03}") }).collect();
+                let items: Vec<_> = (0..100).map(|i| if matches!(shape,"large-input" | "condition-large-input") { format!("{i:03}{}", "x".repeat(10237)) } else { format!("{i:03}") }).collect();
                 let mut ledger = serde_json::Map::new();
                 let output = "x".repeat(width);
-                bind_graph(db, json!({"nodes":[{"id":"agent","parentId":"iter"}],"edges":[]}))?;
+                let kind = if shape == "condition-large-input" { "condition" } else { "agent" };
+                bind_graph(db, json!({"nodes":[{"id":kind,"parentId":"iter"}],"edges":[]}))?;
                 db.execute("UPDATE workflow_runs SET input=?1 WHERE id='other'", [json!({"items":items}).to_string()])?;
                 insert_attempt(db,"container","iter","iteration",None)?;
                 for (i, item) in items.iter().enumerate() {
@@ -41,14 +43,19 @@ fn foreach_storage_growth() {
                     }
                     let payload = json!({"variablePool":pool,"iterationLedger":{"iter":ledger}});
                     db.execute("UPDATE workflow_runs SET payload=?1 WHERE id='other'", [payload.to_string()])?;
-                    let id = format!("agent-{i}");
-                    insert_attempt(db,&id,"agent","agent",Some(i as u32))?;
+                    let id = format!("{kind}-{i}");
+                    insert_attempt(db,&id,kind,kind,Some(i as u32))?;
                     if evidence {
                         let restored: String = db.query_row("SELECT json_extract(entry_state,'$.runPayload') FROM workflow_debug_entries WHERE node_run_id=?1",[&id], |row| row.get(0))?;
                         assert_eq!(serde_json::from_str::<Value>(&restored)?, payload);
                     }
-                    if evidence { db.execute("UPDATE workflow_debug_attempts SET dispatch_input=?2 WHERE node_run_id=?1",params![id,json!({"variablePool":pool,"prompt":item}).to_string()])?; }
-                    db.execute("UPDATE workflow_node_runs SET status=2,output=?2 WHERE id=?1",params![id,output])?;
+                    if kind == "condition" {
+                        if evidence {
+                            record_condition_pool(db,"other",&id,pool)?;
+                            db.execute("UPDATE workflow_node_runs SET payload=?2 WHERE id=?1",params![id,json!({"debugCondition":{"branch":"A"}}).to_string()])?;
+                        }
+                    } else if evidence { db.execute("UPDATE workflow_debug_attempts SET dispatch_input=?2 WHERE node_run_id=?1",params![id,json!({"variablePool":pool,"prompt":item}).to_string()])?; }
+                    db.execute("UPDATE workflow_node_runs SET status=2,output=?2 WHERE id=?1",params![id,(kind == "agent").then_some(&output)])?;
                     ledger.insert(i.to_string(),json!({"status":"succeeded","item":item,"output":output}));
                 }
                 println!("shape={shape} output_bytes={width} evidence={evidence} allocated_growth={}",size()? - before);
@@ -124,6 +131,8 @@ fn immutable_values_are_shared_across_admission_and_dispatch() {
         let count: i64 = db.query_row("SELECT count(*) FROM workflow_debug_outcomes WHERE run_id='other'",[],|r|r.get(0))?;
         assert_eq!(count,5); // Two input versions and three distinct pool values.
         for (id,input) in [("one","first"),("two","first"),("three","changed")] {
+            let packed: bool = db.query_row("SELECT a.dispatch_input='{}' AND json_type(d.body,'$.variablePool.values') IS NULL AND d.refs <> '{}' FROM workflow_debug_attempts a JOIN workflow_debug_documents d USING(node_run_id) WHERE a.node_run_id=?1 AND d.kind='dispatch'",[id],|r|r.get(0))?;
+            assert!(packed);
             let (entry,dispatch):(String,String)=db.query_row("SELECT entry_state,dispatch_input FROM workflow_debug_entries WHERE node_run_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?)))?;
             let entry:Value=serde_json::from_str(&entry)?;
             assert_eq!(entry["runInput"],input);
@@ -131,7 +140,41 @@ fn immutable_values_are_shared_across_admission_and_dispatch() {
             assert_eq!(payload["variablePool"],pool);
             assert_eq!(serde_json::from_str::<Value>(&dispatch)?,json!({"variablePool":pool,"prompt":id}));
         }
-        assert!(db.execute("INSERT INTO workflow_debug_outcomes(run_id,outcome,digest) VALUES('other','different',ora_debug_hash('first'))",[]).is_err());
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn admission_rolls_back_when_the_input_digest_matches_different_bytes() {
+    let (_temp, _, store) = fixture();
+    store.pool.with_connection(|db| {
+        db.execute("UPDATE workflow_runs SET input='new input' WHERE id='other'",[])?;
+        db.execute("INSERT INTO workflow_debug_outcomes(run_id,outcome,digest) VALUES('other','different bytes',ora_debug_hash('new input'))",[])?;
+        let error = insert_attempt(db,"collision","agent","agent",None).unwrap_err();
+        assert!(matches!(error, DatabaseError::Sqlite(rusqlite::Error::SqliteFailure(code,Some(message)))
+            if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER && message == "workflow debug content hash collision"));
+        let count: i64 = db.query_row("SELECT count(*) FROM workflow_node_runs WHERE id='collision'",[],|r|r.get(0))?;
+        assert_eq!(count,0);
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn loop_round_document_restores_interned_values() {
+    let (_temp, _, store) = fixture();
+    store.pool.with_connection(|db| {
+        insert_attempt(db,"lp","loop","loop",None)?;
+        let state = json!({"variablePool":{"values":{"loop.draft":"third"}}});
+        db.execute("INSERT INTO workflow_execution_scopes(id,run_id,parent_loop_node_run_id,round_index,status,state,created_at,updated_at)
+            VALUES('round3','other','lp',3,1,?1,1,1)",[state.to_string()])?;
+        db.execute("INSERT INTO workflow_node_runs(id,run_id,scope_id,node_id,node_type,status,created_at,updated_at)
+            VALUES('writer3','other','round3','writer','agent',1,1,1)",[])?;
+        let packed: bool = db.query_row("SELECT json_type(body,'$.variablePool.values') IS NULL AND refs <> '{}' FROM workflow_debug_documents WHERE node_run_id='writer3' AND kind='scope'",[],|r|r.get(0))?;
+        assert!(packed);
+        let (raw,restored):(String,String) = db.query_row("SELECT a.entry_state,e.entry_state FROM workflow_debug_attempts a JOIN workflow_debug_entries e USING(node_run_id) WHERE a.node_run_id='writer3'",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
+        assert!(serde_json::from_str::<Value>(&raw)?.get("scopeState").is_none());
+        let envelope: Value = serde_json::from_str(&restored)?;
+        assert_eq!(serde_json::from_str::<Value>(envelope["scopeState"].as_str().unwrap())?,state);
         Ok(())
     }).unwrap();
 }

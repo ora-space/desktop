@@ -42,32 +42,6 @@ Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里
 | `0023` | 会话创建时的仅宿主能力，持久化后跨重启保留                                                           |
 | `0024` | 释放卡在 `provisioning` 的本地 Main Workspace（仅数据；降级为空操作）                                |
 | `0025` | 在 `skills` 表记录插件 `package_root`，并在一次性旧受管 Skill 目录清理后删除已退役的 Effect 账本与表 |
-| 版本   | 新增                                                                                                |
-| ------ | --------------------------------------------------------------------------------------------------- |
-| `0001` | 用户配置、项目、Workspace 位置与 provisioning、Workspace、worktree、任务标签、归属 Workspace 的会话 |
-| `0002` | 带命名空间的 Skill 和可配置 Agent                                                                   |
-| `0003` | 工作流定义、快照、归属 Workspace 的运行和节点运行                                                   |
-| `0004` | 持久化的 Git 清理任务和 worktree provisioning 租约                                                  |
-| `0005` | 插件 marketplace 源配置                                                                             |
-| `0006` | 通用 Effect 持久化，见 [Effect](../agents/effects.zh.md)                                            |
-| `0007` | 每个 marketplace 源的不可变命名空间绑定，以规范 Git URL 为键                                        |
-| `0008` | 每个源的 `enabled` 标志                                                                             |
-| `0009` | 每个源的制品获取配置（默认 Direct HTTPS）                                                           |
-| `0010` | 独立的 Effect 恢复检测时间；Scope 的创建移入 Workspace 事务                                         |
-| `0011` | 每个会话持久化的 MCP 选择（已有会话得到空的显式集合）                                               |
-| `0012` | 节点运行上的 Iteration 轮次索引                                                                     |
-| `0013` | 工作流执行作用域：根执行与 Loop 轮次的身份、作用域内的节点唯一性、降级归档                          |
-| `0014` | 扩展包安装归属（`pack_installation`、`pack_installation_member`）                                   |
-| `0015` | 定时任务、定时运行和触发点                                                                          |
-| `0016` | 定时任务的调度锚点和 worktree 基础分支                                                              |
-| `0017` | 触发时选定的定时运行 worktree 基础分支                                                              |
-| `0018` | 定时运行关联的 worktree 任务                                                                        |
-| `0019` | `finalized_without_effect` 的 Effect 操作阶段，通过暂存副本重建操作日志引入                         |
-| `0020` | 定时运行的业务结论、明细与注解时间                                                                  |
-| `0021` | 定时运行的产物清单与被拒绝候选记录                                                                  |
-| `0022` | marketplace 工作流文档的终态来源记录                                                                |
-| `0023` | 会话创建时的仅宿主能力，持久化后跨重启保留                                                          |
-| `0024` | 释放卡在 `provisioning` 的本地 Main Workspace（仅数据；降级为空操作）                               |
 | `0026` | 运行内调试的输入证据、配置修订、预览回执与操作栅栏 |
 
 单个迁移的细节见 [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md)。目录只描述当前 schema；`migrations` 表早于 SQL 快照机制的数据库不受支持，需要重建。

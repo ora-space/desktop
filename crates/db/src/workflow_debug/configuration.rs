@@ -33,11 +33,12 @@ pub(super) fn prepare(
         WorkflowDebugSelection::NodeRunId(id) => db.query_row(
         "SELECT n.node_id,n.scope_id,n.iteration,s.round_index,e.container_attempt,
                 e.snapshot_id,entry.entry_state,CASE WHEN n.node_type='condition' AND json_valid(n.payload)
-                    THEN json_extract(n.payload,'$.debugCondition') ELSE COALESCE(entry.dispatch_input, prior_entry.dispatch_input) END AS observed_input,n.node_type,snap.graph,n.id,CASE WHEN e.dispatch_input IS NULL THEN prior.node_run_id END AS evidence_source
+                    THEN COALESCE(condition.body,json_extract(n.payload,'$.debugCondition')) ELSE COALESCE(entry.dispatch_input, prior_entry.dispatch_input) END AS observed_input,n.node_type,snap.graph,n.id,CASE WHEN e.dispatch_input IS NULL THEN prior.node_run_id END AS evidence_source
          FROM workflow_node_runs n JOIN workflow_runs r ON r.id=n.run_id
          JOIN workflow_run_root_scopes root ON root.run_id=r.id
          JOIN workflow_execution_scopes s ON s.id=n.scope_id
          LEFT JOIN workflow_node_runs parent ON parent.id=s.parent_loop_node_run_id
+          LEFT JOIN workflow_debug_restored_documents condition ON condition.node_run_id=n.id AND condition.kind='condition'
           LEFT JOIN workflow_debug_attempts e ON e.node_run_id=n.id
           LEFT JOIN workflow_debug_entries entry ON entry.node_run_id=n.id
           LEFT JOIN workflow_debug_attempts prior ON prior.node_run_id=(
