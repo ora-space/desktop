@@ -94,7 +94,7 @@ fn seed_session(root: &Path, pool: &RepositoryPool) {
         )
         .expect("record prompt");
     writer
-        .append(&assembler.end_turn(StopReason::EndTurn))
+        .append(&assembler.end_turn(StopReason::EndTurn, None, None))
         .expect("record turn end");
 }
 

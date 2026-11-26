@@ -174,7 +174,7 @@ fn settled_turn(history: &SessionHistory, user_seq: u32) -> Option<(u32, StopRea
         .lines
         .iter()
         .filter_map(|line| {
-            let HistoryRecord::TurnEnded { stop_reason } = &line.record else {
+            let HistoryRecord::TurnEnded { stop_reason, .. } = &line.record else {
                 return None;
             };
             (line.seq > user_seq).then_some((line.seq, *stop_reason))
