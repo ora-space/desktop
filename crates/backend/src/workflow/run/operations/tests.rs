@@ -27,6 +27,8 @@ use std::process::Command;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+mod completion_identity;
+
 struct Fixture {
     temporary: TempDir,
     backend: Backend,
@@ -53,6 +55,18 @@ impl Fixture {
             .iter()
             .find(|node| node.node_id == "agent")
             .expect("agent node");
+        // The test executor records the dispatch input before the interactive turn parks.
+        assert!(
+            ora_db::workflow_debug::WorkflowDebugStore::new(runs.pool.clone())
+                .record_agent_dispatch(
+                    node.run_id.as_ref(),
+                    node.id.as_ref(),
+                    &serde_json::json!({
+                        "variablePool": ora_application::WorkflowVariablePool::default()
+                    })
+                )
+                .unwrap()
+        );
         let (_, node_run_id) = bind_and_park(&runs.pool, node);
         Self {
             workspace: temporary.path().join("fixture-project"),
@@ -850,25 +864,29 @@ fn completion_binds_to_the_displayed_attempt_across_replacement() {
         );
 
         // A claimed request must keep its attempt on either side of the prepare/commit gap.
-        assert!(
+        assert_eq!(
             prepare_completion(
                 &f.runs.pool,
                 &f.runs.sessions_root,
                 &f.runs.baselines_root,
                 &f.workspace,
                 &old.run_id,
-                &old.id,
+                ("agent", &old.id),
                 CompletionApproval::FORCE,
             )
-            .is_err()
+            .unwrap_err()
+            .public_error(),
+            &PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {})
         );
-        assert!(
+        assert_eq!(
             crate::workflow::run::interactive::revalidate_completion(
                 &f.runs.pool,
                 &old.run_id,
-                &old.id
+                ("agent", &old.id)
             )
-            .is_err()
+            .unwrap_err()
+            .public_error(),
+            &PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {})
         );
         let mut request: CompleteWorkflowNodeRequest = serde_json::from_value(serde_json::json!({
             "runId":"run-1","nodeId":"agent","force":true
@@ -1797,7 +1815,7 @@ fn completion_commit_restores_a_file_warning_lost_after_prepare() {
             &fixture.runs.baselines_root,
             &fixture.workspace,
             &run_id,
-            &WorkflowNodeRunId::new(&fixture.node_run_id),
+            ("agent", &WorkflowNodeRunId::new(&fixture.node_run_id)),
             CompletionApproval::PLAIN,
         )
         .expect("prepare a completion with a file warning");
@@ -1887,7 +1905,7 @@ fn completion_commit_keeps_forced_audit_and_file_warning_together() {
             &fixture.runs.baselines_root,
             &fixture.workspace,
             &run_id,
-            &WorkflowNodeRunId::new(&fixture.node_run_id),
+            ("agent", &WorkflowNodeRunId::new(&fixture.node_run_id)),
             CompletionApproval::FORCE,
         )
         .expect("prepare a forced completion with a file warning");

@@ -139,7 +139,7 @@ fn a_changed_turn_wins_over_the_blockers_gate() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect_err("a completion against a superseded turn is rejected");
@@ -178,7 +178,7 @@ fn changed_output_text_reports_the_two_digests() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect_err("a completion against rewritten output is rejected");
@@ -216,7 +216,7 @@ fn blocked_turn_returns_every_blocker_with_its_detail() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect_err("a blocked turn cannot be completed without force");
@@ -266,7 +266,7 @@ fn a_node_that_left_the_awaiting_state_is_rejected_before_its_snapshot() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::FORCE,
         )
         .expect_err("a terminal node cannot be completed, even with force");
@@ -293,7 +293,7 @@ fn a_legacy_node_is_materialized_and_blocked_by_an_unsettled_turn() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect_err("an unsettled turn cannot be completed");
@@ -349,7 +349,7 @@ fn a_legacy_node_with_a_settled_turn_completes_on_its_turn_window() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect("ready");
@@ -404,7 +404,7 @@ fn a_provisional_snapshot_is_repaired_for_the_same_user_message() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect("repaired");
@@ -485,7 +485,7 @@ fn legacy_snapshot_without_turn_origin_defaults_to_human() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect("a pre-turnOrigin snapshot completes as a human turn");
@@ -544,7 +544,7 @@ fn a_provisional_snapshot_of_another_turn_is_left_alone() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect_err("another turn cannot complete this one");
@@ -574,7 +574,7 @@ fn forcing_an_unsettled_turn_records_the_last_assistant_message() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::FORCE,
         )
         .expect("forced");
@@ -610,7 +610,7 @@ fn forcing_a_stopped_turn_records_the_turn_window() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::FORCE,
         )
         .expect("forced");
@@ -647,7 +647,7 @@ fn forcing_a_changed_turn_still_reports_the_conflict() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::FORCE,
         )
         .expect_err("force cannot overrule a superseded turn");
@@ -686,7 +686,7 @@ fn forcing_a_rewritten_output_still_reports_the_conflict() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::FORCE,
         )
         .expect_err("force cannot accept rewritten output");
@@ -720,7 +720,7 @@ fn forcing_a_structured_failure_keeps_raw_output_without_structured_output() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::FORCE,
         )
         .expect("force takes the current output");
@@ -776,7 +776,7 @@ fn an_existing_ready_snapshot_is_not_rewritten() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect("ready without a rewrite");
@@ -800,7 +800,7 @@ fn a_missing_history_file_is_read_as_an_empty_turn() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect_err("an empty session has no turn to complete");
@@ -850,7 +850,7 @@ fn confirming_the_opening_turn_completes_without_a_forced_audit() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::CONFIRM,
         )
         .expect("the confirmed opening turn completes");
@@ -885,7 +885,7 @@ fn confirmation_cannot_lift_other_blockers() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::CONFIRM,
         )
         .expect_err("the remaining blocker still rejects the completion");
@@ -921,7 +921,7 @@ fn force_cannot_stand_in_for_confirmation() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::FORCE,
         )
         .expect_err("force is not confirmation");
@@ -971,7 +971,7 @@ fn confirmation_is_a_noop_on_a_ready_snapshot() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::CONFIRM,
         )
         .expect("confirmation does not block a ready turn");
@@ -1064,7 +1064,7 @@ fn confirming_an_agent_signal_completes_the_opening_turn() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval {
                 confirm_initial_turn: true,
                 force: false,
@@ -1134,7 +1134,7 @@ fn confirming_an_agent_signal_does_not_confirm_the_opening_turn() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval {
                 confirm_initial_turn: false,
                 force: false,
@@ -1206,7 +1206,7 @@ fn a_headless_auto_accept_records_auto_confirmation() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval {
                 confirm_initial_turn: false,
                 force: false,
@@ -1270,7 +1270,7 @@ fn a_manual_confirmation_on_an_auto_accept_node_is_recorded_as_human() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval {
                 confirm_initial_turn: false,
                 force: false,
@@ -1307,7 +1307,7 @@ fn prepare_materializes_the_frozen_completion_policy() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect_err("the stopped turn still blocks completion");

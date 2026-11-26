@@ -169,7 +169,7 @@ pub(crate) fn claim_node_for_completion(
     if repository
         .debug_dispatch_fence(run_id)
         .map_err(repository_error)?
-        .is_some_and(|fence| fence.stopped_attempts.contains(&attempt))
+        .is_some_and(|fence| fence.affected_attempts.contains(&attempt))
     {
         return Err(rejected().into());
     }
@@ -219,16 +219,14 @@ fn validate_first_turn_force_confirmation(
 pub(crate) fn revalidate_completion(
     pool: &RepositoryPool,
     run_id: &WorkflowRunId,
-    node_run_id: &WorkflowNodeRunId,
+    (node_id, node_run_id): (&str, &WorkflowNodeRunId),
 ) -> Result<(), BackendError> {
     let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
-    // Read the node first so every rejection path can name the graph node id, not the node-run id,
-    // in the error — consistent with the prompt-policy rejections.
     let node_run = repository
         .find_node_run_by_id(node_run_id)
         .map_err(repository_error)?
-        .ok_or_else(|| ApplicationError::WorkflowNodeNotFound {
-            node_id: node_run_id.to_string(),
+        .ok_or_else(|| ApplicationError::WorkflowNodeNotAwaitingInput {
+            node_id: node_id.to_string(),
         })?;
     let context = repository
         .find_execution_context(run_id)
@@ -238,14 +236,15 @@ pub(crate) fn revalidate_completion(
         })?;
     if context.run.status != WorkflowRunStatus::Running
         || &node_run.run_id != run_id
+        || node_run.node_id != node_id
         || node_run.status != WorkflowNodeStatus::Pending
         || repository
             .debug_dispatch_fence(run_id)
             .map_err(repository_error)?
-            .is_some_and(|fence| fence.stopped_attempts.contains(node_run_id))
+            .is_some_and(|fence| fence.affected_attempts.contains(node_run_id))
     {
         return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
-            node_id: node_run.node_id,
+            node_id: node_id.to_string(),
         }
         .into());
     }
@@ -266,7 +265,7 @@ pub(crate) fn prepare_completion(
     baselines_root: &Path,
     worktree_root: &Path,
     run_id: &WorkflowRunId,
-    attempt: &WorkflowNodeRunId,
+    (node_id, attempt): (&str, &WorkflowNodeRunId),
     approval: CompletionApproval,
 ) -> Result<PreparedCompletion, BackendError> {
     let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
@@ -278,16 +277,16 @@ pub(crate) fn prepare_completion(
         })?;
     if context.run.status != WorkflowRunStatus::Running {
         return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
-            node_id: attempt.to_string(),
+            node_id: node_id.to_string(),
         }
         .into());
     }
     let node_run = repository
         .find_node_run_by_id(attempt)
         .map_err(repository_error)?
-        .filter(|row| &row.run_id == run_id)
-        .ok_or_else(|| ApplicationError::WorkflowNodeNotFound {
-            node_id: attempt.to_string(),
+        .filter(|row| &row.run_id == run_id && row.node_id == node_id)
+        .ok_or_else(|| ApplicationError::WorkflowNodeNotAwaitingInput {
+            node_id: node_id.to_string(),
         })?;
     if node_run.status != WorkflowNodeStatus::Pending {
         return Err(ApplicationError::WorkflowNodeNotAwaitingInput {

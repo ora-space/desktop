@@ -66,6 +66,8 @@
 
 人工完成（包括强制完成和信号确认）绑定运行页所示尝试的 `nodeRunId`。尝试已更换时，请刷新运行详情后重新确认。旧客户端仅在本次运行内该节点只有一个尝试且仍有效时可以省略这个字段。
 
+调试操作正在停稳，或停稳失败且栅栏尚未释放时，受影响的交互尝试会拒绝后续提示和人工完成。即使完成请求先于调试操作受理，提交前也会再次校验尝试。被此校验拒绝的请求返回 `workflow_node_not_awaiting_input`。
+
 交互的 Agent 节点在第一个回合之后停下等待输入。后续消息作为人工回合在同一会话上运行，`completeWorkflowNode` 手动完成节点；一个完成认领防止后续回合与手动完成竞争。Iteration 区域的成员默认不是交互的，运行时拒绝交互成员。
 
 每个停靠回合都会写入完成快照：turn key、stop reason、blockers 和最终 assistant 文本的 digest。新建或重新保存的交互 Agent 节点默认 `completionSignal: agent`：host 向该节点会话注入 loopback 完成工具，只有 agent 为结算的 attempt 调用它、并且用户确认（或节点配置了 `autoAcceptAgentCompletion`）后节点才完成。本轮没有信号时快照带 `agent_signal_pending`，有信号但未确认时带 `agent_confirmation_pending`，两者与其他 blocker 一起物化进停靠快照。`completionSignal: end_turn` 的遗留图仍按旧规则：只有 `EndTurn` 且没有 blocker 的回合才能正常完成。停止、截断、拒答或未知终态会保持等待输入，`completeWorkflowNode` 返回 `workflow_node_incomplete`（带上全部 blocker），除非显式传 `force`；turn key 或 digest 变化分别返回 `workflow_node_turn_changed` / `workflow_node_output_changed`，并给出 expected 与 actual。会话末尾的步骤卡片和右下角按钮是两个显式推进入口：继续、二次确认后的强制完成，或卡片 ready 时的完成并推进。确认请求携带用户看到的 `signalId`；过期 id 返回 `workflow_node_signal_changed`，不会落到新的回合上。attempt 失败、节点完成和运行取消都会撤销对应的 token；Desktop 重启后完成工具随持久化会话一起恢复。

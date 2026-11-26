@@ -416,6 +416,7 @@ impl WorkflowRuns {
             let agent_runtime = self.agent_runtime.clone();
             let run_id = run_id.clone();
             let attempt = claimed_node_run_id.clone();
+            let node_id = node_id.clone();
             match spawn_repository_work(move || {
                 // Resolve the run workspace before preparing: the file gate reads the same
                 // workspace the node ran in, and both reads happen outside the per-run gate.
@@ -439,7 +440,7 @@ impl WorkflowRuns {
                     &baselines_root,
                     &worktree_root,
                     &run_id,
-                    &attempt,
+                    (&node_id, &attempt),
                     approval,
                 )?;
                 let file_changes = crate::workflow::run::interactive::completion_file_changes(
@@ -483,7 +484,7 @@ impl WorkflowRuns {
             let result = crate::workflow::run::interactive::revalidate_completion(
                 &pool,
                 &run_id,
-                &node_run_id,
+                (&node_id, &node_run_id),
             )
             .and_then(|()| {
                 engine

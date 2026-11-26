@@ -133,6 +133,8 @@ See [Agent runtime](../agents/agent-runtime.md#prompt-inactivity-and-retries).
 
 Human completion, including force and signal confirmation, uses the attempt ID shown on the run page (`nodeRunId`). If the attempt changes, refresh the run before confirming. Older clients can omit the ID only while the node has one unreplaced attempt in the run.
 
+While a debug edit is stopping, or a failed stop still holds its fence, affected interactive attempts reject follow-up prompts and completion. A completion claimed before the edit checks the attempt again before committing. A rejected completion returns `workflow_node_not_awaiting_input`.
+
 An interactive Agent node parks as awaiting input after its first turn. Follow-up messages run as
 human turns on the same session, and `completeWorkflowNode` completes the node manually; a completion
 claim prevents a follow-up racing against manual completion. Region members of an Iteration default

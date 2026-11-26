@@ -245,7 +245,7 @@ fn a_failed_human_turn_restores_the_previous_snapshot_and_still_forces() {
             &temp.path().join("baselines"),
             &temp.path().join("fixture-project"),
             &run_id,
-            &node_run_id,
+            ("agent", &node_run_id),
             CompletionApproval::FORCE,
         )
         .expect("the restored stopped turn is still forceable");
