@@ -61,12 +61,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         } else {
             super::prompt_retry::no_progress_from_settled(snapshot.attempt, &settled)
         };
-        let mut error =
-            agent_timed_out(format!(
-                "workflow agent reported no progress for {} minutes",
-                snapshot.window.as_secs() / 60
-            ))
-            .with_turn_failure(failure);
+        let mut error = agent_timed_out(format!(
+            "workflow agent reported no progress for {} minutes",
+            snapshot.window.as_secs() / 60
+        ))
+        .with_turn_failure(failure);
         if cancellation_result == "confirmed" {
             self.record_cleanup(operation_id, Ok(()));
             self.channel = Some(channel);

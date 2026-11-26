@@ -468,11 +468,11 @@ fn a_refused_scheduled_artifact_grant_reaches_the_node() {
                         &NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
                             protocol_version: CURRENT_PROTOCOL_VERSION,
                             payload: HelloAccepted {
-                                    model_adapter: None,
-                                    thread_previews: false,
-                                    turn_cancel: false,
-                                    turn_failure: false,
-                                    selected_version: CURRENT_PROTOCOL_VERSION,
+                                model_adapter: None,
+                                thread_previews: false,
+                                turn_cancel: false,
+                                turn_failure: false,
+                                selected_version: CURRENT_PROTOCOL_VERSION,
                                 node: identity.clone(),
                                 capabilities: vec![
                                     NodeCapability::RepositoryClone,

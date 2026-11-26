@@ -53,7 +53,8 @@ async fn failure_settlement_round_trips_with_its_wire_names() -> Result<(), Test
 /// Case 13: `turn_failure` is confirmed only beside a confirmed `turn_cancel` and its capability;
 /// any asymmetry between the confirmation and the capability is rejected.
 #[tokio::test]
-async fn turn_failure_negotiation_requires_turn_cancel_and_its_capability() -> Result<(), TestError> {
+async fn turn_failure_negotiation_requires_turn_cancel_and_its_capability() -> Result<(), TestError>
+{
     let node = super::session::node();
     let accepted = |turn_cancel: bool, turn_failure: bool, capabilities: Vec<NodeCapability>| {
         NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {

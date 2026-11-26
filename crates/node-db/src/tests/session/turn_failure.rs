@@ -113,18 +113,18 @@ fn a_kept_failure_settles_beside_its_merged_cancels() {
             &execution,
             &TurnId::new("turn-1"),
             TurnFailureOutcome::Kept,
-            &[
-                CommandId::new("cancel-1"),
-                CommandId::new("cancel-2"),
-            ],
+            &[CommandId::new("cancel-1"), CommandId::new("cancel-2")],
         )
         .unwrap();
     assert_eq!(
         settlements(&db),
-        vec![(sequence.value(), TurnFailureSettled {
-            turn_id: TurnId::new("turn-1"),
-            outcome: TurnFailureOutcome::Kept,
-        })]
+        vec![(
+            sequence.value(),
+            TurnFailureSettled {
+                turn_id: TurnId::new("turn-1"),
+                outcome: TurnFailureOutcome::Kept,
+            }
+        )]
     );
     // The merged cancels settle as `already_ended`; the failure settlement is the transaction head.
     let cancelled = super::turn_cancel::settlements(&db);
@@ -155,18 +155,16 @@ fn an_end_session_refuses_a_kept_settlement() {
     let execution = start.execution_id.clone();
     db.accept_session_command(&cancel("cancel-1", "turn-1"))
         .unwrap();
-    db.accept_session_command(&SessionCommandInput::EndSession(
-        EndSessionMessage {
-            protocol_version: CURRENT_PROTOCOL_VERSION,
-            operation_id: start.operation_id.clone(),
-            execution_id: execution.clone(),
-            payload: EndSession {
-                node_id: NodeId::new("node"),
-                command_id: CommandId::new("end"),
-                reason: EndSessionReason::UserEnded,
-            },
+    db.accept_session_command(&SessionCommandInput::EndSession(EndSessionMessage {
+        protocol_version: CURRENT_PROTOCOL_VERSION,
+        operation_id: start.operation_id.clone(),
+        execution_id: execution.clone(),
+        payload: EndSession {
+            node_id: NodeId::new("node"),
+            command_id: CommandId::new("end"),
+            reason: EndSessionReason::UserEnded,
         },
-    ))
+    }))
     .unwrap();
     assert!(matches!(
         journal.settle_turn_failure(
@@ -193,10 +191,13 @@ fn a_failed_turn_without_a_settlement_backfills_session_ending() {
     let terminal = journal.end_session(&execution, ended()).unwrap();
     assert_eq!(
         settlements(&db),
-        vec![(terminal.value() - 1, TurnFailureSettled {
-            turn_id: TurnId::new("turn-1"),
-            outcome: TurnFailureOutcome::SessionEnding,
-        })]
+        vec![(
+            terminal.value() - 1,
+            TurnFailureSettled {
+                turn_id: TurnId::new("turn-1"),
+                outcome: TurnFailureOutcome::SessionEnding,
+            }
+        )]
     );
 }
 
@@ -221,9 +222,12 @@ fn a_turn_with_a_kept_settlement_is_not_backfilled() {
     journal.end_session(&execution, ended()).unwrap();
     assert_eq!(
         settlements(&db),
-        vec![(sequence.value(), TurnFailureSettled {
-            turn_id: TurnId::new("turn-1"),
-            outcome: TurnFailureOutcome::Kept,
-        })]
+        vec![(
+            sequence.value(),
+            TurnFailureSettled {
+                turn_id: TurnId::new("turn-1"),
+                outcome: TurnFailureOutcome::Kept,
+            }
+        )]
     );
 }

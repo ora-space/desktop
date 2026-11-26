@@ -734,10 +734,13 @@ fn a_provider_crash_reports_session_crashed_rather_than_a_dropped_stream() {
             "crashed",
         )
         .unwrap();
-        let failure = history.lines.into_iter().find_map(|line| match line.record {
-            ora_history::HistoryRecord::TurnEnded { failure, .. } => failure,
-            _ => None,
-        });
+        let failure = history
+            .lines
+            .into_iter()
+            .find_map(|line| match line.record {
+                ora_history::HistoryRecord::TurnEnded { failure, .. } => failure,
+                _ => None,
+            });
         assert_eq!(
             failure.map(|failure| failure.code),
             Some(ora_history::TurnFailureCode::AgentUnavailable)
@@ -1678,19 +1681,22 @@ fn default_policy_exhausts_three_retries() {
         assert!(fixture.frames.try_recv().is_err());
         // The schedule is exhausted, so the turn records `no_progress` with all four attempts and
         // three retry markers, and the final unanswered cancel as the answer (case 5).
-        let history =
-            ora_history::read_session_history(&fixture._directory.path().join("sessions"), "default")
-                .unwrap();
-        let (retries, failure) = history
-            .lines
-            .into_iter()
-            .fold((0, None), |(retries, failure), line| match line.record {
-                ora_history::HistoryRecord::PromptRetried => (retries + 1, failure),
-                ora_history::HistoryRecord::TurnEnded { failure: f, .. } => {
-                    (retries, f.or(failure))
-                }
-                _ => (retries, failure),
-            });
+        let history = ora_history::read_session_history(
+            &fixture._directory.path().join("sessions"),
+            "default",
+        )
+        .unwrap();
+        let (retries, failure) =
+            history
+                .lines
+                .into_iter()
+                .fold((0, None), |(retries, failure), line| match line.record {
+                    ora_history::HistoryRecord::PromptRetried => (retries + 1, failure),
+                    ora_history::HistoryRecord::TurnEnded { failure: f, .. } => {
+                        (retries, f.or(failure))
+                    }
+                    _ => (retries, failure),
+                });
         assert_eq!(retries, 3);
         let failure = failure.expect("the failed turn records its reason");
         assert_eq!(failure.code, ora_history::TurnFailureCode::NoProgress);

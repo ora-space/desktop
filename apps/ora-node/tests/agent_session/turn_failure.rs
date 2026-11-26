@@ -40,10 +40,8 @@ async fn a_kept_failure_settles_kept_before_the_next_turn() {
     fixture.verify_turn_boundary();
     let sessions = fixture.sessions(PLUGIN_VERSION);
     fixture.start_keeping(&sessions, "[request-failed]", FAILURE);
-    let failures = until(|| {
-        (!fixture.ledger.failures().is_empty()).then(|| fixture.ledger.failures())
-    })
-    .await;
+    let failures =
+        until(|| (!fixture.ledger.failures().is_empty()).then(|| fixture.ledger.failures())).await;
     assert_eq!(
         failures,
         vec![("turn-1".to_string(), TurnFailureOutcome::Kept)]

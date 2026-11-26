@@ -3,8 +3,8 @@
 //! A failed turn's `kept` settlement is written in the same transaction as the cancels merged into
 //! the stop, so an `EndSession` landing between them can never surface a `kept` that a later
 //! `session_ending` contradicts. The ledger refuses `kept` once an `EndSession` was accepted.
-use super::*;
 use super::turn_cancel::{end_requested, write_settlement};
+use super::*;
 
 impl<G: WriteGuard> SessionJournal<G> {
     /// Records `outcome` for one failed turn and, in the same transaction, the settlement of the
@@ -137,7 +137,12 @@ fn last_failed_turn(
         let Some(turn) = thread.payload.turn_id else {
             continue;
         };
-        if thread.payload.record.get("type").and_then(serde_json::Value::as_str) != Some("turnEnded")
+        if thread
+            .payload
+            .record
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            != Some("turnEnded")
         {
             continue;
         }
@@ -217,8 +222,13 @@ fn failure_settled(
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    row.map(|(outcome, sequence)| Ok((Sequence::new(sequence as u64), parse_failure_outcome(&outcome)?)))
-        .transpose()
+    row.map(|(outcome, sequence)| {
+        Ok((
+            Sequence::new(sequence as u64),
+            parse_failure_outcome(&outcome)?,
+        ))
+    })
+    .transpose()
 }
 
 /// Stable storage token of a failure outcome; equal to its wire name.

@@ -94,7 +94,12 @@ fn data_supplement_text(data: &Option<Value>) -> Option<&str> {
 /// Maps the Agent's ACP request error onto a `TurnFailure`. The `auth` flag is produced by the
 /// runtime's authentication classification (code `-32000` or the two known texts), which keeps the
 /// single source of truth for it in one place.
-pub(crate) fn acp_failure(code: i64, message: &str, data: &Option<Value>, auth: bool) -> TurnFailure {
+pub(crate) fn acp_failure(
+    code: i64,
+    message: &str,
+    data: &Option<Value>,
+    auth: bool,
+) -> TurnFailure {
     let sanitized = sanitize_agent_text(message, data);
     TurnFailure {
         code: if auth {
@@ -104,13 +109,11 @@ pub(crate) fn acp_failure(code: i64, message: &str, data: &Option<Value>, auth: 
         },
         acp_code: Some(code),
         message: sanitized.as_ref().map(|(text, _)| text.clone()),
-        message_truncated: sanitized.as_ref().and_then(|(_, truncated)| {
-            if *truncated {
-                Some(true)
-            } else {
-                None
-            }
-        }),
+        message_truncated: sanitized.as_ref().and_then(
+            |(_, truncated)| {
+                if *truncated { Some(true) } else { None }
+            },
+        ),
         attempts: None,
         answer: None,
     }

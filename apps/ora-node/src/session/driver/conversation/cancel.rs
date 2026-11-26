@@ -353,20 +353,16 @@ impl<L: SessionLedger> Conversation<'_, L> {
         // A turn stopped by failure already had its own result when a cancel merged into it.
         match stopped.cause {
             StopCause::Cancel => {
-                if let Err(end) =
-                    self.settle_merged(&stopped.merged, TurnCancelOutcome::Stopped)
-                {
+                if let Err(end) = self.settle_merged(&stopped.merged, TurnCancelOutcome::Stopped) {
                     return Judged::End(end);
                 }
             }
             StopCause::Failure(_) => {
                 // A kept failed turn records its own conclusion beside the cancels merged into its
                 // stop, in one transaction, before the next turn is admitted (D6).
-                if let Err(end) = self.settle_failure(
-                    &stopped.turn_id,
-                    TurnFailureOutcome::Kept,
-                    &stopped.merged,
-                ) {
+                if let Err(end) =
+                    self.settle_failure(&stopped.turn_id, TurnFailureOutcome::Kept, &stopped.merged)
+                {
                     return Judged::End(end);
                 }
             }

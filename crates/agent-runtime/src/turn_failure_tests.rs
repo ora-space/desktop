@@ -77,7 +77,10 @@ fn acp_failure_carries_the_code_and_sanitized_text() {
     );
     assert_eq!(failure.code, TurnFailureCode::AgentError);
     assert_eq!(failure.acp_code, Some(-32603));
-    assert_eq!(failure.message.as_deref(), Some("upstream   diagnostic: detail"));
+    assert_eq!(
+        failure.message.as_deref(),
+        Some("upstream   diagnostic: detail")
+    );
     assert_eq!(failure.attempts, None);
     assert_eq!(failure.answer, None);
 
@@ -121,17 +124,13 @@ fn no_progress_maps_the_agents_answer() {
     let respond = |stop_reason: &str| -> PromptResponse {
         serde_json::from_value(json!({"stopReason": stop_reason})).unwrap()
     };
-    let end_turn = no_progress_from_settled::<()>(
-        /*attempts*/ 1,
-        &Ok(Some(Ok(respond("end_turn")))),
-    );
+    let end_turn =
+        no_progress_from_settled::<()>(/*attempts*/ 1, &Ok(Some(Ok(respond("end_turn")))));
     assert_eq!(end_turn.answer, Some(TurnFailureAnswer::EndTurn));
     assert_eq!(end_turn.attempts, Some(1));
 
-    let max_tokens = no_progress_from_settled::<()>(
-        /*attempts*/ 2,
-        &Ok(Some(Ok(respond("max_tokens")))),
-    );
+    let max_tokens =
+        no_progress_from_settled::<()>(/*attempts*/ 2, &Ok(Some(Ok(respond("max_tokens")))));
     assert_eq!(max_tokens.answer, Some(TurnFailureAnswer::MaxTokens));
 
     let error = no_progress_from_settled::<()>(

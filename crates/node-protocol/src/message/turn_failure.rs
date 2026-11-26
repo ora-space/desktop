@@ -7,7 +7,10 @@
 //! acknowledged exactly.
 
 use super::validation::{validate_execution_ids, validate_identity, validate_protocol_version};
-use crate::{ExecutionId, MessageValidationError, OperationId, ProtocolVersion, Sequence, TurnId, ValidateMessage};
+use crate::{
+    ExecutionId, MessageValidationError, OperationId, ProtocolVersion, Sequence, TurnId,
+    ValidateMessage,
+};
 use serde::{Deserialize, Serialize};
 
 /// Whether the session stays open after a failed turn.

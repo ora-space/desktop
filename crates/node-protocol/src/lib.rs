@@ -21,7 +21,6 @@ pub use domain::{
 pub use message::{
     CancelTurn, CancelTurnMessage, TurnCancelOutcome, TurnCancelSettled, TurnCancelSettledMessage,
 };
-pub use message::{TurnFailureOutcome, TurnFailureSettled, TurnFailureSettledMessage};
 pub use message::{
     GetSessionMcpState, GetSessionMcpStateMessage, ProbeSessionMcp, ProbeSessionMcpMessage,
     SessionMcpMessage, SessionMcpReply, SessionMcpReplyMessage, SessionMcpResult,
@@ -29,6 +28,7 @@ pub use message::{
     UpdateSessionMcpMessage,
 };
 pub use message::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
+pub use message::{TurnFailureOutcome, TurnFailureSettled, TurnFailureSettledMessage};
 
 pub use domain::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionResult, AgentSessionSpec, BoundModel,

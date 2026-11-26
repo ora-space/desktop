@@ -393,8 +393,8 @@ fn never_reinterprets_a_failure_the_provider_did_report() {
             seq: 1,
             record: HistoryRecord::TurnEnded {
                 stop_reason: StopReason::EndTurn,
-                    ended_by: None,
-                    failure: None,
+                ended_by: None,
+                failure: None,
             },
         }],
     );

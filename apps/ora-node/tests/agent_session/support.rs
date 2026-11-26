@@ -340,7 +340,9 @@ impl SessionLedger for MemoryLedger {
         {
             return Err(LedgerError("already settled".into()));
         }
-        state.journal.push(Entry::Failure(turn.to_string(), outcome));
+        state
+            .journal
+            .push(Entry::Failure(turn.to_string(), outcome));
         let cancel_outcome = match outcome {
             TurnFailureOutcome::Kept => TurnCancelOutcome::AlreadyEnded,
             TurnFailureOutcome::SessionEnding => TurnCancelOutcome::SessionEnding,
