@@ -401,7 +401,8 @@ async fn ending_cancels_the_running_turn_and_discards_queued_turns() {
             (
                 last.turn_id,
                 field(&last.record, &["type"]),
-                field(&last.record, &["stop_reason"])
+                field(&last.record, &["stop_reason"]),
+                field(&last.record, &["ended_by"])
             ),
             fixture.ledger.settlements(),
             fixture.leases.load(std::sync::atomic::Ordering::SeqCst),
@@ -417,7 +418,8 @@ async fn ending_cancels_the_running_turn_and_discards_queued_turns() {
             (
                 Some(TurnId::new("turn-1")),
                 "turnEnded".to_string(),
-                "cancelled".to_string()
+                "cancelled".to_string(),
+                "session_end".to_string(),
             ),
             vec![
                 ("command-2".to_string(), vec![CommandSettlement::Discarded]),
