@@ -2571,7 +2571,9 @@ describe("WorkflowEditor", () => {
 
     expect(screen.queryAllByText("还没有工作流")).toHaveLength(0);
     // Both the main pane and the sidebar list offer first-run actions.
-    expect(await screen.findAllByText("还没有工作流")).toHaveLength(2);
+    await waitFor(() =>
+      expect(screen.getAllByText("还没有工作流")).toHaveLength(2),
+    );
     expect(screen.queryByLabelText("工作流画布")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "导入" })).toBeInTheDocument();
   });
