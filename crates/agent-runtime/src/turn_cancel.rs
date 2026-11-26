@@ -213,7 +213,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
         // Every answer once `session/cancel` is written answers the cancel.
         let stop_reason = StopReason::Cancelled;
-        self.end_timed_turn_with(stop_reason, tool_timings, Some(TurnEndedBy::CallerCancel), None);
+        // The stop button and a turn cancel are the caller's own cancels; an owner that stopped
+        // reading is the session ending (D1).
+        let ended_by = if notify_owner {
+            TurnEndedBy::CallerCancel
+        } else {
+            TurnEndedBy::SessionEnd
+        };
+        self.end_timed_turn_with(stop_reason, tool_timings, Some(ended_by), None);
         followers.finish(stop_reason);
         let owner_notified = !notify_owner
             || if turn_deadline.is_some() && !reusable {
