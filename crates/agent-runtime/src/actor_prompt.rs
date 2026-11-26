@@ -720,7 +720,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     end_report.record(PromptEndCause::Unknown);
                     self.accept_changes_on(&mut channel);
                     self.cancel(&client, &permissions.pending).await;
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                    // The host is ending the session (an `EndSession` or a D3 end decision), so
+                    // this running turn is attributed to the session end (D1).
+                    self.end_timed_turn_with(
+                        StopReason::Cancelled,
+                        &tool_timings,
+                        Some(TurnEndedBy::SessionEnd),
+                        None,
+                    );
                     followers.finish(StopReason::Cancelled);
                     self.isolate_channel(channel).await;
                     let _ = response.send(Ok(StopSessionResponse {
