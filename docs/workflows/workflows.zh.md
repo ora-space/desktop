@@ -38,15 +38,15 @@
 
 ## 节点种类
 
-| 种类 | 作用 |
-|---|---|
-| `start` | 入口；声明类型化的 Start 输入和默认的运行指令 |
-| `agent` | 驱动一个 Agent 会话，见[工作流运行](workflow-runs.zh.md#agent-节点) |
-| `condition` | 基于类型化比较的 IF / ELSE IF / ELSE 分支 |
-| `aggregator` | 把多个分支输出中第一个已赋值的作为一个变量传出 |
-| `output` | 构建运行的结果对象 |
-| `loop`、`loopExit` | 反馈容器及其显式退出，见[循环与迭代](loops-and-iterations.zh.md) |
-| `iteration` | 遍历数组的 foreach 容器 |
+| 种类               | 作用                                                                |
+| ------------------ | ------------------------------------------------------------------- |
+| `start`            | 入口；声明类型化的 Start 输入和默认的运行指令                       |
+| `agent`            | 驱动一个 Agent 会话，见[工作流运行](workflow-runs.zh.md#agent-节点) |
+| `condition`        | 基于类型化比较的 IF / ELSE IF / ELSE 分支                           |
+| `aggregator`       | 把多个分支输出中第一个已赋值的作为一个变量传出                      |
+| `output`           | 构建运行的结果对象                                                  |
+| `loop`、`loopExit` | 反馈容器及其显式退出，见[循环与迭代](loops-and-iterations.zh.md)    |
+| `iteration`        | 遍历数组的 foreach 容器                                             |
 
 编辑器目录中还有 `tool`、`junction`、`human` 和 `subflow`。运行引擎不执行它们：可达的这类节点会让发布或运行启动失败。
 
@@ -67,6 +67,13 @@
 
 ## Agent 节点配置
 
+新选择的 Skill 绑定在 `skills: [{ skillId, enabled }]` 中保存 Catalog ID，界面显示名称与来源。
+已有裸名称和历史 `ns:name` 在重新选择前保持原样。精确 ID 不回落同名；裸名称有多个候选时
+（含不可用项）判为歧义。`namespace/identifier` 插件 ID 引用只有在插件提供一个 Skill 时才能解析。
+依赖报告和卸载检查与启动预检使用相同解析规则，只有启用项计入启动告警。检查范围是 Ora 全局技能库，
+项目目录中的技能需先到 Skills 页导入。导出将本机本地 Skill 的 ID（含已删除记录）转换为名称，
+保留 `plugin:<plugin-id>:<skill-name>` 来源；本机已保存的图不变。
+
 Agent 检查器编辑节点的执行器和模型、角色、prompt、Skill 和 MCP 绑定、结构化输出、交互性、重试和 prompt 无活动策略。各项的运行时含义见[工作流运行](workflow-runs.zh.md#agent-节点)；存储的形状如下：
 
 - **MCP 绑定**：`mcps: [{ mcpId, enabled }]`，`mcpId` 是已安装插件的 id。只有启用的 id 构成节点会话的允许列表；没有选择（包括没有 `mcps` 的图）表示没有 MCP server。检查器列出已安装的 `kind: "mcp"` 插件；缺失的插件仍按 id 显示，可以禁用或移除。格式错误的绑定会让可执行解析失败。
@@ -75,4 +82,4 @@ Agent 检查器编辑节点的执行器和模型、角色、prompt、Skill 和 M
 - **prompt 无活动**：`agentConfig.promptInactivity: "timeout" | "wait" | "unbounded"`；可显式选择 `"unbounded"` 关闭静默上限。缺失或为 `null` 表示 `"timeout"`。打开旧图从不会添加这个字段。
 - **结构化输出**：一个以对象为根的 JSON Schema，可以在对话框中可视化编辑或直接编辑 JSON，只有保存时才更新节点。
 
-保存、发布、复制和导入导出都原样保留这些值，包括禁用的绑定。它们都不需要 schema 版本或数据库迁移，编辑草稿只影响之后的运行。
+保存、发布、复制和导入都原样保留这些值，包括禁用的绑定；导出仅按上文转换本机 Skill ID。它们都不需要 schema 版本或数据库迁移，编辑草稿只影响之后的运行。

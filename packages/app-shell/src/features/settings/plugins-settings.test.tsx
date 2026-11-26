@@ -1,3 +1,4 @@
+import { useWorkflowEditorStore } from "../workflow-editor/workflow-editor-store";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -1301,7 +1302,7 @@ it("reports the workflow documents and their plugin readiness after importing a 
   );
   expect(within(report).getByText(/用于：编写发布说明/)).toBeVisible();
   expect(
-    within(report).getByText(/1 个插件未安装|1 referenced plugin/),
+    within(report).getByText(/1 项启用依赖尚未就绪|1 enabled dependenc/),
   ).toBeVisible();
   expect(
     within(report).getByRole("button", { name: /去安装|Install/ }),
@@ -1406,7 +1407,7 @@ it("reports an unreadable plugin catalog instead of a dependency verdict", async
     ),
   ).toBeVisible();
   expect(
-    within(report).queryByText(/个插件未安装|referenced plugin/),
+    within(report).queryByText(/项启用依赖尚未就绪|enabled dependenc/),
   ).toBeNull();
 });
 
@@ -1918,7 +1919,7 @@ it("reports workflow dependencies after a marketplace install", async () => {
     0,
   );
   expect(within(report).getByText(/用于：编写发布说明/)).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
   expect(within(report).getByRole("button", { name: /去安装/ })).toBeVisible();
 });
 
@@ -2005,7 +2006,7 @@ it("reports workflow dependencies after a marketplace update", async () => {
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText(/工作流导入结果/)).toBeVisible();
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 });
 
 /** The detail page is the same install entry, so it reports the same dependency result. */
@@ -2036,7 +2037,7 @@ it("reports workflow dependencies after installing from the detail page", async 
 
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 
   // The fix link resolves in the marketplace list the detail page came from, not a later mount.
   await user.click(within(report).getByRole("button", { name: /去安装/ }));
@@ -2075,7 +2076,7 @@ it("reports workflow dependencies after upgrading from the detail page", async (
 
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 });
 
 /**
@@ -2109,7 +2110,7 @@ it("resolves dependencies in-pane when upgrading from the plugin manager", async
 
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 
   await user.click(within(report).getByRole("button", { name: /去安装/ }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -2689,7 +2690,7 @@ it("reports workflow dependencies after a Pack install", async () => {
 
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 });
 
 /** A Pack uninstall names the workflows its removable members still serve. */
@@ -4197,4 +4198,81 @@ it("lists deleted copies with reinstall guidance in a card retry report", async 
   expect(
     within(report).getByText("副本已删除，卸载后重装可恢复"),
   ).toBeVisible();
+});
+
+it("lists disabled missing Skills without a launch warning", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "workflow.json",
+      workflowId: "wf-disabled",
+      name: "禁用依赖",
+      version: "1.0.0",
+    },
+  ];
+  const graph = JSON.parse(agentGraph({ skills: ["missing"] }));
+  graph.nodes[0].data.agentConfig.skills[0].enabled = false;
+  seedImportedWorkflow(state, "wf-disabled", "禁用依赖", JSON.stringify(graph));
+  renderSettings(client, platformPickingWorkflowPackage());
+  const report = await openImportReport(user);
+  expect(await within(report).findByText("已停用")).toBeVisible();
+  expect(within(report).queryByText(/项启用依赖尚未就绪/)).toBeNull();
+  expect(within(report).getByText(/仅检查 Ora 全局技能库/)).toBeVisible();
+});
+
+it("marks an ambiguous Skill as blocking and links to its workflow editor", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "workflow.json",
+      workflowId: "wf-ambiguous",
+      name: "同名依赖",
+      version: "1.0.0",
+    },
+  ];
+  state.skills.skills = [
+    {
+      id: "local-review",
+      namespace: "local",
+      name: "review",
+      description: "",
+      source: { kind: "local" },
+      availability: "available",
+    },
+    {
+      id: "plugin:official/review:review",
+      namespace: "official/review",
+      name: "review",
+      description: "",
+      source: { kind: "plugin", pluginId: "official/review" },
+      availability: "unavailable",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "wf-ambiguous",
+    "同名依赖",
+    agentGraph({ skills: ["review"] }),
+  );
+  renderSettings(client, platformPickingWorkflowPackage());
+  const report = await openImportReport(user);
+  expect(await within(report).findByText("来源有歧义")).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
+  await user.click(
+    within(report).getByRole("button", { name: "去编辑器指定来源" }),
+  );
+  expect(useUiStore.getState().workflowEditorOpen).toBe(true);
+  expect(useWorkflowEditorStore.getState().selectedWorkflowId).toBe(
+    "wf-ambiguous",
+  );
+  act(() => {
+    useUiStore.getState().setWorkflowEditorOpen(false);
+    useWorkflowEditorStore.getState().setSelectedWorkflowId(null);
+  });
 });

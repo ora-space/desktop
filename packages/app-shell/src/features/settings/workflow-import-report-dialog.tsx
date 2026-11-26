@@ -1,3 +1,5 @@
+import { useWorkflowEditorStore } from "../workflow-editor/workflow-editor-store";
+import { useUiStore } from "../../state/stores/ui-store";
 import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -275,6 +277,7 @@ function WorkflowImportDependencies({
       graphs,
       plugins: plugins.data ?? [],
       skills: skills.data ?? [],
+      retiredSkillIds: skills.retiredSkillIds,
     });
   }, [
     pending,
@@ -284,6 +287,7 @@ function WorkflowImportDependencies({
     fileName,
     plugins.data,
     skills.data,
+    skills.retiredSkillIds,
   ]);
 
   return (
@@ -311,6 +315,20 @@ function WorkflowImportDependencies({
             title={outcome.name}
             dependencies={workflow.dependencies}
             variant="import"
+            onChooseSkillSource={() => {
+              const editor = useWorkflowEditorStore.getState();
+              const ui = useUiStore.getState();
+              if (editor.actions) {
+                void editor.actions.select(outcome.workflowId).then(() => {
+                  ui.setWorkflowEditorOpen(true);
+                  ui.setSettingsOpen(false);
+                });
+              } else {
+                editor.setSelectedWorkflowId(outcome.workflowId);
+                ui.setWorkflowEditorOpen(true);
+                ui.setSettingsOpen(false);
+              }
+            }}
             onResolve={onResolve}
           />
         ) : (
@@ -334,8 +352,8 @@ function WorkflowImportDependencies({
 }
 
 /**
- * One readiness verdict for the whole package: missing beats unavailable beats ready, because
- * only missing references fail a run outright.
+ * One readiness verdict for enabled references: missing, unavailable, and ambiguous Skill
+ * bindings all prevent launch. Disabled references stay visible in the details only.
  *
  * The counts cover the workflows whose graph could be read back, so a workflow still unread keeps
  * the summary from claiming the package needs nothing or is ready: the package-wide verdict would
@@ -343,8 +361,9 @@ function WorkflowImportDependencies({
  */
 function ReportBanner({ report }: { report: WorkflowImportReport }) {
   const { t } = useTranslation();
-  const { missing, unavailable, installed } = report.counts;
-  const total = missing + unavailable + installed;
+  const { missing, unavailable, ambiguous, installed } = report.counts;
+  const blocked = missing + unavailable + ambiguous;
+  const total = blocked + installed;
   const unchecked = report.workflows.filter(
     (workflow) => workflow.dependencies === null,
   ).length;
@@ -354,26 +373,14 @@ function ReportBanner({ report }: { report: WorkflowImportReport }) {
     </Banner>
   );
 
-  if (missing > 0) {
+  if (blocked > 0) {
     return (
       <>
         <Banner tone="warn">
           <b className="font-semibold">
-            {t("settings.plugins.importReportMissingTitle", { count: missing })}
+            {t("settings.plugins.importReportMissingTitle", { count: blocked })}
           </b>
           {t("settings.plugins.importReportMissing")}
-        </Banner>
-        {uncheckedNotice}
-      </>
-    );
-  }
-  if (unavailable > 0) {
-    return (
-      <>
-        <Banner tone="info">
-          {t("settings.plugins.importReportUnavailable", {
-            count: unavailable,
-          })}
         </Banner>
         {uncheckedNotice}
       </>

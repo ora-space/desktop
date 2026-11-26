@@ -225,7 +225,7 @@ export const pluginTranslations = {
       "无法读取工作流或插件目录，暂时无法确认卸载影响；现在卸载会跳过这项检查。",
     "settings.plugins.uninstallDependencyTitle": "{{count}} 个工作流依赖该插件",
     "settings.plugins.uninstallDependencyDescription":
-      "卸载后这些工作流会缺依赖，运行到引用该插件的节点时会失败。",
+      "卸载后这些工作流会缺依赖；缺少 Skill 时，启动会被拒绝。",
     "settings.plugins.uninstallDependencyUnreadable":
       "{{count}} 个工作流的图无法读取，未能确认它们的依赖。",
     "settings.plugins.uninstallImportedChecking": "正在检查该插件导入的工作流…",
@@ -267,15 +267,16 @@ export const pluginTranslations = {
     "settings.plugins.importReportChecking": "正在检查插件依赖…",
     "settings.plugins.importReportCheckFailed":
       "无法读取已安装插件或 Skills 列表，暂时无法判断工作流的依赖。",
-    "settings.plugins.importReportMissingTitle": "{{count}} 个插件未安装。",
+    "settings.plugins.importReportMissingTitle":
+      "{{count}} 项启用依赖尚未就绪。",
     "settings.plugins.importReportMissing":
-      "工作流已经导入，但运行到引用它们的节点时会失败。可以从下面的「去安装」补齐。",
+      "工作流已经导入。启动前请补齐缺失依赖、修复不可用项，或在编辑器中为歧义 Skill 指定来源。",
     "settings.plugins.importReportUnavailable":
       "{{count}} 个插件已安装但当前不可用，运行前需要检查插件状态或配置。",
     "settings.plugins.importReportReady":
       "所引用的 {{count}} 个插件都已安装，导入的工作流可以直接运行。",
     "settings.plugins.importReportNoReferences":
-      "导入的工作流没有引用任何 MCP 或 Skill 插件。",
+      "导入的工作流没有启用的 MCP 或 Skill 依赖。",
     "settings.plugins.importReportUnchecked":
       "{{count}} 个工作流的图无法读取，下面的依赖情况只覆盖读取成功的工作流。",
     "settings.plugins.importReportUnreadable":
@@ -697,7 +698,7 @@ export const pluginTranslations = {
     "settings.plugins.uninstallDependencyTitle_other":
       "{{count}} workflows depend on this plugin",
     "settings.plugins.uninstallDependencyDescription":
-      "After uninstalling, these workflows will be missing a dependency and fail at the nodes that use it.",
+      "After uninstalling, these workflows will be missing a dependency. Missing Skills prevent them from starting.",
     "settings.plugins.uninstallDependencyUnreadable_one":
       "The graph of {{count}} workflow could not be read, so its references are unconfirmed.",
     "settings.plugins.uninstallDependencyUnreadable_other":
@@ -747,15 +748,15 @@ export const pluginTranslations = {
     "settings.plugins.importReportCheckFailed":
       "Unable to read the installed plugins or Skills, so the workflows’ dependencies can’t be checked right now.",
     "settings.plugins.importReportMissingTitle":
-      "{{count}} referenced plugin(s) aren’t installed.",
+      "{{count}} enabled dependencies are not ready.",
     "settings.plugins.importReportMissing":
-      "The workflows are imported, but runs fail at the nodes that use those plugins. Install them from the rows below.",
+      "The workflows are imported. Before starting, install missing dependencies, fix unavailable entries, or select a source for ambiguous Skills in the editor.",
     "settings.plugins.importReportUnavailable":
       "{{count}} referenced plugin(s) are installed but unavailable. Check their status or configuration before running.",
     "settings.plugins.importReportReady":
       "Every referenced plugin ({{count}}) is installed, so the imported workflows can run right away.",
     "settings.plugins.importReportNoReferences":
-      "The imported workflows reference no MCP or Skill plugins.",
+      "The imported workflows have no enabled MCP or Skill dependencies.",
     "settings.plugins.importReportUnchecked":
       "The graph of {{count}} workflow(s) could not be read, so the dependency result below only covers the workflows that could be read.",
     "settings.plugins.importReportUnreadable":

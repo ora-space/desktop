@@ -452,3 +452,36 @@ describe("export and import file names", () => {
     expect(importPublishVersion("draft.json", "draft")).toBeNull();
   });
 });
+
+it("exports local catalog IDs as names without changing the draft or losing plugin sources", () => {
+  const workflow = createMockWorkflow("en-US");
+  const agent = workflow.nodes.find((node) => node.data.kind === "agent")!;
+  agent.data.agentConfig!.skills = [
+    "local-uuid",
+    "deleted-uuid",
+    "plugin:official/review:review",
+    "review",
+    "ns:review",
+    "official/review",
+    "unknown-uuid",
+  ].map((skillId) => ({ skillId, enabled: true }));
+  const before = structuredClone(workflow);
+  const exported = workflowExportDocument(workflow, null, {
+    "local-uuid": "review",
+    "deleted-uuid": "old-review",
+  });
+  expect(
+    exported.nodes
+      .find((node) => node.id === agent.id)
+      ?.data.agentConfig?.skills.map((binding) => binding.skillId),
+  ).toEqual([
+    "review",
+    "old-review",
+    "plugin:official/review:review",
+    "review",
+    "ns:review",
+    "official/review",
+    "unknown-uuid",
+  ]);
+  expect(workflow).toEqual(before);
+});

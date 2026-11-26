@@ -1,3 +1,7 @@
+import {
+  resolveWorkflowSkill,
+  workflowSkillLabel,
+} from "./workflow-skill-reference";
 import type { WorkflowContainerInsertion } from "./workflow-container-insertion";
 import { insertOnCanvasEdge } from "./workflow-canvas-graph";
 import { insertLoopMember } from "./workflow-loop-graph";
@@ -383,15 +387,18 @@ function WorkflowEditorContent({
       return capabilitiesOverride;
     }
     const baseCapabilities = createMockWorkflowCapabilities(locale);
-    // Store the agent/skill name in the JSON (roleId / skillId), so exported workflows are
-    // readable and portable across Ora instances instead of opaque catalog ids.
+    // Roles remain portable names; Skill bindings retain the selected catalog identity.
     const roles = (agentsQuery.data ?? []).map((agent) => ({
       value: agent.name,
       label: agent.name,
     }));
     const skills = availableSkills(skillsQuery.data ?? []).map((skill) => ({
-      value: skill.name,
-      label: skill.name,
+      value: skill.id,
+      label: workflowSkillLabel(
+        skill,
+        pluginsQuery.data ?? [],
+        t("settings.workflow.skillLocal"),
+      ),
     }));
     const mcps = workflowMcpChoices(pluginsQuery.data ?? []);
     const agentModels = agentModelsCatalog.agentModels;
@@ -401,6 +408,33 @@ function WorkflowEditorContent({
       agentModels,
       roles,
       skills,
+      resolveSkill: (reference: string) => {
+        const resolved = resolveWorkflowSkill(
+          reference,
+          skillsQuery.data ?? [],
+          skillsQuery.retiredSkillIds,
+        );
+        if (resolved.status === "missing" || resolved.status === "ambiguous") {
+          return {
+            value: reference,
+            label: `${reference} · ${t(`settings.workflow.transfer.status.${resolved.status}`)}`,
+            status: resolved.status,
+          };
+        }
+        return {
+          value: resolved.skill.id,
+          catalogId: resolved.skill.id,
+          label: workflowSkillLabel(
+            resolved.skill,
+            pluginsQuery.data ?? [],
+            t("settings.workflow.skillLocal"),
+          ),
+          status: resolved.status,
+          invocationName: resolved.skill.name
+            .toLowerCase()
+            .replaceAll("_", "-"),
+        };
+      },
       mcps,
       defaultAgentConfig: {
         ...baseCapabilities.defaultAgentConfig,
@@ -422,7 +456,9 @@ function WorkflowEditorContent({
     agentsQuery.data,
     capabilitiesOverride,
     locale,
+    t,
     skillsQuery.data,
+    skillsQuery.retiredSkillIds,
     pluginsQuery.data,
   ]);
   const agentModelsLoading =
@@ -748,6 +784,7 @@ function WorkflowEditorContent({
       nodes,
       pluginsQuery.data ?? [],
       skillsQuery.data ?? [],
+      skillsQuery.retiredSkillIds,
     );
   }, [
     exportRequestId,
@@ -756,30 +793,50 @@ function WorkflowEditorContent({
     pluginsQuery.data,
     skillsQuery.data,
     workflow?.nodes,
+    skillsQuery.retiredSkillIds,
   ]);
+
   /** The exact document export will write, shown in the dialog's structure preview. */
   const exportPreviewJson = useMemo(() => {
     if (exportRequestId === null || workflow === null) {
       return null;
     }
     if (exportVersion === null) {
-      return JSON.stringify(workflowExportDocument(workflow, null), null, 2);
+      return JSON.stringify(
+        workflowExportDocument(
+          workflow,
+          null,
+          skillsQuery.localSkillNamesForExport,
+        ),
+        null,
+        2,
+      );
     }
     if (exportVersionQuery.data === undefined) {
       return null;
     }
     const envelope = parseWorkflowGraph(exportVersionQuery.data.graph);
     return JSON.stringify(
-      workflowExportDocument(workflow, {
-        ...envelope,
-        globalVariables: normalizeWorkflowGlobalVariables(
-          envelope.globalVariables,
-        ),
-      }),
+      workflowExportDocument(
+        workflow,
+        {
+          ...envelope,
+          globalVariables: normalizeWorkflowGlobalVariables(
+            envelope.globalVariables,
+          ),
+        },
+        skillsQuery.localSkillNamesForExport,
+      ),
       null,
       2,
     );
-  }, [exportRequestId, exportVersion, exportVersionQuery.data, workflow]);
+  }, [
+    exportRequestId,
+    exportVersion,
+    exportVersionQuery.data,
+    workflow,
+    skillsQuery.localSkillNamesForExport,
+  ]);
   /** Plugin references of the previewed import file. */
   const importDependencies = useMemo(
     () =>
@@ -788,9 +845,15 @@ function WorkflowEditorContent({
             importState.workflow.nodes,
             pluginsQuery.data ?? [],
             skillsQuery.data ?? [],
+            skillsQuery.retiredSkillIds,
           )
         : [],
-    [importState, pluginsQuery.data, skillsQuery.data],
+    [
+      importState,
+      pluginsQuery.data,
+      skillsQuery.data,
+      skillsQuery.retiredSkillIds,
+    ],
   );
 
   /** Formatted last-edit time of the draft (workflow_snapshots.updated_at). */
@@ -1592,6 +1655,14 @@ function WorkflowEditorContent({
           ),
         });
       }
+      const names = await skillsQuery.refetch();
+      if (names.error) throw names.error;
+      exported = workflowExportDocument(
+        exported,
+        null,
+        names.data?.localSkillNamesForExport ??
+          skillsQuery.localSkillNamesForExport,
+      );
       const written = await platform.saveTextFile({
         defaultFileName: fileName,
         content: `${JSON.stringify(exported, null, 2)}\n`,

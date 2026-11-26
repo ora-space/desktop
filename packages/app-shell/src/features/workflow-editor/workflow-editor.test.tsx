@@ -21,6 +21,7 @@ import {
   WORKFLOW_NODE_INITIAL_HEIGHT,
   WORKFLOW_NODE_WIDTH,
   type DemoWorkflow,
+  type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import {
   parseWorkflowGraph,
@@ -250,7 +251,7 @@ function renderEditor(
       availability: "available",
     },
     {
-      id: "openspec-archive-change",
+      id: "uuid-archive-change",
       namespace: "local",
       name: "openspec-archive-change",
       description: "skill",
@@ -1968,12 +1969,13 @@ describe("WorkflowEditor", () => {
 
   it("adds, disables, and removes configured Agent Skills", async () => {
     const user = userEvent.setup();
-    renderEditor();
+    const state = createFixtureState();
+    renderEditor(undefined, state);
 
     const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
     await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
-    const existingSkillSwitch = screen.getByRole("switch", {
-      name: "启用或禁用 code-defect-scan",
+    const existingSkillSwitch = await screen.findByRole("switch", {
+      name: "启用或禁用 code-defect-scan · 未安装",
     });
     expect(existingSkillSwitch).toBeChecked();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
@@ -1982,22 +1984,37 @@ describe("WorkflowEditor", () => {
     expect(screen.queryByText("missing-skill")).not.toBeInTheDocument();
     const skillSearch = screen.getByLabelText("搜索可添加的 Skill");
     await user.type(skillSearch, "archive");
-    await user.click(screen.getByText("openspec-archive-change"));
+    await user.click(screen.getByText("openspec-archive-change · 本地"));
 
     const archiveSwitch = screen.getByRole("switch", {
-      name: "启用或禁用 openspec-archive-change",
+      name: "启用或禁用 openspec-archive-change · 本地",
     });
     expect(archiveSwitch).toBeChecked();
+    await waitFor(() => {
+      const saved = JSON.parse(state.workflows[0]!.draft.graph);
+      const skills = saved.nodes.flatMap(
+        (node: { data: WorkflowNodeData }) =>
+          node.data.agentConfig?.skills ?? [],
+      );
+      expect(skills).toContainEqual({
+        skillId: "uuid-archive-change",
+        enabled: true,
+      });
+      expect(skills).toContainEqual({
+        skillId: "code-defect-scan",
+        enabled: true,
+      });
+    });
     await user.click(archiveSwitch);
     expect(archiveSwitch).not.toBeChecked();
 
     await user.click(
       screen.getByRole("button", {
-        name: "移除 openspec-archive-change",
+        name: "移除 openspec-archive-change · 本地",
       }),
     );
     expect(
-      screen.queryByText("openspec-archive-change"),
+      screen.queryByText("openspec-archive-change · 本地"),
     ).not.toBeInTheDocument();
   });
 

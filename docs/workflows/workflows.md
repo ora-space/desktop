@@ -79,15 +79,15 @@ reported instead of changed.
 
 ## Node kinds
 
-| Kind | Role |
-|---|---|
-| `start` | The entry; declares typed Start inputs and the default run instruction |
-| `agent` | Prompts an agent session, see [Workflow runs](workflow-runs.md#agent-nodes) |
-| `condition` | IF / ELSE IF / ELSE branching on typed comparisons |
-| `aggregator` | Passes the first assigned of several branch outputs through as one variable |
-| `output` | Builds the run's result object |
+| Kind               | Role                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| `start`            | The entry; declares typed Start inputs and the default run instruction                           |
+| `agent`            | Prompts an agent session, see [Workflow runs](workflow-runs.md#agent-nodes)                      |
+| `condition`        | IF / ELSE IF / ELSE branching on typed comparisons                                               |
+| `aggregator`       | Passes the first assigned of several branch outputs through as one variable                      |
+| `output`           | Builds the run's result object                                                                   |
 | `loop`, `loopExit` | Feedback containers and their explicit exit, see [Loops and iterations](loops-and-iterations.md) |
-| `iteration` | Foreach container over an array |
+| `iteration`        | Foreach container over an array                                                                  |
 
 The editor catalog also contains `tool`, `junction`, `human` and `subflow`. The run engine does not
 execute them: a reachable one fails publish or run start.
@@ -130,6 +130,13 @@ The Agent inspector edits the node's executor and model, role, prompt, Skill and
 structured output, interactivity, retry and prompt inactivity. The runtime meaning of each is in
 [Workflow runs](workflow-runs.md#agent-nodes); the stored shapes are:
 
+- **Skill bindings**: new selections store the catalog ID in `skills: [{ skillId, enabled }]` and show
+  the Skill name and source. Existing bare names and legacy `ns:name` references stay unchanged until
+  reselected. Exact IDs never fall back to another source; bare names with multiple candidates
+  (including unavailable packages) are ambiguous. A plugin ID `namespace/identifier` resolves only
+  when that plugin supplies exactly one Skill. Dependency reports and uninstall checks follow the
+  same resolution rules as launch preflight; only enabled references count toward launch warnings.
+  Reports check Ora's global library, so import project-local Skills on the Skills page first.
 - **MCP bindings**: `mcps: [{ mcpId, enabled }]`, where `mcpId` is the installed plugin id. Only
   enabled ids form the node Session's allowlist; no selection (including graphs without `mcps`) means
   no MCP servers. The inspector lists installed `kind: "mcp"` plugins; missing plugins stay visible by
@@ -148,6 +155,8 @@ structured output, interactivity, retry and prompt inactivity. The runtime meani
 - **Structured output**: an object-rooted JSON Schema edited visually or as raw JSON in a dialog that
   updates the node only on save.
 
-Save, publish, duplicate and import/export keep these values verbatim, including disabled bindings.
+Save, publish, duplicate and import keep these values verbatim, including disabled bindings. Export
+replaces this machine’s local Skill IDs (including deleted records) with their names, retaining
+`plugin:<plugin-id>:<skill-name>` references and leaving the saved graph unchanged.
 None of them needs a schema-version or database migration, and editing a draft affects later runs
 only.

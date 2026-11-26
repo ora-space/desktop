@@ -202,6 +202,7 @@ export function useWorkflowUninstallImpact(
       workflows,
       plugins: plugins.data ?? [],
       skills: skills.data ?? [],
+      retiredSkillIds: skills.retiredSkillIds,
       targets,
     });
   }, [
@@ -213,6 +214,7 @@ export function useWorkflowUninstallImpact(
     draftGraphs,
     plugins.data,
     skills.data,
+    skills.retiredSkillIds,
   ]);
 
   const importedWorkflows = useMemo(() => {

@@ -91,7 +91,7 @@ describe("uninstallDependencyTargets", () => {
         skillOwnedBy("user-owned", "another-owner"),
       ],
     );
-    expect(targets).toEqual([{ kind: "skill", name: "release-notes" }]);
+    expect(targets).toEqual([{ kind: "skill", id: "skill-release-notes" }]);
   });
 
   it("keeps an MCP package bound by its own id", () => {
@@ -127,7 +127,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -174,7 +174,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -268,7 +268,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -308,7 +308,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -336,7 +336,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills: [],
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({ dependents: [], unreadable: 7 });
@@ -375,7 +375,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills: [skillOwnedBy("release-notes", "official/release")],
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     // A null config declares no bindings; the install report reads it the same way.
@@ -427,7 +427,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -507,5 +507,50 @@ describe("findImportedWorkflowsFromPlugins", () => {
       { workflowId: "wf-renamed", name: "用户已改名流程" },
       { workflowId: "wf-second", name: "第二个流程" },
     ]);
+  });
+});
+
+it("compares exact IDs, legacy names, and single/multi Skill plugin references before removal", () => {
+  const pluginId = "official/release";
+  const pLint = {
+    ...skillOwnedBy("lint", pluginId),
+    id: `plugin:${pluginId}:lint`,
+    namespace: pluginId,
+  };
+  const pReview = {
+    ...skillOwnedBy("review", pluginId),
+    id: `plugin:${pluginId}:review`,
+    namespace: pluginId,
+  };
+  const localLint: Skill = {
+    ...pLint,
+    id: "local-lint",
+    namespace: "local",
+    source: { kind: "local" },
+  };
+  const skills = [pLint, pReview, localLint];
+  const targets = uninstallDependencyTargets(
+    [pluginId],
+    [skillPlugin(pluginId)],
+    skills,
+  );
+  const references = [pLint.id, pluginId, "ns:REVIEW", "lint", "unrelated"];
+  const result = findWorkflowDependents({
+    workflows: references.map((reference) => ({
+      workflowId: reference,
+      name: reference,
+      draftGraph: graph({ skills: [reference] }),
+    })),
+    plugins: [skillPlugin(pluginId)],
+    skills,
+    targets,
+  });
+  expect(result).toEqual({
+    dependents: references.slice(0, 3).map((reference) => ({
+      workflowId: reference,
+      name: reference,
+      nodeTitles: ["发布说明"],
+    })),
+    unreadable: 0,
   });
 });
