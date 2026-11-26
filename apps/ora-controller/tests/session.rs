@@ -59,6 +59,7 @@ fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
                                     model_adapter: None,
                                     thread_previews: false,
                                     turn_cancel: false,
+                                    turn_failure: false,
                                     selected_version: CURRENT_PROTOCOL_VERSION,
                                     node: NodeRuntimeIdentity {
                                         node_id,
