@@ -179,6 +179,87 @@ it("clears saved proxy settings through the backend", async () => {
   await waitFor(() => expect(state.proxySettings).toBeNull());
 });
 
+it("resets persisted direct mode even without a saved manual endpoint", async () => {
+  const state = createFixtureState();
+  state.proxyMode = "direct";
+  const client = createTestClient(createFixtureHandlers(state));
+  const user = userEvent.setup();
+  const first = renderProxy(client);
+
+  expect(await screen.findByLabelText(/代理模式|Proxy mode/)).toHaveValue(
+    "direct",
+  );
+  await user.click(screen.getByRole("button", { name: /清空|Clear/ }));
+  await waitFor(() =>
+    expect(screen.getByLabelText(/代理模式|Proxy mode/)).toHaveValue("system")
+  );
+  first.unmount();
+  renderProxy(client);
+  expect(await screen.findByLabelText(/代理模式|Proxy mode/)).toHaveValue(
+    "system",
+  );
+});
+
+it("discards a manual draft when clearing an already-default configuration", async () => {
+  const state = createFixtureState();
+  const user = userEvent.setup();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+
+  const modeLabel = /代理模式|Proxy mode/;
+  await user.selectOptions(await screen.findByLabelText(modeLabel), "manual");
+  await user.type(screen.getByLabelText(/主机|Host/), "draft.example");
+  await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.click(screen.getByRole("button", { name: /清空|Clear/ }));
+
+  await waitFor(() =>
+    expect(screen.getByLabelText(modeLabel)).toHaveValue("system")
+  );
+  await user.selectOptions(screen.getByLabelText(modeLabel), "manual");
+  expect(screen.getByLabelText(/主机|Host/)).toHaveValue("");
+  expect(screen.getByLabelText(/端口|Port/)).toHaveValue("");
+  expect(state.proxySettings).toBeNull();
+});
+
+it("keeps the saved mode when an older background read completes", async () => {
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  const getSettings = handlers.getProxySettings!;
+  let resolveRead: (() => void) | undefined;
+  let delayRead = false;
+  handlers.getProxySettings = async (request) => {
+    const result = await getSettings(request);
+    if (delayRead) {
+      await new Promise<void>((resolve) => {
+        resolveRead = resolve;
+      });
+    }
+    return result;
+  };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const user = userEvent.setup();
+  renderProxy(createTestClient(handlers), queryClient);
+  const modeLabel = /代理模式|Proxy mode/;
+  await user.selectOptions(await screen.findByLabelText(modeLabel), "direct");
+  delayRead = true;
+  act(() => {
+    void queryClient.refetchQueries({ queryKey: settingsKeys.proxySettings });
+  });
+  await waitFor(() => expect(resolveRead).toBeDefined());
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() =>
+    expect(queryClient.getQueryData(settingsKeys.proxySettings))
+      .toMatchObject({ mode: "direct" })
+  );
+  await act(async () => {
+    resolveRead!();
+  });
+  expect(queryClient.getQueryData(settingsKeys.proxySettings))
+    .toMatchObject({ mode: "direct" });
+  expect(screen.getByLabelText(modeLabel)).toHaveValue("direct");
+});
+
 it("checks the current form proxy against a URL", async () => {
   const state = createFixtureState();
   const clientHandlers: TestHandlers = createFixtureHandlers(state);

@@ -125,6 +125,8 @@ function ProxySettingsEditor({
     port.trim() !== "" ||
     username.trim() !== "" ||
     password !== "";
+  const canClear = hasFormValues || controller.settings !== null ||
+    controller.mode !== "system" || mode !== "system";
   const busy = controller.isLoading ||
     controller.isSaving ||
     controller.loadError !== null;
@@ -149,6 +151,11 @@ function ProxySettingsEditor({
   const clear = async () => {
     try {
       await controller.clear();
+      setMode("system");
+      setHost("");
+      setPort("");
+      setUsername("");
+      setPassword("");
       toast.success(t("settings.proxy.cleared"));
     } catch (cause) {
       toast.error(t("settings.proxy.clearError"), {
@@ -251,8 +258,7 @@ function ProxySettingsEditor({
             </Button>
             <Button
               variant="outline"
-              disabled={busy ||
-                (!hasFormValues && controller.settings === null)}
+              disabled={busy || !canClear}
               onClick={() => void clear()}
             >
               {t("settings.proxy.clear")}

@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  GetProxySettingsResponse,
   ProxyMode,
   ProxySettings,
   SetProxySettingsRequest,
@@ -28,18 +29,18 @@ export function useProxySettings() {
       queryClient.setQueryData(settingsKeys.proxyCheckUrl, response);
     },
   });
+  const adoptSettings = async (response: GetProxySettingsResponse) => {
+    // A pending read may have captured the settings before this write.
+    await queryClient.cancelQueries({ queryKey: settingsKeys.proxySettings });
+    queryClient.setQueryData(settingsKeys.proxySettings, response);
+  };
   const mutation = useMutation({
     mutationFn: (request: SetProxySettingsRequest) => client.proxy.set(request),
-    onSuccess: (response) => {
-      // The backend response is authoritative, including a null settings value.
-      queryClient.setQueryData(settingsKeys.proxySettings, response);
-    },
+    onSuccess: adoptSettings,
   });
   const clearMutation = useMutation({
     mutationFn: () => client.proxy.clear({}),
-    onSuccess: (response) => {
-      queryClient.setQueryData(settingsKeys.proxySettings, response);
-    },
+    onSuccess: adoptSettings,
   });
   const checkMutation = useMutation({
     mutationFn: (
