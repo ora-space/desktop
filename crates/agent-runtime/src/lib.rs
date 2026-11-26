@@ -61,6 +61,8 @@ mod host_start_tests;
 mod load_tests;
 #[cfg(test)]
 mod test_host;
+#[cfg(test)]
+mod turn_failure_tests;
 
 pub use end_cause::{PromptEndCause, PromptEndReport};
 pub use error::{ErrorClassification, RuntimeError, SharedError};
