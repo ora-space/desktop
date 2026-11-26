@@ -189,7 +189,7 @@ export function findWorkflowDependents(input: {
             data: {
               ...node.data,
               agentConfig:
-                node.data.agentConfig == null
+                node.data.kind !== "agent" || node.data.agentConfig == null
                   ? node.data.agentConfig
                   : {
                       ...node.data.agentConfig,

@@ -592,3 +592,37 @@ it("ignores disabled Skill bindings and their node titles while retaining enable
     unreadable: 0,
   });
 });
+
+it("keeps Agent dependencies when unused non-Agent nodes retain malformed Skill config", () => {
+  const skill = skillOwnedBy("release-notes", "official/release");
+  const document = JSON.parse(graph({ skills: [skill.id] }, "Active Agent"));
+  document.nodes.push({
+    id: "spare-output",
+    type: "workflow",
+    position: { x: 100, y: 0 },
+    data: { kind: "output", title: "Spare", agentConfig: { skills: {} } },
+  });
+  expect(
+    findWorkflowDependents({
+      workflows: [
+        {
+          workflowId: "workflow",
+          name: "workflow",
+          draftGraph: JSON.stringify(document),
+        },
+      ],
+      plugins: [],
+      skills: [skill],
+      targets: [{ kind: "skill", id: skill.id }],
+    }),
+  ).toEqual({
+    dependents: [
+      {
+        workflowId: "workflow",
+        name: "workflow",
+        nodeTitles: ["Active Agent"],
+      },
+    ],
+    unreadable: 0,
+  });
+});
