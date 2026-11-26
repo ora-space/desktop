@@ -150,7 +150,12 @@ impl PluginApi {
                 host_proxy.get_or_insert_with(|| {
                     self.sync_settings
                         .network_proxy_preferences()
-                        .map_err(BackendError::from)
+                        .map_err(|error| {
+                            BackendError::internal(
+                                "could not read marketplace proxy configuration",
+                                error,
+                            )
+                        })
                         .and_then(|preferences| proxy::host_proxy(&preferences))
                 })
             } else {

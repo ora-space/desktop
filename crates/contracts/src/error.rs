@@ -892,6 +892,7 @@ mod tests {
                 | PublicError::PluginLogLevelsWriteFailed(_)
                 | PublicError::PluginHostIncompatible(_)
                 | PublicError::PluginPackageInvalid(_)
+                | PublicError::ProxyAuthenticationFailed(_)
                 | PublicError::PackMemberDuplicate(_)
                 | PublicError::PackSelfReference(_)
                 | PublicError::PackMemberNotFound(_)

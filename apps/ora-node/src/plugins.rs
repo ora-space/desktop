@@ -260,7 +260,8 @@ fn failure(error: InstallError) -> PluginFailureCode {
         InstallError::Download(error) => match *error {
             DownloadError::ChecksumMismatch { .. } => PluginFailureCode::ChecksumMismatch,
             DownloadError::Io { .. } => PluginFailureCode::InstallFailed,
-            DownloadError::Network { .. }
+            DownloadError::Proxy(_)
+            | DownloadError::Network { .. }
             | DownloadError::HttpStatus { .. }
             | DownloadError::TooLarge { .. }
             | DownloadError::Timeout { .. }

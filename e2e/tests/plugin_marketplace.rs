@@ -760,7 +760,6 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
 
     const THIRD_PARTY_URL: &str = "https://github.com/acme/plugins";
     const THIRD_PARTY_CANONICAL: &str = "https://github.com/acme/plugins";
-    const NO_PROXY: &str = "a marketplace source uses the proxy but no proxy is configured";
 
     initialize_process_logging()?;
     let workspace = tempdir()?;
@@ -812,7 +811,7 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
     let unreachable_remote = root.join("gone").to_string_lossy().into_owned();
 
     let backend = Backend::open(BackendPaths {
-        app_data_directory: app_data,
+        app_data_directory: app_data.clone(),
         home_directory: home.clone(),
         deno_path: PathBuf::from(env!("CARGO_BIN_EXE_fake-agent")),
         relative_path_base: root,
@@ -929,10 +928,14 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
         partial.failed_sources,
     );
 
-    // ---- Step 3: the default source now also fails, through a proxy requirement nobody
-    // configured. That is a property of that one source, so the sync still answers instead of
-    // failing as a whole, and it claims no refresh because none happened.
+    // ---- Step 3: the default source opts into a corrupt host proxy preference and fails.
+    // The other source continues to report its own Git failure.
     eprintln!("== Isolation step 3: every source fails");
+    let db = rusqlite::Connection::open(app_data.join("ora.sqlite3"))?;
+    db.execute(
+        "INSERT INTO user_config (key, value) VALUES ('network_proxy_mode', 'unknown-mode')",
+        [],
+    )?;
     set_source(SOURCE_URL, true, true)?;
     let stalled = plugins.sync_available(SyncAvailablePluginsRequest {})?;
     assert_eq!(
@@ -952,9 +955,14 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
         ),
         "every listing is kept and the sync time does not move",
     );
-    assert_eq!(stalled.failed_sources[0].message, NO_PROXY);
+    assert!(
+        stalled.failed_sources[0]
+            .message
+            .contains("could not read marketplace proxy configuration")
+    );
 
     // ---- Step 4: both sources recover and the third party publishes 0.2.0.
+    // Leave the corrupt preference in place to prove direct sources do not read it.
     eprintln!("== Isolation step 4: every source recovers");
     set_source(SOURCE_URL, false, true)?;
     run_git(
