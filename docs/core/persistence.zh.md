@@ -43,6 +43,7 @@ Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里
 | `0024` | 释放卡在 `provisioning` 的本地 Main Workspace（仅数据；降级为空操作）                                |
 | `0025` | 在 `skills` 表记录插件 `package_root`，并在一次性旧受管 Skill 目录清理后删除已退役的 Effect 账本与表 |
 | `0026` | 运行内调试的输入证据、配置修订、预览回执与操作栅栏 |
+| `0027` | `workflow_debug_boot_protected` 视图标识启动时要保留的执行尝试。`workflow_debug_dispatch` 表指向决定续派范围的调试操作。运行离开 Running 状态时，`workflow_debug_end_dispatch` 触发器清除续派指针。 |
 
 单个迁移的细节见 [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md)。目录只描述当前 schema；`migrations` 表早于 SQL 快照机制的数据库不受支持，需要重建。
 
