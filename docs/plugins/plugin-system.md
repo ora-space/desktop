@@ -135,9 +135,9 @@ Unix milliseconds. The host times out at that same moment, time spent waiting to
 and the plugin measures waiting and cleanup against it. `skills` is present exactly when commands are
 wanted and carries what a session set up now would be given: `readRoots` (its `additionalDirectories`),
 `directories` (its `_meta["ora/skillDirectories"]`) and an opaque `revision` that differs after every
-Skill change. It answers with models and, when known, commands; an absent command list means nobody
-knows, an empty one that the agent has none. A malformed command is dropped alone. The host calls it on
-demand with a longer budget than ordinary control calls.
+Skill change. `agent/discover` answers with models and, when known, commands; an absent command list
+means nobody knows, an empty one that the agent has none. A malformed command is dropped alone. The host
+calls it on demand with a longer budget than ordinary control calls.
 
 `agent/list_models` is the old, models-only name. An agent plugin must register at least one of the
 two; the host calls `agent/discover` when it is registered, never both, and does not fall back when it

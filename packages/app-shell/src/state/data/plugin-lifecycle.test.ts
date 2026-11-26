@@ -1,5 +1,5 @@
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agentRuntimeKeys,
   invalidateAgentCommands,
@@ -48,6 +48,10 @@ function caches() {
 }
 
 describe("plugin lifecycle cache ownership", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("refreshes all workspaces of the started agent, but never another agent", async () => {
     const { client, invalidated } = caches();
     await refreshAgent(client, "agent-a", "models");
@@ -139,10 +143,13 @@ describe("plugin lifecycle cache ownership", () => {
       retry: false,
       staleTime: 5 * 60 * 1000,
     });
+    // Only the clock is faked: a change in the same millisecond would hide a lost update time.
+    vi.useFakeTimers({ toFake: ["Date"] });
     const leave = observer.subscribe(() => {});
     await observer.refetch();
     const discoveredAt = client.getQueryState(queryKey)?.dataUpdatedAt;
     expect(observer.getCurrentResult().data).toEqual(before);
+    vi.setSystemTime(Date.now() + 60_000);
 
     const refreshed = invalidateAgentCommands(client, "agent-a");
     expect(refreshes).toHaveLength(1);
@@ -157,6 +164,30 @@ describe("plugin lifecycle cache ownership", () => {
       status: "error",
     });
     leave();
+    client.clear();
+  });
+
+  it("drops the commands of an entry that was already outdated, such as after a failed refresh", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const client = new QueryClient();
+    const queryKey = agentRuntimeKeys.agentDiscovery(
+      "agent-a",
+      "workspace-1",
+      "modelsAndCommands",
+    );
+    const models = [{ id: "m", displayName: "m" }];
+    client.setQueryData(queryKey, { models, commands: [] });
+    const discoveredAt = client.getQueryState(queryKey)?.dataUpdatedAt;
+    await client.invalidateQueries({ queryKey, refetchType: "none" });
+    vi.setSystemTime(Date.now() + 60_000);
+
+    await invalidateAgentCommands(client, "agent-a");
+
+    expect(client.getQueryData(queryKey)).toEqual({ models });
+    expect(client.getQueryState(queryKey)).toMatchObject({
+      dataUpdatedAt: discoveredAt,
+      isInvalidated: true,
+    });
     client.clear();
   });
 
