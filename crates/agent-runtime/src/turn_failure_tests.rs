@@ -2,7 +2,10 @@
 //! extracting the `data` supplement (case 1), and shaping `acp_failure` / `no_progress_failure`.
 //!
 //! Evidence for specs/test-cases/node/protocol/turn-failure-reason.md cases 1, 3, 4, 5 and 6.
+use crate::prompt_retry::no_progress_from_settled;
 use crate::turn_failure::{acp_failure, no_progress_failure, sanitize_agent_text};
+use agent_client_protocol_schema::v1::{PromptResponse, StopReason};
+use ora_acp::{AcpError, AcpRequestError};
 use ora_history::{TurnFailureAnswer, TurnFailureCode};
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -109,4 +112,42 @@ fn no_progress_failure_records_attempts_answer_and_acp_error() {
     assert_eq!(answered.answer, Some(TurnFailureAnswer::Error));
     assert_eq!(answered.acp_code, Some(-32800));
     assert_eq!(answered.message.as_deref(), Some("cancelled"));
+}
+
+/// Case 4: the watchdog's answer is mapped to the bounded `no_progress` fields, and an ACP error
+/// (including `-32800`) keeps its code and text rather than triggering another send.
+#[test]
+fn no_progress_maps_the_agents_answer() {
+    let respond = |stop_reason: &str| -> PromptResponse {
+        serde_json::from_value(json!({"stopReason": stop_reason})).unwrap()
+    };
+    let end_turn = no_progress_from_settled::<()>(
+        /*attempts*/ 1,
+        &Ok(Some(Ok(respond("end_turn")))),
+    );
+    assert_eq!(end_turn.answer, Some(TurnFailureAnswer::EndTurn));
+    assert_eq!(end_turn.attempts, Some(1));
+
+    let max_tokens = no_progress_from_settled::<()>(
+        /*attempts*/ 2,
+        &Ok(Some(Ok(respond("max_tokens")))),
+    );
+    assert_eq!(max_tokens.answer, Some(TurnFailureAnswer::MaxTokens));
+
+    let error = no_progress_from_settled::<()>(
+        /*attempts*/ 2,
+        &Ok(Some(Err(AcpError::RequestFailed(AcpRequestError {
+            code: -32800,
+            message: "cancelled".into(),
+            data: None,
+        })))),
+    );
+    assert_eq!(error.answer, Some(TurnFailureAnswer::Error));
+    assert_eq!(error.acp_code, Some(-32800));
+    assert_eq!(error.message.as_deref(), Some("cancelled"));
+    assert_eq!(error.attempts, Some(2));
+
+    let unanswered = no_progress_from_settled::<()>(/*attempts*/ 1, &Ok(None));
+    assert_eq!(unanswered.answer, Some(TurnFailureAnswer::None));
+    assert_eq!(unanswered.acp_code, None);
 }
