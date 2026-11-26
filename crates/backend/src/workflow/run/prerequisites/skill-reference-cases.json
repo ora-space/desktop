@@ -1,0 +1,69 @@
+{
+  "skills": [
+    {
+      "id": "local-review",
+      "namespace": "local",
+      "name": "review",
+      "availability": "available"
+    },
+    {
+      "id": "local-lint",
+      "namespace": "local",
+      "name": "lint",
+      "availability": "available"
+    },
+    {
+      "id": "local-broken",
+      "namespace": "local",
+      "name": "broken",
+      "availability": "unavailable"
+    },
+    {
+      "id": "plugin:official/review-pack:review",
+      "namespace": "official/review-pack",
+      "name": "review",
+      "availability": "unavailable"
+    },
+    {
+      "id": "plugin:official/multi:one",
+      "namespace": "official/multi",
+      "name": "one",
+      "availability": "available"
+    },
+    {
+      "id": "plugin:official/multi:two",
+      "namespace": "official/multi",
+      "name": "two",
+      "availability": "available"
+    }
+  ],
+  "cases": [
+    {
+      "reference": "local-review",
+      "status": "installed",
+      "catalogId": "local-review"
+    },
+    { "reference": "LINT", "status": "installed", "catalogId": "local-lint" },
+    {
+      "reference": "legacy:LiNt",
+      "status": "installed",
+      "catalogId": "local-lint"
+    },
+    { "reference": "review", "status": "ambiguous" },
+    { "reference": "broken", "status": "unavailable" },
+    {
+      "reference": "plugin:official/review-pack:review",
+      "status": "unavailable"
+    },
+    { "reference": "plugin:official/missing:lint", "status": "missing" },
+    { "reference": "official/review-pack", "status": "unavailable" },
+    { "reference": "official/multi", "status": "ambiguous" },
+    { "reference": "official/lint", "status": "missing" },
+    {
+      "reference": "official/multi:lint",
+      "status": "installed",
+      "catalogId": "local-lint"
+    },
+    { "reference": "línt", "status": "missing" }
+  ]
+}

@@ -38,6 +38,7 @@ pub struct SkillApi {
         SystemClock,
         NoopSkillImportProgressPublisher,
     >,
+    repository: SqliteSkillRepository,
     revision: SkillRevision,
     /// The local packages' root, as the sessions' catalog spells it.
     skills_root: PathBuf,
@@ -52,7 +53,7 @@ impl SkillApi {
         clock: SystemClock,
     ) -> Self {
         let repository =
-            CountedSkillRepository::new(SqliteSkillRepository::new(pool), revision.clone());
+            CountedSkillRepository::new(SqliteSkillRepository::new(pool.clone()), revision.clone());
         let storage = CountedSkillStorage::new(
             FilesystemSkillStorage::new(skills_root.clone()),
             revision.clone(),
@@ -80,6 +81,7 @@ impl SkillApi {
                 NoopSkillImportProgressPublisher,
                 SkillImportConfig::default(),
             ),
+            repository: SqliteSkillRepository::new(pool),
             revision,
             skills_root: strip_verbatim_prefix(&skills_root),
         }
@@ -102,7 +104,8 @@ impl SkillApi {
     pub fn list(&self, request: ListSkillsRequest) -> Result<ListSkillsResponse, BackendError> {
         // Read first: a change that lands while the packages are read is counted on its own.
         let revision = self.revision.current();
-        self.list
+        let mut response = self
+            .list
             .handle_observed(request, |available| {
                 self.revision.observed(
                     revision,
@@ -112,7 +115,18 @@ impl SkillApi {
                         .collect(),
                 );
             })
-            .map_err(BackendError::from)
+            .map_err(BackendError::from)?;
+        response.local_skill_names_for_export = Some(
+            self.repository
+                .local_skill_names_for_export()
+                .map_err(|error| BackendError::internal("read local Skill export names", error))?,
+        );
+        response.retired_skill_ids = Some(
+            self.repository
+                .retired_skill_ids()
+                .map_err(|error| BackendError::internal("read retired Skill identities", error))?,
+        );
+        Ok(response)
     }
 
     /// Executes skill replacement through the application handler.

@@ -265,8 +265,8 @@ pub(super) fn resolve_exact_catalog_skill_entry(
 /// Resolves a graph-declared skill reference or legacy binding lacking `catalog_skill_id`.
 ///
 /// Exact catalog `id` matches (including soft-deleted rows) and `plugin:` canonical IDs never fall
-/// back to matching another skill by name. Only portable bare names written by the editor or
-/// historical non-plugin `ns:name` suffixes match active catalog rows by name.
+/// back to matching another skill by name. Plugin IDs resolve only their own namespace; portable
+/// bare names and historical non-plugin `ns:name` suffixes match active catalog rows by name.
 pub(super) fn resolve_graph_ref_skill_entry(
     skills_root: &Path,
     skill_repository: &SqliteSkillRepository,
@@ -291,9 +291,16 @@ pub(super) fn resolve_graph_ref_skill_entry(
     let skills = skill_repository
         .list_skills()
         .map_err(StartPrerequisitesError::Repository)?;
+    let plugin_reference = !skill_id.contains(':') && skill_id.matches('/').count() == 1;
     let mut matching: Vec<&Skill> = skills
         .iter()
-        .filter(|skill| skill.name.eq_ignore_ascii_case(candidate))
+        .filter(|skill| {
+            if plugin_reference {
+                skill.namespace.as_ref() == skill_id
+            } else {
+                skill.name.eq_ignore_ascii_case(candidate)
+            }
+        })
         .collect();
     if matching.len() > 1 {
         matching.sort_by(|a, b| a.id.as_ref().cmp(b.id.as_ref()));

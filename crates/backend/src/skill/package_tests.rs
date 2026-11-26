@@ -47,3 +47,41 @@ fn update_preserves_other_package_files() {
         assert!(!home_directory.join("atoms").exists());
     });
 }
+
+/// The export mapping survives deletion while ordinary selectors stop showing the Skill.
+#[test]
+fn list_keeps_deleted_local_names_for_workflow_export() {
+    ora_logging::with_trace_logging(|| {
+        let temp = TempDir::new().unwrap();
+        let backend = Backend::open(backend_paths(
+            &temp.path().join("app"),
+            &temp.path().join("home"),
+        ))
+        .unwrap();
+        let skill = backend
+            .skills()
+            .create(CreateSkillRequest {
+                name: "review".to_string(),
+                description: "test".to_string(),
+                content: None,
+            })
+            .unwrap()
+            .skill;
+        backend
+            .skills()
+            .delete(ora_contracts::DeleteSkillRequest {
+                skill_id: skill.id.clone(),
+            })
+            .unwrap();
+        let response = backend
+            .skills()
+            .list(ora_contracts::ListSkillsRequest {})
+            .unwrap();
+        assert_eq!(response.skills, vec![]);
+        assert_eq!(response.retired_skill_ids, Some(vec![skill.id.clone()]));
+        assert_eq!(
+            response.local_skill_names_for_export,
+            Some(std::collections::BTreeMap::from([(skill.id, skill.name)]))
+        );
+    });
+}
