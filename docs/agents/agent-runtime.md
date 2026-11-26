@@ -175,9 +175,10 @@ their own frontend cache entry: an answer without commands must not hide them fr
 
 Commands may come from Skills, so a discovery that wants them carries the Skill roots and directories a
 session set up now would be given, and a revision. The Desktop host advances the revision with every
-committed Skill catalog change (installing, removing, renaming, upgrading or editing in place) and when
-it notices another set of available Skills, and publishes `AgentModelsInvalidated` for every agent at
-the same time. It only grows and lives in memory. Agents are not restarted, nothing is discovered that
+committed Skill catalog change (installing, removing, renaming, upgrading or editing in place), once
+when an edit, rename or removal that already swapped or moved its package on disk is rolled back because
+its row could not be written, and when it notices another set of available Skills, and publishes
+`AgentModelsInvalidated` for every agent at the same time. It only grows and lives in memory. Agents are not restarted, nothing is discovered that
 no surface shows, and answers given for models alone stand.
 
 The composer shows the commands the session reported; before any report, and while a move onto another
