@@ -3,12 +3,16 @@ import type { WorkflowLoopConfig } from "@ora/workflow-mock";
 import { Input, Label, Switch } from "@ora/ui";
 
 /** Keeps the safety ceiling and its exhaustion policy together in the Loop inspector. */
-export function WorkflowLoopLimitFields({
+export function WorkflowLoopLimitFields<
+  T extends Pick<WorkflowLoopConfig, "maxIterations" | "maxIterationsBehavior">,
+>({
   config,
   onChange,
+  showExhaustionPolicy = true,
 }: {
-  config: WorkflowLoopConfig | undefined;
-  onChange: (config: WorkflowLoopConfig) => void;
+  showExhaustionPolicy?: boolean;
+  config: T | undefined;
+  onChange: (config: T) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -34,33 +38,37 @@ export function WorkflowLoopLimitFields({
           }}
         />
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <Label
-          htmlFor="workflow-loop-interrupt-at-limit"
-          className="text-[11px]"
-        >
-          {t("settings.workflow.loop.interruptAtLimit")}
-        </Label>
-        <Switch
-          id="workflow-loop-interrupt-at-limit"
-          checked={(config?.maxIterationsBehavior ?? "fail") === "fail"}
-          disabled={config === undefined}
-          aria-describedby="workflow-loop-limit-hint"
-          onCheckedChange={(checked) => {
-            if (config === undefined) return;
-            onChange({
-              ...config,
-              maxIterationsBehavior: checked ? "fail" : "succeed",
-            });
-          }}
-        />
-      </div>
-      <p
-        id="workflow-loop-limit-hint"
-        className="text-[11px] leading-5 text-muted-foreground"
-      >
-        {t("settings.workflow.loop.limitHint")}
-      </p>
+      {showExhaustionPolicy && (
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <Label
+              htmlFor="workflow-loop-interrupt-at-limit"
+              className="text-[11px]"
+            >
+              {t("settings.workflow.loop.interruptAtLimit")}
+            </Label>
+            <Switch
+              id="workflow-loop-interrupt-at-limit"
+              checked={(config?.maxIterationsBehavior ?? "fail") === "fail"}
+              disabled={config === undefined}
+              aria-describedby="workflow-loop-limit-hint"
+              onCheckedChange={(checked) => {
+                if (config === undefined) return;
+                onChange({
+                  ...config,
+                  maxIterationsBehavior: checked ? "fail" : "succeed",
+                });
+              }}
+            />
+          </div>
+          <p
+            id="workflow-loop-limit-hint"
+            className="text-[11px] leading-5 text-muted-foreground"
+          >
+            {t("settings.workflow.loop.limitHint")}
+          </p>
+        </>
+      )}
     </div>
   );
 }

@@ -16,3 +16,4 @@ export * from "./validation";
 export * from "./variable-catalog";
 export * from "./variable-value";
 export * from "./version-history";
+export * from "./field-validation";
