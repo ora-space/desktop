@@ -7,11 +7,10 @@ use agent_client_protocol_schema::v1::{
     ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
 };
 use ora_application::{
-    Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository,
-    SkillMaterializationReceipt, WorkflowGraph, WorkflowGraphNode, WorkflowNodeRunIdGenerator,
-    WorkflowRepository, WorkflowRunEngine, WorkflowRunEngineRepository,
-    WorkflowRunInvalidationPublisher, WorkflowRunPayload, WorkflowRunRepository,
-    WorkflowVariablePool,
+    Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository, WorkflowGraph,
+    WorkflowGraphNode, WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunEngine,
+    WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher, WorkflowRunPayload,
+    WorkflowRunRepository, WorkflowSkillReceipt, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_db::{
@@ -203,7 +202,7 @@ pub(crate) fn seeded_workflow(
 ) -> SeededWorkflow {
     let workspace_path = temp.path().join("fixture-project");
     std::fs::create_dir_all(&workspace_path).unwrap();
-    let project = SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
+    let project = SqliteProjectRepository::new(pool.clone());
     project
         .create_project(
             Project::new(
@@ -294,7 +293,7 @@ pub(crate) fn seeded_pending_run(
     let parsed_graph = WorkflowGraph::parse(graph).unwrap();
     let payload = WorkflowRunPayload::with_variable_pool(
         WorkflowRunLocale::EnUs,
-        SkillMaterializationReceipt::default(),
+        WorkflowSkillReceipt::default(),
         parsed_graph.start_node().map(|node| node.id.clone()),
         WorkflowVariablePool::from_graph(&parsed_graph),
     );
@@ -519,13 +518,18 @@ pub(super) fn switch_if_requested(
 ) -> Result<bool, crate::error::BackendError> {
     use super::prerequisites::SkillRoleWorkspaceInitializer;
     use ora_application::{ApplicationError, WorkflowRunWorkspaceInitializer};
-    let initializer =
-        SkillRoleWorkspaceInitializer::new(skills_root.to_path_buf(), pool.clone()).unwrap();
-    let switch = super::snapshot_switch::prepare_resume(pool, run_id, snapshot_id, |graph| {
-        Ok(initializer
-            .initialize_workspace(graph, workspace_root)
-            .map_err(ApplicationError::from_start_prerequisites_error)?)
-    })?;
+    let initializer = SkillRoleWorkspaceInitializer::new(skills_root.to_path_buf(), pool.clone());
+    let switch =
+        super::snapshot_switch::prepare_resume(pool, run_id, snapshot_id, |graph, frozen| {
+            match frozen {
+                Some(receipt) => Ok(initializer
+                    .validate_frozen_graph(graph, receipt)
+                    .map_err(ApplicationError::from_start_prerequisites_error)?),
+                None => Ok(initializer
+                    .initialize_workspace(graph, workspace_root)
+                    .map_err(ApplicationError::from_start_prerequisites_error)?),
+            }
+        })?;
     if let Some(switch) = switch {
         switch.apply(pool, now)?;
         Ok(true)

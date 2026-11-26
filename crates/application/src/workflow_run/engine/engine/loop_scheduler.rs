@@ -252,7 +252,7 @@ where
         &self,
         _scope: &WorkflowExecutionScope,
         body: &WorkflowGraph,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
         state: &LoopRoundExecutionState,
         node_runs: &[WorkflowNodeRun],
         now: i64,
@@ -265,32 +265,38 @@ where
             let Some(node) = body.node(&node_run.node_id) else {
                 continue;
             };
-            let outcome = match self.runtimes.runtime(node.node_type) {
-                Some(RegisteredNodeRuntime::Swift(runtime)) => Some(runtime.complete_running(
-                    node,
-                    &SwiftCompletion {
-                        node_run,
-                        run_input: None,
-                        pool: &state.variable_pool,
-                        node_runs,
-                    },
-                )),
-                _ => None,
+            let Some(RegisteredNodeRuntime::Swift(runtime)) = self.runtimes.runtime(node.node_type)
+            else {
+                continue;
             };
-            match outcome {
-                Some(Ok(output)) => {
+            let revised = self
+                .repository
+                .revised_graph(&context.run.id, &node_run.id)?;
+            let node = revised
+                .as_ref()
+                .and_then(|g| g.execution_node(&node.id))
+                .unwrap_or(node);
+            let completion = SwiftCompletion {
+                node_run,
+                run_input: None,
+                pool: &state.variable_pool,
+                node_runs,
+            };
+            match runtime.complete_running(node, &completion) {
+                Ok(output) => {
+                    let evidence = runtime.completion_evidence(&state.variable_pool, &output);
                     self.repository.complete_node(
                         &node_run.id,
                         Some(output),
                         None,
                         None,
                         Vec::new(),
-                        None,
+                        evidence.as_ref(),
                         now,
                     )?;
                     progressed = true;
                 }
-                Some(Err(error)) => {
+                Err(error) => {
                     self.repository.fail_node(
                         &node_run.id,
                         NodeFailure::from_runtime(node.node_type, error),
@@ -299,7 +305,6 @@ where
                     )?;
                     return Ok(true);
                 }
-                None => {}
             }
         }
         Ok(progressed)

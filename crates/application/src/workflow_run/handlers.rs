@@ -157,7 +157,7 @@ where
                 ));
             }
         };
-        let skill_materialization = self
+        let skill_receipt = self
             .workspace_initializer
             .initialize_workspace(&graph, Path::new(&workspace_root))
             .map_err(ApplicationError::from_start_prerequisites_error)?;
@@ -198,7 +198,7 @@ where
         let run_payload = serde_json::to_string(
             &WorkflowRunPayload::with_variable_pool(
                 request.locale,
-                skill_materialization,
+                skill_receipt,
                 start_node_id,
                 variable_pool,
             )

@@ -138,21 +138,20 @@ fn repository_rows_survive_a_power_cut_with_the_pool_still_running()
 
     // The rows the sidebar's project list and each project's task tree are
     // built from, written through the repositories Desktop composes.
-    let project = SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(10))
-        .create_project(
-            Project::new(
-                ProjectId::new("project-1"),
-                "Power-loss project",
-                AuditFields::new(10, 10, /*is_deleted*/ false),
-            ),
-            WorkspaceLocation::local_filesystem(
-                directory
-                    .path()
-                    .join("repository")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-        )?;
+    let project = SqliteProjectRepository::new(pool.clone()).create_project(
+        Project::new(
+            ProjectId::new("project-1"),
+            "Power-loss project",
+            AuditFields::new(10, 10, /*is_deleted*/ false),
+        ),
+        WorkspaceLocation::local_filesystem(
+            directory
+                .path()
+                .join("repository")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    )?;
 
     let workspace_id = WorkspaceId::new("workspace-task-1");
     let lease = WorktreeProvisioningLease::new(
@@ -219,8 +218,7 @@ fn repository_rows_survive_a_power_cut_with_the_pool_still_running()
     })?;
 
     assert_eq!(
-        SqliteProjectRepository::with_clock(rebooted.clone(), TestClock::new(10))
-            .list_projects()?,
+        SqliteProjectRepository::new(rebooted.clone()).list_projects()?,
         vec![project],
         "the project must still be listed after the power cut",
     );
@@ -267,21 +265,20 @@ fn outstanding_provisioning_lease_survives_a_power_cut() -> Result<(), Box<dyn s
         DatabaseBootstrapper::new(FixedTimestampSource)
             .bootstrap_repository_pool(&location, &catalog)
     })?;
-    let project = SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(10))
-        .create_project(
-            Project::new(
-                ProjectId::new("project-lease"),
-                "Lease project",
-                AuditFields::new(10, 10, /*is_deleted*/ false),
-            ),
-            WorkspaceLocation::local_filesystem(
-                directory
-                    .path()
-                    .join("repository")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-        )?;
+    let project = SqliteProjectRepository::new(pool.clone()).create_project(
+        Project::new(
+            ProjectId::new("project-lease"),
+            "Lease project",
+            AuditFields::new(10, 10, /*is_deleted*/ false),
+        ),
+        WorkspaceLocation::local_filesystem(
+            directory
+                .path()
+                .join("repository")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    )?;
     let lease = WorktreeProvisioningLease::new(
         WorktreeProvisioningLeaseId::new("lease-outstanding"),
         project.id,
@@ -339,7 +336,7 @@ fn a_crash_between_lease_write_and_ownership_commit_leaves_no_half_commit()
         DatabaseBootstrapper::new(FixedTimestampSource)
             .bootstrap_repository_pool(&location, &catalog)
     })?;
-    SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(10)).create_project(
+    SqliteProjectRepository::new(pool.clone()).create_project(
         Project::new(
             ProjectId::new("project-1"),
             "Crash-window project",

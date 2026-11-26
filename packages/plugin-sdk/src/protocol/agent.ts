@@ -25,6 +25,10 @@ export type AgentDiscoverParams = {
    * When the host stops waiting for the answer, in Unix milliseconds. Cleanup has to fit too.
    */
   deadline: number;
+  /**
+   * Present exactly when commands are wanted, because only they depend on Skills.
+   */
+  skills?: AgentDiscoverSkills;
 };
 
 /**
@@ -36,6 +40,24 @@ export type AgentDiscoverParams = {
 export type AgentDiscoverResult = {
   models: Array<AgentModel>;
   commands?: Array<AgentCommand>;
+};
+
+/**
+ * The Skills a session set up now would be given, in the values its setup would carry.
+ */
+export type AgentDiscoverSkills = {
+  /**
+   * The session's `additionalDirectories`, for an agent that declares support for them.
+   */
+  readRoots: Array<string>;
+  /**
+   * The session's `_meta` entry under `ora/skillDirectories`, absent there when empty.
+   */
+  directories: Array<string>;
+  /**
+   * Differs after every change to the Skills, also one that leaves the other two alone.
+   */
+  revision: string;
 };
 
 /**

@@ -40,6 +40,28 @@ impl SessionResponse {
     }
 }
 
+/// Where one frame fell in the order the reader took frames off the connection.
+///
+/// A direct response bypasses the ordered inbound stream, so comparing its order with an event's is
+/// the only way to tell which of the two the agent sent first. Orders are only comparable within
+/// one connection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ReadOrder(u64);
+
+impl ReadOrder {
+    /// Returns the order of the frame read right after this one.
+    pub fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+/// One inbound event together with the order its frame was read in.
+#[derive(Debug)]
+pub struct ReadEvent {
+    pub order: ReadOrder,
+    pub event: AcpInboundEvent,
+}
+
 /// Preserves wire order for all events that participate in a session turn.
 #[derive(Debug)]
 pub enum AcpInboundEvent {

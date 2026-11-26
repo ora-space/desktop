@@ -1,5 +1,4 @@
 use crate::clock::SystemClock;
-use crate::effect_worker::EffectWorkerHandle;
 use crate::git_cleanup::{GatedWorktreeProvisioner, GitCleanupHandle, KeyedResourceLocks};
 use crate::repository_work::spawn_repository_work;
 use crate::workspace::{LocalDirectory, probe_local_directory};
@@ -64,8 +63,6 @@ pub struct TaskApi {
     list: ListTasksHandler<SqliteTaskRepository>,
     update: UpdateTaskHandler<SqliteTaskRepository, SystemClock>,
     clock: SystemClock,
-    /// Wakes Effect convergence for the Workspace a new task brings with it.
-    effect_reconcile: EffectWorkerHandle,
     git_cleanup: GitCleanupHandle,
 }
 
@@ -77,7 +74,6 @@ pub(crate) struct TaskSetup {
     pub(crate) sessions_root: PathBuf,
     pub(crate) repository_gates: Arc<KeyedResourceLocks>,
     pub(crate) clock: SystemClock,
-    pub(crate) effect_reconcile: EffectWorkerHandle,
     pub(crate) git_cleanup: GitCleanupHandle,
 }
 
@@ -91,7 +87,6 @@ impl TaskApi {
             sessions_root,
             repository_gates,
             clock,
-            effect_reconcile,
             git_cleanup,
         } = setup;
         let repository = SqliteTaskRepository::new(pool.clone());
@@ -102,7 +97,6 @@ impl TaskApi {
             relative_path_base,
             sessions_root,
             repository_gates,
-            effect_reconcile,
             git_cleanup,
             get: GetTaskHandler::new(repository.clone()),
             list: ListTasksHandler::new(repository.clone()),
@@ -136,7 +130,6 @@ impl TaskApi {
         );
 
         let response = handler.handle(request)?;
-        self.effect_reconcile.notify();
         Ok(response)
     }
 
@@ -174,7 +167,6 @@ impl TaskApi {
             base_branch: command.base_branch,
             run_id: ScheduledRunId::new(command.run_id),
         })?;
-        self.effect_reconcile.notify();
         Ok(ScheduledRunWorktreeCreated {
             task: response.task,
             worktree_path: response.worktree_path,
@@ -521,7 +513,7 @@ mod tests {
                 &default_migration_catalog().expect("create migration catalog"),
             )
             .expect("bootstrap repository pool");
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock)
+        SqliteProjectRepository::new(pool.clone())
             .create_project(
                 Project::new(
                     ProjectId::new("project-1"),

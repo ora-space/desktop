@@ -6,6 +6,7 @@ mod tests {
     mod abnormal_support;
     mod iteration;
     mod lifecycle;
+    mod skill_catalog;
     mod workflow_agent_completion;
     mod workflow_interactive;
     mod workflow_mcp;

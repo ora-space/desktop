@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,7 +11,7 @@ use serde_json::json;
 use tokio::sync::oneshot;
 
 use crate::error::AcpError;
-use crate::events::SessionResponse;
+use crate::events::{ReadOrder, SessionResponse};
 use crate::frame::send_traced;
 use crate::pending::{PendingRequest, PendingRequests, lock_pending};
 use crate::trace::{SessionTraceRegistration, SessionTraceRegistry};
@@ -152,6 +153,24 @@ where
         Request: Serialize,
         Response: DeserializeOwned,
     {
+        self.request_read_in_order(method, params)
+            .await
+            .map(|(response, _)| response)
+    }
+
+    /// Sends a typed request and also reports where its answer fell among the inbound events.
+    ///
+    /// The answer skips the inbound stream, so events read before it may still be waiting there
+    /// when it arrives; the order is what tells them apart from the ones the agent sent after.
+    pub async fn request_read_in_order<Request, Response>(
+        &self,
+        method: &str,
+        params: &Request,
+    ) -> Result<(Response, ReadOrder), AcpError>
+    where
+        Request: Serialize,
+        Response: DeserializeOwned,
+    {
         let request_id = RequestId::Number(self.next_request_id.fetch_add(1, Ordering::Relaxed));
         let (response_sender, response_receiver) = oneshot::channel();
         lock_pending(&self.pending)
@@ -171,7 +190,7 @@ where
             registration.remove();
             return Err(error);
         }
-        let response = response_receiver
+        let (order, response) = response_receiver
             .await
             .map_err(|_| AcpError::StreamClosed)?;
         // The reader removes direct requests before delivering their response through the
@@ -179,6 +198,7 @@ where
         registration.complete();
         match response {
             Ok(result) => serde_json::from_value(result)
+                .map(|response| (response, order))
                 .map_err(|error| AcpError::InvalidResponse(error.to_string())),
             Err(error) => Err(AcpError::RequestFailed(error.message)),
         }
@@ -191,6 +211,32 @@ where
         method: &str,
         params: &Request,
     ) -> Result<PendingSessionRequest<Response>, AcpError>
+    where
+        Request: Serialize,
+        Response: DeserializeOwned,
+    {
+        let (mut pending, write) = self.prepare_session_request(session_id, method, params);
+        if let Err(error) = write.await {
+            lock_pending(&self.pending).remove_active(&pending.request_id);
+            pending.unregister_on_drop = false;
+            return Err(error);
+        }
+        Ok(pending)
+    }
+
+    /// Registers a session request and leaves writing its frame to the caller.
+    ///
+    /// For a caller that has to own the response before anyone waits for the transport. Dropping the
+    /// write leaves the request unwritten, and dropping the handle retires it either way.
+    pub fn prepare_session_request<Request, Response>(
+        &self,
+        session_id: SessionId,
+        method: &str,
+        params: &Request,
+    ) -> (
+        PendingSessionRequest<Response>,
+        impl Future<Output = Result<(), AcpError>> + Send + use<Transport, Request, Response>,
+    )
     where
         Request: Serialize,
         Response: DeserializeOwned,
@@ -208,17 +254,15 @@ where
             "method": method,
             "params": params,
         });
-        if let Err(error) = self.send(frame).await {
-            lock_pending(&self.pending).remove_active(&request_id);
-            return Err(error);
-        }
-        Ok(PendingSessionRequest {
+        let pending = PendingSessionRequest {
             request_id,
             session_id,
             pending: self.pending.clone(),
             unregister_on_drop: true,
             response: PhantomData,
-        })
+        };
+        let client = self.clone();
+        (pending, async move { client.send(frame).await })
     }
 
     /// Sends a notification that intentionally has no JSON-RPC response.

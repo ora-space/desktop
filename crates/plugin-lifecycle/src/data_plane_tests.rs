@@ -497,7 +497,6 @@ async fn workbench_plugin_declaring_emits_fails_after_launch() {
     let (launcher, log, _senders) = ScriptedLauncher::new(PluginRegistration {
         methods: HashSet::from(["counter/get".to_string()]),
         emits: HashSet::from(["counter/tick".to_string()]),
-        effect_resources: Vec::new(),
     });
     let (lifecycle, _events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
@@ -532,7 +531,6 @@ async fn workbench_plugin_runs_and_lease_reports_registered_methods() {
     let (launcher, _log, _senders) = ScriptedLauncher::new(PluginRegistration {
         methods: HashSet::from(["counter/get".to_string(), "internal/reset".to_string()]),
         emits: HashSet::new(),
-        effect_resources: Vec::new(),
     });
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     start_example(&lifecycle, &mut events).await;

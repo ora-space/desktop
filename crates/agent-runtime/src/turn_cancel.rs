@@ -154,8 +154,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         // stop button keeps the runtime's short grace.
         let turn_deadline = self.turn_cancel.deadline().filter(|_| notify_owner);
         if turn_deadline.is_some()
-            && let Some(response) =
-                ready_response(self, &mut channel, client, &pending, events, saw_output).await
+            && let Some(response) = ready_response(
+                self,
+                &mut channel,
+                client,
+                &pending,
+                events,
+                saw_output,
+                followers,
+            )
+            .await
         {
             // The prompt had already ended on its own: the cancel did not act on it, and the
             // answer keeps its own meaning, success or failure.
@@ -222,6 +230,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         if reusable && owner_notified && !session_invalid {
             self.channel = Some(channel);
         } else {
+            if reusable && !session_invalid {
+                self.accept_changes_on(&mut channel);
+            }
             self.isolate_channel(channel).await;
         }
         let result = if reusable {
@@ -268,7 +279,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// reason, an ACP error is the prompt's failure (marked answered when it is a request error).
     async fn finish_answered_prompt(
         &mut self,
-        channel: SessionChannel,
+        mut channel: SessionChannel,
         answer: Result<PromptResponse, ora_acp::AcpError>,
         operation_id: u64,
         end: PromptEnd<'_>,
@@ -314,6 +325,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 if reusable && delivered && !session_invalid {
                     self.channel = Some(channel);
                 } else {
+                    if reusable && !session_invalid {
+                        self.accept_changes_on(&mut channel);
+                    }
                     self.isolate_channel(channel).await;
                 }
             }
@@ -330,6 +344,7 @@ async fn ready_response<H: AgentRuntimeHost>(
     pending: &ora_acp::PendingSessionRequest<PromptResponse>,
     events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     saw_output: &mut bool,
+    followers: &mut SessionFollowers,
 ) -> Option<ora_acp::SessionResponse> {
     let (before, response) = take_ready_response(&mut channel.events, |response| {
         pending.matches_response(response)
@@ -357,7 +372,15 @@ async fn ready_response<H: AgentRuntimeHost>(
                     )
                     .await;
             }
-            SessionEvent::Response(_) => {}
+            SessionEvent::Response(response) => {
+                if let Some(update) = actor.settle_config_change(channel, response) {
+                    followers.send_update(&update, None);
+                    let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                        update,
+                        tool_timing: None,
+                    }));
+                }
+            }
         }
     }
     response

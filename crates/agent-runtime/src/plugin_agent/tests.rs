@@ -2,23 +2,13 @@ use std::collections::HashSet;
 
 use ora_domain::PluginId;
 use ora_plugin_lifecycle::{InboundNotification, PluginGenerationKey};
-use ora_plugin_runtime::{
-    PluginEffectCoordination, PluginEffectResource, PluginRegistration, PluginRuntimeError,
-};
+use ora_plugin_runtime::{PluginRegistration, PluginRuntimeError};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::control::{PluginAgentError, sensitive_start_error, verify_agent_contract};
-use super::effect::{AgentEffectError, registered_consumer_declaration};
 use super::inbound::{discard_frames_before_start, spawn_frame_forwarding};
-
-/// The exact materialization format an agent plugin must declare, as `plugin-sdk` publishes it.
-///
-/// Spelled out here rather than read from `ora-effect` so the two are compared rather than
-/// derived from one another: this is the string that travels over the wire from a plugin built
-/// against the SDK, and a rename on either side has to fail here instead of silently agreeing.
-const SKILL_DIRECTORY_FORMAT: &str = "ora/skill-directory.v1";
 
 /// Builds one notification as the lifecycle pump delivers it for the example agent plugin.
 fn notification(method: &str, params: serde_json::Value) -> InboundNotification {
@@ -39,7 +29,6 @@ fn complete_registration() -> PluginRegistration {
             "agent/list_models".to_string(),
         ]),
         emits: HashSet::from(["agent/acp".to_string()]),
-        effect_resources: Vec::new(),
     }
 }
 
@@ -65,6 +54,20 @@ fn accepts_either_discovery_method() {
 
         assert_eq!(verify_agent_contract(&registration), Ok(()));
     }
+}
+
+/// Legacy agent plugins whose wire registration carried `effectResources` (now ignored during
+/// `ora/register` parsing) and `effect/*` methods remain usable (ADR D1 / session-setup-and-hosts.md).
+#[test]
+fn accepts_legacy_registration_with_effect_methods_without_effect_resources() {
+    let mut registration = complete_registration();
+    registration.methods.insert("effect/coordinate".to_string());
+    registration.methods.insert("effect/reactivate".to_string());
+    registration
+        .methods
+        .insert("effect/verify_ready".to_string());
+
+    assert_eq!(verify_agent_contract(&registration), Ok(()));
 }
 
 /// Every missing control method is named at once so one restart surfaces the whole gap.
@@ -99,25 +102,6 @@ fn rejects_a_registration_that_cannot_emit_acp() {
         verify_agent_contract(&registration),
         Err(PluginAgentError::ContractIncomplete(
             "missing emitted method agent/acp".to_string()
-        ))
-    );
-}
-
-/// A coordinated surface is rejected unless the plugin can establish and release its barrier.
-#[test]
-fn rejects_a_surface_without_effect_control_methods() {
-    let mut registration = complete_registration();
-    registration.effect_resources = vec![PluginEffectResource {
-        workspace_relative_path: ".codex/skills".to_string(),
-        materialization_format: SKILL_DIRECTORY_FORMAT.to_string(),
-        coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-    }];
-
-    assert_eq!(
-        verify_agent_contract(&registration),
-        Err(PluginAgentError::ContractIncomplete(
-            "missing Effect methods effect/coordinate, effect/reactivate, effect/verify_ready"
-                .to_string()
         ))
     );
 }
@@ -163,130 +147,6 @@ fn classifies_configured_startup_codes_without_the_plugin_message() {
             PluginAgentError::AgentUnusable("agent_model_adapter_failed".to_string()),
             PluginAgentError::Failed("agent_model_adapter_failed".to_string()),
         ]
-    );
-}
-
-/// Builds one plugin registration declaring a single Skill Resource in the given format.
-fn registration_declaring(format: &str) -> PluginRegistration {
-    let mut registration = complete_registration();
-    registration.methods.insert("effect/coordinate".to_string());
-    registration.methods.insert("effect/reactivate".to_string());
-    registration
-        .methods
-        .insert("effect/verify_ready".to_string());
-    registration.effect_resources = vec![PluginEffectResource {
-        workspace_relative_path: ".opencode/skills".to_string(),
-        materialization_format: format.to_string(),
-        coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-    }];
-    registration
-}
-
-/// The format `plugin-sdk` tells plugins to declare is the one this host accepts.
-///
-/// Pinned because the two sides agree only by string: a plugin declaring anything else is not
-/// degraded but abandoned for the rest of the process, so a drift between the SDK's published
-/// constant and `MaterializationFormat::skill_directory_v1` breaks every agent that ships Skills.
-#[test]
-fn accepts_the_skill_format_the_sdk_publishes() {
-    let plugin_id = PluginId::new("official", "example.agent").expect("plugin id");
-
-    let declaration = registered_consumer_declaration(
-        &plugin_id,
-        &registration_declaring(SKILL_DIRECTORY_FORMAT),
-    )
-    .expect("the documented format is accepted");
-
-    let resources = declaration
-        .expect("a declared Resource produces a Consumer")
-        .resources;
-    assert_eq!(
-        resources
-            .iter()
-            .map(|resource| resource.materialization_format.as_str())
-            .collect::<Vec<_>>(),
-        vec![SKILL_DIRECTORY_FORMAT]
-    );
-}
-
-/// Any unknown format is refused instead of being mapped onto a supported Effect format.
-#[test]
-fn rejects_a_materialization_format_this_host_cannot_serve() {
-    let plugin_id = PluginId::new("official", "example.agent").expect("plugin id");
-
-    let error =
-        registered_consumer_declaration(&plugin_id, &registration_declaring("skill_directory.v1"))
-            .expect_err("an unknown format is refused");
-
-    assert_eq!(
-        error,
-        AgentEffectError::InvalidDeclaration(
-            "unsupported Effect materialization format skill_directory.v1".to_string()
-        )
-    );
-}
-
-/// A plugin declaring no Resource is not a Consumer at all, rather than an empty one.
-#[test]
-fn declares_no_consumer_for_a_plugin_that_owns_nothing_on_disk() {
-    let plugin_id = PluginId::new("official", "example.agent").expect("plugin id");
-
-    assert_eq!(
-        registered_consumer_declaration(&plugin_id, &complete_registration()),
-        Ok(None)
-    );
-}
-
-/// Unpublished MCP file-materialization formats are ignored so Skill Effect still registers.
-#[test]
-fn skips_unpublished_mcp_file_materialization_resources() {
-    let plugin_id = PluginId::new("official", "example.agent").expect("plugin id");
-    let mut registration = complete_registration();
-    registration.effect_resources = vec![
-        PluginEffectResource {
-            workspace_relative_path: ".opencode/opencode.json".to_string(),
-            materialization_format: "ora/opencode-mcp-config.v1".to_string(),
-            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-        },
-        PluginEffectResource {
-            workspace_relative_path: ".claude/.mcp.json".to_string(),
-            materialization_format: "ora/claude-mcp-config.v1".to_string(),
-            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-        },
-        PluginEffectResource {
-            workspace_relative_path: ".opencode/skills".to_string(),
-            materialization_format: SKILL_DIRECTORY_FORMAT.to_string(),
-            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-        },
-    ];
-
-    let declaration = registered_consumer_declaration(&plugin_id, &registration)
-        .expect("MCP formats are skipped")
-        .expect("Skill Resource remains");
-    assert_eq!(
-        declaration
-            .resources
-            .iter()
-            .map(|resource| resource.materialization_format.as_str())
-            .collect::<Vec<_>>(),
-        vec![SKILL_DIRECTORY_FORMAT]
-    );
-}
-
-/// An agent that only declared the unpublished MCP Resource is not an Effect Consumer.
-#[test]
-fn treats_mcp_only_materialization_as_no_consumer() {
-    let plugin_id = PluginId::new("official", "example.agent").expect("plugin id");
-    let mut registration = complete_registration();
-    registration.effect_resources = vec![PluginEffectResource {
-        workspace_relative_path: ".opencode/opencode.json".to_string(),
-        materialization_format: "ora/opencode-mcp-config.v1".to_string(),
-        coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-    }];
-
-    assert_eq!(
-        registered_consumer_declaration(&plugin_id, &registration),
-        Ok(None)
     );
 }
 

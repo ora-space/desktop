@@ -4,7 +4,7 @@ English | [中文](agents-and-skills.zh.md)
 
 Besides the agent runtimes that plugins supply, Desktop keeps two user catalogs: **agent
 definitions** (configurable roles a workflow node or chat can adopt) and **Skills** (reusable
-instruction packages materialized into every Workspace). Both are namespaced by `(namespace, name)`
+instruction packages delivered to sessions by storage path). Both are namespaced by `(namespace, name)`
 with case-insensitive visible names; local entries use the `local` namespace, and soft-deleted rows
 do not reserve a name.
 
@@ -82,6 +82,18 @@ see [Surfaces](../plugins/surfaces.md#downloads).
 
 ## How Skills reach agents
 
-Installed Skills are materialized into every eligible Workspace by the Effect system, see
-[Effects](effects.md). A workflow Agent node's Skill bindings mean "required invocation" in that
-node's prompt; they are not a node-level allowlist and do not hide other materialized Skills.
+Ora delivers installed Available Skills from their storage locations directly, without writing files
+into any Workspace:
+
+- Local Skills live at `<data root>/atoms/skills/<name>/SKILL.md`, and plugin Skills live at
+  `<ora home>/plugins/installed/<namespace>/<name>/<version>/assets/<skill>/SKILL.md`. Same-named
+  Available Skills remain distinct entries by `SKILL.md` path.
+- `ora-agent-runtime` prepends `<available_skills>` (names, descriptions, and native absolute
+  `SKILL.md` paths) to the first user prompt of a live session (after any leading `/command` text
+  block) and resends it after cold `session/load`, reopened stopped sessions, or reported
+  compaction. Mid-session installs, upgrades, renames, or uninstalls send only a `<available_skills_update>`
+  path delta on the next prompt without interrupting turns or restarting agents.
+- When an agent advertises `sessionCapabilities.additionalDirectories`, `session/new` and
+  `session/load` also pass the two readable storage roots plus `_meta["ora/skillDirectories"]`.
+- A workflow Agent node's Skill bindings freeze only `{ node_id, skill_id, invocation_name }` and
+  resolve the live storage `SKILL.md` path at dispatch as required invocations, not an allowlist.

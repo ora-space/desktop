@@ -10,6 +10,12 @@ export type CancelWorkflowRunRequest = { runId: string };
  */
 export type CancelWorkflowRunResponse = { run: WorkflowRun };
 
+export type CommitWorkflowDebugRequest = {
+  runId: string;
+  previewId: string;
+  requestId: string;
+};
+
 /**
  * Identifies the awaiting interactive node to complete.
  */
@@ -101,6 +107,31 @@ export type DiagnoseWorkflowNodeFailureResponse = {
   diagnosis: WorkflowNodeAiDiagnosis;
 };
 
+export type GetWorkflowDebugAttemptRequest = {
+  runId: string;
+  nodeRunId: string;
+};
+
+export type GetWorkflowDebugAttemptResponse = {
+  target: WorkflowDebugTarget;
+  revision: number | null;
+  snapshotId: string | null;
+  configuration: unknown | null;
+  status: WorkflowNodeStatus;
+  superseded: boolean;
+  retiredByOperationId: string | null;
+  inputRecorded: boolean;
+  selectedBranch: string | null;
+  output: string | null;
+  error: string | null;
+};
+
+export type GetWorkflowDebugHistoryRequest = { runId: string };
+
+export type GetWorkflowDebugHistoryResponse = {
+  entries: Array<WorkflowDebugHistoryEntry>;
+};
+
 /**
  * Identifies the workflow run to retrieve by its stable identifier.
  */
@@ -173,6 +204,20 @@ export type ListWorkflowRunsResponse = { runs: Array<WorkflowRunSummary> };
  * client request; `Human` covers the legacy and explicit human path.
  */
 export type NodeCompletionRequester = "human" | "agent";
+
+export type PendingWorkflowDebugTarget = {
+  rootScopeId: string;
+  scopeId: string;
+  nodeId: string;
+  containerNodeRunId?: string;
+  index?: number;
+};
+
+export type PreviewWorkflowDebugRequest = {
+  runId: string;
+  baseRevision: number;
+  patch: Array<WorkflowDebugPatch>;
+} & ({ "nodeRunId": string } | { "pendingTarget": PendingWorkflowDebugTarget });
 
 /**
  * Identifies the failed or cancelled run whose resume preview should be loaded.
@@ -319,6 +364,88 @@ export type UpdateWorkflowRunInputRequest = {
  * Returns the run with its updated input.
  */
 export type UpdateWorkflowRunInputResponse = { run: WorkflowRun };
+
+export type WorkflowDebugHistoryEntry = {
+  /**
+   * First attempt the scheduler admitted for a `pendingTarget` after the revision applied.
+   * Null until then, and always null for an operation that selected an existing attempt.
+   */
+  firstNodeRunId: string | null;
+  /**
+   * Run status and error as they were when the confirmation was accepted. A terminal run keeps
+   * them while the stop is in progress and returns to `running` once the revision applies.
+   */
+  priorRunStatus: WorkflowRunStatus;
+  priorError: string | null;
+  operation: WorkflowDebugOperation;
+  preview: WorkflowDebugPreview;
+  patch: Array<WorkflowDebugPatch>;
+};
+
+export type WorkflowDebugImpact = {
+  keep: Array<string>;
+  invalidate: Array<string>;
+  stop: Array<string>;
+  schedule: Array<string>;
+  predictedBranch: string | null;
+};
+
+export type WorkflowDebugOperation =
+  & { operationId: string; requestId: string; baseRevision: number }
+  & ({ "state": "stopping" } | {
+    "state": "stop_failed";
+    reason: string;
+    unsettledNodeRunIds: Array<string>;
+  } | { "state": "applied"; revision: number });
+
+export type WorkflowDebugPatch = {
+  "op": "replace";
+  path: string;
+  value: unknown;
+};
+
+export type WorkflowDebugPhase = { "state": "stopping" } | {
+  "state": "stop_failed";
+  reason: string;
+  unsettledNodeRunIds: Array<string>;
+} | { "state": "applied"; revision: number };
+
+export type WorkflowDebugPreview = {
+  /**
+   * Earlier physical attempt supplying dispatch input for a waiting retry.
+   */
+  inputSourceNodeRunId?: string;
+  previewId: string;
+  baseRevision: number;
+  target: WorkflowDebugTarget;
+  /**
+   * Effective member configurations after rebuilding a selected container from its entrance.
+   */
+  memberConfigurations?: Record<string, unknown>;
+  workspace: WorkflowDebugWorkspace;
+  externalActionsMayRepeat: boolean;
+  keep: Array<string>;
+  invalidate: Array<string>;
+  stop: Array<string>;
+  schedule: Array<string>;
+  predictedBranch: string | null;
+};
+
+export type WorkflowDebugSelection = { "nodeRunId": string } | {
+  "pendingTarget": PendingWorkflowDebugTarget;
+};
+
+export type WorkflowDebugTarget = {
+  nodeRunId?: string;
+  rootScopeId?: string;
+  scopeId: string;
+  nodeId: string;
+  containerNodeRunId: string | null;
+  round: number | null;
+  index: number | null;
+};
+
+export type WorkflowDebugWorkspace = "keep";
 
 /**
  * Public Loop-round identity used to group repeated node definitions in run history.

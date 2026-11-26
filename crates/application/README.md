@@ -5,8 +5,6 @@
 ## Module map
 
 - [agent_definition](src/agent_definition/README.md) manages configurable agent definitions.
-- [effect](src/effect/README.md) exposes Workspace Effect desired/status/retry use cases over the
-  storage-independent `ora-effect` repository port.
 - [project](src/project/README.md) manages project creation, reads, and rename operations.
 - [session](src/session/README.md) provides persisted session reads and soft deletion.
 - [skill](src/skill/README.md) manages reusable skill records, their atomic on-disk packages, and journaled filesystem transactions.

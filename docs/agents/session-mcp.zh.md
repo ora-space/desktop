@@ -2,7 +2,7 @@
 
 [English](session-mcp.md) | 中文
 
-Ora 把已配置的 MCP 插件作为**会话运行时输入**交付：也就是每次 `session/new` 和 `session/load` 中 ACP 的 `mcpServers` 列表。MCP 从不是 Effect Resource，也从不是 Workspace 文件。每个建立 provider session 的帧（`startSession`、prompt 触发的附着、重建、切换 Agent、工作流启动和实时刷新）都使用同一份会话 setup 快照。纯解析逻辑在 `crates/agent-runtime/src/mcp_resolver`，Desktop 数据来源和健康探测仍在 Backend。
+Ora 把已配置的 MCP 插件作为**会话运行时输入**交付：也就是每次 `session/new` 和 `session/load` 中 ACP 的 `mcpServers` 列表，从不写入 Workspace 文件。每个建立 provider session 的帧（`startSession`、prompt 触发的附着、重建、切换 Agent、工作流启动和实时刷新）都使用同一份会话 setup 快照。纯解析逻辑在 `crates/agent-runtime/src/mcp_resolver`，Desktop 数据来源和健康探测仍在 Backend。
 
 ## 选择
 
@@ -26,7 +26,7 @@ server 名称是规范插件 id（`<namespace>/<identifier>`），按 id 排序�
 
 活跃会话在内存中保存 Desired 和 Active 两个 MCP revision。插件的安装、更新和卸载，以及插件设置的保存、清除或恢复，都会发送一个不含机密的唤醒。空闲会话立即 `session/load`；忙碌的会话在当前 prompt 之后刷新，新 prompt 等待刷新完成。成功会推进 Active revision，期间到达的更新的 Desired 保持待定。失败只阻塞这一个会话，下一个 prompt 会重试，而不是使用旧配置。已停止的会话不在后台刷新。显式选择之外的插件变化不会改变该会话的 revision。
 
-MCP 刷新、Skill Effect 变更和 Agent 替换共用一个 Agent Session Barrier，让新 prompt 等到安全点。它们不共享任何 Effect 状态。
+MCP 刷新和 Agent 替换共用一个 Agent Session Barrier，让新 prompt 等到安全点。
 
 共享 revision 还包含宿主显式分配的 generation。现有宿主构造 generation 0；采用有序更新的宿主在解析/发送前
 指定 generation。即便成员身份相同，新 generation 仍须独立收敛成功；旧响应不能让新目标变为 current。
@@ -34,7 +34,7 @@ generation 不含 Settings 摘要。
 
 ## 机密与文件
 
-设置值可以存在于配置存储、短暂的内存快照和发给 Agent 的 ACP 帧中。它们从不进入 Effect 状态、SQLite、Workspace 文件、日志、错误、UI DTO、revision 摘要或 Agent 环境变量。错误只给出插件 id、设置 id、传输方式和稳定的 code。
+设置值可以存在于配置存储、短暂的内存快照和发给 Agent 的 ACP 帧中。它们从不进入 SQLite、Workspace 文件、日志、错误、UI DTO、revision 摘要或 Agent 环境变量。错误只给出插件 id、设置 id、传输方式和稳定的 code。
 
 Ora 从不为 MCP 创建、修改或删除 `.mcp.json`、OpenCode 的 JSON/JSONC、附属文件、Git exclude 文件或任何其他 Workspace 路径；用户自己写的 MCP 配置保持原样。
 
