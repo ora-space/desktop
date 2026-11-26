@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "version": "0.7.0",
+  "date": "2026-11-28",
+  "entries": [
+    {
+      "category": "important",
+      "zh-CN": "0.7.0 只提供 Windows 和 Linux 的安装包与更新；0.6.0 是最后一个支持 macOS 的版本。",
+      "en-US": "0.7.0 ships Windows and Linux installers and updates only; 0.6.0 was the last version that supports macOS."
+    },
+    {
+      "category": "important",
+      "zh-CN": "本次升级将迁移数据库至 schema 0025 并移除旧的 Effect 技能表，升级后无法直接降级回旧版本。升级前已自动在数据目录（Windows 为 %APPDATA%\\space.ora.desktop，Linux 为 ~/.local/share/space.ora.desktop，或环境变量 ORA_DATA_DIR 指定的目录）生成备份 ora.sqlite3.pre-0025.bak；它只包含升级前的数据，不包含升级后的写入。",
+      "en-US": "This update migrates the database to schema 0025 and retires the legacy Effect tables, so in-place downgrade to older versions is not supported. A pre-upgrade backup is saved automatically as ora.sqlite3.pre-0025.bak in your data directory (%APPDATA%\\space.ora.desktop on Windows, ~/.local/share/space.ora.desktop on Linux, or ORA_DATA_DIR when set). It contains only the pre-upgrade data and nothing written after the upgrade."
+    },
+    {
+      "category": "important",
+      "zh-CN": "如需回退到旧版本：先退出 Ora Desktop，确认 ora.sqlite3.pre-0025.bak 可以读取；再把数据目录中的 ora.sqlite3 以及存在的 ora.sqlite3-wal、ora.sqlite3-shm 移到其他位置保留，不要删除，升级后的数据只在其中；最后把 ora.sqlite3.pre-0025.bak 复制为 ora.sqlite3，再启动旧版。",
+      "en-US": "To revert to an older release: quit Ora Desktop and confirm that ora.sqlite3.pre-0025.bak can be read; move ora.sqlite3 and any existing ora.sqlite3-wal and ora.sqlite3-shm out of the data directory to a kept location instead of deleting them, because they hold everything written after the upgrade; then copy ora.sqlite3.pre-0025.bak to ora.sqlite3 and launch the older build."
+    },
+    {
+      "category": "important",
+      "zh-CN": "从旧版本升级时，Ora 会在第一次启动、执行 0025 迁移前生成上述备份。如果备份失败（例如磁盘已满，或数据目录只读），Ora Desktop 会停止启动：窗口会打开，但一片空白，目前没有界面提示。原因记录在数据目录下的 logs/ora.log 中（搜索 desktop bootstrap failed）。释放磁盘空间或恢复数据目录的写权限后重新启动即可；备份失败时迁移不会执行，数据库未被改动。",
+      "en-US": "When upgrading from an older release, Ora creates the backup above on first launch, before migration 0025 runs. If it fails (disk full or data directory read-only), Ora Desktop stops starting: the window opens but stays blank, with no on-screen message. The reason is in logs/ora.log under the data directory (search for desktop bootstrap failed). Free up disk space or restore write access to the data directory and start again; the migration has not run, so the database is unchanged."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "Skill 改为从 Skill 存储目录直接交给 Agent，不再复制到项目目录；会话进行中新增、修改或卸载 Skill 时，Agent 会收到更新。升级时会删除旧版本由 Ora 复制到项目里、且未被修改过的 Skill 目录，用户改过的目录会保留。",
+      "en-US": "Skills are now handed to agents directly from the Skill storage location instead of being copied into project folders, and an agent receives updates when Skills are added, changed, or removed during a session. On upgrade, Ora removes the unmodified Skill directories that older versions copied into projects; directories you changed are kept."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "设置新增「Cloud 连接」：填写自托管 Cloud 的地址并通过系统浏览器登录，登录状态保存在系统凭据库中，并在此显示。",
+      "en-US": "Settings has a new \"Cloud connection\" section: enter the address of a self-hosted Cloud and sign in through the system browser. The sign-in is stored in the operating system's credential store and shown there."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "打开旧会话或新建聊天时，不必先发消息，/ 菜单就能列出 Agent 上报的命令（分组名为「Agent 命令」）；Skill 新增、修改或卸载后，命令列表随之刷新。",
+      "en-US": "When you open a saved session or start a new chat, the / menu lists the agent's commands before you send a message (the group is called \"Agent commands\"), and the list refreshes when Skills are added, changed, or removed."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "新增更新日志：更新完成后用一张卡片提示一次本版的变化，「设置 → 更新日志」可以查看 v0.3.0 以来的历史；有新版本时，该页顶部显示新版本的日志和「立即更新」，安装前仍会再次确认。",
+      "en-US": "Release notes are new: after an update, a card shows what changed once, and Settings → Release notes lists the history back to v0.3.0. When an update is available, the top of that page shows the new version's notes with \"Update now\"; installing still asks you to confirm."
+    },
+    {
+      "category": "feature",
+      "zh-CN": "工作流在启动、重启或续跑前会重新检查依赖的 Agent、Skill 和 MCP；缺少依赖时会指出具体的节点和绑定，修复后同一个运行可以继续。",
+      "en-US": "Before a workflow starts, restarts, or resumes, Ora re-checks the agents, Skills, and MCP servers it depends on. A missing dependency names the node and the binding, and the same run can continue once it is fixed."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "不是 Git 仓库的普通文件夹项目：Git 相关功能不再报内部错误。「变更」面板显示说明和重新检查按钮，对话里原本要打开差异的链接改为打开文件，新建 worktree 的入口隐藏，定时任务表单会说明为什么不能启用。",
+      "en-US": "For projects that are plain folders without a Git repository, Git-only features no longer fail with internal errors. The Changes panel explains the situation and offers a re-check, chat links that would open a diff open the file instead, the \"new worktree\" entries are hidden, and the scheduled-task form explains why a task cannot be enabled."
+    },
+    {
+      "category": "improvement",
+      "zh-CN": "工作流 Agent 节点的 wait 等待策略：30 分钟内没有可归因的进展时，本次发送以超时结束，并在该轮显示错误，不再无限等待；unbounded 仍一直等待。编辑器和运行检查器会显示该策略，导入时会拒绝不支持的值。",
+      "en-US": "For a workflow agent node with the wait policy, a send now times out after 30 minutes without attributable progress and shows the error on that turn instead of waiting forever; unbounded keeps waiting. The editor and the run inspector show the policy, and import rejects unsupported values."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "添加项目时必须选择一个已存在的文件夹。此前因为目录暂时不可见而卡住（列不出模型、发不了消息）的本地项目，升级后会自动恢复。",
+      "en-US": "Adding a project now requires an existing folder. Local projects that were stuck because their folder was briefly unavailable (models were not listed and messages could not be sent) recover after the upgrade."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复已保存的设置（Agent 选择、代理地址与探测地址、插件日志级别等）在重启、升级或读取失败后被默认值覆盖的问题。",
+      "en-US": "Fixed saved settings (agent choices, proxy address and probe URL, plugin log levels, and others) being overwritten by defaults after a restart, an upgrade, or a failed read."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "修复多处模型选择器显示的模型与会话实际使用的不一致的问题：设置成功后被旧的配置快照覆盖、一轮进行中打开的窗口没有选项、晚到达的旧值盖掉新值。",
+      "en-US": "Fixed several cases where the model picker showed a different model from the one the session actually runs on: a successful choice being overwritten by a stale configuration snapshot, a window opened during a turn having no options, and a late old value overriding a newer one."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "工作流编辑器的变量选择器按 Loop 作用域列出变量：循环外只能选 Loop 的命名输出，循环内可以选循环变量和上游变量；不再提供运行时不会被赋值的变量，残缺的 Loop 配置也不会再让编辑器打不开。",
+      "en-US": "The workflow editor's variable picker now lists variables by Loop scope: outside a loop only the Loop's named outputs, inside it the loop variables and upstream variables. It no longer offers variables that are never assigned at runtime, and an incomplete Loop configuration no longer prevents the editor from opening."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "从插件市场安装或升级工作流时，名称冲突会指出冲突的工作流名称，腾出名称后在卡片上重试即可导入；升级中被删除的工作流副本会在重新安装插件时恢复，安装报告会列出未导入的文档及原因。",
+      "en-US": "When installing or upgrading workflows from the marketplace, a name conflict names the workflow that blocks it, and retrying from the card imports the document once the name is free. A workflow copy deleted during an upgrade is restored by reinstalling the plugin, and the import report lists the documents that were not imported and why."
+    },
+    {
+      "category": "fix",
+      "zh-CN": "更新检查或安装失败时会显示原因，并可以重试。",
+      "en-US": "A failed update check or installation now shows why and offers a retry."
+    }
+  ]
+}
