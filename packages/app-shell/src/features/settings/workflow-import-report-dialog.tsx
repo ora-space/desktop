@@ -320,6 +320,13 @@ function WorkflowImportDependencies({
               const ui = useUiStore.getState();
               if (editor.actions) {
                 void editor.actions.select(outcome.workflowId).then(() => {
+                  // Selecting may return normally after a failed draft flush. Keep the report
+                  // open unless the editor actually adopted the requested workflow.
+                  if (
+                    useWorkflowEditorStore.getState().selectedWorkflowId !==
+                    outcome.workflowId
+                  )
+                    return;
                   ui.setWorkflowEditorOpen(true);
                   ui.setSettingsOpen(false);
                 });

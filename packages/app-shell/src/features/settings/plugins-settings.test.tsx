@@ -4223,56 +4223,98 @@ it("lists disabled missing Skills without a launch warning", async () => {
   expect(within(report).getByText(/仅检查 Ora 全局技能库/)).toBeVisible();
 });
 
-it("marks an ambiguous Skill as blocking and links to its workflow editor", async () => {
-  const user = userEvent.setup();
-  const { state, client } = clientWithWorkflowPackage();
-  state.importTarget = weatherInstalled();
-  state.importedWorkflows = [
-    {
-      state: "imported",
-      sourceFile: "workflow.json",
-      workflowId: "wf-ambiguous",
-      name: "同名依赖",
-      version: "1.0.0",
-    },
-  ];
-  state.skills.skills = [
-    {
-      id: "local-review",
-      namespace: "local",
-      name: "review",
-      description: "",
-      source: { kind: "local" },
-      availability: "available",
-    },
-    {
-      id: "plugin:official/review:review",
-      namespace: "official/review",
-      name: "review",
-      description: "",
-      source: { kind: "plugin", pluginId: "official/review" },
-      availability: "unavailable",
-    },
-  ];
-  seedImportedWorkflow(
-    state,
-    "wf-ambiguous",
-    "同名依赖",
-    agentGraph({ skills: ["review"] }),
-  );
-  renderSettings(client, platformPickingWorkflowPackage());
-  const report = await openImportReport(user);
-  expect(await within(report).findByText("来源有歧义")).toBeVisible();
-  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
-  await user.click(
-    within(report).getByRole("button", { name: "去编辑器指定来源" }),
-  );
-  expect(useUiStore.getState().workflowEditorOpen).toBe(true);
-  expect(useWorkflowEditorStore.getState().selectedWorkflowId).toBe(
-    "wf-ambiguous",
-  );
-  act(() => {
-    useUiStore.getState().setWorkflowEditorOpen(false);
-    useWorkflowEditorStore.getState().setSelectedWorkflowId(null);
-  });
-});
+it.each(["closed", "saved", "failed"] as const)(
+  "marks an ambiguous Skill and handles editor navigation (%s)",
+  async (editorState) => {
+    const user = userEvent.setup();
+    const { state, client } = clientWithWorkflowPackage();
+    state.importTarget = weatherInstalled();
+    state.importedWorkflows = [
+      {
+        state: "imported",
+        sourceFile: "workflow.json",
+        workflowId: "wf-ambiguous",
+        name: "同名依赖",
+        version: "1.0.0",
+      },
+    ];
+    state.skills.skills = [
+      {
+        id: "local-review",
+        namespace: "local",
+        name: "review",
+        description: "",
+        source: { kind: "local" },
+        availability: "available",
+      },
+      {
+        id: "plugin:official/review:review",
+        namespace: "official/review",
+        name: "review",
+        description: "",
+        source: { kind: "plugin", pluginId: "official/review" },
+        availability: "unavailable",
+      },
+    ];
+    seedImportedWorkflow(
+      state,
+      "wf-ambiguous",
+      "同名依赖",
+      agentGraph({ skills: ["review"] }),
+    );
+    renderSettings(client, platformPickingWorkflowPackage());
+    const report = await openImportReport(user);
+    expect(await within(report).findByText("来源有歧义")).toBeVisible();
+    expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
+    const select = vi.fn(async (workflowId: string) => {
+      if (editorState === "saved")
+        useWorkflowEditorStore.getState().setSelectedWorkflowId(workflowId);
+    });
+    const unsupported = () => {
+      throw new Error("Unexpected editor operation");
+    };
+    act(() => {
+      useUiStore.setState({ settingsOpen: true, workflowEditorOpen: false });
+      useWorkflowEditorStore.setState({
+        selectedWorkflowId: editorState === "closed" ? null : "old-workflow",
+      });
+      useWorkflowEditorStore.getState().registerActions(
+        editorState === "closed"
+          ? null
+          : {
+              select,
+              create: unsupported,
+              copy: unsupported,
+              rename: unsupported,
+              delete: unsupported,
+              openImport: unsupported,
+              exportFile: unsupported,
+              leave: unsupported,
+            },
+      );
+    });
+    await user.click(
+      within(report).getByRole("button", { name: "去编辑器指定来源" }),
+    );
+    if (editorState === "failed") {
+      expect(select).toHaveBeenCalledWith("wf-ambiguous");
+      expect(useUiStore.getState().settingsOpen).toBe(true);
+      expect(useUiStore.getState().workflowEditorOpen).toBe(false);
+      expect(useWorkflowEditorStore.getState().selectedWorkflowId).toBe(
+        "old-workflow",
+      );
+      expect(report).toBeVisible();
+    } else {
+      expect(useUiStore.getState().settingsOpen).toBe(false);
+      expect(useUiStore.getState().workflowEditorOpen).toBe(true);
+      expect(useWorkflowEditorStore.getState().selectedWorkflowId).toBe(
+        "wf-ambiguous",
+      );
+    }
+    act(() => {
+      useUiStore.getState().setWorkflowEditorOpen(false);
+      useWorkflowEditorStore.getState().setSelectedWorkflowId(null);
+      useWorkflowEditorStore.getState().registerActions(null);
+    });
+  },
+);
