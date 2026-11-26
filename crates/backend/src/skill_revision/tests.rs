@@ -525,3 +525,88 @@ fn a_create_rolled_back_leaves_the_revision_alone() {
         assert_eq!(advanced, 0);
     });
 }
+
+/// A package that breaks or comes back without a commit is counted when the settings list it, as
+/// when a session's catalog reads it, and a commit is not counted again by the next list.
+#[test]
+fn the_settings_list_notices_another_set_of_available_skills() {
+    ora_logging::with_trace_logging(|| {
+        let skills = Skills::new();
+        let api = skills.api();
+        api.create(create("review")).unwrap();
+        let list = || {
+            let before = skills.revision.current();
+            api.list(ora_contracts::ListSkillsRequest {}).unwrap();
+            skills.advanced_from(before)
+        };
+        assert_eq!([list(), list()], [0, 0], "the commit was counted");
+
+        let manifest = skills.root().join("review").join("SKILL.md");
+        let content = fs::read(&manifest).unwrap();
+        fs::remove_file(&manifest).unwrap();
+        assert_eq!([list(), list()], [1, 0], "it stopped being available");
+        fs::write(&manifest, content).unwrap();
+        assert_eq!([list(), list()], [1, 0], "it is available again");
+    });
+}
+
+/// The settings and the sessions read the same Skills, local and from a plugin, as the same set:
+/// neither counts a change for what the other one already saw.
+#[test]
+fn the_settings_and_the_sessions_count_a_change_once() {
+    ora_logging::with_trace_logging(|| {
+        let skills = Skills::new();
+        let api = skills.api();
+        api.create(create("review")).unwrap();
+        let package = skills.directory.path().join("plugin").join("audit");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("SKILL.md"),
+            "---\nname: audit\ndescription: Audits\n---\nInstructions",
+        )
+        .unwrap();
+        let projection = PluginSkillProjection {
+            name: "audit".to_string(),
+            description: "Audits".to_string(),
+            package_root: package,
+        };
+        skills
+            .repository()
+            .replace_plugin_skills(
+                &PluginId::new("official", "review").unwrap(),
+                "1.0.0",
+                &[projection],
+                1,
+            )
+            .unwrap();
+        let catalog = skills.catalog();
+        let look = || {
+            let before = skills.revision.current();
+            catalog
+                .skill_catalog(&WorkspaceId::new("workspace"))
+                .unwrap();
+            skills.advanced_from(before)
+        };
+        let list = || {
+            let before = skills.revision.current();
+            api.list(ora_contracts::ListSkillsRequest {}).unwrap();
+            skills.advanced_from(before)
+        };
+        assert_eq!([look(), list(), look(), list()], [0, 0, 0, 0]);
+
+        let manifest = skills.root().join("review").join("SKILL.md");
+        let content = fs::read(&manifest).unwrap();
+        fs::remove_file(&manifest).unwrap();
+        assert_eq!(
+            [list(), look(), list()],
+            [1, 0, 0],
+            "the settings saw it first"
+        );
+        fs::write(&manifest, content).unwrap();
+        assert_eq!(
+            [look(), list(), look()],
+            [1, 0, 0],
+            "a session saw it first"
+        );
+    });
+}

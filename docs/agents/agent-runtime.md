@@ -177,7 +177,8 @@ Commands may come from Skills, so a discovery that wants them carries the Skill 
 session set up now would be given, and a revision. The Desktop host advances the revision with every
 committed Skill catalog change (installing, removing, renaming, upgrading or editing in place), once
 when an edit, rename or removal that already swapped or moved its package on disk is rolled back because
-its row could not be written, and when it notices another set of available Skills, and publishes
+its row could not be written, and when it notices another set of available Skills, whether reading a
+session's catalog or listing them for the settings, and publishes
 `AgentModelsInvalidated` for every agent at the same time. It only grows and lives in memory. Agents are not restarted, nothing is discovered that
 no surface shows, and answers given for models alone stand.
 

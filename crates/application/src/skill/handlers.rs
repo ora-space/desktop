@@ -198,17 +198,35 @@ where
     /// Lists every visible skill and reports whether its formal package is still loadable.
     pub fn handle(
         &self,
+        request: ListSkillsRequest,
+    ) -> Result<ListSkillsResponse, ApplicationError> {
+        self.handle_observed(request, |_| {})
+    }
+
+    /// Lists like [`Self::handle`] and hands the Skills it found available to `observe`.
+    ///
+    /// Availability also changes with package files, which commit nothing; a caller that tracks
+    /// it learns what this read saw without reading the packages a second time. A list that fails
+    /// observes nothing.
+    pub fn handle_observed(
+        &self,
         _request: ListSkillsRequest,
+        observe: impl FnOnce(&[Skill]),
     ) -> Result<ListSkillsResponse, ApplicationError> {
         let skills = self
             .repository
             .list_skills()
             .map_err(ApplicationError::from_skill_repository_error)?;
         let mut mapped = Vec::new();
+        let mut available = Vec::new();
         for skill in skills {
             let availability = package_availability(&self.storage, &skill)?;
+            if availability == SkillAvailability::Available {
+                available.push(skill.clone());
+            }
             mapped.push(map_skill(skill, availability));
         }
+        observe(&available);
         Ok(ListSkillsResponse { skills: mapped })
     }
 }
