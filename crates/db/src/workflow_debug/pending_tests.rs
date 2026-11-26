@@ -356,4 +356,39 @@ fn pending_loop_member_uses_its_live_round() {
         .unwrap();
     assert_eq!(preview.target.round, Some(3));
     assert_eq!(preview.target.container_node_run_id.as_deref(), Some("lp"));
+    store
+        .claim(&CommitWorkflowDebugRequest {
+            run_id: "other".into(),
+            preview_id: preview.preview_id,
+            request_id: "round-edit".into(),
+        })
+        .unwrap();
+    store
+        .apply_after_stop("other", "round-edit", 2, |_, _| Ok(()))
+        .unwrap();
+    store
+        .pool
+        .with_connection(|db| {
+            for (round, expected) in [(2, "old"), (3, "{{#loop.draft#}}"), (4, "{{#loop.draft#}}")]
+            {
+                let mut target = preview.target.clone();
+                target.round = Some(round);
+                let raw: String = db.query_row(
+                    "SELECT graph FROM workflow_snapshots WHERE id='selected'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let mut graph: Value = serde_json::from_str(&raw)?;
+                configuration::replay(db, "other", &target, "selected", 1, &mut graph)?;
+                let writer = graph["nodes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|node| node["id"] == "writer")
+                    .unwrap();
+                assert_eq!(writer["data"]["agentConfig"]["prompt"], expected);
+            }
+            Ok(())
+        })
+        .unwrap();
 }

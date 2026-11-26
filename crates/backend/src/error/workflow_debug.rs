@@ -128,6 +128,11 @@ mod tests {
                 PublicError::WorkflowDebugOperationActive(EmptyErrorParams {}),
             ),
             (
+                DebugRejection::EmptyRequestId,
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+            ),
+            (
                 DebugRejection::RequestConflict,
                 ErrorClassification::Conflict,
                 PublicError::WorkflowDebugRequestConflict(EmptyErrorParams {}),
