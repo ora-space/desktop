@@ -212,6 +212,10 @@ mod tests {
                     Err(error) => panic!("Git never reached the fixture: {error}"),
                 }
             };
+            // Windows can inherit the listener's nonblocking mode on accepted sockets.
+            socket
+                .set_nonblocking(false)
+                .expect("blocking fixture socket");
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .expect("read timeout");
