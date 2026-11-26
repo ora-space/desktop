@@ -15,8 +15,8 @@
     },
     {
       "category": "important",
-      "zh-CN": "如需回退到旧版本：先退出 Ora Desktop，确认 ora.sqlite3.pre-0025.bak 可以读取；再把数据目录中的 ora.sqlite3 以及存在的 ora.sqlite3-wal、ora.sqlite3-shm 移到其他位置保留，不要删除，升级后的数据只在其中；最后把 ora.sqlite3.pre-0025.bak 复制为 ora.sqlite3，再启动旧版。",
-      "en-US": "To revert to an older release: quit Ora Desktop and confirm that ora.sqlite3.pre-0025.bak can be read; move ora.sqlite3 and any existing ora.sqlite3-wal and ora.sqlite3-shm out of the data directory to a kept location instead of deleting them, because they hold everything written after the upgrade; then copy ora.sqlite3.pre-0025.bak to ora.sqlite3 and launch the older build."
+      "zh-CN": "如需回退到旧版本：先退出 Ora Desktop，确认数据目录中的 ora.sqlite3.pre-0025.bak 存在且大小不为 0；再把数据目录中的 ora.sqlite3 以及存在的 ora.sqlite3-wal、ora.sqlite3-shm 移到其他位置保留，不要删除，升级后的数据只在其中；最后把 ora.sqlite3.pre-0025.bak 复制为 ora.sqlite3，再启动旧版。",
+      "en-US": "To revert to an older release: quit Ora Desktop and confirm that ora.sqlite3.pre-0025.bak in the data directory exists and is not 0 bytes; move ora.sqlite3 and any existing ora.sqlite3-wal and ora.sqlite3-shm out of the data directory to a kept location instead of deleting them, because they hold everything written after the upgrade; then copy ora.sqlite3.pre-0025.bak to ora.sqlite3 and launch the older build."
     },
     {
       "category": "important",
