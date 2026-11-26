@@ -7,7 +7,7 @@ use ora_agent_runtime::{
 };
 use ora_application::{FilesystemSkillStorage, SkillRepository as _, skill_package_is_usable};
 use ora_db::{RepositoryPool, SqliteSkillRepository};
-use ora_domain::{SkillOrigin, WorkspaceId};
+use ora_domain::{Skill, SkillOrigin, WorkspaceId};
 use ora_logging::ora_warn;
 use ora_utils::path::strip_verbatim_prefix;
 use std::collections::BTreeSet;
@@ -44,6 +44,17 @@ impl DesktopSkillCatalog {
     }
 }
 
+/// Where a Skill's package lives, as both the sessions and the settings see it.
+///
+/// Both readers report what they found available as these paths (see `SkillRevision::observed`), so
+/// the same Skills read by either one must give the same set, or each read would count a change.
+pub(crate) fn skill_package_dir(skills_root: &Path, skill: &Skill) -> PathBuf {
+    match &skill.origin {
+        SkillOrigin::Local => skills_root.join(&skill.name),
+        SkillOrigin::Plugin { package_root, .. } => strip_verbatim_prefix(package_root),
+    }
+}
+
 impl SkillCatalogSource for DesktopSkillCatalog {
     fn skill_catalog(
         &self,
@@ -58,10 +69,7 @@ impl SkillCatalogSource for DesktopSkillCatalog {
         let mut entries = Vec::with_capacity(skills.len());
         let mut unreadable_paths = BTreeSet::new();
         for skill in skills {
-            let package_dir = match &skill.origin {
-                SkillOrigin::Local => self.skills_root.join(&skill.name),
-                SkillOrigin::Plugin { package_root, .. } => strip_verbatim_prefix(package_root),
-            };
+            let package_dir = skill_package_dir(&self.skills_root, &skill);
             let skill_md_path = package_dir.join("SKILL.md");
             match skill_package_is_usable(&storage, &skill) {
                 Ok(true) => {
