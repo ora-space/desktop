@@ -425,11 +425,12 @@ impl ConnectionSupervisor {
         self.open_answered_session_channel(agent_session_id, ora_session_id, None)
     }
 
-    /// Opens the channel of a session set up by an answer that skipped its queue, read at
-    /// `answered`.
+    /// Opens the channel of a session set up by an answer carrying options that skipped its queue,
+    /// read at `answered`.
     ///
     /// The session can push options before that answer, while its id is still unknown; such a push
-    /// waits for the channel, yet it was read before the answer and must not replace it.
+    /// waits for the channel, yet it was read before the answer and must not replace it. An answer
+    /// without options replaces nothing, so it sets no `answered`.
     pub(super) fn open_answered_session_channel(
         &self,
         agent_session_id: &str,

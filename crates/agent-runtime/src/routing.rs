@@ -110,7 +110,7 @@ pub(super) struct RouteRegistry {
 struct RouteEntry {
     generation: u64,
     token: u64,
-    /// When the answer that set this session up was read, if it skipped the session's queue.
+    /// When the answer that set this session up with options was read, if it skipped the queue.
     answered: Option<ReadOrder>,
     events: mpsc::Sender<SessionEvent>,
     controls: mpsc::UnboundedSender<SessionControl>,
@@ -127,9 +127,9 @@ impl RouteRegistry {
 
     /// Installs a route token so a stale actor cannot unregister a newer generation.
     ///
-    /// `answered` is when the answer that set the session up was read, for an answer that did not
-    /// come through the session's queue: the options the session pushed before it are dropped,
-    /// because that answer already replaced them.
+    /// `answered` is when the answer that set the session up was read, for an answer carrying
+    /// options that did not come through the session's queue: the options the session pushed before
+    /// it are dropped, because that answer already replaced them.
     pub(super) fn register(
         self: &Arc<Self>,
         session_id: &str,
@@ -274,7 +274,7 @@ impl RouteRegistry {
     }
 }
 
-/// Whether a session's setup answer, read after this update, already replaced the options in it.
+/// Whether a session's setup answer with options, read after this update, already replaced them.
 ///
 /// Only options are replaced by that answer; everything else the session said before it still
 /// holds.
@@ -427,8 +427,20 @@ pub(crate) mod tests {
         let (first_controls, _first_controls_receiver) = mpsc::unbounded_channel();
         let (second_updates, mut second_receiver) = mpsc::channel(1);
         let (second_controls, _second_controls_receiver) = mpsc::unbounded_channel();
-        let _first = routes.register("session-1", 1, first_updates, first_controls, None);
-        let _second = routes.register("session-2", 1, second_updates, second_controls, None);
+        let _first = routes.register(
+            "session-1",
+            1,
+            first_updates,
+            first_controls,
+            /*answered*/ None,
+        );
+        let _second = routes.register(
+            "session-2",
+            1,
+            second_updates,
+            second_controls,
+            /*answered*/ None,
+        );
         let update = SessionNotification::new(
             "session-1",
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("First")),
@@ -456,7 +468,8 @@ pub(crate) mod tests {
         let routes = Arc::new(RouteRegistry::default());
         let (events, mut events_receiver) = mpsc::channel(2);
         let (controls, _controls_receiver) = mpsc::unbounded_channel();
-        let _registration = routes.register("session-1", 1, events, controls, None);
+        let _registration =
+            routes.register("session-1", 1, events, controls, /*answered*/ None);
         let update = SessionNotification::new(
             "session-1",
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
@@ -522,7 +535,8 @@ pub(crate) mod tests {
         let (updates, mut receiver) = mpsc::channel(1);
         let (controls, _controls_receiver) = mpsc::unbounded_channel();
 
-        let _registration = routes.register("new-session", 1, updates, controls, None);
+        let _registration =
+            routes.register("new-session", 1, updates, controls, /*answered*/ None);
         drop(setup);
 
         match receiver.recv().await {
@@ -590,7 +604,13 @@ pub(crate) mod tests {
             let (controls, _controls_receiver) = mpsc::unbounded_channel();
             let register = || {
                 let (updates, controls) = (updates.clone(), controls.clone());
-                routes.register("new-session", 1, updates, controls, Some(answered))
+                routes.register(
+                    "new-session",
+                    1,
+                    updates,
+                    controls,
+                    /*answered*/ Some(answered),
+                )
             };
             let mut registration = None;
             for (routed, (order, update)) in frames.into_iter().enumerate() {
@@ -610,6 +630,40 @@ pub(crate) mod tests {
         }
     }
 
+    /// Another session being set up on the same connection keeps the options it pushed before this
+    /// session was answered: the answer only replaces this session's own.
+    #[test]
+    fn another_session_keeps_options_read_before_this_answer() {
+        let routes = Arc::new(RouteRegistry::default());
+        let setup = routes.begin_session_setup();
+        let (frames, answered) = setup_frames("other");
+        let (order, pushed) = frames[0].clone();
+        assert!(
+            routes
+                .route_read_event(SessionEvent::update(pushed.clone()), order)
+                .is_ok()
+        );
+        let channel = || {
+            let (updates, receiver) = mpsc::channel(8);
+            let (controls, controls_receiver) = mpsc::unbounded_channel();
+            (updates, receiver, controls, controls_receiver)
+        };
+        let (updates, mut answered_receiver, controls, _answered_controls) = channel();
+        let _answered = routes.register(
+            "new-session",
+            1,
+            updates,
+            controls,
+            /*answered*/ Some(answered),
+        );
+        let (updates, mut other_receiver, controls, _other_controls) = channel();
+        let _other = routes.register("other", 1, updates, controls, /*answered*/ None);
+        drop(setup);
+
+        assert_eq!(queued(&mut answered_receiver), Vec::new());
+        assert_eq!(queued(&mut other_receiver), vec![pushed]);
+    }
+
     /// A session set up through its own queue keeps every option it pushed.
     #[test]
     fn options_are_kept_without_a_setup_answer() {
@@ -627,7 +681,8 @@ pub(crate) mod tests {
             let event = SessionEvent::update(update.clone());
             assert!(routes.route_read_event(event, *order).is_ok());
         }
-        let _registration = routes.register("restored", 1, updates, controls, None);
+        let _registration =
+            routes.register("restored", 1, updates, controls, /*answered*/ None);
         for (order, update) in routed {
             let event = SessionEvent::update(update.clone());
             assert!(routes.route_read_event(event, *order).is_ok());
@@ -667,7 +722,8 @@ pub(crate) mod tests {
         let setup = routes.begin_session_setup();
         let (updates, _updates_receiver) = mpsc::channel(1);
         let (controls, _controls_receiver) = mpsc::unbounded_channel();
-        let _registration = routes.register("live-session", 1, updates, controls, None);
+        let _registration =
+            routes.register("live-session", 1, updates, controls, /*answered*/ None);
         let update = SessionNotification::new(
             "live-session",
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
@@ -693,7 +749,8 @@ pub(crate) mod tests {
         let routes = Arc::new(RouteRegistry::default());
         let (updates, _updates_receiver) = mpsc::channel(1);
         let (controls, mut controls_receiver) = mpsc::unbounded_channel();
-        let _registration = routes.register("session-1", 1, updates, controls, None);
+        let _registration =
+            routes.register("session-1", 1, updates, controls, /*answered*/ None);
         let update = SessionNotification::new(
             "session-1",
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
@@ -721,8 +778,8 @@ pub(crate) mod tests {
         let (old_controls, mut old_controls_receiver) = mpsc::unbounded_channel();
         let (new_updates, _new_updates_receiver) = mpsc::channel(1);
         let (new_controls, mut new_controls_receiver) = mpsc::unbounded_channel();
-        let _old = routes.register("old", 1, old_updates, old_controls, None);
-        let _new = routes.register("new", 2, new_updates, new_controls, None);
+        let _old = routes.register("old", 1, old_updates, old_controls, /*answered*/ None);
+        let _new = routes.register("new", 2, new_updates, new_controls, /*answered*/ None);
         let error = super::super::runtime_unavailable_because("connection lost");
 
         routes.fail_generation(1, error.clone());
@@ -749,7 +806,8 @@ pub(crate) mod tests {
         let routes = Arc::new(RouteRegistry::default());
         let (events, mut events_receiver) = mpsc::channel(2);
         let (controls, mut controls_receiver) = mpsc::unbounded_channel();
-        let _registration = routes.register("session-1", 1, events, controls, None);
+        let _registration =
+            routes.register("session-1", 1, events, controls, /*answered*/ None);
         assert!(routes.route_event(SessionEvent::Response(response)).is_ok());
         let error = super::super::runtime_unavailable_because("connection lost");
 

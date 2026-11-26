@@ -26,6 +26,8 @@ enum Intent {
     Absent,
     /// The user asked for none, and the agent pushed model `a` only before answering setup on `b`.
     PushedBeforeAnswer,
+    /// The same, but setup is answered without options at all.
+    PushedBeforeBareAnswer,
 }
 
 /// The conversation that acquires the provider session.
@@ -72,10 +74,20 @@ async fn pushing_agent(
                     Intent::PushedBeforeAnswer => {
                         vec![options("created", "a"), answered, mode("created")]
                     }
+                    Intent::PushedBeforeBareAnswer => {
+                        let bare = answer(json!({"sessionId":"created"}));
+                        vec![options("created", "a"), bare, mode("created")]
+                    }
                     _ => vec![answered, options("created", "b"), mode("created")],
                 }
             }
-            Some("session/load") => vec![answer(json!({"configOptions":model("b")}))],
+            Some("session/load") => match intent {
+                Intent::PushedBeforeBareAnswer => {
+                    let session = frame["params"]["sessionId"].as_str().unwrap();
+                    vec![options(session, "a"), answer(json!({}))]
+                }
+                _ => vec![answer(json!({"configOptions":model("b")}))],
+            },
             Some("session/set_config_option") => match intent {
                 Intent::AppliedLate => {
                     late = vec![answer(json!({"configOptions":model("a")}))];
@@ -99,7 +111,8 @@ async fn pushing_agent(
                 Intent::Applied
                 | Intent::NotOffered
                 | Intent::Absent
-                | Intent::PushedBeforeAnswer => {
+                | Intent::PushedBeforeAnswer
+                | Intent::PushedBeforeBareAnswer => {
                     vec![answer(json!({"configOptions":model("a")}))]
                 }
             },
@@ -130,7 +143,7 @@ async fn views(acquired: Acquired, intent: Intent) -> (Vec<State>, Vec<State>, V
         | Intent::Refused
         | Intent::RefusedAfterPush => Some("a".to_string()),
         Intent::NotOffered => Some("z".to_string()),
-        Intent::Absent | Intent::PushedBeforeAnswer => None,
+        Intent::Absent | Intent::PushedBeforeAnswer | Intent::PushedBeforeBareAnswer => None,
     };
     let mut request_model = None;
     let (session_id, config_options) = match acquired {
@@ -247,6 +260,27 @@ fn a_snapshot_pushed_before_setup_was_answered_does_not_undo_the_answer() {
             );
         });
     }
+}
+
+/// An answer without options replaces none, so the snapshot pushed before it is what the session is
+/// on, whether the answer set the session up or restored it.
+#[test]
+fn a_snapshot_pushed_before_an_answer_without_options_is_kept() {
+    let on = |model: &str| vec![State::Model(model.to_string())];
+    for acquired in [Acquired::Started, Acquired::Switched] {
+        run_case(async move {
+            assert_eq!(
+                views(acquired, Intent::PushedBeforeBareAnswer).await,
+                (on("a"), vec![State::Mode("plan".to_string())], on("a"))
+            );
+        });
+    }
+    run_case(async move {
+        assert_eq!(
+            views(Acquired::Restored, Intent::PushedBeforeBareAnswer).await,
+            (vec![State::NoOptions], on("a"), on("a"))
+        );
+    });
 }
 
 /// A restored session keeps the options it was restored with unless it answered with others.

@@ -385,10 +385,12 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
         agent_session_id: agent_session_id.clone(),
         committed: false,
     };
+    // An answer without options leaves those the agent pushed before it; an empty list does not.
+    let options_answered = response.config_options.is_some().then_some(answered);
     let mut channel = supervisor.open_answered_session_channel(
         &agent_session_id,
         ora_session_id.as_ref(),
-        Some(answered),
+        options_answered,
     )?;
     // Collected on the channel the actor inherits, so the non-command setup updates the agent sent
     // alongside them stay queued on it instead of being discarded with a throwaway registration.
