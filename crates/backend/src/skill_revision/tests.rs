@@ -429,76 +429,99 @@ async fn a_change_invalidates_what_every_agent_offered() {
     }
 }
 
-/// A change whose package already reached the disk when its row could not be written is rolled
-/// back, and counted once: discovery in between may have seen the swapped-in package, or no
-/// package at all, under the revision that would otherwise stay current. Create is not counted,
-/// as discovery only reads packages that have a row.
+/// Fails `change` once its package reached the disk, the row write being refused, and returns how
+/// far that advanced the revision from the last discovery, checking that the next discovery has
+/// that revision and that the package was put back.
+fn advance_of_a_failed_change(change: impl FnOnce(&SkillApi, &str) -> bool) -> u64 {
+    let skills = Skills::new();
+    let api = skills.api();
+    let created = api.create(create("review")).unwrap().skill;
+    let catalog = skills.catalog();
+    let manifest = skills.root().join("review").join("SKILL.md");
+    let content = fs::read(&manifest).unwrap();
+    // Every row write fails from here on, after the package was swapped in or moved aside.
+    rusqlite::Connection::open(skills.directory.path().join("ora.sqlite3"))
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER refuse_updates BEFORE UPDATE ON skills BEGIN SELECT RAISE(ABORT, 'refused'); END;
+             CREATE TRIGGER refuse_inserts BEFORE INSERT ON skills BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .unwrap();
+    catalog
+        .skill_catalog(&WorkspaceId::new("workspace"))
+        .unwrap();
+    let discovered = catalog.revision();
+
+    assert!(change(&api, &created.id), "the change fails");
+    let advanced = skills.advanced_from(discovered);
+    catalog
+        .skill_catalog(&WorkspaceId::new("workspace"))
+        .unwrap();
+    assert_eq!(
+        catalog.revision(),
+        discovered + advanced,
+        "the next discovery"
+    );
+    assert_eq!(fs::read(&manifest).unwrap(), content, "the package is back");
+    assert!(!skills.root().join("audit").exists());
+    advanced
+}
+
+/// Asks for the Skill to be saved under `name`, with `content` if given.
+fn save(skill_id: &str, name: &str, content: Option<&str>) -> UpdateSkillRequest {
+    UpdateSkillRequest {
+        skill_id: skill_id.to_string(),
+        name: name.to_string(),
+        description: "Reviews changes".to_string(),
+        content: content.map(str::to_string),
+    }
+}
+
+/// An edit in place swaps its new package in before the row is written: discovery in between may
+/// have read it under the revision that is current again after the rollback, so that is counted.
 #[test]
-fn a_rollback_after_the_package_reached_the_disk_advances_the_revision() {
+fn an_edit_rolled_back_after_its_swap_advances_the_revision() {
     ora_logging::with_trace_logging(|| {
-        let skills = Skills::new();
-        let api = skills.api();
-        let created = api.create(create("review")).unwrap().skill;
-        let catalog = skills.catalog();
-        let manifest = skills.root().join("review").join("SKILL.md");
-        let content = fs::read(&manifest).unwrap();
-        // Every row write fails from here on, after the package was swapped in or moved aside.
-        rusqlite::Connection::open(skills.directory.path().join("ora.sqlite3"))
-            .unwrap()
-            .execute_batch(
-                "CREATE TRIGGER refuse_updates BEFORE UPDATE ON skills BEGIN SELECT RAISE(ABORT, 'refused'); END;
-                 CREATE TRIGGER refuse_inserts BEFORE INSERT ON skills BEGIN SELECT RAISE(ABORT, 'refused'); END;",
-            )
-            .unwrap();
-        let update = |name: &str, content: Option<&str>| UpdateSkillRequest {
-            skill_id: created.id.clone(),
-            name: name.to_string(),
-            description: "Reviews changes".to_string(),
-            content: content.map(str::to_string),
-        };
-        let failures: [(&str, &dyn Fn() -> bool, u64); 4] = [
-            (
-                "edit in place",
-                &|| {
-                    api.update(update("review", Some("Other instructions")))
-                        .is_err()
-                },
-                1,
-            ),
-            ("rename", &|| api.update(update("audit", None)).is_err(), 1),
-            (
-                "delete",
-                &|| {
-                    api.delete(DeleteSkillRequest {
-                        skill_id: created.id.clone(),
-                    })
-                    .is_err()
-                },
-                1,
-            ),
-            ("create", &|| api.create(create("audit")).is_err(), 0),
-        ];
-        for (change, fails, advanced) in failures {
-            catalog
-                .skill_catalog(&WorkspaceId::new("workspace"))
-                .unwrap();
-            let discovered = catalog.revision();
-            assert!(fails(), "{change}");
-            assert_eq!(skills.advanced_from(discovered), advanced, "{change}");
-            catalog
-                .skill_catalog(&WorkspaceId::new("workspace"))
-                .unwrap();
-            assert_eq!(
-                catalog.revision() == discovered,
-                advanced == 0,
-                "{change}: the next discovery's revision"
-            );
-            assert_eq!(
-                fs::read(&manifest).unwrap(),
-                content,
-                "{change}: the package is back"
-            );
-            assert!(!skills.root().join("audit").exists(), "{change}");
-        }
+        let advanced = advance_of_a_failed_change(|api, id| {
+            api.update(save(id, "review", Some("Other instructions")))
+                .is_err()
+        });
+        assert_eq!(advanced, 1);
+    });
+}
+
+/// A rename moves the package to its new name before the row is written, so its rollback is
+/// counted too.
+#[test]
+fn a_rename_rolled_back_after_its_swap_advances_the_revision() {
+    ora_logging::with_trace_logging(|| {
+        let advanced =
+            advance_of_a_failed_change(|api, id| api.update(save(id, "audit", None)).is_err());
+        assert_eq!(advanced, 1);
+    });
+}
+
+/// A delete moves the package aside before the row is written: discovery in between may have
+/// found the Skill missing, so its rollback is counted.
+#[test]
+fn a_delete_rolled_back_after_its_move_advances_the_revision() {
+    ora_logging::with_trace_logging(|| {
+        let advanced = advance_of_a_failed_change(|api, id| {
+            api.delete(DeleteSkillRequest {
+                skill_id: id.to_string(),
+            })
+            .is_err()
+        });
+        assert_eq!(advanced, 1);
+    });
+}
+
+/// A create whose row is refused is not counted: discovery only reads packages that have a row, so
+/// nobody saw the package it removes again.
+#[test]
+fn a_create_rolled_back_leaves_the_revision_alone() {
+    ora_logging::with_trace_logging(|| {
+        let advanced = advance_of_a_failed_change(|api, _| api.create(create("audit")).is_err());
+        assert_eq!(advanced, 0);
     });
 }
