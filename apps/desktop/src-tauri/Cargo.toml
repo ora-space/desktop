@@ -37,6 +37,7 @@ tauri = { version = "2.11.5", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2.10.1"
+updater-http = { package = "reqwest", version = "0.13.4", default-features = false, features = ["socks"] }
 ora-application = { path = "../../../crates/application" }
 ora-backend = { path = "../../../crates/backend" }
 ora-contracts = { path = "../../../crates/contracts" }
@@ -53,7 +54,7 @@ ora-runtime-settings = { path = "../../../crates/runtime-settings" }
 ora-scheduler = { path = "../../../crates/scheduler" }
 ora-surface = { path = "../../../crates/surface" }
 semver = { workspace = true }
-ora-utils = { path = "../../../crates/utils", features = ["http-reqwest"] }
+ora-utils = { path = "../../../crates/utils", features = ["desktop-proxy", "http-reqwest"] }
 reqwest = { workspace = true, features = ["json"] }
 sha2 = { workspace = true }
 tempfile = "3"
