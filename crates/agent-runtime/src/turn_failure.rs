@@ -43,11 +43,12 @@ fn is_format_char(c: char) -> bool {
 /// cut at the byte limit. `None` text means it cleaned to nothing and must be omitted.
 pub(crate) fn sanitize_agent_text(primary: &str, data: &Option<Value>) -> Option<(String, bool)> {
     let mut text = primary.to_string();
-    if let Some(supplement) = data_supplement_text(data) {
-        if !supplement.is_empty() && supplement != primary {
-            text.push_str(": ");
-            text.push_str(&supplement);
-        }
+    if let Some(supplement) = data_supplement_text(data)
+        && !supplement.is_empty()
+        && supplement != primary
+    {
+        text.push_str(": ");
+        text.push_str(supplement);
     }
     let cleaned: String = text
         .chars()

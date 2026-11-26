@@ -146,11 +146,11 @@ fn last_failed_turn(
         {
             continue;
         }
-        if !thread
+        if thread
             .payload
             .record
             .get("failure")
-            .is_some_and(|failure| !failure.is_null())
+            .is_none_or(serde_json::Value::is_null)
         {
             continue;
         }
