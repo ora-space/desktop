@@ -89,11 +89,13 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   - **Downgrade recovery**: upgrading past `0025` cannot be downgraded in place, and
     `ora.sqlite3.pre-0025.bak` holds only the pre-upgrade state: everything written after the
     upgrade exists only in the current `ora.sqlite3`. To return to an older Desktop release,
-    quit Ora Desktop, confirm that `ora.sqlite3.pre-0025.bak` is readable (for example,
-    `sqlite3 ora.sqlite3.pre-0025.bak "PRAGMA integrity_check;"` prints `ok`), move
-    `ora.sqlite3` and any existing `ora.sqlite3-wal` and `ora.sqlite3-shm` out of the data
-    directory to a kept location instead of deleting them, copy `ora.sqlite3.pre-0025.bak` to
-    `ora.sqlite3`, and launch the older build.
+    quit Ora Desktop and verify that `ora.sqlite3.pre-0025.bak` exists and is non-empty. Check
+    it with `sqlite3 -readonly ora.sqlite3.pre-0025.bak "PRAGMA integrity_check;"`, which fails
+    instead of creating the file when the backup is missing; stop here without moving the
+    current database unless it prints only `ok` (a zero-byte file also prints `ok`, hence the
+    size check). Otherwise move `ora.sqlite3` and any existing `ora.sqlite3-wal` and
+    `ora.sqlite3-shm` out of the data directory to a kept location instead of deleting them,
+    copy `ora.sqlite3.pre-0025.bak` to `ora.sqlite3`, and launch the older build.
   - **Frozen SQL text**: `0025`'s `up_sql` and `down_sql` are frozen once merged (see below).
 
 ## Application bootstrap
