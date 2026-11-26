@@ -192,6 +192,46 @@ fn a_change_that_does_not_take_effect_leaves_the_revision_alone() {
     });
 }
 
+/// A created Skill is counted once its row is written, so nobody told about it can miss it, and not
+/// at all when the write fails.
+#[test]
+fn a_create_is_counted_once_it_is_written() {
+    ora_logging::with_trace_logging(|| {
+        let skills = Skills::new();
+        let rows = SqliteSkillRepository::new(skills.pool.clone());
+        let revision = SkillRevision::default();
+        let written_when_told = Arc::new(std::sync::Mutex::new(Vec::new()));
+        revision.announce_with({
+            let rows = rows.clone();
+            let written_when_told = written_when_told.clone();
+            move || {
+                let written = rows
+                    .find_skill_by_name(&Namespace::local(), "review")
+                    .unwrap()
+                    .is_some();
+                written_when_told.lock().unwrap().push(written);
+            }
+        });
+        let repository = CountedSkillRepository::new(rows, revision.clone());
+        let skill = Skill::new(
+            SkillId::new("review"),
+            Namespace::local(),
+            "review",
+            "Reviews changes",
+            AuditFields::new(1, 1, /*is_deleted*/ false),
+        )
+        .unwrap();
+
+        repository.create_skill(skill.clone()).unwrap();
+        let created = revision.current();
+        // The same row again, which the database refuses.
+        assert!(repository.create_skill(skill).is_err());
+
+        assert_eq!(revision.current(), created);
+        assert_eq!(*written_when_told.lock().unwrap(), vec![true]);
+    });
+}
+
 /// An import is committed Skill by Skill.
 #[test]
 fn an_import_advances_the_revision() {

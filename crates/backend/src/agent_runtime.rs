@@ -62,6 +62,12 @@ impl AgentRuntime {
         }
     }
 
+    /// Reports the Skill revision a discovery would be given now.
+    #[cfg(test)]
+    pub(crate) fn skill_revision(&self) -> u64 {
+        self.inner.skill_revision()
+    }
+
     /// Reports whether each application-scoped CLI runtime is ready, starting, or unavailable.
     pub fn status(
         &self,

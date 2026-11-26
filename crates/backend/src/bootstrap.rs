@@ -468,6 +468,34 @@ mod tests {
         });
     }
 
+    /// The runtime discovers with the revision the code that changes the Skills advances.
+    #[test]
+    fn discovery_counts_the_skill_changes_the_settings_commit() {
+        ora_logging::with_trace_logging(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(async {
+                    let temporary = TempDir::new().expect("create temporary backend directory");
+                    let backend = Backend::open(backend_paths(temporary.path(), temporary.path()))
+                        .expect("open backend");
+                    let before = backend.agent_runtime().skill_revision();
+
+                    backend
+                        .skills()
+                        .create(CreateSkillRequest {
+                            name: "review".to_string(),
+                            description: "Review changes".to_string(),
+                            content: None,
+                        })
+                        .expect("create skill");
+
+                    assert_ne!(backend.agent_runtime().skill_revision(), before);
+                });
+        });
+    }
+
     /// Verifies the shared composition owns storage bootstrap and complete non-Git CRUD flows.
     #[test]
     fn opens_storage_and_serves_shared_crud_apis() {
