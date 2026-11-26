@@ -1676,6 +1676,29 @@ fn default_policy_exhausts_three_retries() {
             &ora_contracts::PublicError::AgentTimedOut(ora_contracts::EmptyErrorParams {})
         );
         assert!(fixture.frames.try_recv().is_err());
+        // The schedule is exhausted, so the turn records `no_progress` with all four attempts and
+        // three retry markers, and the final unanswered cancel as the answer (case 5).
+        let history =
+            ora_history::read_session_history(&fixture._directory.path().join("sessions"), "default")
+                .unwrap();
+        let (retries, failure) = history
+            .lines
+            .into_iter()
+            .fold((0, None), |(retries, failure), line| match line.record {
+                ora_history::HistoryRecord::PromptRetried => (retries + 1, failure),
+                ora_history::HistoryRecord::TurnEnded { failure: f, .. } => {
+                    (retries, f.or(failure))
+                }
+                _ => (retries, failure),
+            });
+        assert_eq!(retries, 3);
+        let failure = failure.expect("the failed turn records its reason");
+        assert_eq!(failure.code, ora_history::TurnFailureCode::NoProgress);
+        assert_eq!(failure.attempts, Some(4));
+        assert_eq!(
+            failure.answer,
+            Some(ora_history::TurnFailureAnswer::Cancelled)
+        );
         fixture.shutdown().await;
     });
 }
