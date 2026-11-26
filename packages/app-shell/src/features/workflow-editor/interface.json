@@ -5,8 +5,7 @@
       "exports": [
         "RunNodeConfigForm",
         "RunNodeConfigFormProps",
-        "RunNodeConfig",
-        "RunNodeConfigEdit"
+        "RunNodeConfig"
       ],
       "purpose": "The run view edits execution-scoped configuration and receives validated changes for preview."
     },
