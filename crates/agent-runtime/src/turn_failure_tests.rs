@@ -4,7 +4,7 @@
 //! Evidence for specs/test-cases/node/protocol/turn-failure-reason.md cases 1, 3, 4, 5 and 6.
 use crate::prompt_retry::no_progress_from_settled;
 use crate::turn_failure::{acp_failure, no_progress_failure, sanitize_agent_text};
-use agent_client_protocol_schema::v1::{PromptResponse, StopReason};
+use agent_client_protocol_schema::v1::PromptResponse;
 use ora_acp::{AcpError, AcpRequestError};
 use ora_history::{TurnFailureAnswer, TurnFailureCode};
 use pretty_assertions::assert_eq;
