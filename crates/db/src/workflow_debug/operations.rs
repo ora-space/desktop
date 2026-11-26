@@ -18,7 +18,7 @@ impl WorkflowDebugStore {
     /// Checks an existing idempotency key before the read set, including after a lost response.
     pub fn claim(&self, request: &CommitWorkflowDebugRequest) -> Result<DebugClaim, DatabaseError> {
         if request.request_id.trim().is_empty() {
-            return Err(DebugRejection::RequestConflict.into());
+            return Err(DebugRejection::EmptyRequestId.into());
         }
         self.pool.with_connection_mut(|db| {
             let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -158,7 +158,9 @@ impl WorkflowDebugStore {
         self.pool.with_connection(|db| {
             Ok(db.execute(
                 "UPDATE workflow_debug_operations SET state='stop_failed',failure=?3,unsettled_attempts=?4
-            WHERE run_id=?1 AND request_id=?2 AND state='stopping'",
+            WHERE run_id=?1 AND request_id=?2 AND state='stopping'
+            AND NOT EXISTS(SELECT 1 FROM json_each(?4) ids WHERE NOT EXISTS(
+                SELECT 1 FROM workflow_node_runs n WHERE n.id=ids.value AND n.run_id=?1))",
                 params![run, request, reason, serde_json::to_string(&unsettled)?],
             )? == 1)
         })

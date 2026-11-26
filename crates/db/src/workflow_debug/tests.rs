@@ -6,6 +6,180 @@ use serde_json::json;
 
 #[path = "pending_tests.rs"]
 mod pending_tests;
+#[path = "storage_measurement.rs"]
+mod storage_measurement;
+
+/// Backoff is a real attempt with its own entry, but no invented dispatch. The timer racing
+/// confirmation invalidates the receipt even though the physical attempt ID does not change.
+#[test]
+fn waiting_retry_uses_its_predecessor_until_the_timer_starts_it() {
+    use ora_application::{
+        NodeFailure, NodeFailureKind, NodeRetryToSchedule, WorkflowRetryRepository,
+    };
+    let (_temp, _, store) = fixture();
+    let input =
+        json!({"variablePool":WorkflowVariablePool::default(), "prompt":"original dispatch"});
+    assert!(store.record_agent_dispatch("F", "t3", &input).unwrap());
+    assert!(!store.record_agent_dispatch("F", "t3", &json!({})).unwrap());
+    let repo = crate::SqliteWorkflowRunEngineRepository::new(store.pool.clone());
+    let waiting = ora_domain::WorkflowNodeRunId::new("retry");
+    repo.schedule_node_retry(
+        &ora_domain::WorkflowNodeRunId::new("t3"),
+        &NodeFailure::new(NodeFailureKind::Session, "retry"),
+        &NodeRetryToSchedule {
+            node_run_id: waiting.clone(),
+            retry: 1,
+            max_retries: 1,
+            delay_ms: 20,
+            due_at: 30,
+        },
+        10,
+    )
+    .unwrap();
+    let mut request = edit("corrected", 0);
+    request.selection = WorkflowDebugSelection::NodeRunId(waiting.to_string());
+    let p = store
+        .preview(&request, |i| {
+            assert_eq!(i.dispatch.as_ref(), Some(&input));
+            assert_eq!(i.target.node_run_id.as_deref(), Some("retry"));
+            assert_eq!(i.entry["scopeId"], "root:F");
+            impact(i)
+        })
+        .unwrap();
+    assert!(
+        !store
+            .attempt(&GetWorkflowDebugAttemptRequest {
+                run_id: "F".into(),
+                node_run_id: waiting.to_string()
+            })
+            .unwrap()
+            .input_recorded
+    );
+    assert_eq!(p.input_source_node_run_id.as_deref(), Some("t3"));
+    repo.begin_node_retry(&waiting, 30).unwrap();
+    assert!(matches!(
+        store.claim(&CommitWorkflowDebugRequest {
+            run_id: "F".into(),
+            preview_id: p.preview_id,
+            request_id: "confirm".into()
+        }),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::StalePreview))
+    ));
+    assert!(store.preview(&request, impact).is_err());
+    // This retry failed before recording a dispatch. The next wait can prove its input from t3.
+    let second = ora_domain::WorkflowNodeRunId::new("second");
+    repo.schedule_node_retry(
+        &waiting,
+        &NodeFailure::new(NodeFailureKind::Session, "startup"),
+        &NodeRetryToSchedule {
+            node_run_id: second.clone(),
+            retry: 2,
+            max_retries: 2,
+            delay_ms: 20,
+            due_at: 60,
+        },
+        40,
+    )
+    .unwrap();
+    request.selection = WorkflowDebugSelection::NodeRunId(second.to_string());
+    assert_eq!(
+        store
+            .preview(&request, impact)
+            .unwrap()
+            .input_source_node_run_id
+            .as_deref(),
+        Some("t3")
+    );
+    for invalid in [
+        "revision=1",
+        "container_attempt='retry'",
+        "snapshot_id='other-snapshot'",
+    ] {
+        store.pool.with_connection(|db| {
+            db.execute("INSERT OR IGNORE INTO workflow_snapshots(id,workflow_id,version,graph,created_at) SELECT 'other-snapshot',workflow_id,'2',graph,1 FROM workflow_snapshots WHERE id='snap'", [])?;
+            db.execute(&format!("UPDATE workflow_debug_attempts SET {invalid} WHERE node_run_id='t3'"), [])?;
+            Ok(())
+        }).unwrap();
+        assert!(matches!(
+            store.preview(&request, impact),
+            Err(DatabaseError::WorkflowDebug(
+                DebugRejection::MissingInputEvidence
+            ))
+        ));
+        store.pool.with_connection(|db| {
+            db.execute("UPDATE workflow_debug_attempts SET revision=0,container_attempt=NULL,snapshot_id='snap' WHERE node_run_id='t3'", [])?;
+            Ok(())
+        }).unwrap();
+    }
+    store.pool.with_connection(|db| {
+        db.execute("INSERT INTO workflow_node_runs(id,run_id,scope_id,node_id,node_type,status,created_at,updated_at) VALUES('loop','F','root:F','loop','loop',1,1,1)", [])?;
+        db.execute("INSERT INTO workflow_execution_scopes(id,run_id,parent_loop_node_run_id,round_index,status,state,created_at,updated_at) VALUES ('different-scope','F','loop',1,1,'{}',1,1)", [])?;
+        Ok(())
+    }).unwrap();
+    // Each recorded candidate differs from the waiting attempt in exactly one coordinate.
+    for (id, node, scope, index) in [
+        ("wrong-node", "different-node", "root:F", None),
+        ("wrong-scope", "agent", "different-scope", None),
+        ("wrong-index", "agent", "root:F", Some(0)),
+    ] {
+        store.pool.with_connection(|db| {
+            db.execute("INSERT INTO workflow_node_runs(id,run_id,scope_id,node_id,node_type,iteration,status,is_deleted,created_at,updated_at) VALUES(?1,'F',?2,?3,'agent',?4,3,1,1,1)",params![id,scope,node,index])?;
+            db.execute("UPDATE workflow_debug_attempts SET dispatch_input=?2,container_attempt=NULL WHERE node_run_id=?1",params![id,input.to_string()])?;
+            db.execute("UPDATE workflow_node_runs SET payload=json_set(payload,'$.retry_chain',json_array(?1),'$.retry_wait.previous_node_run_id',?1) WHERE id='second'",[id])?;
+            Ok(())
+        }).unwrap();
+        assert!(
+            matches!(
+                store.preview(&request, impact),
+                Err(DatabaseError::WorkflowDebug(
+                    DebugRejection::MissingInputEvidence
+                ))
+            ),
+            "{id}"
+        );
+    }
+    store.pool.with_connection(|db| {
+        db.execute("UPDATE workflow_node_runs SET payload=json_set(payload,'$.retry_chain',json_array('t3','retry'),'$.retry_wait.previous_node_run_id','retry') WHERE id='second'",[])?;
+        Ok(())
+    }).unwrap();
+    repo.begin_node_retry(&second, 60).unwrap();
+    let recent =
+        json!({"variablePool":WorkflowVariablePool::default(), "prompt":"more recent dispatch"});
+    assert!(store.record_agent_dispatch("F", "second", &recent).unwrap());
+    let third = ora_domain::WorkflowNodeRunId::new("third");
+    repo.schedule_node_retry(
+        &second,
+        &NodeFailure::new(NodeFailureKind::Session, "retry"),
+        &NodeRetryToSchedule {
+            node_run_id: third.clone(),
+            retry: 3,
+            max_retries: 3,
+            delay_ms: 20,
+            due_at: 90,
+        },
+        70,
+    )
+    .unwrap();
+    request.selection = WorkflowDebugSelection::NodeRunId(third.to_string());
+    let preview = store
+        .preview(&request, |planning| {
+            assert_eq!(planning.dispatch.as_ref(), Some(&recent));
+            impact(planning)
+        })
+        .unwrap();
+    assert_eq!(preview.input_source_node_run_id.as_deref(), Some("second"));
+    // An incompatible newer dispatch closes the search even though t3 still matches.
+    store.pool.with_connection(|db| {
+        db.execute("UPDATE workflow_debug_attempts SET container_attempt='loop' WHERE node_run_id='second'", [])?;
+        Ok(())
+    }).unwrap();
+    assert!(matches!(
+        store.preview(&request, impact),
+        Err(DatabaseError::WorkflowDebug(
+            DebugRejection::MissingInputEvidence
+        ))
+    ));
+}
 
 /// Seeds a real migrated database with two runs of the same published definition.
 fn fixture() -> (tempfile::TempDir, DatabaseLocation, WorkflowDebugStore) {
@@ -51,6 +225,79 @@ fn edit(value: &str, revision: u32) -> PreviewWorkflowDebugRequest {
         {"op":"replace","path":"/agentConfig/prompt","value":value}]}),
     )
     .unwrap()
+}
+
+/// Admission and apply must independently reject a stale or unavailable target.
+#[test]
+fn invalid_run_or_replaced_attempt_cannot_apply() {
+    let (_temp, _, store) = fixture();
+    store
+        .record_agent_dispatch(
+            "F",
+            "t3",
+            &json!({"variablePool":WorkflowVariablePool::default()}),
+        )
+        .unwrap();
+    let p = store.preview(&edit("new", 0), impact).unwrap();
+    let mut request = CommitWorkflowDebugRequest {
+        run_id: "F".into(),
+        preview_id: p.preview_id,
+        request_id: "  ".into(),
+    };
+    assert!(matches!(
+        store.claim(&request),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::EmptyRequestId))
+    ));
+    request.request_id = "k".into();
+    store.claim(&request).unwrap();
+    store
+        .pool
+        .with_connection(|db| {
+            db.execute(
+                "UPDATE workflow_node_runs SET is_deleted=1 WHERE id='t3'",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(matches!(
+        store.apply_after_stop("F", "k", 4, |_, _| panic!("stale settlement")),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::StalePreview))
+    ));
+    assert_eq!(
+        store.history("F").unwrap()[0].operation.phase,
+        WorkflowDebugPhase::Stopping
+    );
+    let mut other = edit("test", 0);
+    other.run_id = "other".into();
+    other.selection = WorkflowDebugSelection::NodeRunId("other-agent".into());
+    store
+        .pool
+        .with_connection(|db| insert_attempt(db, "other-agent", "agent", "agent", None))
+        .unwrap();
+    store
+        .record_agent_dispatch(
+            "other",
+            "other-agent",
+            &json!({"variablePool":WorkflowVariablePool::default()}),
+        )
+        .unwrap();
+    for (status, deleted) in [(0, 0), (1, 1)] {
+        store
+            .pool
+            .with_connection(|db| {
+                db.execute(
+                    "UPDATE workflow_runs SET run_status=?1,is_deleted=?2 WHERE id='other'",
+                    params![status, deleted],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(matches!(
+            store.preview(&other, impact),
+            Err(DatabaseError::WorkflowDebug(DebugRejection::InvalidTarget))
+        ));
+    }
 }
 
 /// Replays a lost response after reopening and checks CAS, rollback and request isolation.
@@ -337,6 +584,24 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
         "{{#iter.item#}}"
     );
     assert_eq!(attempt("f1").revision, Some(0));
+    store
+        .pool
+        .with_connection(|db| {
+            db.execute(
+                "UPDATE workflow_node_runs SET is_deleted=1 WHERE id='f1'",
+                [],
+            )?;
+            insert_attempt(db, "prefix-again", "agent", "agent", Some(1))
+        })
+        .unwrap();
+    let prefix = attempt("prefix-again");
+    assert_eq!(
+        (
+            prefix.revision,
+            prefix.configuration.unwrap()["agentConfig"]["prompt"].clone()
+        ),
+        (Some(1), json!("{{#iter.item#}}"))
+    );
     assert_eq!(
         attempt("new3").configuration.unwrap()["agentConfig"]["prompt"],
         json!("new-{{#iter.item#}}")
@@ -383,6 +648,20 @@ fn double_click_has_one_owner_and_failed_stop_stays_fenced() {
         );
     });
     let unsettled = [ora_domain::WorkflowNodeRunId::new("t3")];
+    store
+        .pool
+        .with_connection(|db| insert_attempt(db, "other-agent", "agent", "agent", None))
+        .unwrap();
+    assert!(
+        !store
+            .record_stop_failure(
+                "F",
+                "key",
+                "wrong run",
+                &[ora_domain::WorkflowNodeRunId::new("other-agent")]
+            )
+            .unwrap()
+    );
     assert!(
         store
             .record_stop_failure("F", "key", "still running", &unsettled)
@@ -686,16 +965,30 @@ fn condition_preview_uses_the_observed_input_and_preserves_the_old_decision() {
         .with_connection(|db| {
             bind_graph(db, graph)?;
             insert_attempt(db, "c1", "condition", "condition", /*index*/ None)?;
-            let mut pool = WorkflowVariablePool::default();
-            pool.declare("start.flag", "boolean", "start");
-            pool.set("start.flag", "start", json!(true)).unwrap();
-            db.execute(
-                "UPDATE workflow_node_runs SET status=2,payload=?1 WHERE id='c1'",
-                [json!({"debugCondition":{"branch":"A","variablePool":pool}}).to_string()],
-            )?;
             Ok(())
         })
         .unwrap();
+    let mut pool = WorkflowVariablePool::default();
+    pool.declare("start.flag", "boolean", "start");
+    pool.set("start.flag", "start", json!(true)).unwrap();
+    crate::SqliteWorkflowRunEngineRepository::new(store.pool.clone())
+        .complete_node(
+            &ora_domain::WorkflowNodeRunId::new("c1"),
+            Some("A".into()),
+            None,
+            None,
+            vec![],
+            Some(&json!({"debugCondition":{"branch":"A","variablePool":pool}})),
+            2,
+        )
+        .unwrap();
+    store.pool.with_connection(|db| {
+        let payload: String = db.query_row("SELECT payload FROM workflow_node_runs WHERE id='c1'",[],|r|r.get(0))?;
+        assert_eq!(serde_json::from_str::<Value>(&payload)?["debugCondition"],json!({"branch":"A"}));
+        let packed: bool = db.query_row("SELECT json_type(body,'$.variablePool.values') IS NULL AND refs <> '{}' FROM workflow_debug_documents WHERE node_run_id='c1' AND kind='condition'",[],|r|r.get(0))?;
+        assert!(packed);
+        Ok(())
+    }).unwrap();
     let mut request: PreviewWorkflowDebugRequest =
         serde_json::from_value(json!({"runId":"other","nodeRunId":"c1","baseRevision":0,
         "patch":[{"op":"replace","path":"/cases/0/conditions/0/value","value":false}]}))
@@ -1039,9 +1332,11 @@ fn iteration_source_must_name_a_root_array_variable() {
     let (_temp, _path, store) = fixture();
     let graph = json!({"nodes":[
         {"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
+        {"id":"prior","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["worker","output"]}}},
+        {"id":"worker","parentId":"prior","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"prior"}}},
         {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["agent","output"]}}},
         {"id":"agent","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"cli","modelId":"m"},"prompt":"old"}}}],
-        "edges":[{"source":"start","target":"iter"},{"source":"iter","target":"agent"}]});
+        "edges":[{"source":"start","target":"prior"},{"source":"prior","target":"worker"},{"source":"prior","target":"iter"},{"source":"iter","target":"agent"}]});
     let mut payload = ora_application::WorkflowRunPayload::default();
     payload
         .variable_pool
@@ -1054,9 +1349,17 @@ fn iteration_source_must_name_a_root_array_variable() {
         .pool
         .with_connection(|db| {
             bind_graph(db, graph)?;
+            insert_attempt(db, "first", "prior", "iteration", None)?;
+            db.execute(
+                "UPDATE workflow_node_runs SET status=2 WHERE id='first'",
+                [],
+            )?;
+            let mut state = serde_json::to_value(&payload)?;
+            state["iterationLedger"] =
+                json!({"prior":{"0":{"status":"succeeded","item":"a","output":"done"}}});
             db.execute(
                 "UPDATE workflow_runs SET payload=?1 WHERE id='other'",
-                [serde_json::to_string(&payload)?],
+                [state.to_string()],
             )?;
             insert_attempt(db, "it", "iter", "iteration", None)
         })

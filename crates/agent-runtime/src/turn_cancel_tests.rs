@@ -244,6 +244,7 @@ fn a_catalog_ahead_of_an_already_queued_answer_is_kept() {
             rebuilt_binding: None,
             load_restoration: Default::default(),
             reported_config_options: Vec::new(),
+            direct_config_changes: Vec::new(),
             commands_exceed_limit: false,
             scheduler: inner.scheduler.clone(),
             events: inner.events.clone(),

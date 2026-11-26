@@ -230,3 +230,6 @@ unnecessary_lazy_evaluations = "deny"
 unnecessary_sort_by = "deny"
 unnecessary_to_owned = "deny"
 unwrap_used = "deny"
+
+[profile.dev.package.sha2]
+opt-level = 3

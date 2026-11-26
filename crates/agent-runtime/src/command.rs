@@ -1,16 +1,27 @@
 //! Commands serialize session operations while retaining each prompt's admission policy.
 
 use crate::RuntimeError;
+use crate::config_changes::ConfigChangeRoute;
 use crate::end_cause::PromptEndReport;
 use crate::prompt::RecordedTurn;
 use crate::title_acquisition::PollAttempt;
-use agent_client_protocol_schema::v1::{ContentBlock, SessionConfigOption, SessionUpdate};
+use agent_client_protocol_schema::v1::{
+    ContentBlock, SessionConfigId, SessionConfigOptionValue, SessionUpdate,
+};
 use ora_contracts::{
     LoadSessionEvent, PromptSessionEvent, RespondToPermissionRequest, RespondToPermissionResponse,
     StopSessionResponse,
 };
 use ora_domain::{PromptInactivityPolicy, SessionTitle};
 use tokio::sync::{mpsc, oneshot};
+
+/// One option a session's provider is to be asked for.
+pub(crate) struct ConfigChangeRequest {
+    pub(crate) config_id: SessionConfigId,
+    pub(crate) value: SessionConfigOptionValue,
+    /// Told how the change is on its way once the actor has asked.
+    pub(crate) accepted: oneshot::Sender<Result<ConfigChangeRoute, RuntimeError>>,
+}
 
 /// Carries one owned operation or lifecycle observation to the session's serialized actor.
 pub(crate) enum RuntimeCommand {
@@ -50,26 +61,13 @@ pub(crate) enum RuntimeCommand {
         operation_id: u64,
         completion: Option<oneshot::Sender<Result<(), RuntimeError>>>,
     },
-    /// A caller outside the actor is about to address this session's provider directly.
+    /// Asks this session's provider for one option.
     ///
-    /// Answers with the provider session it must address. That is not always the binding in the
-    /// row: a session rebuilt to replace one that could not be restored is only persisted once the
-    /// prompt carrying the transcript is accepted, so until then the actor is the only holder of
-    /// the identity the agent actually answers to. Standing down title polling comes with it,
-    /// because the reply is the point at which the caller starts using that identity.
-    ClaimDirectProviderCall {
-        response: oneshot::Sender<String>,
-    },
-    /// The provider answered a direct configuration call with its options after the change.
-    ///
-    /// Some agents say so nowhere else. The answer is for one provider session, which may have been
-    /// replaced while it was on its way. Replies with what a load answers with from here on, which
-    /// is then the replacement's options rather than that answer.
-    AdoptConfigOptions {
-        agent_session_id: String,
-        config_options: Vec<SessionConfigOption>,
-        response: oneshot::Sender<Vec<SessionConfigOption>>,
-    },
+    /// The actor asks rather than its caller, so that the answer arrives among the session's other
+    /// frames and is addressed to the provider session it is talking to right now. That is not always
+    /// the binding in the row: a session rebuilt to replace one that could not be restored is only
+    /// persisted once the prompt carrying the transcript is accepted. Title polling stands down.
+    ChangeConfig(ConfigChangeRequest),
     AdoptUserTitle {
         title: SessionTitle,
         response: oneshot::Sender<()>,

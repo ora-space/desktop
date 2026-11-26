@@ -12,6 +12,7 @@ type Evidence = (
     Option<String>,
     String,
     String,
+    Option<String>,
 );
 
 pub(super) fn resolve(
@@ -109,7 +110,7 @@ pub(super) fn resolve(
             .ok_or(DebugRejection::InvalidTarget)?;
         let frozen: Option<String> = db
             .query_row(
-                "SELECT json_extract(entry_state,'$.runPayload') FROM workflow_debug_attempts
+                "SELECT json_extract(workflow_debug_entries.entry_state,'$.runPayload') FROM workflow_debug_entries JOIN workflow_debug_attempts USING(node_run_id)
              WHERE node_run_id=?1 AND snapshot_id=?2",
                 params![id, snapshot],
                 |r| r.get(0),
@@ -165,7 +166,7 @@ pub(super) fn resolve(
     };
     if ready != ProjectedNodeState::Ready {
         return Err(missing(&format!(
-            "{} in {} is {ready:?}; prerequisites: {:?}",
+            "{} in {} is not ready for first dispatch; prerequisites: {}",
             pos.node_id,
             pos.scope_id,
             graph
@@ -176,7 +177,9 @@ pub(super) fn resolve(
                     .predecessors(&pos.node_id)
                     .into_iter()
                     .map(|n| &n.id)
-                    .collect::<Vec<_>>())
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", "))
                 .unwrap_or_default()
         ))
         .into());
@@ -227,5 +230,6 @@ pub(super) fn resolve(
         Some(json!({"variablePool":pool}).to_string()),
         kind.into(),
         raw,
+        None,
     ))
 }

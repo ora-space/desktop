@@ -138,4 +138,6 @@ The prototype catalog describes only the current schema. It does not carry migra
 
 Rolling back `0006` removes only Generic Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, and Git lifecycle schemas intact.
 
+Migration `0026` records evidence for new workflow attempts and run-local debug operations. Downgrading removes these records; upgrading does not infer historical inputs. Connections that insert node runs or write debug evidence must register the `ora_debug_hash` SQL function as the application does. A stock `sqlite3` connection cannot perform those writes.
+
 See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/core/persistence.md).

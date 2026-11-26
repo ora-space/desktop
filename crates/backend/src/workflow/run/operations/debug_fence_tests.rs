@@ -150,6 +150,50 @@ async fn restart_reports_an_active_debug_operation_and_changes_nothing() {
     );
 }
 
+/// A real checkpoint could restore an edited file; the fence must win before that Git operation.
+#[tokio::test]
+async fn fenced_checkpoint_resume_preserves_files_and_admits_no_attempts() {
+    let fixture = Fixture::open();
+    let root = crate::workflow::run::test_fixture::init_git_workspace(&fixture._temporary);
+    let id = fixture.cancelled_run().await;
+    let detail = || {
+        fixture
+            .runs
+            .get(GetWorkflowRunRequest { run_id: id.clone() })
+            .unwrap()
+    };
+    let agent = detail()
+        .nodes
+        .into_iter()
+        .find(|n| n.node_id == "agent")
+        .unwrap();
+    super::super::checkpoint::record_pre_node_checkpoint(
+        &ora_db::SqliteWorkflowRunEngineRepository::new(fixture.runs.pool.clone()),
+        &root,
+        &ora_domain::WorkflowRunId::new(&id),
+        "agent",
+        &ora_domain::WorkflowNodeRunId::new(agent.id),
+        &fixture.seeded.snapshot_id,
+        95,
+    )
+    .unwrap();
+    let file = root.join("README.md");
+    std::fs::write(&file, "manual edit").unwrap();
+    fixture.stopping_confirmation(&id);
+    let before = detail();
+    let err = fixture
+        .runs
+        .resume_from_failure(ora_contracts::ResumeWorkflowRunRequest {
+            run_id: id.clone(),
+            rollback: Some(ora_contracts::ResumeRollbackMode::Checkpoint),
+            snapshot_id: None,
+        })
+        .unwrap_err();
+    assert_eq!(err.public_error().code(), "workflow_debug_operation_active");
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "manual edit");
+    assert_eq!(detail(), before);
+}
+
 /// A target the store cannot prove is refused with its reason, not as an internal failure.
 #[tokio::test]
 async fn an_unknown_debug_attempt_is_rejected_with_its_reason() {

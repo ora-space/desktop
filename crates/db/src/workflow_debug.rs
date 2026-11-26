@@ -23,6 +23,25 @@ pub use operations::DebugClaim;
 #[cfg(test)]
 mod tests;
 
+/// Stores the pool seen by the Condition evaluator in the node completion transaction.
+pub(crate) fn record_condition_pool(
+    db: &Connection,
+    run_id: &str,
+    node_run_id: &str,
+    pool: Value,
+) -> Result<(), DatabaseError> {
+    db.execute(
+        "INSERT INTO workflow_debug_document_input(node_run_id,run_id,kind,body)
+         VALUES(?1,?2,'condition',?3)",
+        params![
+            node_run_id,
+            run_id,
+            serde_json::json!({"variablePool":pool}).to_string()
+        ],
+    )?;
+    Ok(())
+}
+
 /// Domain outcomes that callers can distinguish from storage failures.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum DebugRejection {
@@ -32,6 +51,8 @@ pub enum DebugRejection {
     StalePreview,
     #[error("request_conflict")]
     RequestConflict,
+    #[error("empty requestId")]
+    EmptyRequestId,
     #[error("debug_operation_active")]
     OperationActive,
     #[error("missing_input_evidence: {0}")]
@@ -44,6 +65,7 @@ pub enum DebugRejection {
 
 /// The immutable attempt inputs and candidate graph supplied to the server's node strategy.
 pub struct DebugPlanningInput {
+    evidence_source: Option<String>,
     read_nodes: std::collections::BTreeSet<String>,
     pub target: WorkflowDebugTarget,
     pub candidate: WorkflowGraph,
@@ -92,6 +114,7 @@ impl WorkflowDebugStore {
                 preview_id: Uuid::new_v4().to_string(),
                 base_revision: revision,
                 target: input.target,
+                input_source_node_run_id: input.evidence_source,
                 member_configurations: (!input.member_configurations.is_empty()).then_some(input.member_configurations),
                 impact,
                 workspace: WorkflowDebugWorkspace::Keep,

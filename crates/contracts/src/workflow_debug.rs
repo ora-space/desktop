@@ -88,6 +88,10 @@ pub struct WorkflowDebugImpact {
 #[ts(export_to = "workflow-run.ts")]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowDebugPreview {
+    /// Earlier physical attempt supplying dispatch input for a waiting retry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_source_node_run_id: Option<String>,
     pub preview_id: String,
     pub base_revision: u32,
     pub target: WorkflowDebugTarget,

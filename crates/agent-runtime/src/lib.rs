@@ -9,6 +9,7 @@ mod actor;
 mod attach;
 mod clock;
 mod command;
+mod config_changes;
 mod connection;
 mod discovery;
 mod end_cause;
@@ -193,6 +194,8 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     /// and offering the agent's own catalog on exactly that, and inferring it from a stale absence
     /// would silently drop a model chosen for a session that could already have been told.
     reported_config_options: Vec<SessionConfigOption>,
+    /// Changes being asked of the agent without this actor, because it held no provider.
+    direct_config_changes: Vec<oneshot::Receiver<()>>,
     /// Whether the current provider session last reported more commands than shown, so each excess is
     /// logged once.
     commands_exceed_limit: bool,
@@ -757,6 +760,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 rebuilt_binding: None,
                 load_restoration: Default::default(),
                 reported_config_options: setup.config_options,
+                direct_config_changes: Vec::new(),
                 commands_exceed_limit,
                 scheduler: self.inner.scheduler.clone(),
                 events: self.inner.events.clone(),

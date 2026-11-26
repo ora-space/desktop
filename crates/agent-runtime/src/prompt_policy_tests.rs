@@ -2517,6 +2517,28 @@ mod restored_sessions {
             live_mcp: LiveMcpState,
         ) {
             let session = self.seed_session_on(id, "official/test.agent");
+            self.add_actor(session, title_acquisition, channel, live_mcp);
+        }
+
+        /// Seeds a session the connected agent serves while its row names another one.
+        fn add_session_bound_elsewhere(&self, id: &str, agent_ref: &str) {
+            let channel = self.supervisor.open_session_channel(id, id).unwrap();
+            self.add_actor(
+                self.seed_session_on(id, agent_ref),
+                crate::TitleAcquisition::disabled(),
+                Some(channel),
+                LiveMcpState::Active(crate::SessionMcpRevision::default()),
+            );
+        }
+
+        /// Starts the actor serving one seeded session.
+        fn add_actor(
+            &self,
+            session: Session,
+            title_acquisition: crate::TitleAcquisition,
+            channel: Option<crate::routing::SessionChannel>,
+            live_mcp: LiveMcpState,
+        ) {
             let recorder = self.manager.open_recorder(&session).unwrap().recorder;
             self.manager
                 .insert_actor(

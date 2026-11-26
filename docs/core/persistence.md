@@ -52,6 +52,7 @@ is the only source of truth for the schema; there is no checked-in `schema.sql`.
 | `0023`  | Host-only session capabilities, persisted so they survive a restart                                                              |
 | `0024`  | Releases local Main Workspaces stranded in `provisioning` (data only; downgrade is a no-op)                                      |
 | `0025`  | Stores plugin `package_root` on `skills` and drops the retired Effect ledger and tables (after one-time legacy Skill cleanup)    |
+| `0026` | Run-local debug evidence, configuration revisions, preview receipts and operation fences |
 
 Details of individual migrations live in [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md).
 The catalog describes only the current schema; databases whose `migrations` table predates SQL

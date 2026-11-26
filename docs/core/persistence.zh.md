@@ -42,6 +42,7 @@ Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里
 | `0023` | 会话创建时的仅宿主能力，持久化后跨重启保留                                                           |
 | `0024` | 释放卡在 `provisioning` 的本地 Main Workspace（仅数据；降级为空操作）                                |
 | `0025` | 在 `skills` 表记录插件 `package_root`，并在一次性旧受管 Skill 目录清理后删除已退役的 Effect 账本与表 |
+| `0026` | 运行内调试的输入证据、配置修订、预览回执与操作栅栏 |
 
 单个迁移的细节见 [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md)。目录只描述当前 schema；`migrations` 表早于 SQL 快照机制的数据库不受支持，需要重建。
 

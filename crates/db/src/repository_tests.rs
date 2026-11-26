@@ -980,6 +980,24 @@ fn switch_run_snapshot_updates_snapshot_and_payload_only_for_terminal_runs() {
     let failed = run_repository.find_run(&failed_id).unwrap().unwrap();
     assert_eq!(failed.snapshot_id, WorkflowSnapshotId::new("snapshot-2"));
     assert_eq!(failed.payload.as_deref(), Some(migrated));
+    // No debug edit preceded this switch. Returning to the original snapshot must still
+    // separate its old attempts from the run's new configuration lineage.
+    assert!(
+        engine_repository
+            .switch_run_snapshot(
+                &failed_id,
+                &WorkflowSnapshotId::new("snapshot-1"),
+                original,
+                81
+            )
+            .unwrap()
+    );
+    pool.with_connection(|db| {
+        let versions = db.prepare("SELECT revision,snapshot_id FROM workflow_debug_baselines WHERE run_id=?1 ORDER BY revision")?
+            .query_map([failed_id.as_ref()],|r| Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+        assert_eq!(versions, vec![(1,"snapshot-2".into()),(2,"snapshot-1".into())]);
+        Ok(())
+    }).unwrap();
 
     let (running_dir, running_pool) = bootstrapped_pool();
     let running_engine = SqliteWorkflowRunEngineRepository::new(running_pool.clone());
