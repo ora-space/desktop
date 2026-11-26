@@ -173,6 +173,8 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       cancel: (request, options) => executeOperation("cancelWorkflowRun", request, transport, options),
       completeNode: (request, options) => executeOperation("completeWorkflowNode", request, transport, options),
       create: (request, options) => executeOperation("createWorkflowRun", request, transport, options),
+      debugAttempt: (request, options) => executeOperation("getWorkflowDebugAttempt", request, transport, options),
+      debugHistory: (request, options) => executeOperation("getWorkflowDebugHistory", request, transport, options),
       delete: (request, options) => executeOperation("deleteWorkflowRun", request, transport, options),
       diagnoseNodeFailure: (request, options) => executeOperation("diagnoseWorkflowNodeFailure", request, transport, options),
       get: (request, options) => executeOperation("getWorkflowRun", request, transport, options),

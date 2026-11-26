@@ -64,6 +64,8 @@ desktop_command_registry! {
     commands::task::get_task,
     commands::task::get_task_workspace,
     commands::workflow::get_workflow,
+    commands::workflow_run::get_workflow_debug_attempt,
+    commands::workflow_run::get_workflow_debug_history,
     commands::workflow::get_workflow_draft,
     commands::workflow_run::get_workflow_run,
     commands::workflow::get_workflow_snapshot,

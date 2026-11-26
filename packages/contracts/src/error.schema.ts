@@ -77,6 +77,15 @@ export const workflowNodeSignalChangedParamsSchema = z.object({
     actual: z.string().nullable()
 });
 
+export const workflowDebugPatchInvalidParamsSchema = z.object({
+    path: z.string(),
+    reason: z.string()
+});
+
+export const workflowDebugTargetRejectedParamsSchema = z.object({
+    reason: z.string()
+});
+
 export const openLocationTargetSchema = z.union([z.literal("explorer"), z.literal("terminal"), z.literal("vscode")]);
 
 export const pluginConfigurationFieldErrorSchema = z.object({
@@ -522,6 +531,21 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("workflow_node_signal_changed"),
         "params": workflowNodeSignalChangedParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_stale_preview"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_operation_active"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_request_conflict"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_patch_invalid"),
+        "params": workflowDebugPatchInvalidParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_target_rejected"),
+        "params": workflowDebugTargetRejectedParamsSchema
     })]);
 
 export const contractErrorSchema = z.object({
@@ -928,4 +952,19 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("workflow_node_signal_changed"),
         "params": workflowNodeSignalChangedParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_stale_preview"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_operation_active"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_request_conflict"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_patch_invalid"),
+        "params": workflowDebugPatchInvalidParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_target_rejected"),
+        "params": workflowDebugTargetRejectedParamsSchema
     })]));

@@ -139,6 +139,16 @@ impl SqliteWorkflowRunEngineRepository {
 }
 
 impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
+    fn revised_graph(
+        &self,
+        run: &WorkflowRunId,
+        attempt: &WorkflowNodeRunId,
+    ) -> Result<Option<ora_application::WorkflowGraph>, RepositoryError> {
+        crate::workflow_debug::WorkflowDebugStore::new(self.pool.clone())
+            .revised_graph(run.as_ref(), attempt.as_ref())
+            .map_err(RepositoryError::new)
+    }
+
     fn find_execution_context(
         &self,
         run_id: &WorkflowRunId,

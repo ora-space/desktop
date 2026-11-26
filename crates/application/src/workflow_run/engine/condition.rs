@@ -95,6 +95,16 @@ pub enum ConditionError {
 }
 
 impl ConditionConfig {
+    /// Checks every edit against this input boundary, including cases after the first match.
+    pub fn preview_branch(&self, pool: &WorkflowVariablePool) -> Result<String, ConditionError> {
+        for case in &self.cases {
+            for rule in &case.conditions {
+                evaluate_rule(rule, pool)?;
+            }
+        }
+        evaluate_condition(self, pool)
+    }
+
     /// Compiles the wire `cases` array into an executable config.
     pub fn from_wire(cases: Vec<WireConditionCase>) -> Result<Self, ConditionError> {
         let mut compiled = Vec::new();

@@ -221,6 +221,17 @@ export type ContractError =
       "code": "workflow_node_signal_changed";
       "params": WorkflowNodeSignalChangedParams;
     }
+    | { "code": "workflow_debug_stale_preview"; "params": EmptyErrorParams }
+    | { "code": "workflow_debug_operation_active"; "params": EmptyErrorParams }
+    | { "code": "workflow_debug_request_conflict"; "params": EmptyErrorParams }
+    | {
+      "code": "workflow_debug_patch_invalid";
+      "params": WorkflowDebugPatchInvalidParams;
+    }
+    | {
+      "code": "workflow_debug_target_rejected";
+      "params": WorkflowDebugTargetRejectedParams;
+    }
   );
 
 /**
@@ -480,6 +491,17 @@ export type PublicError =
   | {
     "code": "workflow_node_signal_changed";
     "params": WorkflowNodeSignalChangedParams;
+  }
+  | { "code": "workflow_debug_stale_preview"; "params": EmptyErrorParams }
+  | { "code": "workflow_debug_operation_active"; "params": EmptyErrorParams }
+  | { "code": "workflow_debug_request_conflict"; "params": EmptyErrorParams }
+  | {
+    "code": "workflow_debug_patch_invalid";
+    "params": WorkflowDebugPatchInvalidParams;
+  }
+  | {
+    "code": "workflow_debug_target_rejected";
+    "params": WorkflowDebugTargetRejectedParams;
   };
 
 /**
@@ -509,6 +531,23 @@ export type SkillFolderConflictParams = { name: string };
  * Carries the user-selected base branch name when Git cannot resolve it.
  */
 export type TaskBaseBranchNotFoundParams = { branchName: string };
+
+/**
+ * Names the field of a run-local debug patch that the server refused, and why.
+ */
+export type WorkflowDebugPatchInvalidParams = {
+  /**
+   * Path relative to the normalized data of the edited node, such as `/agentConfig/prompt`.
+   */
+  path: string;
+  reason: string;
+};
+
+/**
+ * Explains why a run-local debug target cannot be previewed, such as which recorded input is
+ * missing or which position field the page still has to supply.
+ */
+export type WorkflowDebugTargetRejectedParams = { reason: string };
 
 /**
  * Names the workflow node and the MCP plugin its frozen graph declares, for a run that cannot

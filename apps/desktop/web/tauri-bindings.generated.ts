@@ -72,6 +72,8 @@ export const tauriCommands = {
   getTaskWorkspace: "get_task_workspace",
   getVersion: "get_workflow_version",
   getWorkflow: "get_workflow",
+  getWorkflowDebugAttempt: "get_workflow_debug_attempt",
+  getWorkflowDebugHistory: "get_workflow_debug_history",
   getWorkflowRun: "get_workflow_run",
   getWorkflowSnapshot: "get_workflow_snapshot",
   getWorkspaceDiff: "get_workspace_diff",

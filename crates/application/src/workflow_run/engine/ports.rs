@@ -327,6 +327,15 @@ pub const INVALID_START_OPTION_DETAIL: &str = "value is not one of the configure
 ///
 /// Automatic retries persist through the [`WorkflowRetryRepository`] supertrait.
 pub trait WorkflowRunEngineRepository: WorkflowRetryRepository {
+    /// Returns the graph overlay bound to this physical attempt when debug revisions are active.
+    fn revised_graph(
+        &self,
+        _run_id: &WorkflowRunId,
+        _attempt: &WorkflowNodeRunId,
+    ) -> Result<Option<WorkflowGraph>, RepositoryError> {
+        Ok(None)
+    }
+
     /// Loads the run, its workspace, and the frozen snapshot graph in one read.
     fn find_execution_context(
         &self,

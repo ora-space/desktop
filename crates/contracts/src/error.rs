@@ -81,6 +81,25 @@ pub struct WorkflowSnapshotIncompatibleWithResumeParams {
     pub reason: String,
 }
 
+/// Names the field of a run-local debug patch that the server refused, and why.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowDebugPatchInvalidParams {
+    /// Path relative to the normalized data of the edited node, such as `/agentConfig/prompt`.
+    pub path: String,
+    pub reason: String,
+}
+
+/// Explains why a run-local debug target cannot be previewed, such as which recorded input is
+/// missing or which position field the page still has to supply.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowDebugTargetRejectedParams {
+    pub reason: String,
+}
+
 /// Names the Start variable whose supplied or missing value a run rejected, with the reason.
 ///
 /// `variable` is the Start variable's declared name — the identifier the run-input payload keys
@@ -455,6 +474,14 @@ pub enum PublicError {
     WorkflowNodeTurnChanged(WorkflowNodeTurnChangedParams),
     WorkflowNodeOutputChanged(WorkflowNodeOutputChangedParams),
     WorkflowNodeSignalChanged(Box<WorkflowNodeSignalChangedParams>),
+    /// The run moved on since the preview was taken; the page previews again.
+    WorkflowDebugStalePreview(EmptyErrorParams),
+    /// A confirmation for this run is stopping or holds an unreleased fence.
+    WorkflowDebugOperationActive(EmptyErrorParams),
+    /// The request key already names another preview of the same run.
+    WorkflowDebugRequestConflict(EmptyErrorParams),
+    WorkflowDebugPatchInvalid(WorkflowDebugPatchInvalidParams),
+    WorkflowDebugTargetRejected(WorkflowDebugTargetRejectedParams),
 }
 
 impl PublicError {
@@ -605,6 +632,11 @@ impl PublicError {
             Self::WorkflowNodeTurnChanged(_) => "workflow_node_turn_changed",
             Self::WorkflowNodeOutputChanged(_) => "workflow_node_output_changed",
             Self::WorkflowNodeSignalChanged(_) => "workflow_node_signal_changed",
+            Self::WorkflowDebugStalePreview(_) => "workflow_debug_stale_preview",
+            Self::WorkflowDebugOperationActive(_) => "workflow_debug_operation_active",
+            Self::WorkflowDebugRequestConflict(_) => "workflow_debug_request_conflict",
+            Self::WorkflowDebugPatchInvalid(_) => "workflow_debug_patch_invalid",
+            Self::WorkflowDebugTargetRejected(_) => "workflow_debug_target_rejected",
         }
     }
 }
@@ -628,6 +660,8 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     SkillFolderConflictParams::export_all(config)?;
     PluginLogLevelsFileParams::export_all(config)?;
     WorkflowSnapshotIncompatibleWithResumeParams::export_all(config)?;
+    WorkflowDebugPatchInvalidParams::export_all(config)?;
+    WorkflowDebugTargetRejectedParams::export_all(config)?;
     WorkflowRunInputInvalidParams::export_all(config)?;
     TaskBaseBranchNotFoundParams::export_all(config)?;
     PackMemberParams::export_all(config)?;
@@ -648,11 +682,12 @@ mod tests {
         OpenLocationFailedParams, OpenLocationTarget, PackMemberParams,
         PluginConfigurationValidationParams, PluginLogLevelsFileParams, PluginPackageInvalidParams,
         PublicError, RequestId, SessionMcpSetupFailedParams, SkillFolderConflictParams,
-        TaskBaseBranchNotFoundParams, WorkflowMcpNotFoundParams, WorkflowNodeCompletionBlocker,
-        WorkflowNodeCompletionBlockerKind, WorkflowNodeIncompleteParams,
-        WorkflowNodeOutputChangedParams, WorkflowNodeSignalChangedParams,
-        WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey, WorkflowRunInputInvalidParams,
-        WorkflowSkillAmbiguousParams, WorkflowSkillNotFoundParams,
+        TaskBaseBranchNotFoundParams, WorkflowDebugPatchInvalidParams,
+        WorkflowDebugTargetRejectedParams, WorkflowMcpNotFoundParams,
+        WorkflowNodeCompletionBlocker, WorkflowNodeCompletionBlockerKind,
+        WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams,
+        WorkflowNodeSignalChangedParams, WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
+        WorkflowRunInputInvalidParams, WorkflowSkillAmbiguousParams, WorkflowSkillNotFoundParams,
         WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
@@ -891,6 +926,16 @@ mod tests {
                 expected: Some("signal-1".to_string()),
                 actual: Some("signal-2".to_string()),
             })),
+            PublicError::WorkflowDebugStalePreview(EmptyErrorParams {}),
+            PublicError::WorkflowDebugOperationActive(EmptyErrorParams {}),
+            PublicError::WorkflowDebugRequestConflict(EmptyErrorParams {}),
+            PublicError::WorkflowDebugPatchInvalid(WorkflowDebugPatchInvalidParams {
+                path: "/agentConfig/prompt".to_string(),
+                reason: "field is not editable".to_string(),
+            }),
+            PublicError::WorkflowDebugTargetRejected(WorkflowDebugTargetRejectedParams {
+                reason: "missing_input_evidence: start.text".to_string(),
+            }),
         ];
 
         for error in &samples {
@@ -1028,7 +1073,12 @@ mod tests {
                 | PublicError::WorkflowNodeIncomplete(_)
                 | PublicError::WorkflowNodeTurnChanged(_)
                 | PublicError::WorkflowNodeOutputChanged(_)
-                | PublicError::WorkflowNodeSignalChanged(_) => {}
+                | PublicError::WorkflowNodeSignalChanged(_)
+                | PublicError::WorkflowDebugStalePreview(_)
+                | PublicError::WorkflowDebugOperationActive(_)
+                | PublicError::WorkflowDebugRequestConflict(_)
+                | PublicError::WorkflowDebugPatchInvalid(_)
+                | PublicError::WorkflowDebugTargetRejected(_) => {}
             }
         }
 
@@ -1039,7 +1089,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 128);
+        assert_eq!(samples.len(), 133);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

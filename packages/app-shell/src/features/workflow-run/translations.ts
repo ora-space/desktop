@@ -66,6 +66,15 @@ export const workflowRunTranslations = {
       "本轮完成信号已变化，请刷新运行后重新确认。",
     "errors.workflow_node_not_diagnosable":
       "只有失败的智能体节点才能做 AI 分析。",
+    "errors.workflow_debug_stale_preview":
+      "运行已经推进，这次预览已过期。请重新预览后再确认。",
+    "errors.workflow_debug_operation_active":
+      "这次运行还在处理上一次调试的停稳，请等它结束后再试。",
+    "errors.workflow_debug_request_conflict":
+      "这个请求标识已经用于另一份预览，请发起新的确认。",
+    "errors.workflow_debug_patch_invalid":
+      "这处修改未被接受（{{path}}）：{{reason}}",
+    "errors.workflow_debug_target_rejected": "无法调试选中的执行：{{reason}}",
     "workflowRun.loading": "正在加载运行…",
     "workflowRun.unrecognizedNodes":
       "有 {{count}} 个节点的类型无法识别（{{kinds}}）。它们不是有意保留的备用节点，不会出现在执行路径里。",
@@ -617,6 +626,16 @@ export const workflowRunTranslations = {
       "This turn's completion signal changed. Refresh the run and try again.",
     "errors.workflow_node_not_diagnosable":
       "AI analysis is only available for a failed agent node.",
+    "errors.workflow_debug_stale_preview":
+      "The run moved on and this preview is stale. Preview again before confirming.",
+    "errors.workflow_debug_operation_active":
+      "The run is still settling an earlier debug stop. Try again once it has finished.",
+    "errors.workflow_debug_request_conflict":
+      "This request key already names another preview. Start a new confirmation.",
+    "errors.workflow_debug_patch_invalid":
+      "This edit was rejected at {{path}}: {{reason}}",
+    "errors.workflow_debug_target_rejected":
+      "The selected execution cannot be debugged: {{reason}}",
     "workflowRun.loading": "Loading run…",
     "workflowRun.unrecognizedNodes":
       "{{count}} nodes use an unrecognized type ({{kinds}}). They are not spare nodes kept on purpose and are left off the execution path.",

@@ -6,6 +6,22 @@ const NAMESPACE: &str = "workflowRun";
 
 pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
     FrontendEndpoint {
+        operation_name: "getWorkflowDebugAttempt",
+        namespace: NAMESPACE,
+        member_name: "debugAttempt",
+        request_type: "GetWorkflowDebugAttemptRequest",
+        response_type: "GetWorkflowDebugAttemptResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "getWorkflowDebugHistory",
+        namespace: NAMESPACE,
+        member_name: "debugHistory",
+        request_type: "GetWorkflowDebugHistoryRequest",
+        response_type: "GetWorkflowDebugHistoryResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "createWorkflowRun",
         namespace: NAMESPACE,
         member_name: "create",

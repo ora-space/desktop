@@ -29,6 +29,9 @@ pub(super) fn restart_run(
         let Some((status, payload)) = state else {
             return Ok(RestartWorkflowRunResult::NotFound);
         };
+        // A restart builds a new root under the current revision; it must not overtake a
+        // confirmation that is still stopping or holds an unreleased fence.
+        crate::workflow_debug::fence::ensure_inactive(&transaction, run_id.as_ref())?;
         if WorkflowRunStatus::from_database_value(status)? == WorkflowRunStatus::Running {
             return Ok(RestartWorkflowRunResult::NotRestartable);
         }

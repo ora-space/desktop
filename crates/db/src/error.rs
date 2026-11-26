@@ -63,6 +63,8 @@ pub enum DatabaseError {
     CorruptScheduledMissReason(String),
     #[error("workflow document import state is corrupt: {0}")]
     CorruptWorkflowDocumentSourceState(String),
+    #[error(transparent)]
+    WorkflowDebug(#[from] crate::workflow_debug::DebugRejection),
     #[error("workflow run execution context is incomplete")]
     IncompleteWorkflowRunContext,
     #[error("workflow scope has invalid round index: {0}")]

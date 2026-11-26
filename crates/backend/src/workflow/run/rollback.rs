@@ -421,7 +421,9 @@ pub(super) fn resume_from_failure(
         switch.apply(pool, now)?;
         transitions.publish_run_invalidated(&run_id);
     }
-    let ResumeWorkflowRunResponse { run, .. } = engine.resume_from_failure(request)?;
+    let ResumeWorkflowRunResponse { run, .. } = engine
+        .resume_from_failure(request)
+        .map_err(BackendError::from_run_use_case)?;
     Ok(ResumeWorkflowRunResponse {
         run,
         pre_rollback_checkpoint,
