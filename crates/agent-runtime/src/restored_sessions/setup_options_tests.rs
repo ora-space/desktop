@@ -24,6 +24,10 @@ enum Intent {
     NotOffered,
     /// The user asked for none.
     Absent,
+    /// The user asked for none, and the agent pushed model `a` only before answering setup on `b`.
+    PushedBeforeAnswer,
+    /// The same, but setup is answered without options at all.
+    PushedBeforeBareAnswer,
 }
 
 /// The conversation that acquires the provider session.
@@ -63,12 +67,27 @@ async fn pushing_agent(
         let id = &frame["id"];
         let answer = |result: Value| json!({"jsonrpc":"2.0", "id":id, "result":result});
         let replies = match frame["method"].as_str() {
-            Some("session/new") => vec![
-                answer(json!({"sessionId":"created", "configOptions":model("b")})),
-                options("created", "b"),
-                mode("created"),
-            ],
-            Some("session/load") => vec![answer(json!({"configOptions":model("b")}))],
+            Some("session/new") => {
+                let answered = answer(json!({"sessionId":"created", "configOptions":model("b")}));
+                match intent {
+                    // Nothing after the answer repeats it, so only the read order can tell.
+                    Intent::PushedBeforeAnswer => {
+                        vec![options("created", "a"), answered, mode("created")]
+                    }
+                    Intent::PushedBeforeBareAnswer => {
+                        let bare = answer(json!({"sessionId":"created"}));
+                        vec![options("created", "a"), bare, mode("created")]
+                    }
+                    _ => vec![answered, options("created", "b"), mode("created")],
+                }
+            }
+            Some("session/load") => match intent {
+                Intent::PushedBeforeBareAnswer => {
+                    let session = frame["params"]["sessionId"].as_str().unwrap();
+                    vec![options(session, "a"), answer(json!({}))]
+                }
+                _ => vec![answer(json!({"configOptions":model("b")}))],
+            },
             Some("session/set_config_option") => match intent {
                 Intent::AppliedLate => {
                     late = vec![answer(json!({"configOptions":model("a")}))];
@@ -89,7 +108,11 @@ async fn pushing_agent(
                         answer(json!({"configOptions":model("a")})),
                     ]
                 }
-                Intent::Applied | Intent::NotOffered | Intent::Absent => {
+                Intent::Applied
+                | Intent::NotOffered
+                | Intent::Absent
+                | Intent::PushedBeforeAnswer
+                | Intent::PushedBeforeBareAnswer => {
                     vec![answer(json!({"configOptions":model("a")}))]
                 }
             },
@@ -120,7 +143,7 @@ async fn views(acquired: Acquired, intent: Intent) -> (Vec<State>, Vec<State>, V
         | Intent::Refused
         | Intent::RefusedAfterPush => Some("a".to_string()),
         Intent::NotOffered => Some("z".to_string()),
-        Intent::Absent => None,
+        Intent::Absent | Intent::PushedBeforeAnswer | Intent::PushedBeforeBareAnswer => None,
     };
     let mut request_model = None;
     let (session_id, config_options) = match acquired {
@@ -220,6 +243,44 @@ fn a_snapshot_older_than_the_applied_model_does_not_undo_it() {
             });
         }
     }
+}
+
+/// A snapshot the agent pushed before it answered `session/new` was read before that answer, so the
+/// answer replaces it: neither setup nor a later load may fall back to it.
+#[test]
+fn a_snapshot_pushed_before_setup_was_answered_does_not_undo_the_answer() {
+    let on = |model: &str| vec![State::Model(model.to_string())];
+    let mode = State::Mode("plan".to_string());
+    for acquired in [Acquired::Started, Acquired::Switched] {
+        let mode = mode.clone();
+        run_case(async move {
+            assert_eq!(
+                views(acquired, Intent::PushedBeforeAnswer).await,
+                (on("b"), vec![mode], on("b"))
+            );
+        });
+    }
+}
+
+/// An answer without options replaces none, so the snapshot pushed before it is what the session is
+/// on, whether the answer set the session up or restored it.
+#[test]
+fn a_snapshot_pushed_before_an_answer_without_options_is_kept() {
+    let on = |model: &str| vec![State::Model(model.to_string())];
+    for acquired in [Acquired::Started, Acquired::Switched] {
+        run_case(async move {
+            assert_eq!(
+                views(acquired, Intent::PushedBeforeBareAnswer).await,
+                (on("a"), vec![State::Mode("plan".to_string())], on("a"))
+            );
+        });
+    }
+    run_case(async move {
+        assert_eq!(
+            views(Acquired::Restored, Intent::PushedBeforeBareAnswer).await,
+            (vec![State::NoOptions], on("a"), on("a"))
+        );
+    });
 }
 
 /// A restored session keeps the options it was restored with unless it answered with others.

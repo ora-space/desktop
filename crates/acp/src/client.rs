@@ -11,7 +11,7 @@ use serde_json::json;
 use tokio::sync::oneshot;
 
 use crate::error::AcpError;
-use crate::events::SessionResponse;
+use crate::events::{ReadOrder, SessionResponse};
 use crate::frame::send_traced;
 use crate::pending::{PendingRequest, PendingRequests, lock_pending};
 use crate::trace::{SessionTraceRegistration, SessionTraceRegistry};
@@ -153,6 +153,24 @@ where
         Request: Serialize,
         Response: DeserializeOwned,
     {
+        self.request_read_in_order(method, params)
+            .await
+            .map(|(response, _)| response)
+    }
+
+    /// Sends a typed request and also reports where its answer fell among the inbound events.
+    ///
+    /// The answer skips the inbound stream, so events read before it may still be waiting there
+    /// when it arrives; the order is what tells them apart from the ones the agent sent after.
+    pub async fn request_read_in_order<Request, Response>(
+        &self,
+        method: &str,
+        params: &Request,
+    ) -> Result<(Response, ReadOrder), AcpError>
+    where
+        Request: Serialize,
+        Response: DeserializeOwned,
+    {
         let request_id = RequestId::Number(self.next_request_id.fetch_add(1, Ordering::Relaxed));
         let (response_sender, response_receiver) = oneshot::channel();
         lock_pending(&self.pending)
@@ -172,7 +190,7 @@ where
             registration.remove();
             return Err(error);
         }
-        let response = response_receiver
+        let (order, response) = response_receiver
             .await
             .map_err(|_| AcpError::StreamClosed)?;
         // The reader removes direct requests before delivering their response through the
@@ -180,6 +198,7 @@ where
         registration.complete();
         match response {
             Ok(result) => serde_json::from_value(result)
+                .map(|response| (response, order))
                 .map_err(|error| AcpError::InvalidResponse(error.to_string())),
             Err(error) => Err(AcpError::RequestFailed(error.message)),
         }

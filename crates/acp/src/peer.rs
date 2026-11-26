@@ -10,7 +10,10 @@ use tokio::sync::mpsc;
 
 use crate::client::AcpClient;
 use crate::error::AcpError;
-use crate::events::{AcpInboundEvent, ExtensionNotification, PermissionRequest, SessionResponse};
+use crate::events::{
+    AcpInboundEvent, ExtensionNotification, PermissionRequest, ReadEvent, ReadOrder,
+    SessionResponse,
+};
 use crate::frame::send_traced;
 use crate::pending::{PendingRequest, PendingRequests, ResponseRequest, lock_pending};
 use crate::trace::SessionTraceRegistry;
@@ -22,7 +25,7 @@ use crate::frame::trace_frame_summary;
 /// Owns the ordered inbound receiver for one ACP connection.
 pub struct AcpPeer<Transport> {
     pub client: AcpClient<Transport>,
-    inbound: mpsc::UnboundedReceiver<AcpInboundEvent>,
+    inbound: mpsc::UnboundedReceiver<ReadEvent>,
 }
 
 impl<Transport> AcpPeer<Transport>
@@ -57,16 +60,11 @@ where
 
     /// Receives the next session event in transport order.
     pub async fn next_event(&mut self) -> Option<AcpInboundEvent> {
-        self.inbound.recv().await
+        self.inbound.recv().await.map(|read| read.event)
     }
 
     /// Splits the peer into its writer client and ordered inbound receiver.
-    pub fn into_parts(
-        self,
-    ) -> (
-        AcpClient<Transport>,
-        mpsc::UnboundedReceiver<AcpInboundEvent>,
-    ) {
+    pub fn into_parts(self) -> (AcpClient<Transport>, mpsc::UnboundedReceiver<ReadEvent>) {
         (self.client, self.inbound)
     }
 }
@@ -77,15 +75,18 @@ async fn route_messages<Transport>(
     transport: Arc<Transport>,
     pending: Arc<Mutex<PendingRequests>>,
     trace_sessions: SessionTraceRegistry,
-    inbound: mpsc::UnboundedSender<AcpInboundEvent>,
+    inbound: mpsc::UnboundedSender<ReadEvent>,
 ) where
     Transport: AcpTransport,
 {
+    let mut order = ReadOrder::default();
+    let inbound = Inbound(inbound);
     while let Some(message) = messages.recv().await {
+        order = order.next();
         let value = match message {
             Ok(value) => value,
             Err(error) => {
-                let _ = inbound.send(AcpInboundEvent::Fatal(error));
+                let _ = inbound.send(order, AcpInboundEvent::Fatal(error));
                 lock_pending(&pending).clear();
                 return;
             }
@@ -102,26 +103,46 @@ async fn route_messages<Transport>(
                 "{}", msg,
             );
         }
-        if let Err(error) =
-            route_frame(value, &transport, &pending, &trace_sessions, &inbound).await
+        if let Err(error) = route_frame(
+            value,
+            order,
+            &transport,
+            &pending,
+            &trace_sessions,
+            &inbound,
+        )
+        .await
         {
-            let _ = inbound.send(AcpInboundEvent::Fatal(error));
+            let _ = inbound.send(order, AcpInboundEvent::Fatal(error));
             lock_pending(&pending).clear();
             return;
         }
     }
-    let _ = inbound.send(AcpInboundEvent::Fatal(AcpError::StreamClosed));
+    let _ = inbound.send(order.next(), AcpInboundEvent::Fatal(AcpError::StreamClosed));
     // Retaining these senders would turn a known EOF into unrelated outer timeouts.
     lock_pending(&pending).clear();
+}
+
+/// Stamps every inbound event with the order of the frame it came from.
+struct Inbound(mpsc::UnboundedSender<ReadEvent>);
+
+impl Inbound {
+    /// Hands one event to the connection owner; fails once nobody receives them any more.
+    fn send(&self, order: ReadOrder, event: AcpInboundEvent) -> Result<(), AcpError> {
+        self.0
+            .send(ReadEvent { order, event })
+            .map_err(|_| AcpError::StreamClosed)
+    }
 }
 
 /// Routes one validated JSON-RPC object and makes ambiguous shapes fatal.
 async fn route_frame<Transport>(
     value: Value,
+    order: ReadOrder,
     transport: &Arc<Transport>,
     pending: &Mutex<PendingRequests>,
     trace_sessions: &SessionTraceRegistry,
-    inbound: &mpsc::UnboundedSender<AcpInboundEvent>,
+    inbound: &Inbound,
 ) -> Result<(), AcpError>
 where
     Transport: AcpTransport,
@@ -147,12 +168,13 @@ where
             let request =
                 serde_json::from_value(object.get("params").cloned().unwrap_or(Value::Null))
                     .map_err(|error| AcpError::InvalidFrame(error.to_string()))?;
-            inbound
-                .send(AcpInboundEvent::PermissionRequest(PermissionRequest {
+            inbound.send(
+                order,
+                AcpInboundEvent::PermissionRequest(PermissionRequest {
                     request_id,
                     request,
-                }))
-                .map_err(|_| AcpError::StreamClosed)
+                }),
+            )
         }
         (Some(method), Some(request_id)) => {
             // ACP can grow new client methods independently. JSON-RPC requires a correlated
@@ -171,18 +193,15 @@ where
             let notification =
                 serde_json::from_value(object.get("params").cloned().unwrap_or(Value::Null))
                     .map_err(|error| AcpError::InvalidFrame(error.to_string()))?;
-            inbound
-                .send(AcpInboundEvent::SessionUpdate(notification))
-                .map_err(|_| AcpError::StreamClosed)
+            inbound.send(order, AcpInboundEvent::SessionUpdate(notification))
         }
-        (Some(method), None) if method.starts_with('_') => inbound
-            .send(AcpInboundEvent::ExtensionNotification(
-                ExtensionNotification {
-                    method: method.to_string(),
-                    params: object.get("params").cloned().unwrap_or(Value::Null),
-                },
-            ))
-            .map_err(|_| AcpError::StreamClosed),
+        (Some(method), None) if method.starts_with('_') => inbound.send(
+            order,
+            AcpInboundEvent::ExtensionNotification(ExtensionNotification {
+                method: method.to_string(),
+                params: object.get("params").cloned().unwrap_or(Value::Null),
+            }),
+        ),
         (Some(_), None) => Ok(()),
         (None, Some(request_id)) => {
             let response = if let Some(result) = object.get("result") {
@@ -206,16 +225,17 @@ where
             };
             match request {
                 PendingRequest::Direct(sender) => {
-                    let _ = sender.send(response);
+                    let _ = sender.send((order, response));
                     Ok(())
                 }
-                PendingRequest::Session { session_id } => inbound
-                    .send(AcpInboundEvent::SessionResponse(SessionResponse {
+                PendingRequest::Session { session_id } => inbound.send(
+                    order,
+                    AcpInboundEvent::SessionResponse(SessionResponse {
                         request_id,
                         session_id,
                         response,
-                    }))
-                    .map_err(|_| AcpError::StreamClosed),
+                    }),
+                ),
             }
         }
         (None, None) => Err(AcpError::InvalidFrame(
