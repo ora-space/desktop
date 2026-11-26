@@ -31,6 +31,7 @@ export type ContractError =
     | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
     | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
     | { "code": "plugin_package_invalid"; "params": PluginPackageInvalidParams }
+    | { "code": "proxy_authentication_failed"; "params": EmptyErrorParams }
     | { "code": "pack_member_duplicate"; "params": PackMemberParams }
     | { "code": "pack_self_reference"; "params": PackMemberParams }
     | { "code": "pack_member_not_found"; "params": PackMemberParams }
@@ -304,6 +305,7 @@ export type PublicError =
   | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
   | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
   | { "code": "plugin_package_invalid"; "params": PluginPackageInvalidParams }
+  | { "code": "proxy_authentication_failed"; "params": EmptyErrorParams }
   | { "code": "pack_member_duplicate"; "params": PackMemberParams }
   | { "code": "pack_self_reference"; "params": PackMemberParams }
   | { "code": "pack_member_not_found"; "params": PackMemberParams }

@@ -371,7 +371,7 @@ impl ReqwestDownloader {
 
 /// Keeps proxy credentials out of download errors.
 fn proxy_error(error: HostProxyError) -> DownloadError {
-    DownloadError::InvalidSource(error.to_string())
+    DownloadError::Proxy(error)
 }
 
 /// Builds a Rustls client with certificate verification adapted to the host platform.

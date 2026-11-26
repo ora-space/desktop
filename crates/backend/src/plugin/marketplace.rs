@@ -451,7 +451,11 @@ pub(super) fn map_install_error(context: &'static str, error: InstallError) -> B
                 "sha256".to_owned(),
                 "the downloaded package does not match the sha256 its listing declares".to_owned(),
             )),
-            DownloadError::Network { .. }
+            DownloadError::Proxy(ora_utils::http::HostProxyError::Authentication) => {
+                Some(PublicError::ProxyAuthenticationFailed(EmptyErrorParams {}))
+            }
+            DownloadError::Proxy(_)
+            | DownloadError::Network { .. }
             | DownloadError::HttpStatus { .. }
             | DownloadError::Io { .. }
             | DownloadError::TooLarge { .. }
