@@ -210,7 +210,9 @@ overflow stops only that Session.
 
 - While `session/new` has not revealed its provider id, notifications are held in a shared buffer
   of at most 256 entries; registration drains the matching ones and the rest are dropped when the
-  last concurrent setup ends.
+  last concurrent setup ends. The `session/new` answer skips that buffer, so every frame carries
+  the order it was read in: an options update read before the answer, whether still buffered or
+  routed after registration, is dropped, because the answer already replaced it.
 - Routes are bound to a connection generation; updates from an old connection or an unloaded
   Session are discarded as stale.
 - Unknown agent-originated requests get a `-32601` response without ending the connection;

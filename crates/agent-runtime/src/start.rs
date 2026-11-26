@@ -26,7 +26,7 @@ use agent_client_protocol_schema::v1::{
     SessionConfigId, SessionConfigOption, SessionConfigOptionValue, SessionNotification,
     SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
 };
-use ora_acp::{AcpClient, AcpTransport};
+use ora_acp::{AcpClient, AcpTransport, ReadOrder};
 use ora_contracts::{EmptyErrorParams, PublicError, StartSessionRequest, StartSessionResponse};
 use ora_domain::{AgentRef, SessionId};
 use ora_domain::{AuditFields, Session, SessionStatus, WorkspaceId};
@@ -360,7 +360,7 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     } else {
         Vec::new()
     };
-    let response = await_session_new(
+    let (response, answered) = await_session_new(
         &connection.client,
         cwd,
         servers,
@@ -385,8 +385,11 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
         agent_session_id: agent_session_id.clone(),
         committed: false,
     };
-    let mut channel =
-        supervisor.open_session_channel(&agent_session_id, ora_session_id.as_ref())?;
+    let mut channel = supervisor.open_answered_session_channel(
+        &agent_session_id,
+        ora_session_id.as_ref(),
+        Some(answered),
+    )?;
     // Collected on the channel the actor inherits, so the non-command setup updates the agent sent
     // alongside them stay queued on it instead of being discarded with a throwaway registration.
     let mut config_options = response.config_options.unwrap_or_default();
@@ -442,14 +445,15 @@ async fn await_session_new<T: AcpTransport>(
     skill_entries: &[SkillCatalogEntry],
     activity: &SetupActivity,
     window: Duration,
-) -> Result<NewSessionResponse, RuntimeError> {
+) -> Result<(NewSessionResponse, ReadOrder), RuntimeError> {
     let params = crate::skill_catalog::apply_skill_setup(
         NewSessionRequest::new(cwd).mcp_servers(servers),
         additional_directories_supported,
         extra_read_roots,
         skill_entries,
     );
-    let request = client.request::<_, NewSessionResponse>(AGENT_METHOD_NAMES.session_new, &params);
+    let request = client
+        .request_read_in_order::<_, NewSessionResponse>(AGENT_METHOD_NAMES.session_new, &params);
     tokio::pin!(request);
     let inactivity = tokio::time::sleep_until(tokio::time::Instant::now() + window);
     tokio::pin!(inactivity);
@@ -844,7 +848,7 @@ mod tests {
             })))
             .expect("answer session/new");
 
-        let response = (&mut create)
+        let (response, _) = (&mut create)
             .await
             .expect("create survives past its first window");
         assert_eq!(response.session_id.to_string(), "provider-1");
