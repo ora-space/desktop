@@ -55,13 +55,16 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   the archive survives re-upgrade. See [execution scope storage](../../../../docs/workflows/loops-and-iterations.md).
 - The unpublished Loop branch previously used `0011`. Startup recognizes its exact SQL snapshot,
   installs upstream `0011`/`0012`, and adopts it as `0013` atomically, preserving live scope history.
-- Migration `0022` records the terminal outcome of each workflow document a marketplace package
-  delivered, keyed by `(source namespace, plugin identifier, document path)`. The row is written in
-  the same transaction that creates the workflow, its draft and its first published snapshot, and it
-  deliberately carries no foreign key to `workflows`: the record outlives the copy so an upgrade,
-  reinstall, or retry can never re-import a path whose workflow the user edited, renamed, or
-  deleted. `state` is the closed vocabulary `imported` / `conflict_skipped`, and a failed import
-  writes no row at all, which is what keeps it retryable.
+- Migration `0022` records the marketplace import state of each workflow document, keyed by
+  `(source namespace, plugin identifier, document path)`. An `imported` row is committed in the same
+  transaction that creates the workflow, its draft, and its first published snapshot, and it
+  deliberately carries no foreign key to `workflows`: copy liveness is resolved on read against
+  `workflows.is_deleted = 0`, so a surviving copy keeps its source identity across upgrades,
+  renames, and reinstalls, a copy deleted during an install cycle stays deleted for upgrades and
+  card retries while a fresh marketplace install reconsiders it (and conditionally deletes the
+  row back to unrecorded if recovery fails for a non-conflict reason), and `conflict_skipped` stays
+  re-checkable on every install, upgrade, and card retry. A non-conflict import failure on an
+  unrecorded or `conflict_skipped` path leaves that state unchanged, keeping it retryable.
 - Migration `0019` adds the `finalized_without_effect` operation phase used by the explicit Effect
   recovery exit. Its upgrade rebuilds the operation journal and its referencing status/artifact
   tables through staging copies so every row and foreign key survives; the downgrade maps closed
@@ -71,8 +74,23 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   nothing ever promotes a local checkout. Remote locations and deleted rows are untouched. Its
   downgrade is intentionally empty because older builds admit an active local Workspace the same
   way.
-- Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a
-  Workspace seeds its new Scope from published Sources in the same transaction.
+- Migration `0025` adds nullable `package_root` onto `skills`, backfills plugin Skill roots from
+  retired Effect source revisions, and drops all remaining `effect_*` triggers and tables in
+  child-before-parent order. Its persisted downgrade explicitly aborts inside the rollback
+  transaction because the retired ledger and filesystem ownership markers cannot be restored, so an
+  older build refuses to strip the `0025` bookkeeping row and a newer build can reopen cleanly.
+  - **Automatic pre-`0025` backup**: before `0025` runs on an existing pre-`0025` database, both
+    packaged Desktop bootstrap (`Backend::open`) and `cargo xtask reconcile-migrations` write a
+    self-contained SQLite backup into a sibling temporary file (`VACUUM INTO`) and atomically
+    replace `ora.sqlite3.pre-0025.bak` in the same data directory. Every startup while the legacy
+    `effect_*` tables still exist refreshes that backup (so a zero-byte leftover or an earlier
+    downgrade-and-reupgrade cycle never leaves a stale copy), while fresh and already-migrated
+    databases skip backup creation.
+  - **Downgrade recovery**: upgrading past `0025` cannot be downgraded in place. To return to an
+    older Desktop release, quit Ora Desktop, remove `ora.sqlite3`, `ora.sqlite3-wal`, and
+    `ora.sqlite3-shm` from the data directory, copy `ora.sqlite3.pre-0025.bak` to `ora.sqlite3`,
+    and launch the older build.
+  - **Frozen SQL text**: `0025`'s `up_sql` and `down_sql` are frozen once merged (see below).
 
 ## Application bootstrap
 
@@ -105,10 +123,21 @@ The public `reconcile_migration_history` interface opens and reconciles a databa
 tooling. `cargo xtask reconcile-migrations DATA_DIRECTORY` calls it before `task run:desktop`
 starts the application; packaged application startup never calls this interface.
 
+**Irreversible boundary at `0025`:** development databases that have already applied migration
+`0025` cannot reconcile or roll back past `0025` because `0025`'s persisted `down_sql` aborts the
+rollback transaction. Consequently, `0025`'s SQL text (`up_sql` and `down_sql`) — as well as every
+earlier migration's SQL snapshot — is frozen for post-`0025` development databases: editing `0025`
+(or an earlier migration) causes `reconcile_database` to detect snapshot drift at or before `0025`,
+attempt to roll back `0025`, and fail. Subsequent schema changes must be added as new migrations
+(`0026+`), or the development database must be recreated (or restored from
+`ora.sqlite3.pre-0025.bak`).
+
 Explicit reconciliation also resumes first-install work from the durable journal.
 
 The prototype catalog describes only the current schema. It does not carry migrations for retired tables or columns, and the bookkeeping table is intentionally not compatible with databases created before SQL snapshots were introduced. Development databases may be recreated; no compatibility bridge is provided.
 
 Rolling back `0006` removes only Generic Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, and Git lifecycle schemas intact.
+
+Migration `0026` records evidence for new workflow attempts and run-local debug operations. Downgrading removes these records; upgrading does not infer historical inputs. Connections that insert node runs or write debug evidence must register the `ora_debug_hash` SQL function as the application does. A stock `sqlite3` connection cannot perform those writes.
 
 See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/core/persistence.md).

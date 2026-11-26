@@ -163,7 +163,7 @@ fn pruned_runs_surface_as_missing_so_the_sweep_can_remove_their_artifacts() {
 fn seed_task(pool: &RepositoryPool, temporary: &TempDir) -> ScheduledTask {
     let workspace_root = temporary.path().join("project");
     fs::create_dir_all(&workspace_root).expect("create project root");
-    SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(1))
+    SqliteProjectRepository::new(pool.clone())
         .create_project(
             Project::new(
                 ProjectId::new("project-1"),

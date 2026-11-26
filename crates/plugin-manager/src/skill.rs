@@ -1,7 +1,7 @@
 use crate::validation::{ManifestValidationError, invalid};
 use ora_skill_package::Limits;
 use ora_skill_package::manifest::parse_manifest;
-use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
+use ora_utils::path::{CanonicalPathRoot, PortableRelativePath, strip_verbatim_prefix};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -162,7 +162,9 @@ pub(crate) fn validate_skill(
         installed.push(InstalledSkill {
             name: parsed.name,
             description: parsed.description,
-            package_root: skill_root,
+            package_root: strip_verbatim_prefix(
+                &package_root.join(SKILL_ASSET_DIRECTORY).join(&skill_name),
+            ),
         });
     }
 
@@ -188,7 +190,16 @@ mod tests {
             .unwrap();
         }
 
-        assert!(validate_skill(package.path()).is_ok());
+        let descriptor = validate_skill(package.path()).unwrap();
+        assert_eq!(descriptor.skills.len(), 2);
+        for skill in &descriptor.skills {
+            assert_eq!(
+                skill.package_root,
+                ora_utils::path::strip_verbatim_prefix(
+                    &package.path().join(SKILL_ASSET_DIRECTORY).join(&skill.name)
+                )
+            );
+        }
     }
 
     #[test]

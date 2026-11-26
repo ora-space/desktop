@@ -3,14 +3,12 @@ use super::ports::{
     ImportSessionState, SkillImportProgressEvent,
 };
 use crate::skill::{
-    LocalSkillSourceRevision, SkillStorage, commit_existing_package, commit_restored_package,
+    SkillNameClaimedError, SkillStorage, commit_existing_package, commit_restored_package,
     commit_unclaimed_package, has_usable_package, next_updated_at, persist_promoted_package,
 };
 use crate::{ApplicationError, Clock, SkillRepository};
 use ora_domain::{AuditFields, Namespace, Skill, SkillId};
-use ora_effect::Digest;
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -242,16 +240,6 @@ where
         let _ = storage.remove_temp(&staging);
         return CandidateOutcome::Failed { error_code };
     }
-    let source_revision =
-        match imported_source_revision(storage, snapshot, candidate, &skill.name, &staging) {
-            Ok(source) => source,
-            Err(_) => {
-                let _ = storage.remove_temp(&staging);
-                return CandidateOutcome::Failed {
-                    error_code: "skill_storage_error".to_string(),
-                };
-            }
-        };
     let promoted = if let Some(existing) = &existing {
         match commit_restored_package(
             storage,
@@ -278,22 +266,19 @@ where
         }
     };
     let persisted = if existing.is_some() {
-        persist_promoted_package(storage, &promoted, || match source_revision {
-            Some(source) => repository.update_skill_with_source(skill, source),
-            None => repository.update_skill(skill),
-        })
+        persist_promoted_package(storage, &promoted, || repository.update_skill(skill))
     } else {
-        persist_promoted_package(storage, &promoted, || match source_revision {
-            Some(source) => repository.create_skill_with_source(skill, source),
-            None => repository.create_skill(skill),
-        })
+        persist_promoted_package(storage, &promoted, || repository.create_skill(skill))
     };
-    if persisted.is_err() {
-        return CandidateOutcome::Failed {
+    match persisted {
+        Ok(_) => CandidateOutcome::Imported,
+        // The active-name index is the atomic arbiter: a concurrent import claimed the name
+        // after the lookup above, so the package this candidate promoted was rolled back.
+        Err(error) if error.is::<SkillNameClaimedError>() => CandidateOutcome::StaleConflict,
+        Err(_) => CandidateOutcome::Failed {
             error_code: "skill_repository_error".to_string(),
-        };
+        },
     }
-    CandidateOutcome::Imported
 }
 
 /// Overwrites an existing skill, revalidating the frozen id/updatedAt before writing.
@@ -353,16 +338,6 @@ where
         let _ = storage.remove_temp(&staging);
         return CandidateOutcome::Failed { error_code };
     }
-    let source_revision =
-        match imported_source_revision(storage, snapshot, candidate, &skill.name, &staging) {
-            Ok(source) => source,
-            Err(_) => {
-                let _ = storage.remove_temp(&staging);
-                return CandidateOutcome::Failed {
-                    error_code: "skill_storage_error".to_string(),
-                };
-            }
-        };
     let promoted = match commit_existing_package(
         storage,
         &skill.id,
@@ -374,10 +349,7 @@ where
         Ok(promoted) => promoted,
         Err(error) => return promote_failure(storage, &staging, error),
     };
-    let persisted = persist_promoted_package(storage, &promoted, || match source_revision {
-        Some(source) => repository.update_skill_with_source(skill, source),
-        None => repository.update_skill(skill),
-    });
+    let persisted = persist_promoted_package(storage, &promoted, || repository.update_skill(skill));
     if persisted.is_err() {
         return CandidateOutcome::Failed {
             error_code: "skill_repository_error".to_string(),
@@ -464,29 +436,4 @@ fn stage_boundary<Storage: SkillStorage>(
             .map_err(|_| "skill_storage_error".to_string())?;
     }
     Ok(())
-}
-
-/// Captures the imported manifest identity and its final formal package path for atomic publish.
-fn imported_source_revision<Storage: SkillStorage>(
-    storage: &Storage,
-    snapshot: &SnapshotHandle,
-    candidate: &ImportCandidate,
-    final_name: &str,
-    fingerprint_root: &Path,
-) -> Result<Option<LocalSkillSourceRevision>, crate::skill::SkillStorageError> {
-    let Some(package_root) = storage.formal_package_path(final_name) else {
-        return Ok(None);
-    };
-    let manifest_path = candidate.source_path.to_path(&snapshot.root);
-    let manifest = fs::read(&manifest_path).map_err(|error| {
-        crate::skill::SkillStorageError::OperationFailed {
-            message: format!("failed to read {}: {error}", manifest_path.display()),
-        }
-    })?;
-    LocalSkillSourceRevision::from_package(
-        Digest::sha256(&manifest),
-        package_root,
-        fingerprint_root,
-    )
-    .map(Some)
 }

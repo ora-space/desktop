@@ -1,4 +1,3 @@
-use super::effect::EffectWriteContext;
 use crate::{LocalTimestampSource, TimestampSource};
 use ora_application::{
     RepositoryError, ScheduledRunWorktreeLink, TaskWorkspaceCommit, WorkspaceCommitOutcome,
@@ -7,9 +6,7 @@ use ora_domain::{
     Task, Workspace, WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
     WorkspaceProvisionerKind, WorkspaceProvisioningState, Worktree, WorktreeProvisioningLeaseId,
 };
-use ora_effect::EffectScopeId;
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
-use std::collections::BTreeSet;
 
 use crate::repository::RepositoryPool;
 use crate::repository::connection::bool_to_sqlite;
@@ -38,7 +35,7 @@ impl SqliteTaskWorkspaceRepository {
 }
 
 impl<Clock: TimestampSource> SqliteTaskWorkspaceRepository<Clock> {
-    /// Injects the audit clock used after acquiring Effect write transactions.
+    /// Injects the clock used for scheduled-run timestamps inside immediate transactions.
     pub fn with_clock(pool: RepositoryPool, clock: Clock) -> Self {
         Self { pool, clock }
     }
@@ -55,11 +52,10 @@ impl<Clock: TimestampSource> TaskWorkspaceCommit for SqliteTaskWorkspaceReposito
         self.pool
             .with_connection_mut(|connection| {
                 let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let write = EffectWriteContext::new(&transaction, &self.clock);
                 if !project_visible(&transaction, task.project_id.as_ref())? {
                     return Ok(WorkspaceCommitOutcome::ProjectNotVisible);
                 }
-                commit_worktree_task_rows(&transaction, &write, task, worktree, lease_id)?;
+                commit_worktree_task_rows(&transaction, task, worktree, lease_id)?;
                 transaction.commit()?;
                 Ok(WorkspaceCommitOutcome::Committed)
             })
@@ -84,10 +80,10 @@ impl<Clock: TimestampSource> TaskWorkspaceCommit for SqliteTaskWorkspaceReposito
         self.pool
             .with_connection_mut(|connection| {
                 let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let write = EffectWriteContext::new(&transaction, &self.clock);
                 if !project_visible(&transaction, task.project_id.as_ref())? {
                     return Ok(WorkspaceCommitOutcome::ProjectNotVisible);
                 }
+                let updated_at = self.clock.current_timestamp_millis();
                 let bound = transaction.execute(
                     "UPDATE scheduled_runs
                      SET worktree_task_id = ?1, worktree_path = ?2, updated_at = ?3
@@ -96,7 +92,7 @@ impl<Clock: TimestampSource> TaskWorkspaceCommit for SqliteTaskWorkspaceReposito
                     params![
                         task.id.as_ref(),
                         run_link.worktree_path,
-                        write.timestamp().millis(),
+                        updated_at,
                         run_link.run_id.as_ref(),
                         task.project_id.as_ref(),
                     ],
@@ -104,7 +100,7 @@ impl<Clock: TimestampSource> TaskWorkspaceCommit for SqliteTaskWorkspaceReposito
                 if bound != 1 {
                     return Ok(WorkspaceCommitOutcome::RunNotAdmissible);
                 }
-                commit_worktree_task_rows(&transaction, &write, task, worktree, lease_id)?;
+                commit_worktree_task_rows(&transaction, task, worktree, lease_id)?;
                 transaction.commit()?;
                 Ok(WorkspaceCommitOutcome::Committed)
             })
@@ -117,7 +113,6 @@ impl<Clock: TimestampSource> TaskWorkspaceCommit for SqliteTaskWorkspaceReposito
 /// the caller's open immediate transaction.
 fn commit_worktree_task_rows(
     transaction: &Transaction<'_>,
-    write: &EffectWriteContext,
     task: &Task,
     worktree: &Worktree,
     lease_id: &WorktreeProvisioningLeaseId,
@@ -135,7 +130,7 @@ fn commit_worktree_task_rows(
         WorkspaceLifecycle::Active,
         task.audit_fields.clone(),
     );
-    insert_workspace(transaction, &workspace, write)?;
+    insert_workspace(transaction, &workspace)?;
     insert_provisioning(transaction, &workspace)?;
     insert_worktree(transaction, worktree)?;
     insert_task(transaction, task)?;
@@ -203,7 +198,6 @@ fn insert_worktree(
 fn insert_workspace(
     transaction: &Transaction<'_>,
     workspace: &Workspace,
-    write: &EffectWriteContext,
 ) -> Result<(), crate::DatabaseError> {
     let location_id = format!("{}-location", workspace.id);
     let locator = match &workspace.location {
@@ -248,19 +242,6 @@ fn insert_workspace(
             workspace.audit_fields.updated_at,
             bool_to_sqlite(workspace.audit_fields.is_deleted),
         ],
-    )?;
-    write.create_scope(transaction, &EffectScopeId::Workspace(workspace.id.clone()))?;
-    let mut changed_scopes = BTreeSet::new();
-    super::effect::seed_scope_sources(
-        transaction,
-        &EffectScopeId::Workspace(workspace.id.clone()),
-        write.timestamp().millis(),
-        &mut changed_scopes,
-    )?;
-    super::effect::advance_changed_scopes(
-        transaction,
-        &changed_scopes,
-        write.timestamp().millis(),
     )?;
     Ok(())
 }
@@ -323,7 +304,7 @@ mod scheduled_ownership_tests {
     fn seed_project(pool: &RepositoryPool, temp_root: &std::path::Path, project_id: &str) {
         let workspace_root = temp_root.join(project_id);
         std::fs::create_dir_all(&workspace_root).expect("create project workspace");
-        SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(1))
+        SqliteProjectRepository::new(pool.clone())
             .create_project(
                 Project::new(
                     ProjectId::new(project_id),
@@ -707,7 +688,7 @@ mod scheduled_ownership_tests {
         seed_lease(&pool, "project-1", "workspace-task-1", "lease-1");
         // The project disappears while Git work and the commit race it.
         ora_application::ProjectRepository::soft_delete_project(
-            &SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(1)),
+            &SqliteProjectRepository::new(pool.clone()),
             &ProjectId::new("project-1"),
             20,
         )

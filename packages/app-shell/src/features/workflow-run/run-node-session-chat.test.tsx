@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { ChatTurn, SessionConversation } from "@ora/chat";
 import { createChatStore } from "@ora/chat";
@@ -227,6 +227,11 @@ function renderReadOnlyDock() {
 }
 
 describe("RunNodeSessionChat", () => {
+  // Surfaces are still mounted here and follow the selection.
+  afterEach(() =>
+    act(() => useWorkspaceSelectionStore.getState().clearSelection()),
+  );
+
   it("forwards the workflow conversation's live diagnostics to the shared panel", async () => {
     const turn: ChatTurn = {
       id: "turn",
@@ -360,8 +365,6 @@ describe("RunNodeSessionChat", () => {
     expect(
       discover.mock.calls.map(([request]) => request.includeCommands),
     ).toEqual([false]);
-    // The surface is still mounted and follows the selection.
-    act(() => useWorkspaceSelectionStore.getState().clearSelection());
   });
 
   it("keeps the node session's authoritative model visible", async () => {

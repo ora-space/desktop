@@ -21,9 +21,15 @@ impl<H: AgentRuntimeHost> Clone for AgentRuntime<H> {
 }
 
 impl<H: AgentRuntimeHost> AgentRuntime<H> {
-    /// Captures the same manager used by sessions, plugins, workflow execution, and Effect.
+    /// Captures the same manager used by sessions, plugins, and workflow execution.
     pub fn new(manager: Arc<AgentRuntimeManager<H>>) -> Self {
         Self { manager }
+    }
+
+    /// Reports the Skill revision a discovery would be given now.
+    #[cfg(feature = "test-support")]
+    pub fn skill_revision(&self) -> u64 {
+        self.manager.skill_revision()
     }
 
     /// Reports whether each application-scoped CLI runtime is ready, starting, or unavailable.

@@ -1,5 +1,12 @@
+import {
+  operatorSupportsType,
+  invalidComparisonField,
+  findVariable,
+  conditionOperatorNeedsValue,
+  type WorkflowConditionCase,
+} from "@ora/workflow-mock";
 import { selectorToText, textToSelector } from "./workflow-selector-text";
-import { Fragment } from "react";
+import { Fragment, useId } from "react";
 import { useTranslation } from "react-i18next";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import type {
@@ -7,7 +14,6 @@ import type {
   WorkflowConditionComparison,
   WorkflowConditionLogic,
   WorkflowVariableCatalogEntry,
-  WorkflowVariableValueType,
 } from "@ora/workflow-mock";
 import {
   Button,
@@ -24,6 +30,7 @@ import { WorkflowPromptEditor } from "./workflow-prompt-editor";
 
 /** Edits one condition group shared by branch routing and Loop termination. */
 export function WorkflowConditionRules({
+  showValidation,
   conditions,
   logic,
   onChange,
@@ -32,7 +39,9 @@ export function WorkflowConditionRules({
   logicLabel,
   branchLabel,
   minimumConditions = 0,
+  fixedRules,
 }: {
+  showValidation?: boolean;
   conditions: WorkflowConditionComparison[];
   logic: WorkflowConditionLogic;
   onChange: (group: {
@@ -45,8 +54,10 @@ export function WorkflowConditionRules({
   /** When set, drawn in the left rail like Dify's IF / ELIF label. */
   branchLabel?: string;
   minimumConditions?: number;
+  fixedRules?: WorkflowConditionCase;
 }) {
   const { t } = useTranslation();
+  const id = useId();
   const logicOptions = [
     { value: "and", label: t("settings.workflow.condition.logicAnd") },
     { value: "or", label: t("settings.workflow.condition.logicOr") },
@@ -83,20 +94,24 @@ export function WorkflowConditionRules({
       )}
     >
       {conditions.map((comparison, comparisonIndex) => {
-        const variableType = variableCatalog.find(
-          (entry) =>
-            selectorToText(entry.selector) ===
-            selectorToText(comparison.variableSelector),
+        const variableType = findVariable(
+          variableCatalog,
+          comparison.variableSelector,
         )?.valueType;
-        const availableOperators = operators.filter((operator) =>
-          operatorSupportsType(operator.value, variableType),
+        const invalid = showValidation
+          ? invalidComparisonField(comparison, variableCatalog, operators)
+          : undefined;
+        const errorId = invalid
+          ? `${id}-rule-${comparisonIndex}-error`
+          : undefined;
+        const availableOperators = operators.filter(
+          (operator) =>
+            operatorSupportsType(operator.value, variableType) &&
+            (!fixedRules ||
+              fixedRules.conditions[comparisonIndex]?.value !== undefined ||
+              !conditionOperatorNeedsValue(operator.value)),
         );
-        const needsValue = ![
-          "empty",
-          "not_empty",
-          "exists",
-          "not_exists",
-        ].includes(comparison.operator);
+        const needsValue = conditionOperatorNeedsValue(comparison.operator);
         return (
           <Fragment key={comparisonIndex}>
             {comparisonIndex > 0 && showRail && (
@@ -168,6 +183,12 @@ export function WorkflowConditionRules({
                 >
                   <SelectTrigger
                     className="h-7 w-auto max-w-[min(100%,11.5rem)] min-w-0 shrink justify-start gap-0.5 overflow-hidden border-0 bg-transparent px-1 pr-0.5 shadow-none dark:bg-transparent [&_[data-slot=select-value]]:flex-none [&_svg]:size-3"
+                    aria-invalid={
+                      showValidation ? invalid === "variable" : undefined
+                    }
+                    aria-describedby={
+                      invalid === "variable" ? errorId : undefined
+                    }
                     aria-label={t("settings.workflow.field.variable", {
                       index: comparisonIndex + 1,
                     })}
@@ -207,6 +228,12 @@ export function WorkflowConditionRules({
                 >
                   <SelectTrigger
                     size="sm"
+                    aria-invalid={
+                      showValidation ? invalid === "operator" : undefined
+                    }
+                    aria-describedby={
+                      invalid === "operator" ? errorId : undefined
+                    }
                     aria-label={t("settings.workflow.field.operator", {
                       index: comparisonIndex + 1,
                     })}
@@ -236,7 +263,9 @@ export function WorkflowConditionRules({
                   variant="ghost"
                   size="icon-sm"
                   className="ml-auto size-7 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  disabled={conditions.length <= minimumConditions}
+                  disabled={
+                    !!fixedRules || conditions.length <= minimumConditions
+                  }
                   aria-label={t("settings.workflow.condition.removeRule")}
                   onClick={() => removeComparison(comparisonIndex)}
                 >
@@ -244,7 +273,14 @@ export function WorkflowConditionRules({
                 </Button>
               </div>
               {needsValue && (
-                <div className="min-w-0 border-t border-border/70 px-1 py-0.5">
+                <div
+                  role="group"
+                  aria-invalid={
+                    showValidation ? invalid === "value" : undefined
+                  }
+                  aria-describedby={invalid === "value" ? errorId : undefined}
+                  className="min-w-0 border-t border-border/70 px-1 py-0.5"
+                >
                   {variableType === "boolean" ? (
                     <Select
                       value={
@@ -261,6 +297,12 @@ export function WorkflowConditionRules({
                     >
                       <SelectTrigger
                         className="h-8 w-full min-w-0 border-0 bg-transparent px-1.5 shadow-none dark:bg-transparent"
+                        aria-invalid={
+                          showValidation ? invalid === "value" : undefined
+                        }
+                        aria-describedby={
+                          invalid === "value" ? errorId : undefined
+                        }
                         aria-label={t("settings.workflow.field.value", {
                           index: comparisonIndex + 1,
                         })}
@@ -278,6 +320,7 @@ export function WorkflowConditionRules({
                     </Select>
                   ) : (
                     <WorkflowPromptEditor
+                      showValidation={showValidation}
                       key={`${selectorToText(comparison.variableSelector)}-${comparison.operator}-${comparisonIndex}`}
                       compact
                       value={comparisonValueToText(comparison.value)}
@@ -307,6 +350,20 @@ export function WorkflowConditionRules({
                   )}
                 </div>
               )}
+              {invalid && (
+                <span id={errorId} className="sr-only">
+                  {t("settings.workflow.debug.invalid", {
+                    field: [
+                      branchLabel,
+                      t(`settings.workflow.field.${invalid}`, {
+                        index: comparisonIndex + 1,
+                      }),
+                    ]
+                      .filter(Boolean)
+                      .join(" · "),
+                  })}
+                </span>
+              )}
             </div>
           </Fragment>
         );
@@ -322,6 +379,7 @@ export function WorkflowConditionRules({
         variant="ghost"
         size="sm"
         className="w-fit justify-start border border-border bg-background shadow-sm"
+        disabled={!!fixedRules}
         onClick={addComparison}
       >
         <IconPlus />
@@ -419,31 +477,4 @@ function comparisonValueToText(value: unknown): string {
     return "";
   }
   return typeof value === "string" ? value : JSON.stringify(value);
-}
-
-/** Offers comparisons appropriate for the selected value, preserving unknown-type editing. */
-function operatorSupportsType(
-  operator: string,
-  valueType: WorkflowVariableValueType | undefined,
-): boolean {
-  if (valueType === undefined || valueType === "any") return true;
-  switch (operator) {
-    case "greater_than":
-    case "greater_than_or_equal":
-    case "less_than":
-    case "less_than_or_equal":
-      return valueType === "number" || valueType === "integer";
-    case "contains":
-    case "not_contains":
-      return (
-        valueType === "string" ||
-        valueType === "secret" ||
-        valueType.startsWith("array")
-      );
-    case "starts_with":
-    case "ends_with":
-      return valueType === "string" || valueType === "secret";
-    default:
-      return true;
-  }
 }

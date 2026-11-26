@@ -22,7 +22,7 @@ detail, and frontend types never come from domain entities or adapter-local stru
 
 Current namespaces: `project`, `task`, `workspace`, `session`, `appEvents`, `agentRuntime`,
 `agent`, `agentImport`, `skill`, `skillImport`, `fileSystem`, `gitIdentity`, `workflow`,
-`workflowRun`, `scheduledTask`, `plugin`, `effect`, `developerMode`, `runtimeLogLevel` and `proxy`.
+`workflowRun`, `scheduledTask`, `plugin`, `developerMode`, `runtimeLogLevel` and `proxy`.
 
 ## Generation
 

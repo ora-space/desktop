@@ -149,7 +149,6 @@ in-memory fakes.
 | `skill`            | create, get, list, update, delete, startup reconciliation                                                            |
 | `skill_import`     | prepare, get, commit, cancel                                                                                         |
 | `agent_definition` | create, get, list, update, delete; Markdown import (prepare, commit)                                                 |
-| `effect`           | Desired State and Target status, see [Effects](../agents/effects.md)                                                 |
 | `workspace_diff`   | read diff and status, stage, unstage, commit, push                                                                   |
 | `workflow`         | create, get, list, update, delete, analyze, draft get/update, publish, rollback, activate, versions, delete snapshot |
 | `workflow_run`     | CRUD plus the run engine (start, cancel, restart, resume, node completion)                                           |
@@ -188,7 +187,7 @@ written.
   is not an existing directory, with `project_workspace_not_directory`, and persists nothing.
   Creation, cwd resolution and the `listWorkspaces` probe below share one anchoring and directory
   check, so a relative path is judged against the base that later cwd resolution uses. Branch
-  listing and Effect materialization still read the stored location with their own path handling. A
+  listing still reads the stored location with its own path handling. A
   local Main Workspace is `active` from creation: Ora never provisions a local checkout, so a folder
   that disappears later is reported through `directory` and `workspace_unavailable`, never frozen
   into the lifecycle.

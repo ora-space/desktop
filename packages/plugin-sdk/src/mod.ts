@@ -4,11 +4,9 @@ export {
   AGENT_UNUSABLE,
   type AgentCommand,
   type AgentDefinition,
+  type AgentDiscoverSkills,
   type AgentDiscovery,
   type AgentDiscoveryContext,
-  type AgentEffectCoordinationContext,
-  type AgentEffectDefinition,
-  type AgentEffectReadinessContext,
   type AgentModel,
   type AgentStartContext,
   defineAgent,
@@ -16,6 +14,8 @@ export {
 export {
   AGENT_DISCOVERY_CLEANUP_RESERVE_MS,
   type AgentCommandsWait,
+  type SkillSessionSetup,
+  skillSessionSetup,
   waitForAgentCommands,
 } from "./discovery.ts";
 export {
@@ -23,7 +23,6 @@ export {
   type AgentProgram,
   spawnAgentProcess,
 } from "./agent_process.ts";
-export type { EffectResourceDeclaration } from "./plugin.ts";
 export type {
   AgentBoundModel,
   AgentModelApplied,
@@ -60,13 +59,11 @@ export {
   Plugin,
   PluginMethodError,
   type PluginOptions,
-  SKILL_DIRECTORY_V1,
 } from "./plugin.ts";
 export {
   AGENT_METHODS,
   CHILD_PROCESS_METHODS,
   CHILD_PROCESS_NOTIFICATIONS,
-  EFFECT_METHODS,
   INTERNAL_ERROR,
   INVALID_PARAMS,
   type JsonValue,

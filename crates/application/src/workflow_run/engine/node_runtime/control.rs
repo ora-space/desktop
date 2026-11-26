@@ -56,6 +56,14 @@ impl NodeRuntime for ConditionRuntime {
 }
 
 impl SwiftNodeRuntime for ConditionRuntime {
+    fn completion_evidence(
+        &self,
+        pool: &crate::WorkflowVariablePool,
+        result: &str,
+    ) -> Option<serde_json::Value> {
+        Some(serde_json::json!({"debugCondition": {"variablePool":pool, "branch":result}}))
+    }
+
     fn complete_running(
         &self,
         node: &WorkflowGraphNode,

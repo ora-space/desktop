@@ -26,6 +26,7 @@ pub fn reconcile_database_versions<T>(
 where
     T: TimestampSource,
 {
+    crate::location::register_debug_hash(connection)?;
     ensure_migrations_table(connection)?;
 
     super::legacy_loop::adopt_legacy_loop(connection, catalog, timestamp_source)?;

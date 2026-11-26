@@ -59,11 +59,20 @@ pub(super) fn complete(
                 return Ok(AdvanceWorkflowRunResult::NotRunning);
             }
             // Merge onto the existing payload so a success never drops the checkpoint keys.
+            let mut patch = payload_patch.cloned();
+            if node_type == "condition"
+                && let Some(condition) = patch.as_mut().and_then(|p| p.get_mut("debugCondition"))
+                && let Some(pool) = condition.as_object_mut().and_then(|c| c.remove("variablePool"))
+            {
+                crate::workflow_debug::record_condition_pool(
+                    &transaction, &run_id, node_run_id.as_ref(), pool,
+                )?;
+            }
             let payload = merge_complete_payload(
                 node_payload,
                 stop_reason,
                 file_changes,
-                payload_patch.cloned(),
+                patch,
             )?;
             if scope_id == root_scope_id {
                 update_run_execution_state(

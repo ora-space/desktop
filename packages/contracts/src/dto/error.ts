@@ -28,8 +28,6 @@ export type ContractError =
       "params": PluginLogLevelsFileParams;
     }
     | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
-    | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
-    | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
     | { "code": "plugin_package_invalid"; "params": PluginPackageInvalidParams }
     | { "code": "pack_member_duplicate"; "params": PackMemberParams }
     | { "code": "pack_self_reference"; "params": PackMemberParams }
@@ -190,6 +188,10 @@ export type ContractError =
       "code": "workflow_skill_not_found";
       "params": WorkflowSkillNotFoundParams;
     }
+    | {
+      "code": "workflow_skill_ambiguous";
+      "params": WorkflowSkillAmbiguousParams;
+    }
     | { "code": "workflow_mcp_not_found"; "params": WorkflowMcpNotFoundParams }
     | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
     | { "code": "workflow_run_start_failed"; "params": EmptyErrorParams }
@@ -218,6 +220,17 @@ export type ContractError =
     | {
       "code": "workflow_node_signal_changed";
       "params": WorkflowNodeSignalChangedParams;
+    }
+    | { "code": "workflow_debug_stale_preview"; "params": EmptyErrorParams }
+    | { "code": "workflow_debug_operation_active"; "params": EmptyErrorParams }
+    | { "code": "workflow_debug_request_conflict"; "params": EmptyErrorParams }
+    | {
+      "code": "workflow_debug_patch_invalid";
+      "params": WorkflowDebugPatchInvalidParams;
+    }
+    | {
+      "code": "workflow_debug_target_rejected";
+      "params": WorkflowDebugTargetRejectedParams;
     }
   );
 
@@ -301,8 +314,6 @@ export type PublicError =
     "params": PluginLogLevelsFileParams;
   }
   | { "code": "plugin_host_incompatible"; "params": EmptyErrorParams }
-  | { "code": "effect_target_not_found"; "params": EmptyErrorParams }
-  | { "code": "effect_target_not_recoverable"; "params": EmptyErrorParams }
   | { "code": "plugin_package_invalid"; "params": PluginPackageInvalidParams }
   | { "code": "pack_member_duplicate"; "params": PackMemberParams }
   | { "code": "pack_self_reference"; "params": PackMemberParams }
@@ -448,6 +459,10 @@ export type PublicError =
     "code": "workflow_skill_not_found";
     "params": WorkflowSkillNotFoundParams;
   }
+  | {
+    "code": "workflow_skill_ambiguous";
+    "params": WorkflowSkillAmbiguousParams;
+  }
   | { "code": "workflow_mcp_not_found"; "params": WorkflowMcpNotFoundParams }
   | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
   | { "code": "workflow_run_start_failed"; "params": EmptyErrorParams }
@@ -476,6 +491,17 @@ export type PublicError =
   | {
     "code": "workflow_node_signal_changed";
     "params": WorkflowNodeSignalChangedParams;
+  }
+  | { "code": "workflow_debug_stale_preview"; "params": EmptyErrorParams }
+  | { "code": "workflow_debug_operation_active"; "params": EmptyErrorParams }
+  | { "code": "workflow_debug_request_conflict"; "params": EmptyErrorParams }
+  | {
+    "code": "workflow_debug_patch_invalid";
+    "params": WorkflowDebugPatchInvalidParams;
+  }
+  | {
+    "code": "workflow_debug_target_rejected";
+    "params": WorkflowDebugTargetRejectedParams;
   };
 
 /**
@@ -505,6 +531,23 @@ export type SkillFolderConflictParams = { name: string };
  * Carries the user-selected base branch name when Git cannot resolve it.
  */
 export type TaskBaseBranchNotFoundParams = { branchName: string };
+
+/**
+ * Names the field of a run-local debug patch that the server refused, and why.
+ */
+export type WorkflowDebugPatchInvalidParams = {
+  /**
+   * Path relative to the normalized data of the edited node, such as `/agentConfig/prompt`.
+   */
+  path: string;
+  reason: string;
+};
+
+/**
+ * Explains why a run-local debug target cannot be previewed, such as which recorded input is
+ * missing or which position field the page still has to supply.
+ */
+export type WorkflowDebugTargetRejectedParams = { reason: string };
 
 /**
  * Names the workflow node and the MCP plugin its frozen graph declares, for a run that cannot
@@ -623,6 +666,23 @@ export type WorkflowNodeTurnKey = { userSeq: number; endedSeq: number };
 export type WorkflowRunInputInvalidParams = {
   variable: string;
   reason: string;
+};
+
+/**
+ * Names the workflow node, ambiguous bare Skill reference, and matching catalog candidates.
+ *
+ * Raised when a workflow declares a bare Skill name matching multiple Skill catalog entries
+ * (for example a local Skill and a plugin Skill sharing the same name), so the operator can
+ * select a specific Skill instead of letting runtime guess.
+ */
+export type WorkflowSkillAmbiguousParams = {
+  nodeId: string;
+  /**
+   * Node label to show; equal to `node_id` when the node carries no title.
+   */
+  nodeTitle: string;
+  skillRef: string;
+  candidates: Array<string>;
 };
 
 /**

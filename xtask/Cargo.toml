@@ -25,3 +25,4 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+rusqlite = { workspace = true, features = ["bundled"] }

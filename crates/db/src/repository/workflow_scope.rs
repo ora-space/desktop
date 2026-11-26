@@ -24,7 +24,7 @@ pub(super) fn map_round(row: &Row<'_>) -> Result<WorkflowExecutionScope, crate::
 }
 
 /// Lists every Loop round of one run in parent and round order for history projection.
-pub(super) fn list_rounds(
+pub(crate) fn list_rounds(
     connection: &rusqlite::Connection,
     run_id: &WorkflowRunId,
 ) -> Result<Vec<WorkflowExecutionScope>, crate::DatabaseError> {

@@ -15,13 +15,14 @@ CREATE TABLE workflow_document_imports (
 
 const DOWN_STATEMENTS: &[&str] = &["DROP TABLE IF EXISTS workflow_document_imports;"];
 
-/// Records which document paths a marketplace plugin already delivered a workflow for.
+/// Records which document paths a marketplace plugin delivered or skipped for a name conflict.
 ///
-/// The table holds terminal outcomes only: a path either produced a copy, or collided with a
-/// workflow of the same name the user already had. Both are permanent for that source path, which
-/// is what makes an upgrade additive and a user deletion stay deleted. The record is deliberately
-/// not a foreign key to `workflows`: it outlives the copy so re-importing a deleted workflow stays
-/// refused, and `workflow_id` is informational only.
+/// The record is keyed by `(source namespace, plugin identifier, document path)` and intentionally
+/// carries no foreign key to `workflows`: copy liveness is resolved on read by joining `workflows`
+/// on `is_deleted = 0`, so a surviving copy stays skipped across upgrades and reinstalls even when
+/// renamed, a deleted copy stays deleted during upgrades and card retries within the install cycle
+/// while a fresh install reconsiders it, and a `conflict_skipped` record stays retryable once the
+/// conflicting name is freed.
 pub fn migration() -> Migration {
     Migration::new("0022", UP_STATEMENTS, DOWN_STATEMENTS)
 }
@@ -57,8 +58,8 @@ mod tests {
             )
             .expect("insert conflict record");
 
-        // The same source path can never carry a second outcome, which is what stops a reinstall
-        // or upgrade from importing a path twice.
+        // The primary key holds at most one active record per source path, while conditional
+        // updates transition that path between `conflict_skipped` and `imported` as needed.
         assert!(
             connection
                 .execute(
@@ -109,7 +110,7 @@ mod tests {
                     [],
                 )
                 .is_err(),
-            "only terminal states may be recorded"
+            "only recorded source states may be stored"
         );
     }
 }

@@ -2,109 +2,120 @@
 
 use super::graph::{GraphError, WorkflowGraph};
 use super::loop_config::LoopInitialValue;
-use super::variable_pool::VariableSelector;
 use std::collections::HashSet;
 
 /// Visits typed executable configuration, never arbitrary labels or JSON schema strings.
 pub(super) fn validate(graph: &WorkflowGraph, unused: &[String]) -> Result<(), GraphError> {
     let unused: HashSet<&str> = unused.iter().map(String::as_str).collect();
-    let check = |selector: &VariableSelector| require_used(&selector.node_id, &unused);
+    if unused.is_empty() {
+        return Ok(());
+    }
     for scope in graph.execution_scopes() {
         for node in scope.nodes() {
-            for selector in node
-                .condition_config
-                .iter()
-                .flat_map(|config| &config.cases)
-                .flat_map(|case| &case.conditions)
-                .map(|rule| &rule.variable_selector)
-                .chain(
-                    node.output_config
-                        .iter()
-                        .flat_map(|config| &config.outputs)
-                        .map(|binding| &binding.variable_selector),
-                )
-                .chain(
-                    node.aggregator_config
-                        .iter()
-                        .flat_map(|config| &config.variables),
-                )
-            {
-                check(selector)?;
-            }
-            if let Some(config) = &node.iteration_config {
-                check(&config.iterator_selector)?;
-                check(&config.collect_selector)?;
-            }
-            if let Some((config, _)) = scope.loop_body(&node.id) {
-                for variable in &config.variables {
-                    if let LoopInitialValue::Variable(selector) = &variable.initial {
-                        check(selector)?;
-                    }
-                    check(&variable.feedback)?;
-                }
-                for selector in config
-                    .outputs
-                    .iter()
-                    .map(|binding| &binding.variable_selector)
-                    .chain(
-                        config
-                            .until
-                            .cases
-                            .iter()
-                            .flat_map(|case| &case.conditions)
-                            .map(|rule| &rule.variable_selector),
-                    )
-                {
-                    check(selector)?;
-                }
-            }
-            for text in node
-                .agent_config
-                .iter()
-                .map(|config| config.prompt.as_str())
-                .chain(
-                    node.condition_config
-                        .iter()
-                        .flat_map(|config| &config.cases)
-                        .flat_map(|case| &case.conditions)
-                        .filter_map(|rule| rule.value.as_ref().and_then(|value| value.as_str())),
-                )
-                .chain(
-                    scope
-                        .loop_body(&node.id)
-                        .into_iter()
-                        .flat_map(|(config, _)| {
-                            config
-                                .until
-                                .cases
-                                .iter()
-                                .flat_map(|case| &case.conditions)
-                                .filter_map(|rule| {
-                                    rule.value.as_ref().and_then(|value| value.as_str())
-                                })
-                        }),
-                )
-            {
-                visit_template_node_ids(text, &unused)?;
+            for producer in scope.input_producers(node) {
+                require_used(&producer, &unused)?;
             }
         }
     }
     Ok(())
 }
 
-/// Walks Dify-style `{{#node.variable#}}` placeholders and rejects unused producers.
-fn visit_template_node_ids(text: &str, unused: &HashSet<&str>) -> Result<(), GraphError> {
+impl WorkflowGraph {
+    /// Definition IDs read by a node's executable selectors and templates in this scope.
+    pub fn input_producers(
+        &self,
+        node: &super::graph::WorkflowGraphNode,
+    ) -> std::collections::BTreeSet<String> {
+        let mut ids = std::collections::BTreeSet::new();
+        for selector in node
+            .condition_config
+            .iter()
+            .flat_map(|config| &config.cases)
+            .flat_map(|case| &case.conditions)
+            .map(|rule| &rule.variable_selector)
+            .chain(
+                node.output_config
+                    .iter()
+                    .flat_map(|config| &config.outputs)
+                    .map(|binding| &binding.variable_selector),
+            )
+            .chain(
+                node.aggregator_config
+                    .iter()
+                    .flat_map(|config| &config.variables),
+            )
+        {
+            ids.insert(selector.node_id.clone());
+        }
+        if let Some(config) = &node.iteration_config {
+            ids.insert(config.iterator_selector.node_id.clone());
+            ids.insert(config.collect_selector.node_id.clone());
+        }
+        if let Some((config, _)) = self.loop_body(&node.id) {
+            for variable in &config.variables {
+                if let LoopInitialValue::Variable(selector) = &variable.initial {
+                    ids.insert(selector.node_id.clone());
+                }
+                ids.insert(variable.feedback.node_id.clone());
+            }
+            for selector in config
+                .outputs
+                .iter()
+                .map(|binding| &binding.variable_selector)
+                .chain(
+                    config
+                        .until
+                        .cases
+                        .iter()
+                        .flat_map(|case| &case.conditions)
+                        .map(|rule| &rule.variable_selector),
+                )
+            {
+                ids.insert(selector.node_id.clone());
+            }
+        }
+        for text in node
+            .agent_config
+            .iter()
+            .map(|config| config.prompt.as_str())
+            .chain(
+                node.condition_config
+                    .iter()
+                    .flat_map(|config| &config.cases)
+                    .flat_map(|case| &case.conditions)
+                    .filter_map(|rule| rule.value.as_ref().and_then(|value| value.as_str())),
+            )
+            .chain(
+                self.loop_body(&node.id)
+                    .into_iter()
+                    .flat_map(|(config, _)| {
+                        config
+                            .until
+                            .cases
+                            .iter()
+                            .flat_map(|case| &case.conditions)
+                            .filter_map(|rule| rule.value.as_ref().and_then(|value| value.as_str()))
+                    }),
+            )
+        {
+            visit_template_node_ids(text, &mut ids);
+        }
+        ids
+    }
+}
+
+/// Walks Dify-style `{{#node.variable#}}` placeholders and records their producers.
+fn visit_template_node_ids(text: &str, ids: &mut std::collections::BTreeSet<String>) {
     let mut remaining = text;
     while let Some((_, after_open)) = remaining.split_once("{{#") {
         let Some((selector, rest)) = after_open.split_once("#}}") else {
             break;
         };
         if let Some((node_id, _)) = selector.split_once('.') {
-            require_used(node_id, unused)?;
+            ids.insert(node_id.to_owned());
         }
         remaining = rest;
     }
-    Ok(())
 }
 
 /// References never implicitly activate spare nodes or substitute empty values.

@@ -32,13 +32,17 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// brings none during setup: what is still on screen belongs to a session that is gone.
     pub(super) async fn replace_stale_session(
         &mut self,
-        channel: SessionChannel,
+        mut channel: SessionChannel,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
         let model = current_model(&self.reported_config_options);
         let had_options = !self.reported_config_options.is_empty();
         let had_commands = channel.reported_commands().is_some();
+        // Their answers can no longer arrive. They are made as far as the caller is concerned, and
+        // leave it on what the replacement offers.
+        let mut changes = std::mem::take(&mut channel.config_changes);
         self.isolate_channel(channel).await;
         let mut setup = self.rebuild_provider_session(model.as_deref()).await?;
+        changes.accept(&self.reported_config_options);
         // `session/new` answers with every option the replacement offers, so none means none.
         if had_options && self.reported_config_options.is_empty() {
             setup.push(SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(

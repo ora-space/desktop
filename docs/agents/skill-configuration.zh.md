@@ -2,7 +2,7 @@
 
 [English](skill-configuration.md) | 中文
 
-Skill 插件可以用 Settings-only `assets/config.json` 声明配置。现有插件配置编辑器把覆盖值存入宿主插件数据目录；配置不改变 Skill Catalog 发布和工作区物化。
+Skill 插件可以用 Settings-only `assets/config.json` 声明配置。现有插件配置编辑器把覆盖值存入宿主插件数据目录；配置不改变 Skill Catalog 发布与会话清单交付。
 
 ```json
 {
@@ -48,7 +48,7 @@ if token is None:
 
 ## 安全边界
 
-配置仍保存在宿主 `store.json`，本功能没有新增加密或系统钥匙串。Ora 不把配置值复制进工作区文件、Effect 状态、ACP 消息或宿主日志。公开字段在编辑器中仍然可见。
+配置仍保存在宿主 `store.json`，本功能没有新增加密或系统钥匙串。Ora 不把配置值复制进工作区文件、ACP 消息或宿主日志。公开字段在编辑器中仍然可见。
 
 每个 Agent 都能读取整份 Desktop 快照，**不提供工作区或 Skill 级凭据隔离**。Agent 和脚本可以自行读取并输出环境值，脱敏不能阻止恶意脚本泄漏。重置或卸载后，已有进程终止前仍持有旧快照；需要立即撤销时，应在外部服务吊销凭据。
 

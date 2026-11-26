@@ -1,10 +1,11 @@
 use crate::BackendError;
 use crate::clock::SystemClock;
-use crate::effect_worker::EffectWorkerHandle;
+use crate::skill_catalog::skill_package_dir;
+use crate::skill_revision::{CountedSkillRepository, CountedSkillStorage, SkillRevision};
 use ora_application::{
     CreateSkillHandler, DeleteSkillHandler, FilesystemSkillStorage, GetSkillHandler,
-    ListSkillsHandler, SkillImportConfig, SkillImportProgressEvent, SkillImportProgressPublisher,
-    SkillImportService, UpdateSkillHandler, UuidSkillIdGenerator, UuidSkillImportIdGenerator,
+    ListSkillsHandler, NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportService,
+    UpdateSkillHandler, UuidSkillIdGenerator, UuidSkillImportIdGenerator,
 };
 use ora_contracts::{
     CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest,
@@ -14,43 +15,32 @@ use ora_contracts::{
     PrepareSkillImportRequest, PrepareSkillImportResponse, UpdateSkillRequest, UpdateSkillResponse,
 };
 use ora_db::{RepositoryPool, SqliteSkillRepository};
+use ora_utils::path::strip_verbatim_prefix;
 use std::path::PathBuf;
 
 #[cfg(test)]
 mod package_tests;
 
+/// The package storage the settings change Skills through.
+type Storage = CountedSkillStorage<FilesystemSkillStorage>;
+
 /// Groups the concrete skill handlers and import service shared by runtime adapters.
 pub struct SkillApi {
-    create: CreateSkillHandler<
-        SqliteSkillRepository,
-        FilesystemSkillStorage,
-        UuidSkillIdGenerator,
-        SystemClock,
-    >,
-    get: GetSkillHandler<SqliteSkillRepository, FilesystemSkillStorage>,
-    list: ListSkillsHandler<SqliteSkillRepository, FilesystemSkillStorage>,
-    update: UpdateSkillHandler<SqliteSkillRepository, FilesystemSkillStorage, SystemClock>,
-    delete: DeleteSkillHandler<SqliteSkillRepository, FilesystemSkillStorage, SystemClock>,
+    create: CreateSkillHandler<CountedSkillRepository, Storage, UuidSkillIdGenerator, SystemClock>,
+    get: GetSkillHandler<CountedSkillRepository, Storage>,
+    list: ListSkillsHandler<CountedSkillRepository, Storage>,
+    update: UpdateSkillHandler<CountedSkillRepository, Storage, SystemClock>,
+    delete: DeleteSkillHandler<CountedSkillRepository, Storage, SystemClock>,
     import: SkillImportService<
-        SqliteSkillRepository,
-        FilesystemSkillStorage,
+        CountedSkillRepository,
+        Storage,
         UuidSkillImportIdGenerator,
         SystemClock,
-        SkillEffectNotifier,
+        NoopSkillImportProgressPublisher,
     >,
-    effect_reconcile: EffectWorkerHandle,
-}
-
-/// Wakes Effect convergence after an asynchronous import has durably processed a candidate.
-#[derive(Clone, Debug)]
-struct SkillEffectNotifier {
-    effect_reconcile: EffectWorkerHandle,
-}
-
-impl SkillImportProgressPublisher for SkillEffectNotifier {
-    fn publish(&self, _event: SkillImportProgressEvent) {
-        self.effect_reconcile.notify();
-    }
+    revision: SkillRevision,
+    /// The local packages' root, as the sessions' catalog spells it.
+    skills_root: PathBuf,
 }
 
 impl SkillApi {
@@ -58,11 +48,15 @@ impl SkillApi {
     pub(crate) fn new(
         pool: RepositoryPool,
         skills_root: PathBuf,
+        revision: SkillRevision,
         clock: SystemClock,
-        effect_reconcile: EffectWorkerHandle,
     ) -> Self {
-        let repository = SqliteSkillRepository::new(pool);
-        let storage = FilesystemSkillStorage::new(skills_root.clone());
+        let repository =
+            CountedSkillRepository::new(SqliteSkillRepository::new(pool), revision.clone());
+        let storage = CountedSkillStorage::new(
+            FilesystemSkillStorage::new(skills_root.clone()),
+            revision.clone(),
+        );
 
         Self {
             create: CreateSkillHandler::new(
@@ -77,23 +71,23 @@ impl SkillApi {
             delete: DeleteSkillHandler::new(repository.clone(), storage, clock),
             import: SkillImportService::new(
                 repository,
-                FilesystemSkillStorage::new(skills_root),
+                CountedSkillStorage::new(
+                    FilesystemSkillStorage::new(skills_root.clone()),
+                    revision.clone(),
+                ),
                 UuidSkillImportIdGenerator,
                 clock,
-                SkillEffectNotifier {
-                    effect_reconcile: effect_reconcile.clone(),
-                },
+                NoopSkillImportProgressPublisher,
                 SkillImportConfig::default(),
             ),
-            effect_reconcile,
+            revision,
+            skills_root: strip_verbatim_prefix(&skills_root),
         }
     }
 
     /// Executes skill creation through the application handler.
     pub fn create(&self, request: CreateSkillRequest) -> Result<CreateSkillResponse, BackendError> {
-        let response = self.create.handle(request)?;
-        self.effect_reconcile.notify();
-        Ok(response)
+        self.create.handle(request).map_err(BackendError::from)
     }
 
     /// Executes one skill lookup through the application handler.
@@ -102,22 +96,33 @@ impl SkillApi {
     }
 
     /// Executes skill listing through the application handler.
+    ///
+    /// What it found available is observed like a session's catalog read, so a package that broke
+    /// or came back without a commit invalidates the discovered commands once the settings show it.
     pub fn list(&self, request: ListSkillsRequest) -> Result<ListSkillsResponse, BackendError> {
-        self.list.handle(request).map_err(BackendError::from)
+        // Read first: a change that lands while the packages are read is counted on its own.
+        let revision = self.revision.current();
+        self.list
+            .handle_observed(request, |available| {
+                self.revision.observed(
+                    revision,
+                    available
+                        .iter()
+                        .map(|skill| skill_package_dir(&self.skills_root, skill).join("SKILL.md"))
+                        .collect(),
+                );
+            })
+            .map_err(BackendError::from)
     }
 
     /// Executes skill replacement through the application handler.
     pub fn update(&self, request: UpdateSkillRequest) -> Result<UpdateSkillResponse, BackendError> {
-        let response = self.update.handle(request)?;
-        self.effect_reconcile.notify();
-        Ok(response)
+        self.update.handle(request).map_err(BackendError::from)
     }
 
     /// Executes skill deletion through the application handler.
     pub fn delete(&self, request: DeleteSkillRequest) -> Result<DeleteSkillResponse, BackendError> {
-        let response = self.delete.handle(request)?;
-        self.effect_reconcile.notify();
-        Ok(response)
+        self.delete.handle(request).map_err(BackendError::from)
     }
 
     /// Prepares one import source into a previewed session.
@@ -323,8 +328,7 @@ mod tests {
                     &default_migration_catalog().unwrap(),
                 )
                 .unwrap();
-            let skill_repository =
-                SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
+            let skill_repository = SqliteSkillRepository::new(pool.clone());
             let agent_repository = SqliteAgentDefinitionRepository::new(pool);
             let promote = Arc::new(Barrier::new(2));
             let handler = CreateSkillHandler::new(

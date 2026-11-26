@@ -14,7 +14,7 @@ use crate::clock::SystemClock;
 use crate::host::SessionStore;
 use crate::host::{AgentAttach, AgentRuntimeHost};
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
-use ora_acp::{AcpClient, AcpInboundEvent};
+use ora_acp::{AcpClient, AcpInboundEvent, ReadEvent, ReadOrder};
 use ora_contracts::PublicError;
 use ora_domain::{AgentRef, PluginId, SessionStatus};
 use ora_logging::{ora_error, ora_info, ora_warn};
@@ -64,6 +64,8 @@ pub(super) struct RuntimeConnection {
     /// it so unused provider history does not accumulate; agents without it fall
     /// back to `session/close`, which only detaches.
     pub delete_session_supported: bool,
+    /// Whether the agent advertises `sessionCapabilities.additionalDirectories`.
+    pub additional_directories_supported: bool,
 }
 
 #[derive(Clone)]
@@ -285,18 +287,6 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
         }
     }
 
-    /// Resolves a plugin package address onto the agent identity its sessions are bound to.
-    ///
-    /// The two are the same value now that an agent is identified by its whole plugin id, but the
-    /// lookup remains because the answer also has to say whether that package is installed: a
-    /// caller holding a package address wants the agent it currently supplies, not an identity
-    /// minted for a package that is gone.
-    pub fn agent_for_plugin(&self, plugin_id: &PluginId) -> Option<AgentRef> {
-        self.plugin_host
-            .is_installed(plugin_id)
-            .then(|| AgentRef::for_plugin(plugin_id))
-    }
-
     /// Selects the sole application-scoped connection for one persisted agent identity.
     ///
     /// A miss is a normal runtime state rather than data corruption: a session can outlive the
@@ -432,6 +422,21 @@ impl ConnectionSupervisor {
         agent_session_id: &str,
         ora_session_id: &str,
     ) -> Result<SessionChannel, RuntimeError> {
+        self.open_answered_session_channel(agent_session_id, ora_session_id, None)
+    }
+
+    /// Opens the channel of a session set up by an answer carrying options that skipped its queue,
+    /// read at `answered`.
+    ///
+    /// The session can push options before that answer, while its id is still unknown; such a push
+    /// waits for the channel, yet it was read before the answer and must not replace it. An answer
+    /// without options replaces nothing, so it sets no `answered`.
+    pub(super) fn open_answered_session_channel(
+        &self,
+        agent_session_id: &str,
+        ora_session_id: &str,
+        answered: Option<ReadOrder>,
+    ) -> Result<SessionChannel, RuntimeError> {
         let connection = self.current()?;
         if self.active_generation.load(Ordering::Acquire) != connection.generation {
             return Err(runtime_unavailable_because(format!(
@@ -449,6 +454,7 @@ impl ConnectionSupervisor {
             connection.generation,
             events_sender,
             controls_sender,
+            answered,
         );
         if self.active_generation.load(Ordering::Acquire) != connection.generation {
             drop(registration);
@@ -461,6 +467,7 @@ impl ConnectionSupervisor {
             connection,
             events,
             pending_updates: std::collections::VecDeque::new(),
+            config_changes: Default::default(),
             available_commands: Vec::new(),
             controls,
             _trace_registration: trace_registration,
@@ -546,6 +553,7 @@ async fn run_supervisor<H: AgentRuntimeHost>(context: SupervisorContext<H>) {
                     list_session_supported: process.list_session_supported,
                     close_session_supported: process.close_session_supported,
                     delete_session_supported: process.delete_session_supported,
+                    additional_directories_supported: process.additional_directories_supported,
                 };
                 let _ = state.send(ConnectionState::Ready(connection));
                 ora_info!(agent = identifier, generation, "agent runtime is ready");
@@ -652,17 +660,21 @@ async fn run_process_generation<A: AgentAttach>(
     loop {
         tokio::select! {
             inbound = process.inbound.recv() => {
-                match inbound {
-                    Some(AcpInboundEvent::SessionUpdate(update)) => {
-                        let _ = routes.route_event(SessionEvent::update(update));
+                let Some(ReadEvent { order, event }) = inbound else {
+                    return false;
+                };
+                match event {
+                    AcpInboundEvent::SessionUpdate(update) => {
+                        let _ = routes.route_read_event(SessionEvent::update(update), order);
                     }
-                    Some(AcpInboundEvent::ExtensionNotification(extension)) => {
+                    AcpInboundEvent::ExtensionNotification(extension) => {
                         if let Some(update) = subagent_updates.translate(extension) {
-                            let _ = routes.route_event(SessionEvent::update(update));
+                            let _ = routes.route_read_event(SessionEvent::update(update), order);
                         }
                     }
-                    Some(AcpInboundEvent::PermissionRequest(permission)) => {
-                        if let Err(orphan) = routes.route_event(SessionEvent::Permission(permission)) {
+                    AcpInboundEvent::PermissionRequest(permission) => {
+                        let permission = SessionEvent::Permission(permission);
+                        if let Err(orphan) = routes.route_read_event(permission, order) {
                             match *orphan {
                                 SessionEvent::Permission(orphan) => {
                                     let _ = process.client.respond(
@@ -676,17 +688,16 @@ async fn run_process_generation<A: AgentAttach>(
                             }
                         }
                     }
-                    Some(AcpInboundEvent::SessionResponse(response)) => {
-                        let _ = routes.route_event(SessionEvent::Response(response));
+                    AcpInboundEvent::SessionResponse(response) => {
+                        let _ = routes.route_read_event(SessionEvent::Response(response), order);
                     }
-                    Some(AcpInboundEvent::Fatal(error)) => {
+                    AcpInboundEvent::Fatal(error) => {
                         ora_warn!(
                             error = %error,
                             "agent ACP connection failed"
                         );
                         return false;
                     }
-                    None => return false,
                 }
             }
             // A dead process never sends another frame, so the inbound stream alone cannot report

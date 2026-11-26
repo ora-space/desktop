@@ -211,6 +211,10 @@ const VALUELESS_CONDITION_OPERATORS = new Set([
   "not_exists",
 ]);
 
+export function conditionOperatorNeedsValue(operator: string): boolean {
+  return !VALUELESS_CONDITION_OPERATORS.has(operator);
+}
+
 /** Whether a condition row has enough authored data to be presented as configured. */
 export function isWorkflowConditionComparisonComplete(
   comparison: WorkflowConditionComparison,
@@ -222,7 +226,7 @@ export function isWorkflowConditionComparisonComplete(
   ) {
     return false;
   }
-  if (VALUELESS_CONDITION_OPERATORS.has(comparison.operator)) {
+  if (!conditionOperatorNeedsValue(comparison.operator)) {
     return true;
   }
   return (

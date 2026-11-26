@@ -1,7 +1,7 @@
-//! Shared Agent Session Barrier for MCP refresh, Effect mutation, and Agent replacement.
+//! Agent Session Barrier for live MCP refresh.
 //!
-//! The barrier is the coordination seam only. MCP does not publish Effect state, and Effect
-//! Target readiness does not prove any Session has loaded MCP.
+//! Serializes per-Agent `session/load` MCP refreshes so concurrent sessions targeting the same
+//! Agent plugin do not race each other during setup/refresh.
 
 use ora_domain::PluginId;
 use std::collections::HashMap;
@@ -9,15 +9,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
-/// Why one Agent's sessions must stop admitting new prompts.
+/// Why one Agent's sessions hold the shared session barrier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BarrierReason {
     McpRefresh,
-    EffectMutation,
-    AgentReplacement,
 }
 
-/// One Agent's mutex that serializes MCP refresh with Effect mutation and process replacement.
+/// One Agent's mutex that serializes MCP refresh operations for sessions sharing that Agent.
 #[derive(Debug, Default)]
 pub struct AgentSessionBarrier {
     lock: Arc<Mutex<()>>,
@@ -75,6 +73,7 @@ pub struct AgentSessionBarriers {
 }
 
 impl AgentSessionBarriers {
+    /// Creates an empty per-plugin barrier registry.
     pub fn new() -> Self {
         Self::default()
     }
@@ -100,7 +99,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mcp_and_effect_share_one_agent_session_barrier() {
+    async fn mcp_refresh_holds_one_agent_session_barrier_per_agent() {
         let barriers = AgentSessionBarriers::new();
         let plugin = plugin("opencode");
         let first = barriers
@@ -111,14 +110,14 @@ mod tests {
         assert!(
             barriers
                 .for_plugin(&plugin)
-                .try_acquire(BarrierReason::EffectMutation)
+                .try_acquire(BarrierReason::McpRefresh)
                 .is_none()
         );
         drop(first);
         assert!(
             barriers
                 .for_plugin(&plugin)
-                .try_acquire(BarrierReason::AgentReplacement)
+                .try_acquire(BarrierReason::McpRefresh)
                 .is_some()
         );
     }
@@ -132,7 +131,7 @@ mod tests {
         let timeout = std::time::Duration::from_secs(5);
         assert!(
             barrier
-                .acquire_with_timeout(BarrierReason::EffectMutation, timeout)
+                .acquire_with_timeout(BarrierReason::McpRefresh, timeout)
                 .await
                 .is_err()
         );
@@ -140,14 +139,14 @@ mod tests {
         let unrelated = barriers.for_plugin(&plugin("claude"));
         assert!(
             unrelated
-                .acquire_with_timeout(BarrierReason::EffectMutation, timeout)
+                .acquire_with_timeout(BarrierReason::McpRefresh, timeout)
                 .await
                 .is_ok()
         );
         drop(owner);
         assert!(
             barrier
-                .acquire_with_timeout(BarrierReason::EffectMutation, timeout)
+                .acquire_with_timeout(BarrierReason::McpRefresh, timeout)
                 .await
                 .is_ok()
         );
@@ -163,7 +162,7 @@ mod tests {
         assert!(
             barriers
                 .for_plugin(&plugin("claude"))
-                .try_acquire(BarrierReason::EffectMutation)
+                .try_acquire(BarrierReason::McpRefresh)
                 .is_some()
         );
     }

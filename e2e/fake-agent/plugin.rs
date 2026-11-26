@@ -2,16 +2,14 @@
 
 use ora_plugin_protocol::{
     AGENT_ACP_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_START_METHOD, AGENT_STOP_METHOD,
-    AgentEffectCoordinationContext, AgentEffectReadinessContext, AgentListModelsParams,
-    AgentListModelsResult, AgentStartContext, AgentStartResult, EFFECT_COORDINATE_METHOD,
-    EFFECT_REACTIVATE_METHOD, EFFECT_VERIFY_READY_METHOD, INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE,
-    JSON_RPC_VERSION, METHOD_NOT_FOUND_CODE, PluginEffectCoordination, PluginEffectResource,
-    PluginRegistrationParams, REGISTER_METHOD, SHUTDOWN_METHOD, SKILL_DIRECTORY_V1, read_message,
-    write_message,
+    AgentListModelsParams, AgentListModelsResult, AgentStartContext, AgentStartResult,
+    INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE, JSON_RPC_VERSION, METHOD_NOT_FOUND_CODE,
+    PluginRegistrationParams, REGISTER_METHOD, SHUTDOWN_METHOD, read_message, write_message,
 };
 use serde_json::{Value, json};
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::Path;
 use tokio::io::{stdin, stdout};
 
 use super::acp::{FakeAcpAgent, models};
@@ -23,12 +21,15 @@ use super::acp::{FakeAcpAgent, models};
 /// of what it was asked. Recording every call is what lets a test assert both that discovery
 /// happened and that connection startup did not perform it.
 pub(super) const DISCOVERY_JOURNAL: &str = "list_models_calls.txt";
+/// Marker file making `ora/register` declare legacy `effectResources` & `effect/*` methods.
+const LEGACY_EFFECT_MARKER: &str = "register_legacy_effect_resources";
+/// Journal written if the host ever invokes a retired `effect/*` method.
+const EFFECT_CALLS_JOURNAL: &str = "effect_calls.txt";
 
 /// Mutable process state shared by the outer plugin methods.
 #[derive(Default)]
 struct FakePlugin {
     running: bool,
-    quiesced: bool,
     acp: FakeAcpAgent,
 }
 
@@ -42,28 +43,40 @@ struct PluginError {
 pub(super) async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = stdin();
     let mut output = stdout();
+    let legacy_effects = Path::new(LEGACY_EFFECT_MARKER).exists();
+    let mut methods = vec![
+        AGENT_START_METHOD.to_string(),
+        AGENT_STOP_METHOD.to_string(),
+        AGENT_LIST_MODELS_METHOD.to_string(),
+    ];
+    if legacy_effects {
+        methods.extend([
+            "effect/coordinate".to_string(),
+            "effect/reactivate".to_string(),
+            "effect/verify_ready".to_string(),
+        ]);
+    }
     let registration = PluginRegistrationParams {
-        methods: vec![
-            AGENT_START_METHOD.to_string(),
-            AGENT_STOP_METHOD.to_string(),
-            AGENT_LIST_MODELS_METHOD.to_string(),
-            EFFECT_COORDINATE_METHOD.to_string(),
-            EFFECT_REACTIVATE_METHOD.to_string(),
-            EFFECT_VERIFY_READY_METHOD.to_string(),
-        ],
+        methods,
         emits: vec![AGENT_ACP_METHOD.to_string()],
-        effect_resources: Some(vec![PluginEffectResource {
-            workspace_relative_path: ".opencode/skills".to_string(),
-            materialization_format: SKILL_DIRECTORY_V1.to_string(),
-            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-        }]),
     };
+    let mut params = serde_json::to_value(&registration)?;
+    if legacy_effects && let Some(object) = params.as_object_mut() {
+        object.insert(
+            "effectResources".to_string(),
+            json!([{
+                "workspaceRelativePath": ".claude/skills",
+                "materializationFormat": "ora/skill-directory.v1",
+                "coordination": "quiesce_before_mutation"
+            }]),
+        );
+    }
     write_message(
         &mut output,
         &json!({
             "jsonrpc": JSON_RPC_VERSION,
             "method": REGISTER_METHOD,
-            "params": registration,
+            "params": params,
         }),
     )
     .await?;
@@ -120,12 +133,10 @@ impl FakePlugin {
                     return Err(PluginError::invalid_params(method, "cwd must not be empty"));
                 }
                 self.running = true;
-                self.quiesced = false;
                 serde_json::to_value(AgentStartResult::acp_v1()).map_err(PluginError::internal)
             }
             AGENT_STOP_METHOD => {
                 self.running = false;
-                self.quiesced = false;
                 Ok(json!({}))
             }
             AGENT_LIST_MODELS_METHOD => {
@@ -141,54 +152,15 @@ impl FakePlugin {
                 serde_json::to_value(AgentListModelsResult { models: models() })
                     .map_err(PluginError::internal)
             }
-            EFFECT_COORDINATE_METHOD => {
-                let context: AgentEffectCoordinationContext = serde_json::from_value(params)
-                    .map_err(|error| PluginError::invalid_params(method, error))?;
-                self.require_running()?;
-                self.quiesced = true;
-                Ok(json!({
-                    "targetId": context.target_id,
-                    "state": "safe_to_mutate",
-                }))
-            }
-            EFFECT_REACTIVATE_METHOD => {
-                let context: AgentEffectCoordinationContext = serde_json::from_value(params)
-                    .map_err(|error| PluginError::invalid_params(method, error))?;
-                self.require_running()?;
-                self.quiesced = false;
-                Ok(json!({
-                    "targetId": context.target_id,
-                    "state": "reactivated",
-                }))
-            }
-            EFFECT_VERIFY_READY_METHOD => {
-                let context: AgentEffectReadinessContext = serde_json::from_value(params)
-                    .map_err(|error| PluginError::invalid_params(method, error))?;
-                self.require_running()?;
-                if self.quiesced {
-                    return Err(PluginError {
-                        code: -32000,
-                        message: "fake agent is quiesced for a Skill mutation".to_string(),
-                    });
+            _ => {
+                if method.starts_with("effect/") {
+                    record_effect_call(method);
                 }
-                serde_json::to_value(context).map_err(PluginError::internal)
+                Err(PluginError {
+                    code: METHOD_NOT_FOUND_CODE,
+                    message: format!("unknown plugin method {method}"),
+                })
             }
-            _ => Err(PluginError {
-                code: METHOD_NOT_FOUND_CODE,
-                message: format!("unknown plugin method {method}"),
-            }),
-        }
-    }
-
-    /// Refuses Effect readiness operations until the outer agent has started.
-    fn require_running(&self) -> Result<(), PluginError> {
-        if self.running {
-            Ok(())
-        } else {
-            Err(PluginError {
-                code: -32000,
-                message: "fake agent is not running".to_string(),
-            })
         }
     }
 }
@@ -219,5 +191,16 @@ fn record_discovery(cwd: &str) {
         .open(DISCOVERY_JOURNAL)
     {
         let _ = writeln!(file, "{cwd}");
+    }
+}
+
+/// Appends any unexpected retired `effect/*` call to a journal beside this package.
+fn record_effect_call(method: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(EFFECT_CALLS_JOURNAL)
+    {
+        let _ = writeln!(file, "{method}");
     }
 }

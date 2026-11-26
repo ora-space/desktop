@@ -1,17 +1,17 @@
 use ora_application::{
-    BindWorkflowNodeSessionResult, CancelWorkflowRunResult, FileChange, NewImportedWorkflow,
-    NodeFailure, NodeFailureKind, NodeRunToStart, ProjectRepository, RestartWorkflowRunResult,
-    ResumeWorkflowRunResult, SessionRepository, SkillRepository, StartWorkflowRunResult,
-    WorkflowDocumentSource, WorkflowDocumentSourceRepository, WorkflowRepository,
-    WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
-    WorkflowRunRepository, WorkflowVariablePool,
+    BindWorkflowNodeSessionResult, CancelWorkflowRunResult, ConflictSkipCommit, FileChange,
+    NewImportedWorkflow, NodeFailure, NodeFailureKind, NodeRunToStart, ProjectRepository,
+    RestartWorkflowRunResult, ResumeWorkflowRunResult, SessionRepository, SkillNameClaimedError,
+    SkillRepository, SourcePrecondition, StartWorkflowRunResult, WorkflowDocumentSource,
+    WorkflowDocumentSourceRepository, WorkflowRepository, WorkflowRunCreateOutcome,
+    WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::{
     AgentRef, AuditFields, Namespace, PluginId, Project, ProjectId, Session, SessionId,
-    SessionStatus, SkillOrigin, Workflow, WorkflowId, WorkflowNodeRunId, WorkflowNodeStatus,
-    WorkflowRun, WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Workspace,
-    WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
+    SessionStatus, Skill, SkillId, SkillOrigin, Workflow, WorkflowId, WorkflowNodeRunId,
+    WorkflowNodeStatus, WorkflowRun, WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot,
+    WorkflowSnapshotId, Workspace, WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -36,12 +36,11 @@ impl TimestampSource for FixedTimestampSource {
     }
 }
 
-/// Verifies plugin Skills use the existing Effect source table as their origin and package locator.
+/// Verifies plugin Skills store `package_root` directly on `skills` and disappear when removed.
 #[test]
 fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
     let (temp_dir, pool) = bootstrapped_pool();
-    let repository =
-        SqliteSkillRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let repository = SqliteSkillRepository::new(pool.clone());
     let plugin_id = PluginId::new("official", "review-pack").unwrap();
     let package_root = temp_dir.path().join("plugins/review-pack/review");
     std::fs::create_dir_all(&package_root).unwrap();
@@ -54,11 +53,6 @@ fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
                 name: "review".to_string(),
                 description: "Reviews changes".to_string(),
                 package_root: package_root.clone(),
-                skill_md_digest: ora_effect::Digest::sha256(b"manifest"),
-                package_fingerprint: ora_effect::Fingerprint::from(
-                    ora_utils::directory::fingerprint_directory(&package_root, &[])
-                        .unwrap_or_else(|error| panic!("fingerprint package: {error}")),
-                ),
             }],
             10,
         )
@@ -76,74 +70,52 @@ fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
         }
     );
 
-    let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
-    project_repository
-        .create_project(
-            Project::new(
-                ProjectId::new("project-with-plugin-skill"),
-                "Plugin Skill Project",
-                AuditFields::new(15, 15, false),
-            ),
-            WorkspaceLocation::local_filesystem(workspace_path.to_string_lossy()),
-        )
-        .unwrap();
-    let (workspace_id, generation, namespace, identifier) = pool
-        .with_connection(|connection| {
-            connection
-                .query_row(
-                    "SELECT scopes.workspace_id, scopes.generation,
-                            sources.namespace, sources.identifier
-                     FROM effect_desired_effects desired
-                     JOIN effect_scopes scopes ON scopes.id = desired.scope_id
-                     JOIN effect_revisions revisions ON revisions.id = desired.revision_id
-                     JOIN effect_sources sources ON sources.id = revisions.source_id",
-                    [],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                        ))
-                    },
-                )
-                .map_err(Into::into)
-        })
-        .unwrap();
-    assert_eq!(
-        (generation, namespace, identifier),
-        (1, "official/review-pack".to_string(), "review".to_string())
-    );
-
     repository.remove_plugin_skills(&plugin_id, 20).unwrap();
     assert!(repository.list_skills().unwrap().is_empty());
-    let (generation, desired_count) = pool
-        .with_connection(|connection| {
-            connection
-                .query_row(
-                    "SELECT scopes.generation, COUNT(desired.id)
-                     FROM effect_scopes scopes
-                     LEFT JOIN effect_desired_effects desired
-                       ON desired.scope_id = scopes.id
-                     WHERE scopes.workspace_id = ?1
-                     GROUP BY scopes.workspace_id",
-                    [workspace_id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-                )
-                .map_err(Into::into)
-        })
+}
+
+/// Verifies the active-name unique index surfaces as a typed claim, not a storage failure.
+#[test]
+fn create_skill_reports_a_visible_name_claim() {
+    let (_temp_dir, pool) = bootstrapped_pool();
+    let repository = SqliteSkillRepository::new(pool);
+    let namespace = Namespace::local();
+    let skill = |id: &str, name: &str, updated_at: i64| {
+        Skill::new(
+            SkillId::new(id),
+            namespace.clone(),
+            name,
+            "Description",
+            AuditFields::new(1, updated_at, /*is_deleted*/ false),
+        )
+        .unwrap()
+    };
+
+    repository
+        .create_skill(skill("skill-1", "grilling", 1))
         .unwrap();
-    assert_eq!((generation, desired_count), (2, 0));
+
+    // The index compares names case-insensitively, exactly like the name lookup.
+    let error = repository
+        .create_skill(skill("skill-2", "Grilling", 2))
+        .unwrap_err();
+    assert!(error.is::<SkillNameClaimedError>());
+
+    // Only visible rows are covered, so a deleted skill frees its name again.
+    repository
+        .soft_delete_skill(&SkillId::new("skill-1"), 3)
+        .unwrap();
+    repository
+        .create_skill(skill("skill-3", "grilling", 4))
+        .unwrap();
+    assert_eq!(repository.list_skills().unwrap().len(), 1);
 }
 /// Verifies project creation materializes the shared main workspace used by ordinary sessions.
 #[test]
 fn project_creation_creates_main_workspace() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool);
     let project = Project::new(
         ProjectId::new("project-1"),
@@ -185,8 +157,7 @@ fn project_creation_creates_main_workspace() {
 fn project_creation_admits_local_main_workspace_without_probing_the_directory() {
     let (temp_dir, pool) = bootstrapped_pool();
     let missing_path = temp_dir.path().join("missing-repository");
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool);
     project_repository
         .create_project(
@@ -218,8 +189,7 @@ fn project_creation_admits_local_main_workspace_without_probing_the_directory() 
 fn session_round_trip_persists_workspace_and_mcp_selection() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let session_repository = SqliteSessionRepository::new(pool);
     project_repository
@@ -267,8 +237,7 @@ fn session_round_trip_persists_workspace_and_mcp_selection() {
 fn standalone_session_list_excludes_workflow_node_sessions() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let session_repository = SqliteSessionRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
@@ -570,8 +539,7 @@ fn bind_node_run_session_rejects_cancelled_node_run() {
 fn workflow_run_round_trip_uses_workspace_id() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool);
@@ -659,8 +627,7 @@ fn workflow_run_round_trip_uses_workspace_id() {
 fn restart_resets_variable_values_and_keeps_the_catalog() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
@@ -1013,6 +980,24 @@ fn switch_run_snapshot_updates_snapshot_and_payload_only_for_terminal_runs() {
     let failed = run_repository.find_run(&failed_id).unwrap().unwrap();
     assert_eq!(failed.snapshot_id, WorkflowSnapshotId::new("snapshot-2"));
     assert_eq!(failed.payload.as_deref(), Some(migrated));
+    // No debug edit preceded this switch. Returning to the original snapshot must still
+    // separate its old attempts from the run's new configuration lineage.
+    assert!(
+        engine_repository
+            .switch_run_snapshot(
+                &failed_id,
+                &WorkflowSnapshotId::new("snapshot-1"),
+                original,
+                81
+            )
+            .unwrap()
+    );
+    pool.with_connection(|db| {
+        let versions = db.prepare("SELECT revision,snapshot_id FROM workflow_debug_baselines WHERE run_id=?1 ORDER BY revision")?
+            .query_map([failed_id.as_ref()],|r| Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+        assert_eq!(versions, vec![(1,"snapshot-2".into()),(2,"snapshot-1".into())]);
+        Ok(())
+    }).unwrap();
 
     let (running_dir, running_pool) = bootstrapped_pool();
     let running_engine = SqliteWorkflowRunEngineRepository::new(running_pool.clone());
@@ -1963,8 +1948,7 @@ fn fail_orphaned_node_runs_writes_interrupted_by_restart_error_detail() {
 fn deleting_workflow_run_does_not_delete_workspace_or_session() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let session_repository = SqliteSessionRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
@@ -2166,16 +2150,20 @@ fn list_workflows_derives_source_plugin_id_from_imported_records() {
         .unwrap();
     // Conflict-skipped records store `workflow_id = NULL` and must never attribute the existing
     // user workflow to the marketplace package.
-    source_repository
-        .record_conflict_skip(
-            &WorkflowDocumentSource {
-                namespace: "official".to_string(),
-                identifier: "ora.conflict-pack".to_string(),
-                document_path: "assets/workflows/manual.json".to_string(),
-            },
-            15,
-        )
-        .unwrap();
+    assert_eq!(
+        source_repository
+            .record_conflict_skip(
+                &WorkflowDocumentSource {
+                    namespace: "official".to_string(),
+                    identifier: "ora.conflict-pack".to_string(),
+                    document_path: "assets/workflows/manual.json".to_string(),
+                },
+                &SourcePrecondition::Unrecorded,
+                15,
+            )
+            .unwrap(),
+        ConflictSkipCommit::Recorded
+    );
 
     for (wf_id, name, created_at, path) in [
         (
@@ -2194,39 +2182,42 @@ fn list_workflows_derives_source_plugin_id_from_imported_records() {
         let wf_id_obj = WorkflowId::new(wf_id);
         let pub_id = WorkflowSnapshotId::new(format!("pub-{wf_id}"));
         source_repository
-            .commit_import(NewImportedWorkflow {
-                source: WorkflowDocumentSource {
-                    namespace: "official".to_string(),
-                    identifier: "ora.cdase-workflow".to_string(),
-                    document_path: path.to_string(),
+            .commit_import(
+                NewImportedWorkflow {
+                    source: WorkflowDocumentSource {
+                        namespace: "official".to_string(),
+                        identifier: "ora.cdase-workflow".to_string(),
+                        document_path: path.to_string(),
+                    },
+                    workflow: Workflow::new(
+                        wf_id_obj.clone(),
+                        Namespace::local(),
+                        name,
+                        Some(pub_id.clone()),
+                        AuditFields::new(created_at, created_at, false),
+                    )
+                    .unwrap(),
+                    draft: WorkflowSnapshot::new(
+                        WorkflowSnapshotId::new(format!("draft-{wf_id}")),
+                        wf_id_obj.clone(),
+                        "draft",
+                        "{}",
+                        created_at,
+                        Some(created_at),
+                        false,
+                    ),
+                    published: WorkflowSnapshot::new(
+                        pub_id,
+                        wf_id_obj,
+                        "1.0.0",
+                        "{}",
+                        created_at,
+                        Some(created_at),
+                        false,
+                    ),
                 },
-                workflow: Workflow::new(
-                    wf_id_obj.clone(),
-                    Namespace::local(),
-                    name,
-                    Some(pub_id.clone()),
-                    AuditFields::new(created_at, created_at, false),
-                )
-                .unwrap(),
-                draft: WorkflowSnapshot::new(
-                    WorkflowSnapshotId::new(format!("draft-{wf_id}")),
-                    wf_id_obj.clone(),
-                    "draft",
-                    "{}",
-                    created_at,
-                    Some(created_at),
-                    false,
-                ),
-                published: WorkflowSnapshot::new(
-                    pub_id,
-                    wf_id_obj,
-                    "1.0.0",
-                    "{}",
-                    created_at,
-                    Some(created_at),
-                    false,
-                ),
-            })
+                &SourcePrecondition::Unrecorded,
+            )
             .unwrap();
     }
 
@@ -2289,8 +2280,7 @@ fn seed_run(
     finished_at: Option<i64>,
 ) -> WorkflowRunId {
     let workspace_path = existing_workspace_path(temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
@@ -2377,8 +2367,7 @@ fn create_run_workspace_session(pool: &RepositoryPool, run_id: &WorkflowRunId) -
 /// Seeds a created-but-never-started Pending run for deletion-policy fixtures.
 fn seed_pending_run(temp_dir: &TempDir, pool: &RepositoryPool) -> WorkflowRunId {
     let workspace_path = existing_workspace_path(temp_dir);
-    let project_repository =
-        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let project_repository = SqliteProjectRepository::new(pool.clone());
     let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());

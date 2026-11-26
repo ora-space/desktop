@@ -254,6 +254,10 @@ export const pluginTranslations = {
     "settings.plugins.cancel": "取消",
     "settings.plugins.installFailed": "安装失败",
     "settings.plugins.installSuccess": "插件已安装。",
+    "settings.plugins.installSuccessDocumentsNotImported":
+      "插件已安装，但工作流未导入。",
+    "settings.plugins.packInstallDocumentsNotImported":
+      "集合包已安装，但工作流未导入。",
     "settings.plugins.uninstallFailed": "卸载失败",
     "settings.plugins.import": "导入插件",
     "settings.plugins.importSuccess": "插件已导入。",
@@ -277,14 +281,37 @@ export const pluginTranslations = {
     "settings.plugins.importReportUnreadable":
       "无法读取「{{name}}」的图，暂时无法检查它依赖的插件。",
     "settings.plugins.importReportRefusedTitle": "{{count}} 个文档未导入",
+    "settings.plugins.importReportSkippedTitle": "{{count}} 份未导入",
+    "settings.plugins.importReportConflict": "与现有工作流「{{name}}」同名",
+    "settings.plugins.importReportConflictKnown":
+      "与现有工作流「{{name}}」同名（仍未解决）",
+    "settings.plugins.importReportConflictRecovery":
+      "把同名工作流改名或删除后，在插件卡片选择「重试导入未导入的文档」。",
+    "settings.plugins.importReportPackConflictRecovery":
+      "把同名工作流改名或删除后，在「{{pluginId}}」的已安装插件卡片选择「重试导入未导入的文档」。",
+    "settings.plugins.importReportOpenInstalledCard": "查看已安装卡片",
+    "settings.plugins.importReportOpenInstalledCardFor":
+      "查看 {{pluginId}} 的已安装卡片",
     "settings.plugins.importReportClose": "关闭",
     "settings.plugins.updateSuccess": "插件已升级。",
-    "settings.plugins.retryWorkflowImport": "重试导入失败的文档",
+    "settings.plugins.updateSuccessDocumentsNotImported":
+      "插件已升级，但工作流未导入。",
+    "settings.plugins.retryWorkflowImport": "重试导入未导入的文档",
     "settings.plugins.retryWorkflowImportDone": "已重试导入工作流文档。",
+    "settings.plugins.retryWorkflowImportDocumentsNotImported":
+      "部分工作流文档仍未导入。",
     "settings.plugins.retryWorkflowImportFailed": "重试导入失败",
     "settings.plugins.workflowDocumentsImported": "导入 {{count}} 个工作流文档",
-    "settings.plugins.workflowDocumentsProcessed": "{{count}} 份此前已处理",
-    "settings.plugins.workflowDocumentsConflicts": "{{count}} 份因同名冲突跳过",
+    "settings.plugins.workflowDocumentsProcessed":
+      "{{count}} 份已有副本，保持不动",
+    "settings.plugins.workflowDocumentsDeleted":
+      "{{count}} 份副本已删除，卸载后重装可恢复",
+    "settings.plugins.workflowDocumentDeletedCopy":
+      "副本已删除，卸载后重装可恢复",
+    "settings.plugins.workflowDocumentsConflicts":
+      "{{count}} 份因同名冲突未导入，可在插件卡片重试",
+    "settings.plugins.workflowDocumentsKnownConflicts":
+      "{{count}} 份仍因同名冲突未导入，可在插件卡片重试",
     "settings.plugins.workflowDocumentsFailed": "{{count}} 份导入失败",
     "settings.plugins.pathSelectionError": "无法选择插件文件。",
     "settings.plugins.uninstalling": "卸载中",
@@ -705,6 +732,10 @@ export const pluginTranslations = {
     "settings.plugins.cancel": "Cancel",
     "settings.plugins.installFailed": "Install failed",
     "settings.plugins.installSuccess": "Plugin installed.",
+    "settings.plugins.installSuccessDocumentsNotImported":
+      "Plugin installed, but its workflows were not imported.",
+    "settings.plugins.packInstallDocumentsNotImported":
+      "Pack installed, but its workflows were not imported.",
     "settings.plugins.uninstallFailed": "Uninstall failed",
     "settings.plugins.import": "Import plugin",
     "settings.plugins.importSuccess": "Plugin imported.",
@@ -731,18 +762,43 @@ export const pluginTranslations = {
       "Unable to read the graph of “{{name}}”, so its plugins can’t be checked right now.",
     "settings.plugins.importReportRefusedTitle":
       "{{count}} document(s) were not imported",
+    "settings.plugins.importReportSkippedTitle":
+      "{{count}} document(s) not imported",
+    "settings.plugins.importReportConflict":
+      'Shares its name with the existing workflow "{{name}}"',
+    "settings.plugins.importReportConflictKnown":
+      'Shares its name with the existing workflow "{{name}}" (still unresolved)',
+    "settings.plugins.importReportConflictRecovery":
+      'Rename or delete that workflow, then choose "Retry importing the missing documents" on the plugin card.',
+    "settings.plugins.importReportPackConflictRecovery":
+      'Rename or delete that workflow, then choose "Retry importing the missing documents" on the installed plugin card for {{pluginId}}.',
+    "settings.plugins.importReportOpenInstalledCard": "Open installed card",
+    "settings.plugins.importReportOpenInstalledCardFor":
+      "Open installed card for {{pluginId}}",
     "settings.plugins.importReportClose": "Close",
     "settings.plugins.updateSuccess": "Plugin updated.",
-    "settings.plugins.retryWorkflowImport": "Retry failed document imports",
+    "settings.plugins.updateSuccessDocumentsNotImported":
+      "Plugin updated, but its workflows were not imported.",
+    "settings.plugins.retryWorkflowImport":
+      "Retry importing the missing documents",
     "settings.plugins.retryWorkflowImportDone":
       "Retried the workflow document import.",
+    "settings.plugins.retryWorkflowImportDocumentsNotImported":
+      "Some workflow documents are still not imported.",
     "settings.plugins.retryWorkflowImportFailed":
       "Failed to retry the document import",
     "settings.plugins.workflowDocumentsImported":
       "Imported {{count}} workflow document(s)",
-    "settings.plugins.workflowDocumentsProcessed": "{{count}} already handled",
+    "settings.plugins.workflowDocumentsProcessed":
+      "{{count}} already have a copy and stay unchanged",
+    "settings.plugins.workflowDocumentsDeleted":
+      "{{count}} copy(ies) deleted; uninstall and reinstall to restore",
+    "settings.plugins.workflowDocumentDeletedCopy":
+      "The copy was deleted; uninstall and reinstall to restore it",
     "settings.plugins.workflowDocumentsConflicts":
-      "{{count}} skipped by a name conflict",
+      "{{count}} not imported because of a name conflict; retry from the plugin card",
+    "settings.plugins.workflowDocumentsKnownConflicts":
+      "{{count}} still not imported because of a name conflict; retry from the plugin card",
     "settings.plugins.workflowDocumentsFailed":
       "{{count}} document(s) failed to import",
     "settings.plugins.pathSelectionError": "Unable to select a plugin file.",

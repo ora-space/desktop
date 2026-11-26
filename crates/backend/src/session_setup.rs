@@ -13,7 +13,6 @@ pub(crate) use mcp::{
     McpHealthStore, SessionMcpError, SessionMcpHost, SessionMcpSelection,
     observe_session_mcp_health, resolve_session_mcp, resolve_session_mcp_revision,
 };
-pub(crate) use ora_agent_runtime::{BarrierGuard, BarrierReason};
 
 use crate::plugin::PluginApi;
 use std::sync::Arc;

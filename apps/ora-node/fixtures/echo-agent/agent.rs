@@ -88,7 +88,6 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             AGENT_LIST_MODELS_METHOD.to_string(),
         ],
         emits: vec![AGENT_ACP_METHOD.to_string()],
-        effect_resources: None,
     };
     write_message(
         &mut output,

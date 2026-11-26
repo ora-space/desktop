@@ -31,7 +31,6 @@ import {
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
 import { createAgentMemory, agentHandlers } from "../../test/memory/agents";
 import { createSkillMemory, skillHandlers } from "../../test/memory/skills";
-import { readyEffectHandlers } from "../../test/memory/effects";
 import "../../i18n/i18n-instance";
 import { useComposerInputStore } from "../../state/stores/composer-input-store";
 import { useDraftSessionsStore } from "../../state/stores/draft-sessions-store";
@@ -63,7 +62,6 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
     ...pluginHandlers(state),
     ...agentHandlers(state),
     ...skillHandlers(state),
-    ...readyEffectHandlers(),
   };
 }
 
