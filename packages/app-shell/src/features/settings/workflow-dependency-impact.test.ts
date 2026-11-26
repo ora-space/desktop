@@ -554,3 +554,41 @@ it("compares exact IDs, legacy names, and single/multi Skill plugin references b
     unreadable: 0,
   });
 });
+
+it("ignores disabled Skill bindings and their node titles while retaining enabled and published references", () => {
+  const pluginId = "official/release";
+  const skill = skillOwnedBy("release-notes", pluginId);
+  const disabled = JSON.parse(graph({ skills: [skill.id] }, "Disabled"));
+  disabled.nodes[0].data.agentConfig.skills[0].enabled = false;
+  const enabled = JSON.parse(graph({ skills: [skill.id] }, "Enabled"));
+  const mixed = {
+    ...disabled,
+    nodes: [...disabled.nodes, { ...enabled.nodes[0], id: "enabled" }],
+  };
+  const result = findWorkflowDependents({
+    workflows: [
+      {
+        workflowId: "disabled",
+        name: "disabled",
+        draftGraph: JSON.stringify(disabled),
+      },
+      { workflowId: "mixed", name: "mixed", draftGraph: JSON.stringify(mixed) },
+      {
+        workflowId: "published",
+        name: "published",
+        draftGraph: JSON.stringify(disabled),
+        publishedGraph: JSON.stringify(enabled),
+      },
+    ],
+    plugins: [],
+    skills: [skill],
+    targets: [{ kind: "skill", id: skill.id }],
+  });
+  expect(result).toEqual({
+    dependents: [
+      { workflowId: "mixed", name: "mixed", nodeTitles: ["Enabled"] },
+      { workflowId: "published", name: "published", nodeTitles: ["Enabled"] },
+    ],
+    unreadable: 0,
+  });
+});

@@ -182,9 +182,26 @@ export function findWorkflowDependents(input: {
       let dependencies: ReturnType<typeof collectWorkflowDependencies>;
       try {
         dependencies = collectWorkflowDependencies(
-          parseWorkflowGraph(rawGraph).nodes,
+          // Disabled Skill bindings do not affect launch, including their node titles when the
+          // same reference is enabled on another node. MCP warnings retain their existing scope.
+          parseWorkflowGraph(rawGraph).nodes.map((node) => ({
+            ...node,
+            data: {
+              ...node.data,
+              agentConfig:
+                node.data.agentConfig == null
+                  ? node.data.agentConfig
+                  : {
+                      ...node.data.agentConfig,
+                      skills: node.data.agentConfig.skills?.filter(
+                        (binding) => binding.enabled,
+                      ),
+                    },
+            },
+          })),
           input.plugins,
           input.skills,
+          input.retiredSkillIds,
         );
       } catch {
         workflowUnreadable = true;
