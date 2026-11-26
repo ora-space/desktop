@@ -92,6 +92,21 @@ async fn a_cancelled_running_turn_keeps_the_session_for_the_next_turn() {
         SessionCommand::SubmitUserTurn(turn("turn-2", "hello")),
     );
     until(|| (turn_ends(&fixture) == 2).then_some(())).await;
+    let cancelled_ended_by = fixture
+        .ledger
+        .events()
+        .iter()
+        .find_map(|event| {
+            (event.record.get("type").and_then(|t| t.as_str()) == Some("turnEnded"))
+                .then(|| {
+                    event
+                        .record
+                        .get("ended_by")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or_default()
+                        .to_string()
+                })
+        });
     let journal = fixture.ledger.journal();
     let cancelled_end = journal
         .iter()
@@ -105,12 +120,14 @@ async fn a_cancelled_running_turn_keeps_the_session_for_the_next_turn() {
         (
             outcome,
             cancelled_end < settlement,
+            cancelled_ended_by.as_deref(),
             fixture.ledger.ended(),
             end(&fixture, &sessions).await
         ),
         (
             TurnCancelOutcome::Stopped,
             true,
+            Some("caller_cancel"),
             None,
             AgentSessionEndReason::UserEnded
         )
