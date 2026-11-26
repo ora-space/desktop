@@ -486,6 +486,56 @@ fn foreach_debug_replays_from_the_selected_member_without_repeating_its_predeces
             state().variable_pool.values["iter.output"],
             json!(["e", "c"])
         );
+        let current_rows = node_runs(&pool, &run);
+        let container = current_rows
+            .iter()
+            .find(|row| row.node_id == "iter")
+            .unwrap();
+        let preview = coordinator
+            .preview(serde_json::from_value(json!({
+                "runId": run.as_ref(),
+                "nodeRunId": container.id.as_ref(),
+                "baseRevision": 2,
+                "patch": [{"op":"replace","path":"/iterationConfig/collectSelector","value":["prep","output"]}]
+            })).unwrap())
+            .unwrap();
+        coordinator
+            .commit(CommitWorkflowDebugRequest {
+                run_id: run.to_string(),
+                preview_id: preview.preview_id,
+                request_id: "collect-prep".into(),
+            })
+            .await
+            .unwrap();
+        for item in ["e", "c"] {
+            for member in ["prep", "fix"] {
+                let attempt = active();
+                assert_eq!(attempt.node_id, member);
+                engine
+                    .complete_node(
+                        &run,
+                        &attempt.id,
+                        Some(format!("{member}-{item}")),
+                        None,
+                        None,
+                        vec![],
+                    )
+                    .unwrap();
+            }
+        }
+        let sibling = current_rows
+            .iter()
+            .find(|row| row.node_id == "sibling")
+            .unwrap();
+        engine
+            .complete_node(&run, &sibling.id, Some("done".into()), None, None, vec![])
+            .unwrap();
+        let finished = repo.find_execution_context(&run).unwrap().unwrap().run;
+        assert_eq!(finished.status, WorkflowRunStatus::Succeeded);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(finished.output.as_deref().unwrap()).unwrap(),
+            json!({"result":["prep-e","prep-c"]})
+        );
         assert_eq!(dispatched(&exec, "sibling"), 1);
     });
 }
