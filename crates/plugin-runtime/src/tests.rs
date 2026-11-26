@@ -92,7 +92,6 @@ async fn accepts_initial_registration() {
         PluginRegistration {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::from(["example.tick".to_string()]),
-            effect_resources: Vec::new(),
         }
     );
     assert_eq!(*inner.status_tx.borrow(), RuntimeStatus::Ready);
@@ -119,16 +118,14 @@ async fn defaults_missing_emits_to_an_empty_whitelist() {
         PluginRegistration {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::new(),
-            effect_resources: Vec::new(),
         }
     );
 }
 
-/// Effect declarations retain only Workspace-relative locators and typed coordination policy.
+/// Legacy `ora/register` payloads carrying `effectResources` and `effect/*` methods still parse
+/// cleanly; the host ignores `effectResources`.
 #[tokio::test]
-async fn parses_effect_resource_registration() {
-    use crate::{PluginEffectCoordination, PluginEffectResource};
-
+async fn tolerates_legacy_effect_resource_registration() {
     let (inner, _inbound) = test_inner();
     handle_message(
         &inner,
@@ -136,7 +133,7 @@ async fn parses_effect_resource_registration() {
             "jsonrpc": "2.0",
             "method": "ora/register",
             "params": {
-                "methods": ["effect/coordinate", "effect/reactivate", "effect/verify_ready"],
+                "methods": ["agent/start", "effect/coordinate", "effect/reactivate", "effect/verify_ready"],
                 "effectResources": [{
                     "workspaceRelativePath": ".agents/skills",
                     "materializationFormat": "skill_directory.v1",
@@ -146,16 +143,11 @@ async fn parses_effect_resource_registration() {
         }),
     )
     .await
-    .expect("register Effect Resource");
+    .expect("legacy register payload with effectResources must still parse");
 
-    assert_eq!(
-        inner.registration.read().await.effect_resources,
-        vec![PluginEffectResource {
-            workspace_relative_path: ".agents/skills".to_string(),
-            materialization_format: "skill_directory.v1".to_string(),
-            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-        }]
-    );
+    let registration = inner.registration.read().await;
+    assert!(registration.methods.contains("agent/start"));
+    assert!(registration.methods.contains("effect/verify_ready"));
 }
 
 /// Duplicate method names invalidate registration rather than selecting one handler.
@@ -403,7 +395,6 @@ async fn ignores_a_late_response_to_an_abandoned_request() {
         registration: RwLock::new(PluginRegistration {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::new(),
-            effect_resources: Vec::new(),
         }),
         status_tx,
         exited_tx,
@@ -436,6 +427,87 @@ async fn ignores_a_late_response_to_an_abandoned_request() {
     .expect("ignore late response");
 
     assert_eq!(*inner.status_tx.borrow(), RuntimeStatus::Ready);
+}
+
+/// Builds a ready plugin whose queued frames the caller reads, or leaves unread.
+fn callable_runtime(call_timeout: Duration) -> (PluginRuntime, mpsc::Receiver<serde_json::Value>) {
+    let (inner, _inbound, _writer_rx) = test_inner_with_writer();
+    let (writer_tx, writer_rx) = mpsc::channel(1);
+    let (supervisor_tx, _supervisor_rx) = mpsc::unbounded_channel();
+    let (status_tx, _) = watch::channel(RuntimeStatus::Ready);
+    let inner = Arc::new(RuntimeInner {
+        registration: RwLock::new(PluginRegistration {
+            methods: HashSet::from(["example.echo".to_string()]),
+            emits: HashSet::new(),
+        }),
+        status_tx,
+        writer_tx: writer_tx.clone(),
+        supervisor_tx: supervisor_tx.clone(),
+        call_timeout,
+        ..inner
+    });
+    let runtime = PluginRuntime {
+        inner,
+        _lease: Arc::new(RuntimeLease {
+            writer_tx,
+            supervisor_tx,
+        }),
+    };
+    (runtime, writer_rx)
+}
+
+/// A call with an instant counts the wait for the writer; an ordinary one only what follows it.
+#[tokio::test(start_paused = true)]
+async fn a_chosen_instant_includes_the_wait_for_the_writer() {
+    let limit = Duration::from_secs(10);
+    let waited = Duration::from_secs(4);
+    for (chosen, expected) in [(true, limit), (false, waited + limit)] {
+        let (runtime, mut frames) = callable_runtime(limit);
+        runtime.notify("example.fill", json!({})).await.unwrap();
+        tokio::spawn(async move {
+            tokio::time::sleep(waited).await;
+            frames.recv().await;
+            std::future::pending::<()>().await;
+            drop(frames);
+        });
+        let started = tokio::time::Instant::now();
+
+        let outcome = if chosen {
+            runtime
+                .invoke_until("example.echo", json!({}), started + limit)
+                .await
+        } else {
+            runtime.invoke("example.echo", json!({})).await
+        };
+
+        assert_eq!(outcome, Err(PluginRuntimeError::CallTimeout));
+        assert_eq!(started.elapsed().as_secs(), expected.as_secs());
+    }
+}
+
+/// A call whose instant passes before it was written leaves nothing for the plugin to answer.
+#[tokio::test(start_paused = true)]
+async fn a_call_never_written_by_its_instant_is_withdrawn() {
+    let (runtime, mut frames) = callable_runtime(Duration::from_secs(1));
+    runtime.notify("example.fill", json!({})).await.unwrap();
+    let started = tokio::time::Instant::now();
+
+    let call = runtime.invoke_until("example.echo", json!({}), started + Duration::from_secs(10));
+
+    // The outer limit only keeps a call that ignores its instant from hanging the test.
+    assert_eq!(
+        timeout(Duration::from_secs(60), call).await,
+        Ok(Err(PluginRuntimeError::CallTimeout))
+    );
+
+    assert_eq!(started.elapsed().as_secs(), 10);
+    assert_eq!(frames.recv().await.unwrap()["method"], "example.fill");
+    // There is room now, which a call that was not withdrawn would use.
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert!(frames.try_recv().is_err());
+    assert!(runtime.inner.pending.lock().await.clear().is_empty());
 }
 
 /// A response id the host never issued remains a protocol violation.

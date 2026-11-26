@@ -1,5 +1,6 @@
-use super::{current_model, produced_output, stale_load_retry_allowed};
+use super::{produced_output, stale_load_retry_allowed};
 use crate::attach::LoadRestoration;
+use crate::model_config::current_model;
 use agent_client_protocol_schema::v1::{
     ContentBlock, ContentChunk, Plan, SessionUpdate, TextContent, ToolCall, ToolCallUpdate,
     ToolCallUpdateFields,

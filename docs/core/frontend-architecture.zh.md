@@ -16,14 +16,14 @@ App Shell（`packages/app-shell`）按功能组织。本文说明横跨各功能
 
 `state/data/` 负责缓存标识和共享数据规则。没有全局的 key 注册表或 barrel，使用方直接导入需要的 owner。
 
-| Owner | 负责 |
-|---|---|
-| `workspace.ts`、`sessions.ts` | 共享列表、采纳权威响应、聚合删除后的清理、会话树中的位置 |
-| `workflows.ts`、`workflow-analysis.ts`、`workflow-runs.ts`、`workflow-run-retry.ts` | 定义、草稿、版本和执行分析查询；持久化运行的查询、变更、投影和重试展示 |
-| `mock-workflows.ts`、`mock-workflow-runs.ts`、`mock-workflow-mounts.ts` | 内存运行时的标识和订阅，与持久化运行缓存隔离 |
-| `files.ts`、`file-watch.ts`、`diff.ts`、`workspace-status.ts`、`workspace-review.ts` | 有作用域的文件访问、watcher 驱动的失效、Workspace diff、状态和评审刷新 |
-| `plugins.ts`、`agent-runtime.ts`、`plugin-lifecycle.ts`、`mcp-health.ts` | 目录和配置缓存、按 Agent 划分的模型前缀、跨领域的生命周期协调、MCP 健康 |
-| `agents.ts`、`skills.ts`、`settings.ts`、`identity.ts`、`effects.ts` | 定义、偏好、身份和 Effect 缓存 |
+| Owner                                                                                | 负责                                                                    |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `workspace.ts`、`sessions.ts`                                                        | 共享列表、采纳权威响应、聚合删除后的清理、会话树中的位置                |
+| `workflows.ts`、`workflow-analysis.ts`、`workflow-runs.ts`、`workflow-run-retry.ts`  | 定义、草稿、版本和执行分析查询；持久化运行的查询、变更、投影和重试展示  |
+| `mock-workflows.ts`、`mock-workflow-runs.ts`、`mock-workflow-mounts.ts`              | 内存运行时的标识和订阅，与持久化运行缓存隔离                            |
+| `files.ts`、`file-watch.ts`、`diff.ts`、`workspace-status.ts`、`workspace-review.ts` | 有作用域的文件访问、watcher 驱动的失效、Workspace diff、状态和评审刷新  |
+| `plugins.ts`、`agent-runtime.ts`、`plugin-lifecycle.ts`、`mcp-health.ts`             | 目录和配置缓存、按 Agent 划分的模型前缀、跨领域的生命周期协调、MCP 健康 |
+| `agents.ts`、`skills.ts`、`settings.ts`、`identity.ts`                               | 定义、偏好和身份缓存                                                    |
 
 UI hook 负责选中状态、草稿和输入框清理、变更进行中状态以及视图相关的操作；它们先通过数据 owner 采纳权威结果，再协调 UI 状态。值得记住的规则：
 
@@ -37,11 +37,12 @@ UI hook 负责选中状态、草稿和输入框清理、变更进行中状态以
 
 | 触发 | 失效 |
 |---|---|
-| Agent 激活 | 运行时可用性，以及该 Agent 在所有 Workspace 中的模型查询 |
-| Agent 停止或移除 | 运行时可用性；不对已停止的运行时做模型发现 |
+| Agent 激活 | 运行时可用性，以及该 Agent 在所有 Workspace 中的发现查询 |
+| Agent 停止或移除 | 运行时可用性；不对已停止的运行时做发现 |
 | 插件变更完成 | 已安装和可用插件，以及本次会话的 Hook 生命周期结果 |
 | `PluginStatusChanged` | 已安装插件、运行时可用性和 Skill；不含可用插件和模型 |
-| `AgentModelsInvalidated` | 只有该 Agent 的模型查询前缀 |
+| `AgentModelsInvalidated`（Skill 变化） | 只有该 Agent 带命令的发现结果，失效前先取消进行中的请求；只取模型的结果不受影响，失效结果里的模型留给只取模型的调用方 |
+| 应用事件流重新连上 | 对所有 Agent 同样处理，因为断开期间可能漏掉变化 |
 | 显式初始化 Hook | 只有 Hook 生命周期结果 |
 
 数据测试使用真实的 `QueryClient` 缓存和 observer，验证精确的失效和重新拉取行为。
@@ -65,4 +66,4 @@ const state = createWorkspaceMemory();
 const client = createTestClient(workspaceHandlers(state));
 ```
 
-`emptyFilesHandlers`、`readyEffectHandlers` 这类合成 fixture 用名字说明自己的行为，从不作为全局默认；没有依赖的测试从 `createTestClient({})` 开始。自定义行为，包括脚本化的聊天流和注入的失败，都用带类型的 handler 实现。永远不要替换生成客户端的方法，也不要把部分对象强转成 `ContractsClient`。handler 断言要包含传输层的第二个参数 `options`。
+`emptyFilesHandlers` 这类合成 fixture 用名字说明自己的行为，从不作为全局默认；没有依赖的测试从 `createTestClient({})` 开始。自定义行为，包括脚本化的聊天流和注入的失败，都用带类型的 handler 实现。永远不要替换生成客户端的方法，也不要把部分对象强转成 `ContractsClient`。handler 断言要包含传输层的第二个参数 `options`。

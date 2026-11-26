@@ -65,11 +65,38 @@ pub struct SkillFolderConflictParams {
     pub name: String,
 }
 
+/// Host configuration path that needs repair; excludes the stored configuration contents.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct PluginLogLevelsFileParams {
+    pub path: String,
+}
+
 /// Explains why a published snapshot cannot take over an existing run on resume.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "error.ts")]
 pub struct WorkflowSnapshotIncompatibleWithResumeParams {
+    pub reason: String,
+}
+
+/// Names the field of a run-local debug patch that the server refused, and why.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowDebugPatchInvalidParams {
+    /// Path relative to the normalized data of the edited node, such as `/agentConfig/prompt`.
+    pub path: String,
+    pub reason: String,
+}
+
+/// Explains why a run-local debug target cannot be previewed, such as which recorded input is
+/// missing or which position field the page still has to supply.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowDebugTargetRejectedParams {
     pub reason: String,
 }
 
@@ -101,6 +128,22 @@ pub struct WorkflowSkillNotFoundParams {
     /// Node label to show; equal to `node_id` when the node carries no title.
     pub node_title: String,
     pub skill_id: String,
+}
+
+/// Names the workflow node, ambiguous bare Skill reference, and matching catalog candidates.
+///
+/// Raised when a workflow declares a bare Skill name matching multiple Skill catalog entries
+/// (for example a local Skill and a plugin Skill sharing the same name), so the operator can
+/// select a specific Skill instead of letting runtime guess.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowSkillAmbiguousParams {
+    pub node_id: String,
+    /// Node label to show; equal to `node_id` when the node carries no title.
+    pub node_title: String,
+    pub skill_ref: String,
+    pub candidates: Vec<String>,
 }
 
 /// Names the workflow node and the MCP plugin its frozen graph declares, for a run that cannot
@@ -310,9 +353,9 @@ pub enum PublicError {
     AgentNameConflict(EmptyErrorParams),
     AgentNotFound(EmptyErrorParams),
     PluginNotFound(EmptyErrorParams),
+    PluginLogLevelsReadOnly(PluginLogLevelsFileParams),
+    PluginLogLevelsWriteFailed(PluginLogLevelsFileParams),
     PluginHostIncompatible(EmptyErrorParams),
-    EffectTargetNotFound(EmptyErrorParams),
-    EffectTargetNotRecoverable(EmptyErrorParams),
     PluginPackageInvalid(PluginPackageInvalidParams),
     PackMemberDuplicate(PackMemberParams),
     PackSelfReference(PackMemberParams),
@@ -343,6 +386,7 @@ pub enum PublicError {
     WorkspaceDiffBaselineUnavailable(EmptyErrorParams),
     WorkspaceDiffCommitMessageBlank(EmptyErrorParams),
     WorkspaceDiffTooLarge(EmptyErrorParams),
+    WorkspaceNotGitRepository(EmptyErrorParams),
     SessionNotFound(EmptyErrorParams),
     AgentNotInstalled(EmptyErrorParams),
     AgentRuntimeUnavailable(EmptyErrorParams),
@@ -415,6 +459,7 @@ pub enum PublicError {
     WorkflowRunValidation(EmptyErrorParams),
     WorkflowRunInputInvalid(WorkflowRunInputInvalidParams),
     WorkflowSkillNotFound(Box<WorkflowSkillNotFoundParams>),
+    WorkflowSkillAmbiguous(Box<WorkflowSkillAmbiguousParams>),
     WorkflowMcpNotFound(Box<WorkflowMcpNotFoundParams>),
     WorkflowRoleNotFound(EmptyErrorParams),
     WorkflowRunStartFailed(EmptyErrorParams),
@@ -429,6 +474,14 @@ pub enum PublicError {
     WorkflowNodeTurnChanged(WorkflowNodeTurnChangedParams),
     WorkflowNodeOutputChanged(WorkflowNodeOutputChangedParams),
     WorkflowNodeSignalChanged(Box<WorkflowNodeSignalChangedParams>),
+    /// The run moved on since the preview was taken; the page previews again.
+    WorkflowDebugStalePreview(EmptyErrorParams),
+    /// A confirmation for this run is stopping or holds an unreleased fence.
+    WorkflowDebugOperationActive(EmptyErrorParams),
+    /// The request key already names another preview of the same run.
+    WorkflowDebugRequestConflict(EmptyErrorParams),
+    WorkflowDebugPatchInvalid(WorkflowDebugPatchInvalidParams),
+    WorkflowDebugTargetRejected(WorkflowDebugTargetRejectedParams),
 }
 
 impl PublicError {
@@ -448,6 +501,8 @@ impl PublicError {
             Self::AgentNameConflict(_) => "agent_name_conflict",
             Self::AgentNotFound(_) => "agent_not_found",
             Self::PluginNotFound(_) => "plugin_not_found",
+            Self::PluginLogLevelsReadOnly(_) => "plugin_log_levels_read_only",
+            Self::PluginLogLevelsWriteFailed(_) => "plugin_log_levels_write_failed",
             Self::PluginHostIncompatible(_) => "plugin_host_incompatible",
             Self::PluginPackageInvalid(_) => "plugin_package_invalid",
             Self::PackMemberDuplicate(_) => "pack_member_duplicate",
@@ -474,8 +529,6 @@ impl PublicError {
             }
             Self::ProjectNotFound(_) => "project_not_found",
             Self::ProjectWorkspaceNotDirectory(_) => "project_workspace_not_directory",
-            Self::EffectTargetNotFound(_) => "effect_target_not_found",
-            Self::EffectTargetNotRecoverable(_) => "effect_target_not_recoverable",
             Self::TaskNotFound(_) => "task_not_found",
             Self::ScheduledTaskNotFound(_) => "scheduled_task_not_found",
             Self::ScheduledTaskConflict(_) => "scheduled_task_conflict",
@@ -489,6 +542,7 @@ impl PublicError {
             Self::WorkspaceDiffBaselineUnavailable(_) => "workspace_diff_baseline_unavailable",
             Self::WorkspaceDiffCommitMessageBlank(_) => "workspace_diff_commit_message_blank",
             Self::WorkspaceDiffTooLarge(_) => "workspace_diff_too_large",
+            Self::WorkspaceNotGitRepository(_) => "workspace_not_git_repository",
             Self::SessionNotFound(_) => "session_not_found",
             Self::AgentNotInstalled(_) => "agent_not_installed",
             Self::AgentRuntimeUnavailable(_) => "agent_runtime_unavailable",
@@ -561,6 +615,7 @@ impl PublicError {
             Self::WorkflowRunValidation(_) => "workflow_run_validation",
             Self::WorkflowRunInputInvalid(_) => "workflow_run_input_invalid",
             Self::WorkflowSkillNotFound(_) => "workflow_skill_not_found",
+            Self::WorkflowSkillAmbiguous(_) => "workflow_skill_ambiguous",
             Self::WorkflowMcpNotFound(_) => "workflow_mcp_not_found",
             Self::WorkflowRoleNotFound(_) => "workflow_role_not_found",
             Self::WorkflowRunStartFailed(_) => "workflow_run_start_failed",
@@ -577,6 +632,11 @@ impl PublicError {
             Self::WorkflowNodeTurnChanged(_) => "workflow_node_turn_changed",
             Self::WorkflowNodeOutputChanged(_) => "workflow_node_output_changed",
             Self::WorkflowNodeSignalChanged(_) => "workflow_node_signal_changed",
+            Self::WorkflowDebugStalePreview(_) => "workflow_debug_stale_preview",
+            Self::WorkflowDebugOperationActive(_) => "workflow_debug_operation_active",
+            Self::WorkflowDebugRequestConflict(_) => "workflow_debug_request_conflict",
+            Self::WorkflowDebugPatchInvalid(_) => "workflow_debug_patch_invalid",
+            Self::WorkflowDebugTargetRejected(_) => "workflow_debug_target_rejected",
         }
     }
 }
@@ -598,7 +658,10 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     OpenLocationTarget::export_all(config)?;
     OpenLocationFailedParams::export_all(config)?;
     SkillFolderConflictParams::export_all(config)?;
+    PluginLogLevelsFileParams::export_all(config)?;
     WorkflowSnapshotIncompatibleWithResumeParams::export_all(config)?;
+    WorkflowDebugPatchInvalidParams::export_all(config)?;
+    WorkflowDebugTargetRejectedParams::export_all(config)?;
     WorkflowRunInputInvalidParams::export_all(config)?;
     TaskBaseBranchNotFoundParams::export_all(config)?;
     PackMemberParams::export_all(config)?;
@@ -606,6 +669,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     PluginConfigurationValidationParams::export_all(config)?;
     PluginPackageInvalidParams::export_all(config)?;
     MarketplaceArtifactRetrievalFieldInvalidParams::export_all(config)?;
+    WorkflowSkillAmbiguousParams::export_all(config)?;
     PublicError::export_all(config)?;
     ContractError::export_all(config)?;
     Ok(())
@@ -616,13 +680,14 @@ mod tests {
     use super::{
         ContractError, EmptyErrorParams, MarketplaceArtifactRetrievalFieldInvalidParams,
         OpenLocationFailedParams, OpenLocationTarget, PackMemberParams,
-        PluginConfigurationValidationParams, PluginPackageInvalidParams, PublicError, RequestId,
-        SessionMcpSetupFailedParams, SkillFolderConflictParams, TaskBaseBranchNotFoundParams,
-        WorkflowMcpNotFoundParams, WorkflowNodeCompletionBlocker,
-        WorkflowNodeCompletionBlockerKind, WorkflowNodeCompletionBlockerParams,
+        PluginConfigurationValidationParams, PluginLogLevelsFileParams, PluginPackageInvalidParams,
+        PublicError, RequestId, SessionMcpSetupFailedParams, SkillFolderConflictParams,
+        TaskBaseBranchNotFoundParams, WorkflowDebugPatchInvalidParams,
+        WorkflowDebugTargetRejectedParams, WorkflowMcpNotFoundParams,
+        WorkflowNodeCompletionBlocker, WorkflowNodeCompletionBlockerKind,
         WorkflowNodeIncompleteParams, WorkflowNodeOutputChangedParams,
         WorkflowNodeSignalChangedParams, WorkflowNodeTurnChangedParams, WorkflowNodeTurnKey,
-        WorkflowRunInputInvalidParams, WorkflowSkillNotFoundParams,
+        WorkflowRunInputInvalidParams, WorkflowSkillAmbiguousParams, WorkflowSkillNotFoundParams,
         WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
@@ -667,6 +732,12 @@ mod tests {
             PublicError::AgentNameConflict(empty),
             PublicError::AgentNotFound(empty),
             PublicError::PluginNotFound(empty),
+            PublicError::PluginLogLevelsReadOnly(PluginLogLevelsFileParams {
+                path: "plugins/log-levels.json".to_owned(),
+            }),
+            PublicError::PluginLogLevelsWriteFailed(PluginLogLevelsFileParams {
+                path: "plugins/log-levels.json".to_owned(),
+            }),
             PublicError::PluginHostIncompatible(empty),
             PublicError::PluginPackageInvalid(PluginPackageInvalidParams {
                 field: "description".to_owned(),
@@ -702,8 +773,6 @@ mod tests {
                 field_errors: Vec::new(),
             }),
             PublicError::PluginConfigurationRecoveryNotRequired(empty),
-            PublicError::EffectTargetNotFound(empty),
-            PublicError::EffectTargetNotRecoverable(empty),
             PublicError::ProjectNotFound(empty),
             PublicError::ProjectWorkspaceNotDirectory(empty),
             PublicError::TaskNotFound(empty),
@@ -721,6 +790,7 @@ mod tests {
             PublicError::WorkspaceDiffBaselineUnavailable(empty),
             PublicError::WorkspaceDiffCommitMessageBlank(empty),
             PublicError::WorkspaceDiffTooLarge(empty),
+            PublicError::WorkspaceNotGitRepository(empty),
             PublicError::SessionNotFound(empty),
             PublicError::AgentNotInstalled(empty),
             PublicError::AgentRuntimeUnavailable(empty),
@@ -813,6 +883,15 @@ mod tests {
                 node_title: "Review".to_string(),
                 skill_id: "code_review".to_string(),
             })),
+            PublicError::WorkflowSkillAmbiguous(Box::new(WorkflowSkillAmbiguousParams {
+                node_id: "review".to_string(),
+                node_title: "Review".to_string(),
+                skill_ref: "code_review".to_string(),
+                candidates: vec![
+                    "local-uuid (local)".to_string(),
+                    "plugin:local/review-pack:code_review (local/review-pack)".to_string(),
+                ],
+            })),
             PublicError::WorkflowMcpNotFound(Box::new(WorkflowMcpNotFoundParams {
                 node_id: "review".to_string(),
                 node_title: "Review".to_string(),
@@ -847,6 +926,16 @@ mod tests {
                 expected: Some("signal-1".to_string()),
                 actual: Some("signal-2".to_string()),
             })),
+            PublicError::WorkflowDebugStalePreview(EmptyErrorParams {}),
+            PublicError::WorkflowDebugOperationActive(EmptyErrorParams {}),
+            PublicError::WorkflowDebugRequestConflict(EmptyErrorParams {}),
+            PublicError::WorkflowDebugPatchInvalid(WorkflowDebugPatchInvalidParams {
+                path: "/agentConfig/prompt".to_string(),
+                reason: "field is not editable".to_string(),
+            }),
+            PublicError::WorkflowDebugTargetRejected(WorkflowDebugTargetRejectedParams {
+                reason: "missing_input_evidence: start.text".to_string(),
+            }),
         ];
 
         for error in &samples {
@@ -864,6 +953,8 @@ mod tests {
                 | PublicError::AgentNameConflict(_)
                 | PublicError::AgentNotFound(_)
                 | PublicError::PluginNotFound(_)
+                | PublicError::PluginLogLevelsReadOnly(_)
+                | PublicError::PluginLogLevelsWriteFailed(_)
                 | PublicError::PluginHostIncompatible(_)
                 | PublicError::PluginPackageInvalid(_)
                 | PublicError::PackMemberDuplicate(_)
@@ -880,8 +971,6 @@ mod tests {
                 | PublicError::ConfigurationLoadFailed(_)
                 | PublicError::PluginConfigurationValidation(_)
                 | PublicError::PluginConfigurationRecoveryNotRequired(_)
-                | PublicError::EffectTargetNotFound(_)
-                | PublicError::EffectTargetNotRecoverable(_)
                 | PublicError::ProjectNotFound(_)
                 | PublicError::ProjectWorkspaceNotDirectory(_)
                 | PublicError::TaskNotFound(_)
@@ -897,6 +986,7 @@ mod tests {
                 | PublicError::WorkspaceDiffBaselineUnavailable(_)
                 | PublicError::WorkspaceDiffCommitMessageBlank(_)
                 | PublicError::WorkspaceDiffTooLarge(_)
+                | PublicError::WorkspaceNotGitRepository(_)
                 | PublicError::SessionNotFound(_)
                 | PublicError::AgentNotInstalled(_)
                 | PublicError::AgentRuntimeUnavailable(_)
@@ -969,6 +1059,7 @@ mod tests {
                 | PublicError::WorkflowRunValidation(_)
                 | PublicError::WorkflowRunInputInvalid(_)
                 | PublicError::WorkflowSkillNotFound(_)
+                | PublicError::WorkflowSkillAmbiguous(_)
                 | PublicError::WorkflowMcpNotFound(_)
                 | PublicError::WorkflowRoleNotFound(_)
                 | PublicError::WorkflowRunStartFailed(_)
@@ -982,7 +1073,12 @@ mod tests {
                 | PublicError::WorkflowNodeIncomplete(_)
                 | PublicError::WorkflowNodeTurnChanged(_)
                 | PublicError::WorkflowNodeOutputChanged(_)
-                | PublicError::WorkflowNodeSignalChanged(_) => {}
+                | PublicError::WorkflowNodeSignalChanged(_)
+                | PublicError::WorkflowDebugStalePreview(_)
+                | PublicError::WorkflowDebugOperationActive(_)
+                | PublicError::WorkflowDebugRequestConflict(_)
+                | PublicError::WorkflowDebugPatchInvalid(_)
+                | PublicError::WorkflowDebugTargetRejected(_) => {}
             }
         }
 
@@ -993,7 +1089,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 126);
+        assert_eq!(samples.len(), 133);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

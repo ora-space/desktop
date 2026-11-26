@@ -8,7 +8,7 @@ Marketplace 列出发布在 Git 仓库（"源"）中的插件，负责安装和�
 
 一个源由 HTTPS Git URL、分支（默认 `main`）、代理开关、`enabled` 标志和制品获取方式组成。操作：`listMarketplaceSources`、`addMarketplaceSource`、`updateMarketplaceSource`、`deleteMarketplaceSource`。
 
-- **命名空间**：每个源的规范 URL（规范化大小写、凭据、默认端口、末尾斜杠和 `.git`）在 `plugin_source_namespace` 中一次性绑定到一个命名空间。这个绑定比源配置活得更久：一旦从该源安装了插件，命名空间就冻结进它的安装路径、数据目录、Skill 行和 Effect 消费者身份，所以删除再重新添加同一个仓库会复用它。两个源发布相同的 identifier 会得到两个不同的插件 id，两者都会列出。
+- **命名空间**：每个源的规范 URL（规范化大小写、凭据、默认端口、末尾斜杠和 `.git`）在 `plugin_source_namespace` 中一次性绑定到一个命名空间。这个绑定比源配置活得更久：一旦从该源安装了插件，命名空间就冻结进它的安装路径、数据目录和 Skill 行，所以删除再重新添加同一个仓库会复用它。两个源发布相同的 identifier 会得到两个不同的插件 id，两者都会列出。
 - **启用**：禁用会保留 URL、分支、代理策略、位置和命名空间绑定，但把该源排除在同步、列表和安装之外。
 - **代理**：Git 工作如何连接只由该源的开关决定。Ora 把路由写成针对该源 origin 和完整 URL 的命令级 Git 配置，优先级高于用户的 `http.proxy`、按 URL 的 `http.<url>.proxy` 和 `*_proxy` 环境变量：选择使用代理的源总是走 Ora 的代理（见[设置](../desktop/settings.zh.md#网络代理)），不使用的源总是直连。下载遵循同样的选择。
 - **制品获取**：`Direct HTTPS`（默认）获取绝对的 HTTPS 发布地址，不签名。`S3 SigV4` 接受对象 key，或在配置的 endpoint 和 bucket 上的 path-style HTTPS 地址，并用该源的 region 和静态凭据对签名；它拒绝外部的 HTTPS 地址，而不是退回到不签名的获取。endpoint、bucket、region 和两项凭据是一份完整的配置。凭据只写：源查询从不返回它们，debug 输出会脱敏。它们以明文配置的形式保存在本地 SQLite 数据库中；没有操作系统 keychain、临时凭据或 provider 凭据链。永远不要把更新凭据的请求序列化进日志或遥测。签名只认证请求，不保证完整性：每个制品仍必须匹配发布中的 SHA-256。

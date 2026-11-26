@@ -36,7 +36,6 @@ import {
   createWorkflowMemory,
   workflowHandlers,
 } from "../../test/memory/workflows";
-import { readyEffectHandlers } from "../../test/memory/effects";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useDraftSessionsStore } from "../../state/stores/draft-sessions-store";
 import { useComposerInputStore } from "../../state/stores/composer-input-store";
@@ -83,7 +82,6 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
     ...agentHandlers(state),
     ...skillHandlers(state),
     ...workflowHandlers(state),
-    ...readyEffectHandlers(),
   };
 }
 
@@ -114,7 +112,7 @@ describe("task-scoped first send without the task in the tasks cache", () => {
       projectId: "p1",
       kind: "isolated",
       lifecycle: "active",
-      directory: { kind: "present" },
+      directory: { kind: "present", git: "repository" },
     });
     // ...but the tasks list the client loaded does not contain it yet.
     const baseHandlers = createFixtureHandlers(state);

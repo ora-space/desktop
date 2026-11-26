@@ -17,14 +17,17 @@ use ora_agent_runtime::RuntimeError;
 use ora_application::{
     AgentConfig, AgentDefinitionRepository, AgentSkill, BindWorkflowNodeSessionResult, Clock,
     ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind, RepositoryError,
-    StructuredOutputError, VariableTemplateError, WorkflowGraphNode, WorkflowRunCallback,
-    WorkflowRunEngineRepository, WorkflowRunPayload, render_variable_template,
+    StartPrerequisitesError, StructuredOutputError, VariableTemplateError, WorkflowGraphNode,
+    WorkflowRunCallback, WorkflowRunEngineRepository, WorkflowRunPayload, render_variable_template,
 };
 use ora_contracts::{
     AgentRef as ContractAgentRef, PromptSessionEvent, PromptSessionRequest, StartSessionRequest,
     StopSessionRequest,
 };
-use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteWorkflowRunEngineRepository};
+use ora_db::{
+    RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository,
+    SqliteWorkflowRunEngineRepository,
+};
 use ora_domain::SessionHostCapabilities;
 use ora_domain::{AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId};
 use ora_logging::ora_warn;
@@ -66,6 +69,8 @@ pub struct WorkflowRunNodeExecutor {
     agent_repository: SqliteAgentDefinitionRepository,
     callback: Arc<dyn WorkflowRunCallback>,
     clock: SystemClock,
+    /// Formal skill catalog root used to resolve live `SKILL.md` storage paths at dispatch time.
+    skills_root: PathBuf,
     /// Root of durable session history, read once when an interactive turn parks.
     sessions_root: PathBuf,
     /// Root for the per-node worktree baseline snapshots an interactive node diffs at completion.
@@ -90,6 +95,7 @@ impl WorkflowRunNodeExecutor {
         agent_repository: SqliteAgentDefinitionRepository,
         callback: Arc<dyn WorkflowRunCallback>,
         clock: SystemClock,
+        skills_root: PathBuf,
         sessions_root: PathBuf,
         baselines_root: PathBuf,
         transitions: Arc<WorkflowRunTransitions>,
@@ -101,6 +107,7 @@ impl WorkflowRunNodeExecutor {
             agent_repository,
             callback,
             clock,
+            skills_root,
             sessions_root,
             baselines_root,
             transitions,
@@ -137,6 +144,7 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
         let agent_repository = self.agent_repository.clone();
         let callback = self.callback.clone();
         let clock = self.clock;
+        let skills_root = self.skills_root.clone();
         let sessions_root = self.sessions_root.clone();
         let baselines_root = self.baselines_root.clone();
         let transitions = self.transitions.clone();
@@ -157,6 +165,7 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                 &pool,
                 &agent_repository,
                 &clock,
+                &skills_root,
                 &sessions_root,
                 &baselines_root,
                 &transitions,
@@ -288,8 +297,8 @@ pub enum NodeExecutionError {
         /// Retained so a schema failure does not erase the Agent's auditable final response.
         output: Option<String>,
     },
-    #[error("node {node_id} is missing the frozen materialization receipt for skill {skill_id}")]
-    MissingSkillMaterialization { node_id: String, skill_id: String },
+    #[error("node {node_id} is missing required skill {skill_id}")]
+    MissingRequiredSkill { node_id: String, skill_id: String },
     #[error("prompt session ended without a stop reason")]
     SessionEndedWithoutStopReason,
     #[error("workflow node stopped before its session became visible")]
@@ -329,9 +338,7 @@ impl NodeExecutionError {
             Self::InvalidRunPayload => NodeFailureKind::InvalidRunPayload,
             Self::PromptTemplate { .. } => NodeFailureKind::PromptTemplate,
             Self::StructuredOutput { .. } => NodeFailureKind::StructuredOutput,
-            Self::MissingSkillMaterialization { .. } => {
-                NodeFailureKind::MissingSkillMaterialization
-            }
+            Self::MissingRequiredSkill { .. } => NodeFailureKind::MissingRequiredSkill,
             Self::SessionEndedWithoutStopReason => NodeFailureKind::SessionEndedWithoutStopReason,
             Self::SessionBindingRejected => NodeFailureKind::SessionBindingRejected,
             Self::BaselinePersist { .. } => NodeFailureKind::BaselinePersist,
@@ -345,7 +352,7 @@ impl NodeExecutionError {
             | Self::MissingAgentConfig { .. }
             | Self::InvalidRunPayload
             | Self::PromptTemplate { .. }
-            | Self::MissingSkillMaterialization { .. }
+            | Self::MissingRequiredSkill { .. }
             | Self::SessionEndedWithoutStopReason
             | Self::SessionBindingRejected
             | Self::BaselinePersist { .. }
@@ -379,6 +386,7 @@ async fn drive_agent_node(
     pool: &RepositoryPool,
     agent_repository: &SqliteAgentDefinitionRepository,
     clock: &SystemClock,
+    skills_root: &Path,
     sessions_root: &Path,
     baselines_root: &Path,
     transitions: &Arc<WorkflowRunTransitions>,
@@ -391,6 +399,14 @@ async fn drive_agent_node(
     variable_pool: &ora_application::WorkflowVariablePool,
     #[cfg(feature = "test-support")] owner_stream_drop: &OwnerStreamDropControl,
 ) -> Result<AgentNodeOutcome, NodeExecutionError> {
+    let debug_store = ora_db::workflow_debug::WorkflowDebugStore::new(pool.clone());
+    let revised = debug_store
+        .revised_graph(context.run.id.as_ref(), node_run_id.as_ref())
+        .map_err(RepositoryError::new)?;
+    let node = revised
+        .as_ref()
+        .and_then(|g| g.execution_node(&node.id))
+        .unwrap_or(node);
     let config =
         node.agent_config
             .as_ref()
@@ -497,12 +513,8 @@ async fn drive_agent_node(
             previous_failure_for_injection(run_payload.inject_last_failure, previous.as_ref());
         let node_runs = repository.list_node_runs_in_scope(scope_id)?;
         let workspace_root = agent_runtime.workspace_cwd(&context.workspace.id)?;
-        let required_skills = resolve_required_skills(
-            &run_payload,
-            &node.id,
-            &config.skills,
-            &workspace_root,
-        )?;
+        let required_skills =
+            resolve_required_skills(pool, skills_root, &run_payload, &node.id, &config.skills)?;
         let prompt = assemble_workflow_prompt(WorkflowPromptRequest {
             node: &rendered_node,
             graph: Some(graph),
@@ -515,6 +527,16 @@ async fn drive_agent_node(
             locale: run_payload.locale,
             previous_failure: previous_failure.as_ref(),
         });
+        // Bind historical input to what this driver actually observed. Scope and root pools can
+        // advance independently between row admission and this asynchronous prompt handoff.
+        let dispatch_input = serde_json::json!({
+            "variablePool": variable_pool,
+            "prompt": &prompt,
+            "visibleAttempts": node_runs.iter().map(|row| (&row.id, row.status)).collect::<Vec<_>>(),
+        });
+        debug_store
+            .record_agent_dispatch(context.run.id.as_ref(), node_run_id.as_ref(), &dispatch_input)
+            .map_err(RepositoryError::new)?;
         let completion_attempt = (config.interactive
             && config.completion_signal == ora_application::AgentCompletionSignal::Agent)
             .then(|| uuid::Uuid::new_v4().to_string());
@@ -735,14 +757,16 @@ pub(super) fn resolve_agent_ref(value: &str) -> Result<ContractAgentRef, NodeExe
     Ok(value.to_string())
 }
 
-/// Resolves the current node's enabled skills exclusively from the receipt frozen at deployment.
+/// Resolves the current node's frozen catalog bindings to live formal storage `SKILL.md` paths.
 fn resolve_required_skills(
+    pool: &RepositoryPool,
+    skills_root: &Path,
     payload: &WorkflowRunPayload,
     node_id: &str,
     skills: &[AgentSkill],
-    worktree_root: &Path,
 ) -> Result<Vec<RequiredWorkflowSkill>, NodeExecutionError> {
-    let bindings = payload.skill_materialization.bindings_for_node(node_id);
+    let bindings = payload.skill_receipt.bindings_for_node(node_id);
+    let skill_repository = SqliteSkillRepository::new(pool.clone());
     let mut required = Vec::new();
     let mut seen_skill_ids = HashSet::new();
     for skill in skills.iter().filter(|skill| skill.enabled) {
@@ -752,13 +776,29 @@ fn resolve_required_skills(
         let binding = bindings
             .iter()
             .find(|binding| binding.skill_id == skill.skill_id)
-            .ok_or_else(|| NodeExecutionError::MissingSkillMaterialization {
+            .ok_or_else(|| NodeExecutionError::MissingRequiredSkill {
                 node_id: node_id.to_string(),
                 skill_id: skill.skill_id.clone(),
             })?;
+        let resolved = super::prerequisites::resolve_binding_skill_entry(
+            skills_root,
+            &skill_repository,
+            binding,
+        )
+        .map_err(|error| match error {
+            StartPrerequisitesError::Repository(source) => NodeExecutionError::Repository(source),
+            _ => NodeExecutionError::MissingRequiredSkill {
+                node_id: node_id.to_string(),
+                skill_id: binding.skill_id.clone(),
+            },
+        })?
+        .ok_or_else(|| NodeExecutionError::MissingRequiredSkill {
+            node_id: node_id.to_string(),
+            skill_id: binding.skill_id.clone(),
+        })?;
         required.push(RequiredWorkflowSkill {
             invocation_name: binding.invocation_name.clone(),
-            package_paths: binding.absolute_package_paths(worktree_root),
+            skill_md_path: resolved.skill_md_path,
         });
     }
     Ok(required)
@@ -768,9 +808,21 @@ fn resolve_required_skills(
 mod tests {
     use super::*;
     use ora_application::AgentOutputContract;
+    use ora_application::SkillRepository as _;
     use ora_application::StructuredTextExposure;
     use ora_contracts::WorkflowRunLocale;
-    use ora_utils::path::StrictRelativePath;
+    use ora_db::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
+    use ora_domain::{AuditFields, Namespace, Skill, SkillId};
+    use tempfile::TempDir;
+
+    fn test_pool(temp: &TempDir) -> RepositoryPool {
+        DatabaseBootstrapper::new(crate::test_clock::TestClock)
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(temp.path().join("ora.sqlite3")),
+                &default_migration_catalog().expect("migration catalog"),
+            )
+            .expect("bootstrap pool")
+    }
     use pretty_assertions::assert_eq;
 
     /// Verifies a graph's agent identity is carried through instead of checked against a set.
@@ -889,19 +941,43 @@ mod tests {
         );
     }
 
-    /// Node execution uses the frozen receipt for invocation and placement, never the live catalog.
+    /// Covers `specs/test-cases/desktop/core/agent/session/skill/workflow-skill-resolution.md`:
+    /// node dispatch resolves frozen catalog IDs against live formal storage and fails cleanly
+    /// when a catalog entry or its `SKILL.md` disappears before dispatch.
     #[test]
-    fn required_skills_resolve_only_from_the_frozen_materialization_receipt() {
+    fn required_skills_resolve_live_storage_paths_by_frozen_catalog_id() {
+        let temp = TempDir::new().unwrap();
+        let pool = test_pool(&temp);
+        let skills_root = temp.path().join("atoms").join("skills");
+        let review_dir = skills_root.join("review");
+        std::fs::create_dir_all(&review_dir).unwrap();
+        let review_skill_md = review_dir.join("SKILL.md");
+        std::fs::write(
+            &review_skill_md,
+            "---\nname: review\ndescription: Reviews changes\n---\nInstructions\n",
+        )
+        .unwrap();
+        SqliteSkillRepository::new(pool.clone())
+            .create_skill(
+                Skill::new(
+                    SkillId::new("catalog-id"),
+                    Namespace::local(),
+                    "review",
+                    "Reviews changes",
+                    AuditFields::new(1, 1, /*is_deleted*/ false),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
         let payload = WorkflowRunPayload::new(
             WorkflowRunLocale::ZhCn,
-            ora_application::SkillMaterializationReceipt {
-                bindings: vec![ora_application::MaterializedSkillBinding {
+            ora_application::WorkflowSkillReceipt {
+                bindings: vec![ora_application::FrozenSkillBinding {
                     node_id: "review-node".to_string(),
                     skill_id: "catalog-id".to_string(),
+                    catalog_skill_id: Some("catalog-id".to_string()),
                     invocation_name: "review".to_string(),
-                    package_paths: vec![
-                        StrictRelativePath::parse(".plugin/skills/review").unwrap(),
-                    ],
                 }],
             },
         );
@@ -909,19 +985,165 @@ mod tests {
             skill_id: "catalog-id".to_string(),
             enabled: true,
         }];
-        let worktree_root = Path::new("worktrees").join("run-1");
 
         assert_eq!(
-            resolve_required_skills(&payload, "review-node", &skills, &worktree_root).unwrap(),
+            resolve_required_skills(&pool, &skills_root, &payload, "review-node", &skills).unwrap(),
             vec![RequiredWorkflowSkill {
                 invocation_name: "review".to_string(),
-                package_paths: vec![worktree_root.join(".plugin").join("skills").join("review")],
+                skill_md_path: review_skill_md.clone(),
             }]
         );
         assert!(matches!(
-            resolve_required_skills(&payload, "other-node", &skills, &worktree_root),
-            Err(NodeExecutionError::MissingSkillMaterialization { node_id, skill_id })
+            resolve_required_skills(&pool, &skills_root, &payload, "other-node", &skills),
+            Err(NodeExecutionError::MissingRequiredSkill { node_id, skill_id })
                 if node_id == "other-node" && skill_id == "catalog-id"
         ));
+
+        // Removing SKILL.md between run start and dispatch fails with MissingRequiredSkill.
+        std::fs::remove_file(&review_skill_md).unwrap();
+        assert!(matches!(
+            resolve_required_skills(&pool, &skills_root, &payload, "review-node", &skills),
+            Err(NodeExecutionError::MissingRequiredSkill { node_id, skill_id })
+                if node_id == "review-node" && skill_id == "catalog-id"
+        ));
+    }
+
+    /// Uninstalling a plugin skill frozen on a node must fail dispatch even when a same-named
+    /// local skill is installed, both for bare-name bindings (carrying `catalog_skill_id`) and
+    /// for legacy receipts storing the exact `plugin:` ID without `catalog_skill_id`.
+    #[test]
+    fn uninstalled_plugin_skill_never_falls_back_to_same_named_local_skill_at_dispatch() {
+        let temp = TempDir::new().unwrap();
+        let pool = test_pool(&temp);
+        let skills_root = temp.path().join("atoms").join("skills");
+        let local_dir = skills_root.join("review");
+        std::fs::create_dir_all(&local_dir).unwrap();
+        std::fs::write(
+            local_dir.join("SKILL.md"),
+            "---\nname: review\ndescription: Local review\n---\nLocal instructions\n",
+        )
+        .unwrap();
+        let plugin_dir = temp
+            .path()
+            .join("plugins/installed/official/review-pack/1.0.0/assets/review");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("SKILL.md"),
+            "---\nname: review\ndescription: Plugin review\n---\nPlugin instructions\n",
+        )
+        .unwrap();
+
+        let repo = SqliteSkillRepository::new(pool.clone());
+        let plugin_id = ora_domain::PluginId::new("official", "review-pack").unwrap();
+        repo.create_skill(
+            Skill::new(
+                SkillId::new("local-uuid"),
+                Namespace::local(),
+                "review",
+                "Local review",
+                AuditFields::new(1, 1, /*is_deleted*/ false),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        repo.replace_plugin_skills(
+            &plugin_id,
+            "1.0.0",
+            &[ora_db::PluginSkillProjection {
+                name: "review".to_string(),
+                description: "Plugin review".to_string(),
+                package_root: plugin_dir.clone(),
+            }],
+            2,
+        )
+        .unwrap();
+
+        let frozen_plugin_id = "plugin:official/review-pack:review";
+        let payload = WorkflowRunPayload::new(
+            WorkflowRunLocale::EnUs,
+            ora_application::WorkflowSkillReceipt {
+                bindings: vec![ora_application::FrozenSkillBinding {
+                    node_id: "review-node".to_string(),
+                    skill_id: "review".to_string(),
+                    catalog_skill_id: Some(frozen_plugin_id.to_string()),
+                    invocation_name: "review".to_string(),
+                }],
+            },
+        );
+        let bare_skills = vec![AgentSkill {
+            skill_id: "review".to_string(),
+            enabled: true,
+        }];
+        assert_eq!(
+            resolve_required_skills(&pool, &skills_root, &payload, "review-node", &bare_skills)
+                .unwrap(),
+            vec![RequiredWorkflowSkill {
+                invocation_name: "review".to_string(),
+                skill_md_path: plugin_dir.join("SKILL.md"),
+            }]
+        );
+
+        // Uninstall plugin while same-named local skill remains active.
+        repo.remove_plugin_skills(&plugin_id, 3).unwrap();
+        assert!(matches!(
+            resolve_required_skills(&pool, &skills_root, &payload, "review-node", &bare_skills),
+            Err(NodeExecutionError::MissingRequiredSkill { node_id, skill_id })
+                if node_id == "review-node" && skill_id == "review"
+        ));
+
+        // Legacy receipt without `catalog_skill_id` holding a `plugin:` ID must also fail closed.
+        let legacy_plugin_payload = WorkflowRunPayload::new(
+            WorkflowRunLocale::EnUs,
+            ora_application::WorkflowSkillReceipt {
+                bindings: vec![ora_application::FrozenSkillBinding {
+                    node_id: "review-node".to_string(),
+                    skill_id: frozen_plugin_id.to_string(),
+                    catalog_skill_id: None,
+                    invocation_name: "review".to_string(),
+                }],
+            },
+        );
+        let plugin_skills = vec![AgentSkill {
+            skill_id: frozen_plugin_id.to_string(),
+            enabled: true,
+        }];
+        assert!(matches!(
+            resolve_required_skills(
+                &pool,
+                &skills_root,
+                &legacy_plugin_payload,
+                "review-node",
+                &plugin_skills,
+            ),
+            Err(NodeExecutionError::MissingRequiredSkill { node_id, skill_id })
+                if node_id == "review-node" && skill_id == frozen_plugin_id
+        ));
+
+        // Legacy receipt without `catalog_skill_id` holding a bare name still resolves local skill.
+        let legacy_bare_payload = WorkflowRunPayload::new(
+            WorkflowRunLocale::EnUs,
+            ora_application::WorkflowSkillReceipt {
+                bindings: vec![ora_application::FrozenSkillBinding {
+                    node_id: "review-node".to_string(),
+                    skill_id: "review".to_string(),
+                    catalog_skill_id: None,
+                    invocation_name: "review".to_string(),
+                }],
+            },
+        );
+        assert_eq!(
+            resolve_required_skills(
+                &pool,
+                &skills_root,
+                &legacy_bare_payload,
+                "review-node",
+                &bare_skills,
+            )
+            .unwrap(),
+            vec![RequiredWorkflowSkill {
+                invocation_name: "review".to_string(),
+                skill_md_path: local_dir.join("SKILL.md"),
+            }]
+        );
     }
 }

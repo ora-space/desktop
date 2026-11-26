@@ -761,7 +761,7 @@ describe("WorkspaceFilesView project scope", () => {
         projectId: string;
         kind: "main";
         lifecycle: "active";
-        directory: { kind: "present" };
+        directory: { kind: "present"; git: "repository" };
       }>;
     }) => void;
     const workspacesPromise = new Promise<{
@@ -770,7 +770,7 @@ describe("WorkspaceFilesView project scope", () => {
         projectId: string;
         kind: "main";
         lifecycle: "active";
-        directory: { kind: "present" };
+        directory: { kind: "present"; git: "repository" };
       }>;
     }>((resolve) => {
       resolveWorkspaces = resolve;
@@ -812,7 +812,7 @@ describe("WorkspaceFilesView project scope", () => {
           projectId: "project-1",
           kind: "main",
           lifecycle: "active",
-          directory: { kind: "present" },
+          directory: { kind: "present", git: "repository" },
         },
       ],
     });

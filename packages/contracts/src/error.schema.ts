@@ -5,6 +5,10 @@ export const requestIdSchema = z.string();
 
 export const emptyErrorParamsSchema = z.record(z.string(), z.never());
 
+export const pluginLogLevelsFileParamsSchema = z.object({
+    path: z.string()
+});
+
 export const pluginPackageInvalidParamsSchema = z.object({
     field: z.string(),
     message: z.string()
@@ -44,6 +48,13 @@ export const workflowSkillNotFoundParamsSchema = z.object({
     skillId: z.string()
 });
 
+export const workflowSkillAmbiguousParamsSchema = z.object({
+    nodeId: z.string(),
+    nodeTitle: z.string(),
+    skillRef: z.string(),
+    candidates: z.array(z.string())
+});
+
 export const workflowMcpNotFoundParamsSchema = z.object({
     nodeId: z.string(),
     nodeTitle: z.string(),
@@ -64,6 +75,15 @@ export const workflowNodeSignalChangedParamsSchema = z.object({
     nodeId: z.string(),
     expected: z.string().nullable(),
     actual: z.string().nullable()
+});
+
+export const workflowDebugPatchInvalidParamsSchema = z.object({
+    path: z.string(),
+    reason: z.string()
+});
+
+export const workflowDebugTargetRejectedParamsSchema = z.object({
+    reason: z.string()
 });
 
 export const openLocationTargetSchema = z.union([z.literal("explorer"), z.literal("terminal"), z.literal("vscode")]);
@@ -149,13 +169,13 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("plugin_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("plugin_log_levels_read_only"),
+        "params": pluginLogLevelsFileParamsSchema
+    }), z.object({
+        "code": z.literal("plugin_log_levels_write_failed"),
+        "params": pluginLogLevelsFileParamsSchema
+    }), z.object({
         "code": z.literal("plugin_host_incompatible"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
-        "code": z.literal("effect_target_not_found"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
-        "code": z.literal("effect_target_not_recoverable"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("plugin_package_invalid"),
@@ -246,6 +266,9 @@ export const publicErrorSchema = z.union([z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("workspace_diff_too_large"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workspace_not_git_repository"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("session_not_found"),
@@ -464,6 +487,9 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("workflow_skill_not_found"),
         "params": workflowSkillNotFoundParamsSchema
     }), z.object({
+        "code": z.literal("workflow_skill_ambiguous"),
+        "params": workflowSkillAmbiguousParamsSchema
+    }), z.object({
         "code": z.literal("workflow_mcp_not_found"),
         "params": workflowMcpNotFoundParamsSchema
     }), z.object({
@@ -505,6 +531,21 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("workflow_node_signal_changed"),
         "params": workflowNodeSignalChangedParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_stale_preview"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_operation_active"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_request_conflict"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_patch_invalid"),
+        "params": workflowDebugPatchInvalidParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_target_rejected"),
+        "params": workflowDebugTargetRejectedParamsSchema
     })]);
 
 export const contractErrorSchema = z.object({
@@ -549,13 +590,13 @@ export const contractErrorSchema = z.object({
         "code": z.literal("plugin_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("plugin_log_levels_read_only"),
+        "params": pluginLogLevelsFileParamsSchema
+    }), z.object({
+        "code": z.literal("plugin_log_levels_write_failed"),
+        "params": pluginLogLevelsFileParamsSchema
+    }), z.object({
         "code": z.literal("plugin_host_incompatible"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
-        "code": z.literal("effect_target_not_found"),
-        "params": emptyErrorParamsSchema
-    }), z.object({
-        "code": z.literal("effect_target_not_recoverable"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("plugin_package_invalid"),
@@ -646,6 +687,9 @@ export const contractErrorSchema = z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("workspace_diff_too_large"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workspace_not_git_repository"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("session_not_found"),
@@ -864,6 +908,9 @@ export const contractErrorSchema = z.object({
         "code": z.literal("workflow_skill_not_found"),
         "params": workflowSkillNotFoundParamsSchema
     }), z.object({
+        "code": z.literal("workflow_skill_ambiguous"),
+        "params": workflowSkillAmbiguousParamsSchema
+    }), z.object({
         "code": z.literal("workflow_mcp_not_found"),
         "params": workflowMcpNotFoundParamsSchema
     }), z.object({
@@ -905,4 +952,19 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("workflow_node_signal_changed"),
         "params": workflowNodeSignalChangedParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_stale_preview"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_operation_active"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_request_conflict"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_patch_invalid"),
+        "params": workflowDebugPatchInvalidParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_debug_target_rejected"),
+        "params": workflowDebugTargetRejectedParamsSchema
     })]));

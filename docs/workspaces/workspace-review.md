@@ -8,16 +8,39 @@ checkout) and stages, commits and pushes them. Use cases live in
 
 ## Operations
 
-| Operation | Purpose |
-|---|---|
-| `getWorkspaceDiff` | A bounded unified patch for one scope |
-| `getWorkspaceStatus` | Per-file staging status |
+| Operation                                          | Purpose                                                 |
+| -------------------------------------------------- | ------------------------------------------------------- |
+| `getWorkspaceDiff`                                 | A bounded unified patch for one scope                   |
+| `getWorkspaceStatus`                               | Per-file staging status                                 |
 | `stageWorkspaceChanges`, `unstageWorkspaceChanges` | Stage or unstage paths; an empty list means all changes |
-| `commitWorkspaceChanges` | Commit exactly the staged change set |
-| `pushWorkspaceBranch` | Push the checked-out branch to `origin` |
+| `commitWorkspaceChanges`                           | Commit exactly the staged change set                    |
+| `pushWorkspaceBranch`                              | Push the checked-out branch to `origin`                 |
 
 Requests carry the `WorkspaceId`; the backend resolves the live checkout and never accepts a
 frontend path or a `TaskId`.
+
+## Folders without Git
+
+A project can be any folder; agents then write straight into it and there is nothing to review.
+`listWorkspaces` reports a present directory as `{ kind: "present", git }`. `git` comes from one
+`git rev-parse --is-inside-work-tree` per listed directory, run on every list and never stored:
+
+| `git`           | Meaning                                                                                                                                                | Client behavior                                                                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repository`    | The folder is inside a work tree                                                                                                                       | Unchanged                                                                                                                                                                                     |
+| `notRepository` | Git says the folder is not inside any repository, and no `.git` entry exists in it or above it                                                         | Changes explains this and issues no diff or status query; every new-worktree entry is hidden; the scheduled-task form refuses creating, enabling or moving a task to the project and says why |
+| `unknown`       | Git could not answer (not installed, untrusted owner, a damaged or unreadable `.git`, no answer within 5 seconds, or the checkout is being cleaned up) | Unchanged, so the operation's own error surfaces                                                                                                                                              |
+
+Git discovers repositories upward, so a plain folder nested inside another checkout is
+`repository` and the review operations act on that enclosing checkout. After `git init` (or
+removing `.git`) the clients see the change when the workspace list is next refetched: on window
+focus once the cached list is older than its 30-second stale time, the Changes panel's re-check
+button, or a `workspace_not_git_repository` refusal, which makes the Changes panel re-probe at
+once. A chat link that would open a diff in such a folder opens the file in Files instead.
+
+Every operation above first probes the resolved checkout the same way and returns
+`workspace_not_git_repository` for a folder outside any repository, before the baseline check and
+before running the operation's own Git commands.
 
 ## Scopes and baselines
 

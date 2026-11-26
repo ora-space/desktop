@@ -21,11 +21,11 @@
 
 访问权限按 Webview label 通过 `capabilities/` 授予：
 
-| Label | 可以调用 |
-|---|---|
-| `main` | 所有已注册的命令 |
+| Label              | 可以调用                                                              |
+| ------------------ | --------------------------------------------------------------------- |
+| `main`             | 所有已注册的命令                                                      |
 | `plugin-webview:*` | 只有 `plugin_webview_invoke`，见 [Surface](../plugins/surfaces.zh.md) |
-| `remote-webview:*` | 什么都不能：没有任何 capability 针对这个 label，页面没有 Tauri IPC |
+| `remote-webview:*` | 什么都不能：没有任何 capability 针对这个 label，页面没有 Tauri IPC    |
 
 `build.rs` 会把注册表和 `permissions/main-commands.toml` 对照检查，因此注册过的命令不可能绕开 ACL。
 
@@ -41,31 +41,33 @@
 
 除了生成的契约命令，Desktop 还注册了一些没有 SDK 操作的原生命令：
 
-| 命令 | 用途 |
-|---|---|
-| `stream_contract`、`cancel_contract_stream` | 共享的流传输 |
-| `get_worktree_root`、`set_worktree_root` | 新任务 worktree 的创建位置 |
-| `resolve_task_cwd`、`resolve_workspace_cwd` | 任务或 Workspace 当前的工作目录 |
-| `open_location` | 在系统文件管理器中定位路径（`explorer /select,`、`open -R`），而不是用默认编辑器打开；目录以文件夹窗口打开 |
-| `open_external_url` | 在系统浏览器中打开 `http(s)`/`mailto` URL；其他 scheme 返回 `InvalidRequest` |
-| `write_workflow_export`、`read_workflow_import` | 工作流文件的导出和导入 |
-| `download_today_log`、`download_plugin_log` | 把诊断日志复制到保存对话框选定的位置 |
-| `surface_*`、`plugin_webview_invoke` | 插件 surface，见 [Surface](../plugins/surfaces.zh.md) |
-| `get_desktop_update_status`、`check_desktop_update`、`install_desktop_update` | 见 [Desktop 更新](#desktop-更新) |
+| 命令                                                                          | 用途                                                                                                       |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `stream_contract`、`cancel_contract_stream`                                   | 共享的流传输                                                                                               |
+| `get_worktree_root`、`set_worktree_root`                                      | 新任务 worktree 的创建位置                                                                                 |
+| `resolve_task_cwd`、`resolve_workspace_cwd`                                   | 任务或 Workspace 当前的工作目录                                                                            |
+| `open_location`                                                               | 在系统文件管理器中定位路径（`explorer /select,`、`open -R`），而不是用默认编辑器打开；目录以文件夹窗口打开 |
+| `open_external_url`                                                           | 在系统浏览器中打开 `http(s)`/`mailto` URL；其他 scheme 返回 `InvalidRequest`                               |
+| `write_workflow_export`、`read_workflow_import`                               | 工作流文件的导出和导入                                                                                     |
+| `download_today_log`、`download_plugin_log`                                   | 把诊断日志复制到保存对话框选定的位置                                                                       |
+| `surface_*`、`plugin_webview_invoke`                                          | 插件 surface，见 [Surface](../plugins/surfaces.zh.md)                                                      |
+| `is_new_installation`                                                         | 数据库是否由本次启动新建，见[更新日志](../development/release-notes.zh.md#展示)                            |
+| `get_desktop_update_status`、`check_desktop_update`、`install_desktop_update` | 见 [Desktop 更新](#desktop-更新)                                                                           |
 
 ## 持久化路径
 
-| 数据 | 位置 |
-|---|---|
-| SQLite 数据库（包括 `user_config`） | `<数据根目录>/ora.sqlite3` |
-| 日志 | `<数据根目录>/logs/ora.log` |
-| 会话历史 | `<数据根目录>/sessions/` |
-| 定时运行产物 | `<数据根目录>/scheduled-artifacts/<run id>/` |
-| Skill 包 | `<数据根目录>/atoms/skills/` |
-| 实例锁 | `<数据根目录>/instance.lock` |
-| 插件、marketplace 源、插件数据和日志 | `~/.ora/plugins/` |
-| 默认 worktree 根目录 | `~/.ora/worktrees` |
-| 已下载的更新包 | `~/.ora/cache/desktop-updates/v2/` |
+| 数据                                 | 位置                                         |
+| ------------------------------------ | -------------------------------------------- |
+| SQLite 数据库（包括 `user_config`）  | `<数据根目录>/ora.sqlite3`                   |
+| `0025` 迁移前 SQLite 升级备份        | `<数据根目录>/ora.sqlite3.pre-0025.bak`      |
+| 日志                                 | `<数据根目录>/logs/ora.log`                  |
+| 会话历史                             | `<数据根目录>/sessions/`                     |
+| 定时运行产物                         | `<数据根目录>/scheduled-artifacts/<run id>/` |
+| Skill 包                             | `<数据根目录>/atoms/skills/`                 |
+| 实例锁                               | `<数据根目录>/instance.lock`                 |
+| 插件、marketplace 源、插件数据和日志 | `~/.ora/plugins/`                            |
+| 默认 worktree 根目录                 | `~/.ora/worktrees`                           |
+| 已下载的更新包                       | `~/.ora/cache/desktop-updates/v2/`           |
 
 worktree 根目录是非敏感配置，在 设置 → 数据与隐私 中选择，必须是一个已存在目录的绝对路径。它只是创建目标：新值只影响之后开始的任务创建，已有的 worktree 从不移动，也从不根据它重新拼路径，见[任务与 worktree](../workspaces/tasks-and-worktrees.zh.md)。
 
@@ -77,8 +79,9 @@ worktree 根目录是非敏感配置，在 设置 → 数据与隐私 中选择�
 
 发布构建在启动一分钟后检查一次已签名的静态清单 `https://github.com/ora-space/desktop/releases/latest/download/latest.json`，之后通过 `ora-scheduler` 任务每六小时检查一次（`0 0 */6 * * *`），并使用用户配置的代理。Tauri 更新器选择当前操作系统和架构并校验签名；Desktop 服务把通过校验的包存入按身份寻址的缓存，所以早先进程下载过的包可以复用（会先用配置的公钥重新校验），无需再次下载。开发构建保留这些命令供测试使用，但不注册任何网络任务。
 
-- 已下载的包在后续检查失败时仍可安装；只有在没有任何可安装的包时才报告 `Failed`，安装失败会恢复到 `Ready`。
+- 已下载的包在后续检查失败时仍可安装；只有在没有任何可安装的包时才报告 `Failed`，安装失败会恢复到 `Ready`。设置侧栏和更新日志页显示检查失败，更新日志页还显示原因、安装失败的提示，并可以重试。
 - Linux 发布的是 AppImage，所以 `deb`/`rpm` 安装或裸可执行文件会在下载之前就报告 `ManualUpdate` 及原因，外壳会指向发布页而不是提供安装按钮。
+- `Ready` 和 `ManualUpdate` 带有清单里的更新日志，见[更新日志](../development/release-notes.zh.md#更新之前)。
 - 更新器公钥在 `apps/desktop/src-tauri/tauri.conf.json` 中；发布构建需要 GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY` 中对应的私钥。
 
 状态变化以 `desktop-update-status-changed` 发出。生命周期、缓存布局和不变量见 [`src/update/README.md`](../../apps/desktop/src-tauri/src/update/README.md)。

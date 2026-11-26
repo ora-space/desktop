@@ -1,27 +1,30 @@
 //! Commands serialize session operations while retaining each prompt's admission policy.
 
 use crate::RuntimeError;
+use crate::config_changes::ConfigChangeRoute;
 use crate::end_cause::PromptEndReport;
 use crate::prompt::RecordedTurn;
 use crate::title_acquisition::PollAttempt;
-use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate};
+use agent_client_protocol_schema::v1::{
+    ContentBlock, SessionConfigId, SessionConfigOptionValue, SessionUpdate,
+};
 use ora_contracts::{
     LoadSessionEvent, PromptSessionEvent, RespondToPermissionRequest, RespondToPermissionResponse,
     StopSessionResponse,
 };
-use ora_domain::{AgentRef, PromptInactivityPolicy, SessionTitle};
+use ora_domain::{PromptInactivityPolicy, SessionTitle};
 use tokio::sync::{mpsc, oneshot};
+
+/// One option a session's provider is to be asked for.
+pub(crate) struct ConfigChangeRequest {
+    pub(crate) config_id: SessionConfigId,
+    pub(crate) value: SessionConfigOptionValue,
+    /// Told how the change is on its way once the actor has asked.
+    pub(crate) accepted: oneshot::Sender<Result<ConfigChangeRoute, RuntimeError>>,
+}
 
 /// Carries one owned operation or lifecycle observation to the session's serialized actor.
 pub(crate) enum RuntimeCommand {
-    /// The agent's process was replaced, so every provider-side session it held is gone.
-    ///
-    /// Broadcast rather than addressed, because the actor registry is keyed by Ora session and one
-    /// agent's connection is shared by every Workspace; each actor decides whether it is bound to
-    /// the replaced agent.
-    AgentProcessReplaced {
-        agent: AgentRef,
-    },
     McpDesiredMaybeChanged,
     Load {
         cleanup: oneshot::Sender<Result<(), RuntimeError>>,
@@ -58,16 +61,13 @@ pub(crate) enum RuntimeCommand {
         operation_id: u64,
         completion: Option<oneshot::Sender<Result<(), RuntimeError>>>,
     },
-    /// A caller outside the actor is about to address this session's provider directly.
+    /// Asks this session's provider for one option.
     ///
-    /// Answers with the provider session it must address. That is not always the binding in the
-    /// row: a session rebuilt to replace one that could not be restored is only persisted once the
-    /// prompt carrying the transcript is accepted, so until then the actor is the only holder of
-    /// the identity the agent actually answers to. Standing down title polling comes with it,
-    /// because the reply is the point at which the caller starts using that identity.
-    ClaimDirectProviderCall {
-        response: oneshot::Sender<String>,
-    },
+    /// The actor asks rather than its caller, so that the answer arrives among the session's other
+    /// frames and is addressed to the provider session it is talking to right now. That is not always
+    /// the binding in the row: a session rebuilt to replace one that could not be restored is only
+    /// persisted once the prompt carrying the transcript is accepted. Title polling stands down.
+    ChangeConfig(ConfigChangeRequest),
     AdoptUserTitle {
         title: SessionTitle,
         response: oneshot::Sender<()>,

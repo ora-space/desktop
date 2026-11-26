@@ -10,7 +10,9 @@ use crate::host::RuntimeEvents;
 use crate::host::SessionStore;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
 use agent_client_protocol_schema::v1::StopReason;
-use agent_client_protocol_schema::v1::{ListSessionsRequest, ListSessionsResponse, SessionUpdate};
+use agent_client_protocol_schema::v1::{
+    ListSessionsRequest, ListSessionsResponse, SessionInfoUpdate, SessionUpdate,
+};
 use ora_contracts::StopSessionResponse;
 use ora_domain::SessionTitle;
 use ora_logging::{ora_debug, ora_warn};
@@ -96,7 +98,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         RuntimeCommand::Stop { response } => {
                             self.channel = Some(channel);
                             self.title_acquisition.close();
-                            self.unload().await;
+                            self.stop_unload().await;
                             let _ = response.send(Ok(StopSessionResponse {
                                 session: contract_session(self.session.clone()),
                             }));
@@ -106,15 +108,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
                             let _ = response.send(Err(permission_not_pending()));
-                            return;
-                        }
-                        RuntimeCommand::AgentProcessReplaced { agent } => {
-                            // The channel goes back first: the detach decision is about the live
-                            // registration this poll borrowed, and it cannot see one that is still
-                            // moved out. Ending the attempt either way costs at most a title.
-                            self.channel = Some(channel);
-                            self.title_acquisition.preempt_attempt(attempt);
-                            self.detach_replaced_agent(&agent);
                             return;
                         }
                         RuntimeCommand::McpDesiredMaybeChanged => {
@@ -132,9 +125,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         RuntimeCommand::TakeIdleTurnTraffic { response } => {
                             // A title poll only borrows the idle channel; hand it back and drain
                             // as an idle actor would, so the answer is not lost to the poll.
-                            if super::events::drain_idle_events(&mut channel, &self.command_sender)
-                            .await
-                            {
+                            if super::events::drain_idle_events(self, &mut channel).await {
                                 self.turn_cancel.note_idle_traffic();
                             }
                             self.channel = Some(channel);
@@ -142,10 +133,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             let _ = response.send(self.turn_cancel.take_idle_traffic());
                             return;
                         }
-                        RuntimeCommand::ClaimDirectProviderCall { response } => {
+                        RuntimeCommand::ChangeConfig(request) => {
+                            self.change_config(Some(&mut channel), request).await;
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
-                            let _ = response.send(self.provider_session_id().to_string());
                             return;
                         }
                         RuntimeCommand::AdoptUserTitle { title, response } => {
@@ -232,9 +223,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 event = channel.events.recv() => {
                     match event {
                         Some(SessionEvent::Update(update, _)) => {
-                            channel.observe_commands(&update.update);
                             self.observe_session_update(&update.update);
-                            channel.pending_updates.push_back(update);
+                            // The other updates wait for the next prompt one by one; a catalog
+                            // replaces every earlier one.
+                            if matches!(
+                                update.update,
+                                SessionUpdate::AvailableCommandsUpdate(_)
+                            ) {
+                                channel.retain_commands(&update);
+                            } else {
+                                channel.pending_updates.push_back(update);
+                            }
+                        }
+                        Some(SessionEvent::Response(response)) => {
+                            let _ = self.settle_config_change(&mut channel, response);
                         }
                         Some(event) => {
                             settle_idle_event(&client, event).await;
@@ -305,8 +307,24 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             .start_polling(list_supported, first_handle, final_handle);
     }
 
-    /// Accepts an ACP session-info title only while the actor's acquisition window is open.
+    /// Observes live ACP session updates for titles, config options, and parent compaction.
     pub(crate) fn observe_session_update(&mut self, update: &SessionUpdate) {
+        self.observe_session_metadata(update);
+        if let SessionUpdate::SessionInfoUpdate(info) = update
+            && is_parent_compaction_completed(info)
+        {
+            self.forget_announced_skills();
+        }
+    }
+
+    /// Observes replayed ACP session updates during an in-session MCP refresh `session/load`
+    /// without letting historical compaction entries reset the live session's announced skills.
+    pub(crate) fn observe_replayed_session_update(&mut self, update: &SessionUpdate) {
+        self.observe_session_metadata(update);
+    }
+
+    /// Applies session title and config-option updates carried by an ACP notification.
+    fn observe_session_metadata(&mut self, update: &SessionUpdate) {
         match update {
             SessionUpdate::SessionInfoUpdate(info) => {
                 if let Some(title) = info.title.value() {
@@ -317,6 +335,17 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             // stays level with what the provider last said rather than frozen at attach.
             SessionUpdate::ConfigOptionUpdate(config) => {
                 self.reported_config_options = config.config_options.clone();
+            }
+            SessionUpdate::AvailableCommandsUpdate(commands) => {
+                let count = commands.available_commands.len();
+                // An agent may report often; only going over the limit is news.
+                if !self.commands_exceed_limit {
+                    crate::discovery::warn_when_commands_exceed_limit(
+                        &self.session.agent_ref,
+                        count,
+                    );
+                }
+                self.commands_exceed_limit = crate::discovery::exceeds_shown_commands(count);
             }
             _ => {}
         }
@@ -379,4 +408,20 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         }
     }
+}
+
+/// Reports whether a `SessionInfoUpdate` signals completed context compaction for the parent
+/// session itself (ignoring started/failed states and child-session projections).
+pub(crate) fn is_parent_compaction_completed(info: &SessionInfoUpdate) -> bool {
+    let Some(meta) = info.meta.as_ref() else {
+        return false;
+    };
+    if ora_history::child_source_id(Some(meta)).is_some() {
+        return false;
+    }
+    meta.get("opencode/compaction")
+        .and_then(|value| value.as_object())
+        .and_then(|compaction| compaction.get("status"))
+        .and_then(|status| status.as_str())
+        == Some("completed")
 }

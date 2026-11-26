@@ -41,6 +41,7 @@ export function PluginLogMenuItems({
   const { state, isLoading, isSaving, setLevel } = usePluginLogLevel(pluginId);
   const download = usePluginLogDownload(pluginId, displayName);
   const current = state?.level;
+  const readOnlyPath = state?.readOnlyPath;
 
   return (
     <>
@@ -54,7 +55,12 @@ export function PluginLogMenuItems({
             </span>
           )}
         </DropdownMenuSubTrigger>
-        <DropdownMenuSubContent className="w-40">
+        <DropdownMenuSubContent className="w-72">
+          {readOnlyPath && (
+            <p role="alert" className="px-2 py-1 text-xs break-all">
+              {t("settings.plugins.logLevelReadOnly", { path: readOnlyPath })}
+            </p>
+          )}
           <DropdownMenuRadioGroup
             value={current ?? ""}
             onValueChange={(value) =>
@@ -71,7 +77,7 @@ export function PluginLogMenuItems({
               <DropdownMenuRadioItem
                 key={level}
                 value={level}
-                disabled={isSaving}
+                disabled={isSaving || readOnlyPath != null}
               >
                 {t(`settings.plugins.logLevel.${level}`)}
               </DropdownMenuRadioItem>

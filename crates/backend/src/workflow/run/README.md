@@ -10,18 +10,17 @@ This module adapts workflow-run application use cases to the production backend 
   owning prompt is admitted, carries the prompt inactivity policy from the frozen node configuration
   through retries and every composite or interactive turn, freezes the node's enabled MCP bindings
   as the Session's explicit permission set, and records node outputs and file changes.
-- `prerequisites.rs` resolves roles and freezes required-skill paths through an injected Agent
-  delivery-capability provider. Effect owns physical Skill materialization. Skill resolution is
-  origin-aware: a local skill resolves through its formal catalog directory and a plugin-imported
-  skill through the immutable plugin package recorded in its catalog row. The current provider
-  declares the shared `.agents/skills` root; future plugin-backed providers can declare different
-  or multiple roots without changing the workflow or prompt layers.
+- `prerequisites.rs` resolves roles and validates enabled skills against Ora's live Skill catalog,
+  freezing `{ node_id, skill_id, catalog_skill_id, invocation_name }` bindings without copying
+  packages into the workspace. Skill resolution is origin-aware: a local skill resolves through its
+  formal catalog directory (`<app_data>/atoms/skills/<name>`) and a plugin-imported skill through
+  the immutable plugin package recorded in `skills.package_root`. Ambiguous bare names that match
+  multiple active catalog skills are rejected.
 - `prompt.rs` assembles the localized, worktree-bounded, topology-aware handoff for an agent node.
-  Required-skill constraints show the actual absolute package paths resolved from the frozen run
-  receipt while preserving leading slash commands for Agent CLI parsing. All Agent-facing paths
-  use forward-slash separators consistently, independent of the host operating system. Text block
-  boundaries include explicit blank lines because Agent providers may concatenate ACP blocks
-  without adding separators.
+  Required-skill constraints show each skill's live formal-storage `SKILL.md` path resolved from
+  the frozen catalog binding using native OS path separators (matching session `<available_skills>`
+  delivery). Text block boundaries include explicit blank lines because Agent providers may
+  concatenate ACP blocks without adding separators.
 - `interactive/` coordinates human turns and manual completion for interactive nodes.
 - `recovery.rs` runs the graph-aware boot sweep. Desktop calls it only after acquiring
   the data-directory instance lock, which the operating system releases when the previous

@@ -40,10 +40,12 @@ pub enum ImportedWorkflowOutcome {
 /// considered.
 ///
 /// The marketplace imports documents by the same rules as a local `.orax` package, but it also
-/// keeps a durable record per source path. A path that already reached a terminal state is skipped
-/// without touching the user's copy, the first name conflict is reported once and then remembered
-/// as terminal, and only a genuine failure stays retryable. Every arm names the member plugin that
-/// carried the document, because one pack install can carry documents from several members.
+/// keeps a durable record per source path, and what that record means depends on the current copy
+/// and the operation: an install opens a new cycle and may recover a copy the user deleted, while
+/// an update or a retry keeps respecting that deletion. A surviving copy stays skipped, a name
+/// conflict stays retryable by fixing the name and asking again, and only a genuine failure keeps
+/// no record at all. Every arm names the member plugin that carried the document, because one pack
+/// install can carry documents from several members.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(
     tag = "state",
@@ -52,8 +54,7 @@ pub enum ImportedWorkflowOutcome {
 )]
 #[ts(export_to = "plugin.ts")]
 pub enum MarketplaceWorkflowOutcome {
-    /// The document became a workflow with one published snapshot, and the source path is now
-    /// terminal.
+    /// The document became a workflow with one published snapshot, and its copy is recorded.
     Imported {
         /// Canonical identifier of the member plugin that carried the document.
         plugin_id: String,
@@ -66,29 +67,47 @@ pub enum MarketplaceWorkflowOutcome {
         /// The version the new snapshot was published under.
         version: String,
     },
-    /// The source path already had a terminal record, so the document was not imported again.
+    /// The document already has a surviving copy, so it was not imported again.
     ///
-    /// This is the outcome of every path an earlier install, upgrade, or conflict skip already
-    /// handled. Reporting it explains why a document shipped by the package did not appear in the
-    /// library a second time.
+    /// This covers every path an earlier install already delivered, including a copy the user has
+    /// renamed or edited since. Reporting it explains why a document shipped by the package did not
+    /// appear in the library a second time.
     SkippedProcessed {
         /// Canonical identifier of the member plugin that carried the document.
         plugin_id: String,
-        /// Package-relative path that already reached a terminal state.
+        /// Package-relative path whose copy is still alive.
+        source_file: String,
+    },
+    /// The document's copy was deleted during the current install cycle, so it was left deleted.
+    ///
+    /// An install opens a new cycle and reconsiders the path; an upgrade or an explicit retry keeps
+    /// respecting the deletion. This arm stays separate from
+    /// [`MarketplaceWorkflowOutcome::SkippedProcessed`] so the surface can present the deletion as a
+    /// neutral fact with its recovery path instead of as "already handled".
+    SkippedDeletedCopy {
+        /// Canonical identifier of the member plugin that carried the document.
+        plugin_id: String,
+        /// Package-relative path whose copy the user deleted.
         source_file: String,
     },
     /// A workflow with this document's name already existed; the user's copy was kept.
     ///
-    /// The conflict is reported only the first time: the source path becomes terminal, so later
-    /// upgrades and retries report [`MarketplaceWorkflowOutcome::SkippedProcessed`] instead of the
-    /// same conflict again.
+    /// The conflict stays reported until the name is free again: the source path keeps a
+    /// `conflict_skipped` record, and every later install, upgrade, or retry re-checks the library,
+    /// so renaming or deleting the user's workflow makes the document importable. `known_conflict`
+    /// marks a conflict the record already carried before this operation, which lets an upgrade
+    /// report it as a neutral count instead of opening the report again.
     SkippedConflict {
         /// Canonical identifier of the member plugin that carried the document.
         plugin_id: String,
         /// Package-relative path whose document name collided with an existing workflow.
         source_file: String,
+        /// Name of the surviving workflow in the library that blocks this document's import.
+        name: String,
+        /// Whether the record already held this conflict before the operation ran.
+        known_conflict: bool,
     },
-    /// The document was refused and no terminal record was written, so a retry can try it again.
+    /// The document was refused and no record was created, so a retry can try it again.
     Failed {
         /// Canonical identifier of the member plugin that carried the document.
         plugin_id: String,
@@ -102,8 +121,8 @@ pub enum MarketplaceWorkflowOutcome {
 /// Requests a retry of the workflow document import for one installed plugin.
 ///
 /// The retry is an explicit action on an installed plugin card rather than a second install, so it
-/// never downloads or replaces a package; it reconsiders only the documents whose source paths do
-/// not have a terminal record yet.
+/// never downloads or replaces a package; it reconsiders paths without a surviving copy, including
+/// unrecorded documents and name conflicts, while keeping copies deleted during the running cycle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]

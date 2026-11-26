@@ -209,10 +209,12 @@ export const chatTranslations = {
     "chat.actionMenu.open": "打开快捷操作",
     "chat.actionMenu.files": "Files",
     "chat.actionMenu.skills": "Skills",
-    "chat.actionMenu.commands": "Commands",
+    "chat.actionMenu.commands": "Agent 命令",
     "chat.actionMenu.roles": "角色",
     "chat.actionMenu.plugins": "Plugins",
     "chat.actionMenu.actions": "Actions",
+    "chat.actionMenu.commandsPending":
+      "执行一轮对话后，Agent 自带命令和 skill 才会显示",
     "chat.actionMenu.showMore": "显示另外 {{count}} 项",
     "chat.actionMenu.showLess": "收起",
     "chat.actionMenu.filesSearching": "正在搜索文件…",
@@ -368,39 +370,7 @@ export const chatTranslations = {
     "chat.pickProject": "请先选择或创建一个项目，然后开始对话",
     "chat.pickAgent": "请先选择一个 Agent，然后开始对话",
     "chat.pickAvailableAgent": "请先选择一个可用的Agent模型",
-    "chat.agentEffectsNotReady": "Agent 正在同步项目技能，完成后即可发送",
     "chat.workspaceDirectoryMissing": "项目目录不存在，恢复目录后才能发送",
-    "chat.agentEffectsFailed": "Agent 技能同步失败，需要恢复：{{message}}",
-    "chat.agentEffectRecovery.title": "Agent 技能同步需要手动恢复",
-    "chat.agentEffectRecovery.action": "恢复",
-    "chat.agentEffectRecovery.pending": "正在恢复…",
-    "chat.agentEffectRecovery.refused":
-      "恢复未完成：{{message}}。外部状态与记录不一致，请检查工作区目录后重试。",
-    "chat.agentEffectFailure.title": "Agent 技能同步失败",
-    "chat.agentEffectFailure.reason.preserved_item_conflict":
-      "存在未由 Ora 管理的旧技能目录，无法覆盖：{{relativePath}}",
-    "chat.agentEffectFailure.reason.skill_directory_link":
-      "技能目录不支持符号链接或 Windows junction：{{relativePath}}",
-    "chat.agentEffectFailure.reason.skill_directory_link_workspace_root":
-      "工作区文件夹本身是符号链接或 Windows 联接，不受支持。",
-    "chat.agentEffectFailure.reason.unsafe_skill_directory":
-      "技能目录路径不安全或被不受支持的条目占用：{{relativePath}}",
-    "chat.agentEffectFailure.reason.unsafe_skill_directory_workspace_root":
-      "工作区文件夹本身的路径不安全，无法同步技能。",
-    "chat.agentEffectFailure.reason.managed_item_drift":
-      "由 Ora 管理的技能目录在外部被修改，无法安全覆盖：{{relativePath}}",
-    "chat.agentEffectFailure.reason.managed_item_drift_generic":
-      "由 Ora 管理的技能目录在外部被修改，无法安全覆盖。",
-    "chat.agentEffectFailure.reason.recovery_required":
-      "存在未完成的技能同步操作，需要手动恢复。",
-    "chat.agentEffectFailure.preservedHint":
-      "请移走上列旧技能目录，然后重新同步。",
-    "chat.agentEffectFailure.linkHint":
-      "请将列出的符号链接或 Windows junction 替换为普通文件或目录，然后重新同步。",
-    "chat.agentEffectFailure.retryHint": "请先处理上列问题，然后重新同步。",
-    "chat.agentEffectFailure.action": "重新同步",
-    "chat.agentEffectFailure.pending": "正在重新同步…",
-    "chat.agentEffectFailure.refused": "重新同步未完成：{{message}}。",
     "chat.copyCode": "复制代码",
     "chat.codeCopied": "代码已复制",
     "chat.collapseCode": "收起代码",
@@ -656,10 +626,12 @@ export const chatTranslations = {
     "chat.actionMenu.open": "Open quick actions",
     "chat.actionMenu.files": "Files",
     "chat.actionMenu.skills": "Skills",
-    "chat.actionMenu.commands": "Commands",
+    "chat.actionMenu.commands": "Agent commands",
     "chat.actionMenu.roles": "Roles",
     "chat.actionMenu.plugins": "Plugins",
     "chat.actionMenu.actions": "Actions",
+    "chat.actionMenu.commandsPending":
+      "The Agent's own commands and skills appear after one turn of conversation",
     "chat.actionMenu.showMore": "Show {{count}} more",
     "chat.actionMenu.showLess": "Show less",
     "chat.actionMenu.filesSearching": "Searching files…",
@@ -847,42 +819,8 @@ export const chatTranslations = {
     "chat.pickAgent": "Pick an agent before starting a chat",
     "chat.pickAvailableAgent":
       "Pick an available agent and model before starting a chat",
-    "chat.agentEffectsNotReady": "The agent is syncing project Skills",
     "chat.workspaceDirectoryMissing":
       "The project folder is missing; restore it to send",
-    "chat.agentEffectsFailed":
-      "Agent Skill sync failed and needs recovery: {{message}}",
-    "chat.agentEffectRecovery.title": "Agent Skill sync needs manual recovery",
-    "chat.agentEffectRecovery.action": "Recover",
-    "chat.agentEffectRecovery.pending": "Recovering…",
-    "chat.agentEffectRecovery.refused":
-      "Recovery did not complete: {{message}}. External state no longer matches the journal; check the workspace directory and try again.",
-    "chat.agentEffectFailure.title": "Agent Skill sync failed",
-    "chat.agentEffectFailure.reason.preserved_item_conflict":
-      "Unmanaged Skill directory cannot be overwritten: {{relativePath}}",
-    "chat.agentEffectFailure.reason.skill_directory_link":
-      "Symbolic links and Windows junctions are not supported: {{relativePath}}",
-    "chat.agentEffectFailure.reason.skill_directory_link_workspace_root":
-      "The workspace folder itself is a symbolic link or Windows junction, which is not supported.",
-    "chat.agentEffectFailure.reason.unsafe_skill_directory":
-      "Skill directory path is unsafe or occupied by an unsupported entry: {{relativePath}}",
-    "chat.agentEffectFailure.reason.unsafe_skill_directory_workspace_root":
-      "The workspace folder itself is unsafe, so Skills cannot be synced.",
-    "chat.agentEffectFailure.reason.managed_item_drift":
-      "A Skill directory managed by Ora changed outside Ora and cannot be overwritten safely: {{relativePath}}",
-    "chat.agentEffectFailure.reason.managed_item_drift_generic":
-      "A Skill directory managed by Ora changed outside Ora and cannot be overwritten safely.",
-    "chat.agentEffectFailure.reason.recovery_required":
-      "An incomplete Skill sync operation requires manual recovery.",
-    "chat.agentEffectFailure.preservedHint":
-      "Move the old Skill directories listed above out of the workspace, then retry the sync.",
-    "chat.agentEffectFailure.linkHint":
-      "Replace the listed symbolic links or Windows junctions with regular files or directories, then retry the sync.",
-    "chat.agentEffectFailure.retryHint":
-      "Resolve the issues listed above, then retry the sync.",
-    "chat.agentEffectFailure.action": "Retry sync",
-    "chat.agentEffectFailure.pending": "Retrying sync…",
-    "chat.agentEffectFailure.refused": "Retry did not complete: {{message}}.",
     "chat.copyCode": "Copy code",
     "chat.codeCopied": "Code copied",
     "chat.collapseCode": "Collapse code",

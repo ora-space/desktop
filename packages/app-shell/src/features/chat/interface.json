@@ -5,14 +5,6 @@
       "exports": ["BindingTimeline", "SessionInformationDialog"],
       "purpose": "Workspace menus and workflow executions compose the same on-demand binding timeline and diagnostic panel."
     },
-    "./agent-effect-failure-reason": {
-      "exports": ["localizeAgentEffectFailureSummary"],
-      "purpose": "Workspace formats chat-owned Effect send-gate failure wording in the active locale."
-    },
-    "./agent-effect-recovery-banner": {
-      "exports": ["AgentEffectRecoveryBanner"],
-      "purpose": "Workspace composes chat-owned manual-recovery presentation above the conversation it gates."
-    },
     "./chat-view": {
       "exports": ["ChatView"],
       "purpose": "Workspace and workflow-run compose the same conversation renderer."
@@ -52,6 +44,10 @@
     "./turn-diff-files": {
       "exports": ["displayPath"],
       "purpose": "Files and workflow activity normalize displayed ACP worktree paths consistently."
+    },
+    "./use-discovered-commands": {
+      "exports": ["useDiscoveredCommands"],
+      "purpose": "Workspace supplies the surface's agent and session state to chat-owned stand-ins for an unreported command list."
     },
     "./translations": {
       "exports": ["chatTranslations"],

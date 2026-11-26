@@ -184,17 +184,16 @@ current process. `ui.plugin` exposes the underlying `Plugin`.
 ## Agent plugins
 
 `defineAgent` builds a plugin that serves Ora's agent contract — `agent/start`,
-`agent/stop`, `agent/list_models`, and the `agent/acp` notification in both
-directions. Ora validates that whole contract when the handshake completes and
-refuses a plugin whose declaration is incomplete, so the helper registers all of
-it up front.
+`agent/stop`, `agent/discover` (also under its old name `agent/list_models`),
+and the `agent/acp` notification in both directions. Ora validates that whole
+contract when the handshake completes and refuses a plugin whose declaration is
+incomplete, so the helper registers all of it up front.
 
 ```ts
 import {
   AGENT_NOT_INSTALLED,
   defineAgent,
   PluginMethodError,
-  SKILL_DIRECTORY_V1,
 } from "@ora-space/plugin-sdk";
 
 let send;
@@ -203,32 +202,10 @@ const plugin = defineAgent({
     send = sender; // spawn the agent CLI here and own its lifetime
   },
   stop: () => {/* terminate the CLI this plugin spawned */},
-  listModels: ({ cwd }) => [{ id: "opus", displayName: "Opus", default: true }],
+  discover: ({ cwd, includeCommands }) => ({
+    models: [{ id: "opus", displayName: "Opus", default: true }],
+  }),
   onAcp: (frame) => {/* forward the frame to the CLI */},
-  effects: {
-    resources: [{
-      workspaceRelativePath: ".agents/skills",
-      materializationFormat: SKILL_DIRECTORY_V1,
-      coordination: "quiesce_before_mutation",
-    }],
-    coordinate: async ({ targetId, resourceIds }) => {
-      // Quiesce every instance that could consume this exact Resource set and retain the barrier.
-      return { targetId, resourceIds, state: "safe_to_mutate" };
-    },
-    reactivate: async ({ targetId, resourceIds }) => {
-      // Reinitialize affected instances after verification, then release the retained barrier.
-      return { targetId, resourceIds, state: "reactivated" };
-    },
-    verifyReady: async ({
-      targetId,
-      generation,
-      consumerRevisionId,
-      projectionDigest,
-    }) => {
-      // Confirm the Agent can consume this exact immutable Target projection.
-      return { targetId, generation, consumerRevisionId, projectionDigest };
-    },
-  },
 });
 await plugin.run();
 ```
@@ -241,37 +218,70 @@ retries quietly instead of reporting a fault. Throw `AGENT_UNUSABLE` instead
 when the CLI this package ships cannot run at all: that failure repeats on every
 attempt, so Ora reports it once and stops retrying that agent.
 
-### Model discovery
+### Discovery
 
-`listModels` is called on demand — when a user opens a chat surface or a
-workflow inspector — never as part of bringing the agent up, and it receives the
-Workspace directory the models are being listed for. Ora keeps no copy of the
-answer: the plugin owns the catalog and decides when its own cache is stale.
-Returning an empty list is a valid answer for an agent that has no models to
+`discover` is called on demand — when a user opens a chat surface or a workflow
+inspector — never as part of bringing the agent up, and it receives the
+Workspace directory it answers for. Ora keeps no copy of the answer: the plugin
+owns it and decides when its own cache is stale. A plugin that caches must key
+the cache by the whole context except `deadline` — with `skills`, including its
+`revision`, when commands are wanted — keep it in memory only, and never cache a
+failure. Returning no models is a valid answer for an agent that has none to
 offer before a session exists; its models then arrive with the session's ACP
 `config_options` instead.
 
-Most agents only expose their models through ACP session configuration, which
-means discovery has to run one. Do that on a **separate, one-shot agent
-process**, and ask the host to start it:
+`includeCommands` says whether the caller wants the agent's commands. When it
+does not, do not wait for them. `defineAgent` also answers `agent/list_models`
+for versions of Ora that know only that name, always without commands.
+
+Most agents only expose their models through ACP session configuration, and
+report commands in a notification after that session exists, which means
+discovery has to run one. Do that on a **separate, one-shot agent process**, and
+ask the host to start it:
 
 ```ts
-listModels: (async ({ cwd }) => {
+discover: (async (context) => {
+  const { cwd, includeCommands } = context;
   const probe = await spawnAgentProcess(processes, {
     packageCommand: "bin/opencode",
     command: "opencode",
   }, { args: ["acp", "--cwd", cwd], cwd });
-  // initialize → session/new(cwd) → read config_options → end the process
+  // initialize → declared = sessionCapabilities.additionalDirectories is present
+  const setup = skillSessionSetup(context.skills, declared);
+  // session/new({ cwd, mcpServers: [], ...setup }) → read config_options
+  const commands = includeCommands
+    ? await waitForAgentCommands(context, firstCommandReport)
+    : undefined;
+  // session/delete if the agent supports it → end the process
+  return { models, commands };
 });
 ```
 
+`deadline` in the context is when Ora stops waiting for the answer, as Ora said
+when it asked; pass that same context on. `waitForAgentCommands` takes a promise
+for the first `available_commands_update` of the probe session, and stops at
+Ora's cap or where the cleanup reserve before that deadline begins. A plugin
+with an earlier deadline of its own passes it as `{ deadline }`. It resolves to
+`undefined` when nothing arrives, and then `commands` stays out of the answer:
+an absent list means nobody knows, an empty one means the agent said it has
+none. Relay the commands in the agent's order and wording; Ora decides what to
+show.
+
+`skills` is there when commands are wanted. An agent may offer Ora's Skills as
+commands, so the probe session has to be set up with the ones a session would be
+given: `skillSessionSetup` builds that part of `session/new`. `revision` is
+opaque and differs after every change to the Skills, also one that leaves the
+directories alone, such as an edit in place. An older Ora sends no `skills` even
+when it wants commands; `skillSessionSetup(undefined, …)` then returns `{}`, and
+the probe session is set up without Skills.
+
 Two constraints, both load-bearing:
 
-- **Not the connection you gave Ora.** `listModels` runs before Ora's own ACP
+- **Not the connection you gave Ora.** `discover` runs before Ora's own ACP
   `initialize`, Ora's `initialize` is what declares the client capability that
   decides whether the agent reports a model selector at all, and any request you
   inject returns down the same pipe Ora is reading. A second process avoids all
-  three, and its probe session disappears with it — no `session/delete` needed.
+  three.
 - **Not a process you spawn yourself.** Every plugin child process goes through
   `ora/childprocess/spawn` (`createHostProcesses`), because the host owns the OS
   handles, terminates process trees, and reclaims everything a plugin generation
@@ -279,13 +289,6 @@ Two constraints, both load-bearing:
   a timed-out handshake — and a failure outside that ownership leaves an orphan
   agent process behind. A sandboxed plugin also cannot compute the host path of
   its own bundled executable, which is why `packageCommand` exists.
-
-Effect locators are always Workspace-relative; Ora supplies and validates the
-absolute Workspace root when it coordinates a mutation. The canonical Plugin ID
-becomes the persisted consumer identity, so plugin code cannot claim another
-consumer's state. Both coordination callbacks must be idempotent because Ora may
-retry after either side has completed but before the corresponding durable
-status update is visible.
 
 ### Bundled CLI or the user's own
 

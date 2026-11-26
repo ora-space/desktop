@@ -1,8 +1,8 @@
 use super::{AgentRuntimeHost, AgentRuntimeManager};
 use crate::RuntimeError;
 use ora_contracts::{
-    GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, ListAgentModelsRequest,
-    ListAgentModelsResponse,
+    DiscoverAgentRequest, DiscoverAgentResponse, GetAgentRuntimeStatusRequest,
+    GetAgentRuntimeStatusResponse,
 };
 use std::sync::Arc;
 
@@ -21,9 +21,15 @@ impl<H: AgentRuntimeHost> Clone for AgentRuntime<H> {
 }
 
 impl<H: AgentRuntimeHost> AgentRuntime<H> {
-    /// Captures the same manager used by sessions, plugins, workflow execution, and Effect.
+    /// Captures the same manager used by sessions, plugins, and workflow execution.
     pub fn new(manager: Arc<AgentRuntimeManager<H>>) -> Self {
         Self { manager }
+    }
+
+    /// Reports the Skill revision a discovery would be given now.
+    #[cfg(feature = "test-support")]
+    pub fn skill_revision(&self) -> u64 {
+        self.manager.skill_revision()
     }
 
     /// Reports whether each application-scoped CLI runtime is ready, starting, or unavailable.
@@ -34,11 +40,11 @@ impl<H: AgentRuntimeHost> AgentRuntime<H> {
         Ok(self.manager.agent_runtime_status())
     }
 
-    /// Discovers one agent's models for a workspace without creating a session.
-    pub async fn models(
+    /// Discovers what one agent offers in a workspace without creating a session.
+    pub async fn discover(
         &self,
-        request: ListAgentModelsRequest,
-    ) -> Result<ListAgentModelsResponse, RuntimeError> {
-        self.manager.agent_models(request).await
+        request: DiscoverAgentRequest,
+    ) -> Result<DiscoverAgentResponse, RuntimeError> {
+        self.manager.discover_agent(request).await
     }
 }

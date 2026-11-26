@@ -10,11 +10,13 @@ use super::WorkflowRuns;
 use crate::Backend;
 use crate::test_backend::backend_paths;
 use crate::workflow::run::test_fixture::{SeededWorkflow, seeded_workflow};
-use ora_application::{WorkflowRepository, WorkflowRunRepository};
+use ora_application::{WorkflowRepository, WorkflowRunEngineRepository, WorkflowRunRepository};
 use ora_contracts::{
-    CancelWorkflowRunRequest, CreateWorkflowRunRequest, ImportPluginRequest, PluginDataDisposition,
-    PublicError, RestartWorkflowRunRequest, ResumeWorkflowRunRequest, StartWorkflowRunRequest,
-    UninstallPluginRequest, WorkflowMcpNotFoundParams, WorkflowRunLocale, WorkflowRunStatus,
+    CancelWorkflowRunRequest, CreateWorkflowRunRequest, GetPluginConfigurationRequest,
+    ImportPluginRequest, PluginDataDisposition, PluginSettingValue, PluginSettingValueSource,
+    PublicError, RestartWorkflowRunRequest, ResumeWorkflowRunRequest,
+    SavePluginConfigurationRequest, StartWorkflowRunRequest, UninstallPluginRequest,
+    WorkflowMcpNotFoundParams, WorkflowRunLocale, WorkflowRunStatus, WorkflowSkillAmbiguousParams,
     WorkflowSkillNotFoundParams,
 };
 use pretty_assertions::assert_eq;
@@ -545,9 +547,10 @@ async fn target_dependencies_are_checked_before_checkpoint_rollback() {
     }
 }
 
-/// Switching versions freezes the same agent-declared discovery path that creation would use.
+/// Switching versions freezes catalog-resolved skill bindings for the target snapshot without
+/// requiring any Effect declaration or workspace package paths.
 #[tokio::test]
-async fn switched_receipt_uses_the_agent_declared_skill_directory() {
+async fn switched_receipt_freezes_catalog_skill_bindings_without_workspace_paths() {
     let original = SKILL_GRAPH.replace(
         r#""skillId":"code_review","enabled":true"#,
         r#""skillId":"code_review","enabled":false"#,
@@ -558,38 +561,6 @@ async fn switched_receipt_uses_the_agent_declared_skill_directory() {
     fixture
         .install_skill_plugin("review-pack", "code_review")
         .await;
-    let agent_id = "official/ora-space.opencode";
-    fixture
-        .runs
-        .plugin_api
-        .replace_agent_effect_declaration(
-            ora_domain::PluginId::parse(agent_id).unwrap(),
-            Some(ora_effect::ConsumerDeclaration {
-                consumer: ora_effect::ConsumerIdentity::new(
-                    ora_effect::ConsumerKind::agent_plugin(),
-                    agent_id,
-                )
-                .unwrap(),
-                adapter: ora_effect::ConsumerAdapterIdentity::parse("ora/agent-plugin").unwrap(),
-                capabilities: ora_effect::CapabilitySet {
-                    materialization_contracts: [
-                        ora_effect::MaterializationContract::skill_directory_v1().capability_key(),
-                    ]
-                    .into(),
-                    ..Default::default()
-                },
-                resources: vec![ora_effect::FilesystemResourceTemplate {
-                    relative_path: ora_effect::ResourcePath::parse(".claude/skills").unwrap(),
-                    materialization_format: ora_effect::MaterializationFormat::skill_directory_v1(),
-                    materialization_contract:
-                        ora_effect::MaterializationContract::skill_directory_v1(),
-                    accepts: Default::default(),
-                    coordination: ora_effect::CoordinationRequirement::Uninterrupted,
-                    ownership_relative_path: None,
-                }],
-            }),
-        )
-        .unwrap();
     fixture.publish_target(SKILL_GRAPH);
     let resumed = fixture
         .runs
@@ -606,12 +577,75 @@ async fn switched_receipt_uses_the_agent_declared_skill_directory() {
         .unwrap();
     let payload: ora_application::WorkflowRunPayload =
         serde_json::from_str(row.payload.as_deref().unwrap()).unwrap();
-    let bindings = payload.skill_materialization.bindings_for_node("reviewer");
+    let bindings = payload.skill_receipt.bindings_for_node("reviewer");
     assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].skill_id, "code_review");
     assert_eq!(
-        bindings[0].package_paths,
-        vec![ora_utils::path::StrictRelativePath::parse(".claude/skills/code_review").unwrap()]
+        bindings[0].catalog_skill_id.as_deref(),
+        Some("plugin:local/review-pack:code_review")
     );
+    assert_eq!(bindings[0].invocation_name, "code-review");
+}
+
+/// Uninstalling the Skill plugin a run froze must block start, restart, and same-snapshot resume
+/// even when a same-named local Skill is created afterwards.
+#[tokio::test]
+async fn removed_plugin_skill_does_not_fall_back_to_same_named_local_skill() {
+    let fixture = Fixture::open(SKILL_GRAPH);
+    fixture
+        .install_skill_plugin("review-pack", "code_review")
+        .await;
+    let run_id = fixture.create_run();
+    fixture.start_and_settle(&run_id).await;
+    fixture.uninstall_plugin("local/review-pack").await;
+
+    fixture
+        .backend
+        .skills()
+        .create(ora_contracts::CreateSkillRequest {
+            name: "code_review".to_string(),
+            description: "Local impostor".to_string(),
+            content: Some("Local instructions".to_string()),
+        })
+        .expect("create same-named local skill");
+
+    let restart_error = fixture
+        .runs
+        .restart(RestartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .expect_err(
+            "restart must reject missing frozen plugin skill despite same-named local skill",
+        );
+    assert_eq!(
+        restart_error.public_error(),
+        &PublicError::WorkflowSkillNotFound(Box::new(WorkflowSkillNotFoundParams {
+            node_id: "reviewer".to_string(),
+            node_title: "Code review".to_string(),
+            skill_id: "code_review".to_string(),
+        }))
+    );
+
+    let resume_error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: run_id.clone(),
+            rollback: None,
+            snapshot_id: None,
+        })
+        .expect_err(
+            "resume must reject missing frozen plugin skill despite same-named local skill",
+        );
+    assert_eq!(resume_error.public_error(), restart_error.public_error());
+
+    // Re-installing the frozen plugin restores the exact catalog ID and allows restart again.
+    fixture
+        .install_skill_plugin("review-pack", "code_review")
+        .await;
+    fixture
+        .runs
+        .restart(RestartWorkflowRunRequest { run_id })
+        .expect("restart succeeds once original plugin skill returns");
 }
 
 /// Scheduling accepts an installed, unconfigured MCP and keeps a running start idempotent
@@ -675,4 +709,410 @@ async fn invalid_mcp_package_blocks_pending_start() {
         .unwrap_err();
     assert_eq!(error.public_error().code(), "workflow_mcp_not_found");
     assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
+}
+
+/// A blank title cannot identify the node, so the diagnostic carries the node id instead and
+/// nothing but the three identity fields reaches the client.
+#[tokio::test]
+async fn a_blank_node_title_falls_back_to_the_node_id() {
+    let graph = MCP_GRAPH.replace(r#""title":"Code review""#, r#""title":"   ""#);
+    let fixture = Fixture::open(&graph);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    fixture.uninstall_plugin("local/github").await;
+
+    let error = fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.public_error(),
+        &PublicError::WorkflowMcpNotFound(Box::new(WorkflowMcpNotFoundParams {
+            node_id: "reviewer".to_string(),
+            node_title: "reviewer".to_string(),
+            mcp_id: "local/github".to_string(),
+        }))
+    );
+    // Configuration values, transport arguments, and environment are not part of the diagnostic.
+    assert_eq!(
+        serde_json::to_value(error.public_error()).unwrap(),
+        serde_json::json!({
+            "code": "workflow_mcp_not_found",
+            "params": {
+                "nodeId": "reviewer",
+                "nodeTitle": "reviewer",
+                "mcpId": "local/github",
+            },
+        })
+    );
+    assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
+}
+
+/// Retained Setting values must stay out of the rejection sent to the client after uninstall.
+#[tokio::test]
+async fn a_missing_mcp_diagnostic_does_not_expose_retained_settings() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    let plugins = fixture.backend.plugins();
+    let request = GetPluginConfigurationRequest {
+        plugin_id: "local/github".into(),
+    };
+    let configuration = plugins
+        .get_configuration(request.clone())
+        .unwrap()
+        .configuration;
+    let saved = plugins
+        .save_configuration(SavePluginConfigurationRequest {
+            plugin_id: request.plugin_id.clone(),
+            expected_revision: configuration.revision,
+            declaration_fingerprint: configuration.declaration_fingerprint,
+            values: [(
+                "apiKey".into(),
+                PluginSettingValue::String("synthetic-mcp-setting-value".into()),
+            )]
+            .into(),
+            preserve_setting_ids: vec![],
+        })
+        .unwrap()
+        .configuration;
+    assert_eq!(saved.settings[0].source, PluginSettingValueSource::Stored);
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: request.plugin_id.clone(),
+            data_disposition: PluginDataDisposition::Retain,
+            hook_execution_acknowledged: false,
+        })
+        .await
+        .unwrap();
+
+    let error = fixture
+        .runs
+        .start(StartWorkflowRunRequest { run_id })
+        .unwrap_err();
+    assert_eq!(
+        serde_json::to_value(error.public_error()).unwrap(),
+        serde_json::json!({
+            "code": "workflow_mcp_not_found",
+            "params": {
+                "nodeId": "reviewer",
+                "nodeTitle": "Code review",
+                "mcpId": "local/github",
+            },
+        })
+    );
+
+    install_mcp_package(&fixture).await;
+    assert_eq!(
+        plugins.get_configuration(request).unwrap().configuration,
+        saved
+    );
+}
+
+/// A run that cannot be resumed keeps its original rejection even when a dependency is also
+/// missing, so the user is not sent to reinstall a plugin that would not make it resumable.
+#[tokio::test]
+async fn a_run_that_cannot_resume_reports_that_before_a_missing_dependency() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    fixture.uninstall_plugin("local/github").await;
+
+    let error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: run_id.clone(),
+            rollback: None,
+            snapshot_id: None,
+        })
+        .unwrap_err();
+    assert_eq!(error.public_error().code(), "workflow_run_not_resumable");
+    assert_eq!(fixture.get(&run_id).run.status, WorkflowRunStatus::Pending);
+}
+
+/// Only the old graph is missing the binding, so selecting the fixed target snapshot must switch
+/// instead of failing on the snapshot the run is leaving behind.
+#[tokio::test]
+async fn a_target_snapshot_without_the_missing_binding_still_switches() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    fixture.start_and_settle(&run_id).await;
+    fixture.uninstall_plugin("local/github").await;
+
+    // The target graph drops the binding entirely, which repairs the dependency of the switch.
+    fixture.publish_target(
+        &MCP_GRAPH.replace(r#","mcps":[{"mcpId":"local/github","enabled":true}]"#, ""),
+    );
+    let resumed = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: run_id.clone(),
+            rollback: None,
+            snapshot_id: Some("snapshot-2".to_owned()),
+        })
+        .expect("a target snapshot without the removed binding must be usable");
+    assert_eq!(resumed.run.snapshot_id, "snapshot-2");
+    assert_eq!(resumed.run.status, WorkflowRunStatus::Running);
+    fixture
+        .runs
+        .cancel(CancelWorkflowRunRequest { run_id })
+        .await
+        .expect("cancel the switched run so the fixture cannot outlive its runtime");
+}
+
+/// Checks persisted node runs at the backend boundary. The desktop E2E observes sessions and ACP
+/// with an installed agent.
+#[tokio::test]
+async fn a_rejected_start_creates_no_node_run() {
+    let fixture = Fixture::open(MCP_GRAPH);
+    install_mcp_package(&fixture).await;
+    let run_id = fixture.create_run();
+    fixture.uninstall_plugin("local/github").await;
+
+    fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: run_id.clone(),
+        })
+        .unwrap_err();
+
+    let detail = fixture.get(&run_id);
+    assert_eq!(detail.run.status, WorkflowRunStatus::Pending);
+    assert!(
+        detail.nodes.is_empty(),
+        "a rejected start must not create node-run rows"
+    );
+    assert!(
+        ora_db::SqliteWorkflowRunEngineRepository::new(fixture.runs.pool.clone())
+            .list_node_runs(&ora_domain::WorkflowRunId::new(&run_id))
+            .unwrap()
+            .is_empty(),
+        "a rejected start must not create node-run rows"
+    );
+}
+
+/// Covers owner Decision A and N7 across run creation, legacy-receipt start, and snapshot switch:
+/// when a local and a plugin skill share the same bare name, creating a run, starting a run whose
+/// receipt lacks a frozen catalog ID, and switching snapshots with the bare name are all rejected
+/// with the user-visible `workflow_skill_ambiguous` public error naming the node, reference, and
+/// candidates, while referencing a concrete catalog ID succeeds.
+#[tokio::test]
+async fn ambiguous_bare_skill_name_blocks_create_start_and_snapshot_switch() {
+    let disabled = SKILL_GRAPH.replace(
+        r#""skillId":"code_review","enabled":true"#,
+        r#""skillId":"code_review","enabled":false"#,
+    );
+    let fixture = Fixture::open(&disabled);
+    fixture
+        .install_skill_plugin("review-pack", "code_review")
+        .await;
+    let local_skill = fixture
+        .backend
+        .skills()
+        .create(ora_contracts::CreateSkillRequest {
+            name: "code_review".to_string(),
+            description: "Local code review".to_string(),
+            content: Some("Local instructions".to_string()),
+        })
+        .expect("create same-named local skill")
+        .skill;
+
+    let mut expected_candidates = vec![
+        format!("{} (local)", local_skill.id),
+        "plugin:local/review-pack:code_review (local/review-pack)".to_string(),
+    ];
+    expected_candidates.sort();
+    let expected_public =
+        PublicError::WorkflowSkillAmbiguous(Box::new(WorkflowSkillAmbiguousParams {
+            node_id: "reviewer".to_string(),
+            node_title: "Code review".to_string(),
+            skill_ref: "code_review".to_string(),
+            candidates: expected_candidates.clone(),
+        }));
+
+    // Create a clean run on snapshot-1 (skill disabled) and settle it before publishing v2.
+    let switch_run_id = fixture.create_run();
+    fixture.start_and_settle(&switch_run_id).await;
+
+    // 1. Run creation with a bare name matching both local and plugin skills is rejected.
+    fixture.publish_target(SKILL_GRAPH);
+    let create_error = fixture
+        .runs
+        .create(CreateWorkflowRunRequest {
+            workspace_id: fixture.seeded.workspace_id.clone(),
+            workflow_id: fixture.seeded.workflow_id.clone(),
+            locale: WorkflowRunLocale::EnUs,
+            snapshot_id: Some("snapshot-2".to_string()),
+            kickoff_input: None,
+            name: None,
+            inject_last_failure: None,
+        })
+        .expect_err("ambiguous bare skill name must block run creation");
+    assert_eq!(create_error.public_error(), &expected_public);
+    assert_eq!(
+        serde_json::to_value(create_error.public_error()).unwrap(),
+        serde_json::json!({
+            "code": "workflow_skill_ambiguous",
+            "params": {
+                "nodeId": "reviewer",
+                "nodeTitle": "Code review",
+                "skillRef": "code_review",
+                "candidates": expected_candidates,
+            },
+        })
+    );
+
+    // 2. Snapshot switch onto a graph carrying the ambiguous bare name is also rejected.
+    let switch_error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: switch_run_id.clone(),
+            rollback: None,
+            snapshot_id: Some("snapshot-2".to_string()),
+        })
+        .expect_err("ambiguous bare skill name must block snapshot switch");
+    assert_eq!(switch_error.public_error(), &expected_public);
+
+    // 3. A pending run with a legacy payload (no frozen `catalogSkillId`) targeting an ambiguous
+    // bare name is rejected on start rather than silently picking one skill.
+    let legacy_run_id = fixture
+        .runs
+        .create(CreateWorkflowRunRequest {
+            workspace_id: fixture.seeded.workspace_id.clone(),
+            workflow_id: fixture.seeded.workflow_id.clone(),
+            locale: WorkflowRunLocale::EnUs,
+            snapshot_id: Some(fixture.seeded.snapshot_id.to_string()),
+            kickoff_input: None,
+            name: None,
+            inject_last_failure: None,
+        })
+        .expect("create pending run on snapshot-1")
+        .run
+        .id;
+    let legacy_conn =
+        rusqlite::Connection::open(fixture.temporary.path().join("ora.sqlite3")).unwrap();
+    let legacy_payload = r#"{"locale":"en-US","skillMaterialization":{"bindings":[{"nodeId":"reviewer","skillId":"code_review","invocationName":"code-review"}]}}"#;
+    legacy_conn
+        .execute(
+            "UPDATE workflow_runs SET snapshot_id = 'snapshot-2', payload = ?2 WHERE id = ?1",
+            rusqlite::params![legacy_run_id, legacy_payload],
+        )
+        .unwrap();
+    drop(legacy_conn);
+
+    let start_error = fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: legacy_run_id,
+        })
+        .expect_err("ambiguous bare skill name must block starting a legacy run");
+    assert_eq!(start_error.public_error(), &expected_public);
+
+    // 4. Switching to a concrete catalog ID succeeds unambiguously even while both skills exist.
+    let explicit_graph = SKILL_GRAPH.replace(
+        r#""skillId":"code_review""#,
+        &format!(r#""skillId":"{}""#, local_skill.id),
+    );
+    let workflow_repo = ora_db::SqliteWorkflowRepository::new(fixture.runs.pool.clone());
+    let workflow = ora_domain::WorkflowId::new(&fixture.seeded.workflow_id);
+    workflow_repo
+        .update_draft(&workflow, explicit_graph, 40)
+        .unwrap();
+    workflow_repo
+        .publish_snapshot(
+            &workflow,
+            ora_domain::WorkflowSnapshotId::new("snapshot-3"),
+            "v3".into(),
+            41,
+        )
+        .unwrap();
+
+    let switched = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: switch_run_id.clone(),
+            rollback: None,
+            snapshot_id: Some("snapshot-3".to_string()),
+        })
+        .expect("explicit catalog skill ID must allow snapshot switch");
+    assert_eq!(switched.run.snapshot_id, "snapshot-3");
+    fixture
+        .runs
+        .cancel(CancelWorkflowRunRequest {
+            run_id: switch_run_id,
+        })
+        .await
+        .expect("cancel switched run");
+}
+
+/// Corrupt frozen payloads must fail precheck explicitly rather than silently falling back to
+/// unfrozen skill resolution.
+#[tokio::test]
+async fn corrupt_frozen_payload_rejects_start_and_same_snapshot_resume() {
+    let fixture = Fixture::open(SKILL_GRAPH);
+    fixture
+        .install_skill_plugin("review-pack", "code_review")
+        .await;
+    let pending_run_id = fixture.create_run();
+    let settled_run_id = fixture.create_run();
+    fixture.start_and_settle(&settled_run_id).await;
+
+    let conn = rusqlite::Connection::open(fixture.temporary.path().join("ora.sqlite3")).unwrap();
+    for id in [&pending_run_id, &settled_run_id] {
+        conn.execute(
+            "UPDATE workflow_runs SET payload = '{not-json' WHERE id = ?1",
+            rusqlite::params![id],
+        )
+        .unwrap();
+    }
+    drop(conn);
+
+    let start_error = fixture
+        .runs
+        .start(StartWorkflowRunRequest {
+            run_id: pending_run_id,
+        })
+        .expect_err("corrupt run payload must fail start precheck");
+    assert_eq!(
+        start_error.public_error().code(),
+        "workflow_run_start_failed"
+    );
+    assert!(
+        std::error::Error::source(&start_error)
+            .expect("source")
+            .to_string()
+            .contains("failed to parse frozen workflow run payload")
+    );
+
+    let resume_error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: settled_run_id.clone(),
+            rollback: None,
+            snapshot_id: None,
+        })
+        .expect_err("corrupt run payload must fail same-snapshot resume");
+    assert_eq!(
+        resume_error.public_error().code(),
+        "workflow_run_start_failed"
+    );
+
+    // Switching to another published snapshot also refuses a corrupt stored payload instead of
+    // silently resetting its locale and variable pool.
+    fixture.publish_target(SKILL_GRAPH);
+    let switch_error = fixture
+        .runs
+        .resume_from_failure(ResumeWorkflowRunRequest {
+            run_id: settled_run_id,
+            rollback: None,
+            snapshot_id: Some("snapshot-2".to_string()),
+        })
+        .expect_err("corrupt run payload must fail cross-snapshot switch");
+    assert_eq!(
+        switch_error.public_error().code(),
+        "workflow_run_start_failed"
+    );
 }

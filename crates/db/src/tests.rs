@@ -6,8 +6,8 @@ use rusqlite::{Connection, params};
 use tempfile::TempDir;
 
 use crate::{
-    AppliedMigration, DatabaseBootstrapper, DatabaseError, DatabaseLocation, Migration,
-    MigrationCatalog, MigrationDirection, TimestampSource, default_migration_catalog,
+    AppliedMigration, DatabaseBootstrapper, DatabaseError, DatabaseLocation, DatabaseOrigin,
+    Migration, MigrationCatalog, MigrationDirection, TimestampSource, default_migration_catalog,
 };
 
 /// Supplies a deterministic migration timestamp without mutating process-wide clock state.
@@ -246,6 +246,39 @@ fn existing_database_does_not_run_first_install_sql() {
             .query_row("SELECT COUNT(*) FROM alpha", [], |row| row.get::<_, i64>(0))
             .expect("count first-install rows"),
         0,
+    );
+}
+
+/// Only the process that initializes a database may treat it as a fresh installation, including
+/// when an upgrade still has migrations to apply.
+#[test]
+fn database_origin_separates_a_new_database_from_a_reopened_or_upgraded_one() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let location = DatabaseLocation::path(temp_dir.path().join("origin.sqlite3"));
+    let initial = MigrationCatalog::new(vec![table_migration("0001", "alpha")])
+        .expect("build initial catalog");
+    let upgraded = MigrationCatalog::new(vec![
+        table_migration("0001", "alpha"),
+        table_migration("0002", "beta"),
+    ])
+    .expect("build upgraded catalog");
+
+    let origins = [&initial, &initial, &upgraded].map(|catalog| {
+        with_trace_logging(|| {
+            DatabaseBootstrapper::new(FixedTimestampSource { now: 100 })
+                .bootstrap_database(&location, catalog)
+                .expect("bootstrap database")
+                .origin
+        })
+    });
+
+    assert_eq!(
+        origins,
+        [
+            DatabaseOrigin::Created,
+            DatabaseOrigin::Existing,
+            DatabaseOrigin::Existing,
+        ],
     );
 }
 
@@ -846,5 +879,54 @@ fn assert_migration_step_failed(
             _ => None,
         },
         Some((expected_version, expected_direction))
+    );
+}
+
+/// Distribution data remains pending across a failure and is applied exactly once on recovery.
+#[test]
+fn failed_first_install_data_retries_after_schema_has_committed() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("retry-first-install.sqlite3");
+    let catalog = MigrationCatalog::new(vec![table_migration("0001", "alpha")])
+        .unwrap()
+        .with_first_install_sql(&[
+            "INSERT INTO alpha (id) VALUES (7); INSERT INTO recovery_gate (id) VALUES (1);",
+        ]);
+    assert!(bootstrap_file_database(&path, &catalog, 100).is_err());
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM alpha", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    connection
+        .execute_batch("CREATE TABLE recovery_gate (id INTEGER PRIMARY KEY);")
+        .unwrap();
+    drop(connection);
+    let resumed_origins = [200, 300].map(|now| {
+        with_trace_logging(|| {
+            DatabaseBootstrapper::new(FixedTimestampSource { now })
+                .bootstrap_database(&DatabaseLocation::path(&path), &catalog)
+                .unwrap()
+                .origin
+        })
+    });
+    assert_eq!(
+        resumed_origins,
+        [DatabaseOrigin::Existing, DatabaseOrigin::Existing]
+    );
+    let connection = Connection::open(path).unwrap();
+    assert_eq!(
+        (
+            connection
+                .query_row("SELECT id FROM alpha", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            connection
+                .query_row("SELECT id FROM recovery_gate", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap()
+        ),
+        (7, 1)
     );
 }

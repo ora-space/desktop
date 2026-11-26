@@ -7,6 +7,7 @@ import type { TestHandlers } from "../contracts-transport";
 /** Mutable records owned by the settings test adapter. */
 export interface SettingsMemoryState {
   proxySettings: ProxySettings | null;
+  proxyCheckUrl: string;
   developerMode: { enabled: boolean };
   runtimeLogLevel: RuntimeLogLevelStateResponse;
 }
@@ -15,6 +16,7 @@ export interface SettingsMemoryState {
 export function createSettingsMemory(): SettingsMemoryState {
   return {
     proxySettings: null,
+    proxyCheckUrl: "https://google.com",
     developerMode: { enabled: false },
     runtimeLogLevel: {
       configuredLevel: "info",
@@ -26,6 +28,14 @@ export function createSettingsMemory(): SettingsMemoryState {
 /** Registers only the settings operations explicitly requested by a fixture. */
 export function settingsHandlers(state: SettingsMemoryState) {
   return {
+    getProxyCheckUrl: async () => ({ url: state.proxyCheckUrl }),
+    setProxyCheckUrl: async ({ url }) => {
+      const parsed = new URL(url);
+      if (!["http:", "https:"].includes(parsed.protocol))
+        throw new Error("Invalid probe URL");
+      state.proxyCheckUrl = url.trim();
+      return { url: state.proxyCheckUrl };
+    },
     getProxySettings: async () => ({ settings: state.proxySettings }),
     setProxySettings: async (req) => {
       state.proxySettings = structuredClone(req.settings);

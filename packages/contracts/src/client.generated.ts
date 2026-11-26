@@ -17,8 +17,8 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       prepare: (request, options) => executeOperation("prepareAgentImport", request, transport, options),
     },
     agentRuntime: {
+      discover: (request, options) => executeOperation("discoverAgent", request, transport, options),
       getStatus: (request, options) => executeOperation("getAgentRuntimeStatus", request, transport, options),
-      listModels: (request, options) => executeOperation("listAgentModels", request, transport, options),
     },
     appEvents: {
       watch: (request, options) => executeStreamOperation("watchAppEvents", request, transport, options),
@@ -33,11 +33,6 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
     developerMode: {
       get: (request, options) => executeOperation("getDeveloperMode", request, transport, options),
       set: (request, options) => executeOperation("setDeveloperMode", request, transport, options),
-    },
-    effect: {
-      getTargetStatus: (request, options) => executeOperation("getEffectTargetStatus", request, transport, options),
-      recoverTarget: (request, options) => executeOperation("recoverEffectTarget", request, transport, options),
-      retryTarget: (request, options) => executeOperation("retryEffectTarget", request, transport, options),
     },
     fileSystem: {
       copyProjectEntry: (request, options) => executeOperation("copyProjectEntry", request, transport, options),
@@ -101,7 +96,9 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       check: (request, options) => executeOperation("checkProxySettings", request, transport, options),
       clear: (request, options) => executeOperation("clearProxySettings", request, transport, options),
       get: (request, options) => executeOperation("getProxySettings", request, transport, options),
+      getCheckUrl: (request, options) => executeOperation("getProxyCheckUrl", request, transport, options),
       set: (request, options) => executeOperation("setProxySettings", request, transport, options),
+      setCheckUrl: (request, options) => executeOperation("setProxyCheckUrl", request, transport, options),
     },
     runtimeLogLevel: {
       get: (request, options) => executeOperation("getRuntimeLogLevel", request, transport, options),
@@ -176,6 +173,8 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       cancel: (request, options) => executeOperation("cancelWorkflowRun", request, transport, options),
       completeNode: (request, options) => executeOperation("completeWorkflowNode", request, transport, options),
       create: (request, options) => executeOperation("createWorkflowRun", request, transport, options),
+      debugAttempt: (request, options) => executeOperation("getWorkflowDebugAttempt", request, transport, options),
+      debugHistory: (request, options) => executeOperation("getWorkflowDebugHistory", request, transport, options),
       delete: (request, options) => executeOperation("deleteWorkflowRun", request, transport, options),
       diagnoseNodeFailure: (request, options) => executeOperation("diagnoseWorkflowNodeFailure", request, transport, options),
       get: (request, options) => executeOperation("getWorkflowRun", request, transport, options),

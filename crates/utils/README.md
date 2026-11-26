@@ -17,6 +17,7 @@ that any other crate can consume without introducing dependency cycles.
 - `directory`: rejects links and special entries while copying or fingerprinting directory trees;
   fingerprints cover portable paths, file bytes, entry kinds, and executable permissions while
   allowing callers to exclude their own metadata files.
+- `error`: rendering an error with all of its causes on one line (`error_chain`).
 - `hash` (Cargo feature `validation`): streaming SHA-256 digests over a reader or file without
   buffering the whole input, plus `sha256_hex` for a short in-memory value.
 - `url` (Cargo feature `validation`): canonicalizing a repository URL so two spellings of one

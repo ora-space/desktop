@@ -122,7 +122,25 @@ impl SqlitePluginMarketplaceSourceRepository {
         })
     }
 
-    /// Removes one source by URL and returns whether the row existed.
+    /// Only a brand-new database may request first-install source seeding.
+    pub fn needs_initial_source(&self) -> Result<bool, DatabaseError> {
+        self.pool.with_connection(|connection| {
+            connection.query_row("SELECT EXISTS(SELECT 1 FROM bootstrap_state WHERE key = 'fresh_database') AND NOT EXISTS(SELECT 1 FROM bootstrap_state WHERE key = 'marketplace_sources_initialized')", [], |row| row.get(0)).map_err(Into::into)
+        })
+    }
+
+    /// Completes initialization after the source has been durably stored (or already exists).
+    pub fn finish_source_initialization(&self) -> Result<(), DatabaseError> {
+        self.pool.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO bootstrap_state (key) VALUES ('marketplace_sources_initialized') ON CONFLICT(key) DO NOTHING",
+                [],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Deletes one user-selected source.
     pub fn delete_source(&self, url: &str) -> Result<bool, DatabaseError> {
         self.pool.with_connection(|connection| {
             let deleted = connection.execute(

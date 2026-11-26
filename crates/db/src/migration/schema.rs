@@ -24,11 +24,11 @@ mod schema_v0021;
 mod schema_v0022;
 mod schema_v0023;
 mod schema_v0024;
+mod schema_v0025;
+mod schema_v0026;
 
-/// Distribution-specific initialization applied only to a brand-new database.
-///
-/// Public builds intentionally ship no data initialization. Internal distributions may patch this
-/// list without changing versioned migration snapshots or the runner.
+/// Distribution-specific data initialization, separate from durable bootstrap bookkeeping.
+/// Public builds ship no distribution data. Replacing this list cannot disable source seeding.
 pub(super) const FIRST_INSTALL_SQL: &[&str] = &[];
 
 /// Returns the ordered schema migrations shipped with the database crate.
@@ -58,5 +58,7 @@ pub(super) fn migrations() -> Vec<Migration> {
         schema_v0022::migration(),
         schema_v0023::migration(),
         schema_v0024::migration(),
+        schema_v0025::migration(),
+        schema_v0026::migration(),
     ]
 }

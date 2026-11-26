@@ -9,12 +9,11 @@ use super::ports::SessionLedger;
 use super::thread::thread_event;
 use super::workload::PackageViewLauncher;
 use ora_agent_runtime::{
-    AgentAttach, AgentPluginAttachment, AgentRuntimeHost, MemorySessionStore, RuntimeError,
-    RuntimeEvents, WorkspaceDirectory,
+    AgentAttach, AgentPluginAttachment, AgentRuntimeHost, MemorySessionStore, NoSkillCatalog,
+    RuntimeError, RuntimeEvents, WorkspaceDirectory,
 };
 use ora_contracts::StopPluginRequest;
 use ora_domain::{AgentRef, PluginId, SessionId, WorkspaceId};
-use ora_effect::ConsumerDeclaration;
 use ora_history::HistoryLine;
 use ora_logging::ora_warn;
 use ora_node_protocol::{ExecutionId, GitIdentity, OperationId, TurnId};
@@ -53,6 +52,8 @@ impl<L: SessionLedger> AgentRuntimeHost for NodeRuntimeHost<L> {
     type Attach = SessionPlugin;
     /// Only the spec's explicit MCP bindings can enter this execution.
     type Setup = super::mcp::NodeSessionMcp;
+    /// A Node does not project or advertise Skills; ACP frames remain unchanged.
+    type Skills = NoSkillCatalog;
     type Events = ThreadMirror<L>;
     type Directory = CheckoutDirectory;
 }
@@ -219,15 +220,6 @@ impl AgentAttach for SessionPlugin {
             })
             .await
             .map(drop)
-    }
-
-    /// A Node projects no Skills into the checkout, so there is no Effect consumer to record.
-    fn replace_agent_effect_declaration(
-        &self,
-        _plugin_id: PluginId,
-        _declaration: Option<ConsumerDeclaration>,
-    ) -> Result<(), RuntimeError> {
-        Ok(())
     }
 }
 

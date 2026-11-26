@@ -18,6 +18,8 @@ use crate::session_setup::{
     SessionMcpError, SessionMcpHost, observe_session_mcp_health, resolve_session_mcp,
     resolve_session_mcp_revision,
 };
+use crate::skill_catalog::DesktopSkillCatalog;
+use crate::skill_revision::SkillRevision;
 use crate::task::resolve_workspace_cwd;
 use ora_agent_runtime::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, AgentSessionMcpCapabilities,
@@ -26,25 +28,21 @@ use ora_agent_runtime::{
 };
 use ora_application::{RepositoryError, SessionRepository};
 use ora_contracts::{
-    AppEvent, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse,
-    InstalledPluginContribution, ListAgentModelsRequest, ListAgentModelsResponse,
-    ListInstalledPluginsRequest, StopPluginRequest,
+    AppEvent, DiscoverAgentRequest, DiscoverAgentResponse, GetAgentRuntimeStatusRequest,
+    GetAgentRuntimeStatusResponse, InstalledPluginContribution, ListInstalledPluginsRequest,
+    StopPluginRequest,
 };
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
     AgentRef, HistoryState, PluginId, Session, SessionId, SessionMcpSelection, SessionStatus,
     SessionTitle, WorkspaceId,
 };
-use ora_effect::ConsumerDeclaration;
 use ora_history::HistoryLine;
 use ora_plugin_lifecycle::{ConnectionError, PluginLifecycleError};
 use ora_scheduler::Scheduler;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-pub(crate) use ora_agent_runtime::ReplacedAgentSessions;
-pub(crate) use ora_agent_runtime::plugin_effect;
 
 /// The runtime as Desktop composes it.
 pub(crate) type AgentRuntimeManager = ora_agent_runtime::AgentRuntimeManager<DesktopRuntimeHost>;
@@ -57,11 +55,17 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
-    /// Captures the same manager used by sessions, plugins, workflow execution, and Effect.
+    /// Captures the same manager used by sessions, plugins, and workflow execution.
     pub(crate) fn new(manager: Arc<AgentRuntimeManager>) -> Self {
         Self {
             inner: ora_agent_runtime::AgentRuntime::new(manager),
         }
+    }
+
+    /// Reports the Skill revision a discovery would be given now.
+    #[cfg(test)]
+    pub(crate) fn skill_revision(&self) -> u64 {
+        self.inner.skill_revision()
     }
 
     /// Reports whether each application-scoped CLI runtime is ready, starting, or unavailable.
@@ -72,12 +76,12 @@ impl AgentRuntime {
         Ok(self.inner.status(request)?)
     }
 
-    /// Discovers one agent's models for a workspace without creating a session.
-    pub async fn models(
+    /// Discovers what one agent offers in a workspace without creating a session.
+    pub async fn discover(
         &self,
-        request: ListAgentModelsRequest,
-    ) -> Result<ListAgentModelsResponse, BackendError> {
-        Ok(self.inner.models(request).await?)
+        request: DiscoverAgentRequest,
+    ) -> Result<DiscoverAgentResponse, BackendError> {
+        Ok(self.inner.discover(request).await?)
     }
 }
 
@@ -88,6 +92,7 @@ impl AgentRuntimeHost for DesktopRuntimeHost {
     type Store = DesktopSessionStore;
     type Attach = PluginApi;
     type Setup = SessionMcpHost;
+    type Skills = DesktopSkillCatalog;
     type Events = AppEventPublisher;
     type Directory = DesktopWorkspaceDirectory;
 }
@@ -98,6 +103,8 @@ pub(crate) struct AgentRuntimeSetup {
     pub plugin_host: Arc<PluginApi>,
     pub pool: RepositoryPool,
     pub home_directory: PathBuf,
+    pub skills_root: PathBuf,
+    pub skill_revision: SkillRevision,
     pub relative_path_base: PathBuf,
     pub sessions_root: PathBuf,
     pub scheduler: Scheduler,
@@ -114,18 +121,23 @@ pub(crate) fn open_agent_runtime(
         plugin_host,
         pool,
         home_directory,
+        skills_root,
+        skill_revision,
         relative_path_base,
         sessions_root,
         scheduler,
         app_events,
         host_mcp_servers,
     } = setup;
+    let skill_catalog =
+        DesktopSkillCatalog::new(pool.clone(), skills_root, &home_directory, skill_revision);
     Ok(AgentRuntimeManager::new(
         ora_agent_runtime::AgentRuntimeSetup {
             session_setup: SessionMcpHost::from_plugin_api(plugin_host.clone())
                 .with_host_servers(host_mcp_servers),
             attach: plugin_host,
             store: DesktopSessionStore { pool: pool.clone() },
+            skill_catalog,
             directory: DesktopWorkspaceDirectory {
                 pool,
                 relative_path_base,
@@ -262,15 +274,6 @@ impl AgentAttach for PluginApi {
         })
         .await
         .map(|_stopped| ())
-    }
-
-    fn replace_agent_effect_declaration(
-        &self,
-        plugin_id: PluginId,
-        declaration: Option<ConsumerDeclaration>,
-    ) -> Result<(), RuntimeError> {
-        PluginApi::replace_agent_effect_declaration(self, plugin_id, declaration)
-            .map_err(RuntimeError::from)
     }
 }
 

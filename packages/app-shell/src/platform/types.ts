@@ -1,4 +1,5 @@
 import type { CloudConnection, MarketplaceAutoSyncEvent } from "@ora/contracts";
+import type { ReleaseNote } from "../lib/release-note";
 export type { MarketplaceAutoSyncEvent } from "@ora/contracts";
 
 export type PathSelectionKind = "file" | "directory";
@@ -76,7 +77,10 @@ export interface LocationActionsCapability {
  */
 export type ManualUpdateReason = "system_package" | "unpackaged_binary";
 
-/** Describes the native Desktop updater state shown by the shell's version control. */
+/**
+ * Describes the native Desktop updater state shown by the shell's version control. Notes come from
+ * the unsigned manifest; the host has bounded them, and an empty list means there are none to show.
+ */
 export type DesktopUpdateStatus =
   | { kind: "current" }
   | { kind: "checking" }
@@ -86,15 +90,21 @@ export type DesktopUpdateStatus =
       downloaded: number;
       total: number | null;
     }
-  | { kind: "ready"; version: string }
-  | { kind: "manual_update"; version: string; reason: ManualUpdateReason }
+  | { kind: "ready"; version: string; notes: ReleaseNote[] }
+  | {
+      kind: "manual_update";
+      version: string;
+      reason: ManualUpdateReason;
+      notes: ReleaseNote[];
+    }
   | { kind: "installing"; version: string }
   | { kind: "failed"; message: string };
 
 /** Exposes update status and installation without coupling shared UI to Tauri IPC. */
 export interface DesktopUpdateCapability {
   getStatus(): Promise<DesktopUpdateStatus>;
-  install(): Promise<void>;
+  /** Installs the confirmed version; the host refuses when another release replaced it. */
+  install(version: string): Promise<void>;
   /** Runs an update check on demand, outside the scheduled delayed and cron checks. */
   check(): Promise<void>;
   onStatus(
@@ -282,6 +292,12 @@ export interface ScheduledArtifactsCapability {
   ): Promise<void>;
 }
 
+/** Describes the local installation that a host runs from. */
+export interface InstallationCapability {
+  /** Whether this process created the local data, so no earlier version ran here. */
+  isNew(): Promise<boolean>;
+}
+
 /** Collects the host capabilities consumed by the shared application shell. */
 export interface PlatformAdapter {
   readonly worktreeStorage: WorktreeStorageCapability;
@@ -289,6 +305,7 @@ export interface PlatformAdapter {
   readonly locationActions: LocationActionsCapability;
   readonly surfaces: SurfaceCapability;
   readonly updates?: DesktopUpdateCapability;
+  readonly installation?: InstallationCapability;
   readonly pluginMarketplace?: PluginMarketplaceCapability;
   readonly cloudConnection?: CloudConnectionCapability;
   readonly diagnosticLogs?: DiagnosticLogsCapability;

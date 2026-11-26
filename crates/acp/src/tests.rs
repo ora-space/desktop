@@ -412,3 +412,40 @@ async fn preserves_underscore_extension_notifications_in_wire_order() {
         json!({ "stopReason": "end_turn" })
     );
 }
+
+/// A direct answer is placed among the inbound events in the order its frame was read, so a caller
+/// can tell the events the agent sent before it from those it sent after.
+#[tokio::test]
+async fn a_direct_answer_is_ordered_among_the_events_read_around_it() {
+    let (peer, mut link) = spawn_peer();
+    let (client, mut inbound) = peer.into_parts();
+    let request = tokio::spawn(async move {
+        client
+            .request_read_in_order::<_, Value>("session/new", &json!({}))
+            .await
+    });
+    let frame = link.next_outbound().await;
+    link.send(update_frame("created", "before"));
+    link.send(response_frame(
+        &frame["id"],
+        json!({ "sessionId": "created" }),
+    ));
+    link.send(update_frame("created", "after"));
+
+    let (answer, answered) = request.await.expect("request task").expect("direct answer");
+    let before = inbound.recv().await.expect("event before the answer");
+    let after = inbound.recv().await.expect("event after the answer");
+    assert_eq!(answer, json!({ "sessionId": "created" }));
+    assert!(
+        before.order < answered,
+        "{before:?} was read before {answered:?}"
+    );
+    assert!(
+        answered < after.order,
+        "{after:?} was read after {answered:?}"
+    );
+    let expected = |title| update_frame("created", title)["params"].clone();
+    let received = |event| serde_json::to_value(expect_update(event)).expect("update");
+    assert_eq!(received(before.event), expected("before"));
+    assert_eq!(received(after.event), expected("after"));
+}

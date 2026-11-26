@@ -1,9 +1,10 @@
 use super::connection::RuntimeConnection;
 use crate::RuntimeError;
+use crate::config_changes::ConfigChanges;
 use agent_client_protocol_schema::v1::{
     AvailableCommand, AvailableCommandsUpdate, SessionNotification, SessionUpdate,
 };
-use ora_acp::{PermissionRequest, SessionResponse, SessionTraceRegistration};
+use ora_acp::{PermissionRequest, ReadOrder, SessionResponse, SessionTraceRegistration};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -46,6 +47,8 @@ pub(super) struct SessionChannel {
     pub connection: RuntimeConnection,
     pub events: mpsc::Receiver<SessionEvent>,
     pub pending_updates: VecDeque<SessionNotification>,
+    /// What this provider session was asked to change and has not answered.
+    pub(crate) config_changes: ConfigChanges,
     /// The slash-command catalog this provider session last reported; empty until it reports one.
     ///
     /// It lives with the channel because it describes exactly one attachment: dropping the channel
@@ -100,13 +103,15 @@ pub(super) struct RouteRegistry {
     entries: RwLock<HashMap<String, RouteEntry>>,
     next_token: AtomicU64,
     setup_count: AtomicU64,
-    pending_setup_updates: Mutex<VecDeque<SessionNotification>>,
+    pending_setup_updates: Mutex<VecDeque<(ReadOrder, SessionNotification)>>,
     setup_activity: SetupActivity,
 }
 
 struct RouteEntry {
     generation: u64,
     token: u64,
+    /// When the answer that set this session up with options was read, if it skipped the queue.
+    answered: Option<ReadOrder>,
     events: mpsc::Sender<SessionEvent>,
     controls: mpsc::UnboundedSender<SessionControl>,
 }
@@ -121,12 +126,17 @@ impl RouteRegistry {
     }
 
     /// Installs a route token so a stale actor cannot unregister a newer generation.
+    ///
+    /// `answered` is when the answer that set the session up was read, for an answer carrying
+    /// options that did not come through the session's queue: the options the session pushed before
+    /// it are dropped, because that answer already replaced them.
     pub(super) fn register(
         self: &Arc<Self>,
         session_id: &str,
         generation: u64,
         events: mpsc::Sender<SessionEvent>,
         controls: mpsc::UnboundedSender<SessionControl>,
+        answered: Option<ReadOrder>,
     ) -> RouteRegistration {
         // Serializing registration with setup buffering closes the race where an
         // update is classified as unrouted immediately before this route appears.
@@ -140,16 +150,17 @@ impl RouteRegistry {
             RouteEntry {
                 generation,
                 token,
+                answered,
                 events: events.clone(),
                 controls,
             },
         );
         let mut retained = VecDeque::new();
-        while let Some(update) = pending.pop_front() {
-            if update.session_id.0.as_ref() == session_id {
+        while let Some((order, update)) = pending.pop_front() {
+            if update.session_id.0.as_ref() != session_id {
+                retained.push_back((order, update));
+            } else if !answered_since(answered, order, &update) {
                 let _ = events.try_send(SessionEvent::update(update));
-            } else {
-                retained.push_back(update);
             }
         }
         *pending = retained;
@@ -160,8 +171,20 @@ impl RouteRegistry {
         }
     }
 
-    /// Routes one ordered event without allowing a slow session to poison the connection.
+    /// Routes an event built by a test, which no reader put in order.
+    #[cfg(test)]
     pub(super) fn route_event(&self, event: SessionEvent) -> Result<(), Box<SessionEvent>> {
+        self.route_read_event(event, ReadOrder::default())
+    }
+
+    /// Routes one ordered event without allowing a slow session to poison the connection.
+    ///
+    /// `order` is when the event's frame was read.
+    pub(super) fn route_read_event(
+        &self,
+        event: SessionEvent,
+        order: ReadOrder,
+    ) -> Result<(), Box<SessionEvent>> {
         let mut pending = self
             .pending_setup_updates
             .lock()
@@ -170,9 +193,16 @@ impl RouteRegistry {
         let route = self
             .read_entries()
             .get(&session_id)
-            .map(|entry| (entry.token, entry.events.clone()));
+            .map(|entry| (entry.token, entry.answered, entry.events.clone()));
         match route {
-            Some((token, events)) => match events.try_send(event) {
+            // Read before the answer but routed after it: the answer already replaced it.
+            Some((_, answered, _))
+                if matches!(&event, SessionEvent::Update(update, _)
+                    if answered_since(answered, order, update)) =>
+            {
+                Ok(())
+            }
+            Some((token, _, events)) => match events.try_send(event) {
                 Err(TrySendError::Full(event)) => {
                     if let Some(entry) = self.remove_route(&session_id, token) {
                         let _ = entry.controls.send(SessionControl::QueueOverflow);
@@ -190,7 +220,7 @@ impl RouteRegistry {
                     if pending.len() == super::CONTRACT_QUEUE_CAPACITY {
                         pending.pop_front();
                     }
-                    pending.push_back(update);
+                    pending.push_back((order, update));
                     // The agent emitted traffic while a create is still waiting for its session
                     // id, which is the only aliveness proof a `session/new` deadline can observe.
                     self.setup_activity.record();
@@ -242,6 +272,19 @@ impl RouteRegistry {
     fn write_entries(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<String, RouteEntry>> {
         self.entries.write().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Whether a session's setup answer with options, read after this update, already replaced them.
+///
+/// Only options are replaced by that answer; everything else the session said before it still
+/// holds.
+fn answered_since(
+    answered: Option<ReadOrder>,
+    order: ReadOrder,
+    update: &SessionNotification,
+) -> bool {
+    matches!(update.update, SessionUpdate::ConfigOptionUpdate(_))
+        && answered.is_some_and(|answered| order < answered)
 }
 
 pub(super) struct RouteRegistration {
@@ -311,6 +354,7 @@ impl Drop for RouteRegistration {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{RouteRegistry, SessionControl, SessionEvent};
+    use agent_client_protocol_schema::v1::ConfigOptionUpdate;
     use agent_client_protocol_schema::v1::RequestId;
     use agent_client_protocol_schema::v1::RequestPermissionRequest;
     use agent_client_protocol_schema::v1::SessionId;
@@ -318,7 +362,8 @@ pub(crate) mod tests {
     use agent_client_protocol_schema::v1::{SessionInfoUpdate, SessionUpdate};
     use agent_client_protocol_schema::v1::{ToolCallUpdate, ToolCallUpdateFields};
     use ora_acp::{
-        AcpError, AcpInboundEvent, AcpPeer, AcpTransport, PermissionRequest, SessionResponse,
+        AcpError, AcpInboundEvent, AcpPeer, AcpTransport, PermissionRequest, ReadOrder,
+        SessionResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
@@ -382,8 +427,20 @@ pub(crate) mod tests {
         let (first_controls, _first_controls_receiver) = mpsc::unbounded_channel();
         let (second_updates, mut second_receiver) = mpsc::channel(1);
         let (second_controls, _second_controls_receiver) = mpsc::unbounded_channel();
-        let _first = routes.register("session-1", 1, first_updates, first_controls);
-        let _second = routes.register("session-2", 1, second_updates, second_controls);
+        let _first = routes.register(
+            "session-1",
+            1,
+            first_updates,
+            first_controls,
+            /*answered*/ None,
+        );
+        let _second = routes.register(
+            "session-2",
+            1,
+            second_updates,
+            second_controls,
+            /*answered*/ None,
+        );
         let update = SessionNotification::new(
             "session-1",
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("First")),
@@ -411,7 +468,8 @@ pub(crate) mod tests {
         let routes = Arc::new(RouteRegistry::default());
         let (events, mut events_receiver) = mpsc::channel(2);
         let (controls, _controls_receiver) = mpsc::unbounded_channel();
-        let _registration = routes.register("session-1", 1, events, controls);
+        let _registration =
+            routes.register("session-1", 1, events, controls, /*answered*/ None);
         let update = SessionNotification::new(
             "session-1",
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
@@ -477,7 +535,8 @@ pub(crate) mod tests {
         let (updates, mut receiver) = mpsc::channel(1);
         let (controls, _controls_receiver) = mpsc::unbounded_channel();
 
-        let _registration = routes.register("new-session", 1, updates, controls);
+        let _registration =
+            routes.register("new-session", 1, updates, controls, /*answered*/ None);
         drop(setup);
 
         match receiver.recv().await {
@@ -486,6 +545,150 @@ pub(crate) mod tests {
                 panic!("expected setup update")
             }
         }
+    }
+
+    /// The setup frames these tests route, and when the answer that set the session up was read.
+    ///
+    /// The agent pushes options, answers, then sends a title and options again.
+    fn setup_frames(session_id: &str) -> ([(ReadOrder, SessionNotification); 3], ReadOrder) {
+        let options = |current: &str| {
+            let options = json!([{"id":"model", "name":"Model", "type":"select",
+                "currentValue":current, "options":[{"value":current, "name":current}]}]);
+            let options = serde_json::from_value(options).expect("model option");
+            SessionNotification::new(
+                session_id.to_string(),
+                SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(options)),
+            )
+        };
+        let title = SessionNotification::new(
+            session_id.to_string(),
+            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("Created")),
+        );
+        let pushed = ReadOrder::default().next();
+        let answered = pushed.next();
+        let titled = answered.next();
+        let frames = [
+            (pushed, options("old")),
+            (titled, title),
+            (titled.next(), options("new")),
+        ];
+        (frames, answered)
+    }
+
+    /// Returns every update queued on a route, in queue order.
+    fn queued(receiver: &mut mpsc::Receiver<SessionEvent>) -> Vec<SessionNotification> {
+        std::iter::from_fn(|| match receiver.try_recv() {
+            Ok(SessionEvent::Update(update, _)) => Some(update),
+            Ok(SessionEvent::Permission(_) | SessionEvent::Response(_)) => {
+                panic!("expected only updates")
+            }
+            Err(_) => None,
+        })
+        .collect()
+    }
+
+    /// Options pushed before the answer that set the session up are dropped, whether they were
+    /// waiting for its route or reached it afterwards; the rest is kept in order.
+    #[test]
+    fn options_read_before_the_setup_answer_are_dropped() {
+        // The route can appear before any of the frames is routed, between them, or after all.
+        for registered_after in 0..=3 {
+            let routes = Arc::new(RouteRegistry::default());
+            let setup = routes.begin_session_setup();
+            let (frames, answered) = setup_frames("new-session");
+            let kept = frames[1..]
+                .iter()
+                .map(|(_, update)| update.clone())
+                .collect::<Vec<_>>();
+            let (updates, mut receiver) = mpsc::channel(8);
+            let (controls, _controls_receiver) = mpsc::unbounded_channel();
+            let register = || {
+                let (updates, controls) = (updates.clone(), controls.clone());
+                routes.register(
+                    "new-session",
+                    1,
+                    updates,
+                    controls,
+                    /*answered*/ Some(answered),
+                )
+            };
+            let mut registration = None;
+            for (routed, (order, update)) in frames.into_iter().enumerate() {
+                if routed == registered_after {
+                    registration = Some(register());
+                }
+                let event = SessionEvent::update(update);
+                assert!(routes.route_read_event(event, order).is_ok());
+            }
+            let _registration = registration.unwrap_or_else(register);
+            drop(setup);
+            assert_eq!(
+                queued(&mut receiver),
+                kept,
+                "registered after {registered_after}"
+            );
+        }
+    }
+
+    /// Another session being set up on the same connection keeps the options it pushed before this
+    /// session was answered: the answer only replaces this session's own.
+    #[test]
+    fn another_session_keeps_options_read_before_this_answer() {
+        let routes = Arc::new(RouteRegistry::default());
+        let setup = routes.begin_session_setup();
+        let (frames, answered) = setup_frames("other");
+        let (order, pushed) = frames[0].clone();
+        assert!(
+            routes
+                .route_read_event(SessionEvent::update(pushed.clone()), order)
+                .is_ok()
+        );
+        let channel = || {
+            let (updates, receiver) = mpsc::channel(8);
+            let (controls, controls_receiver) = mpsc::unbounded_channel();
+            (updates, receiver, controls, controls_receiver)
+        };
+        let (updates, mut answered_receiver, controls, _answered_controls) = channel();
+        let _answered = routes.register(
+            "new-session",
+            1,
+            updates,
+            controls,
+            /*answered*/ Some(answered),
+        );
+        let (updates, mut other_receiver, controls, _other_controls) = channel();
+        let _other = routes.register("other", 1, updates, controls, /*answered*/ None);
+        drop(setup);
+
+        assert_eq!(queued(&mut answered_receiver), Vec::new());
+        assert_eq!(queued(&mut other_receiver), vec![pushed]);
+    }
+
+    /// A session set up through its own queue keeps every option it pushed.
+    #[test]
+    fn options_are_kept_without_a_setup_answer() {
+        let routes = Arc::new(RouteRegistry::default());
+        let setup = routes.begin_session_setup();
+        let (frames, _) = setup_frames("restored");
+        let all = frames
+            .iter()
+            .map(|(_, update)| update.clone())
+            .collect::<Vec<_>>();
+        let (updates, mut receiver) = mpsc::channel(8);
+        let (controls, _controls_receiver) = mpsc::unbounded_channel();
+        let (buffered, routed) = frames.split_at(1);
+        for (order, update) in buffered {
+            let event = SessionEvent::update(update.clone());
+            assert!(routes.route_read_event(event, *order).is_ok());
+        }
+        let _registration =
+            routes.register("restored", 1, updates, controls, /*answered*/ None);
+        for (order, update) in routed {
+            let event = SessionEvent::update(update.clone());
+            assert!(routes.route_read_event(event, *order).is_ok());
+        }
+        drop(setup);
+        assert_eq!(queued(&mut receiver), all);
     }
 
     /// Verifies buffered setup traffic wakes a create deadline waiting on the activity signal.
@@ -519,7 +722,8 @@ pub(crate) mod tests {
         let setup = routes.begin_session_setup();
         let (updates, _updates_receiver) = mpsc::channel(1);
         let (controls, _controls_receiver) = mpsc::unbounded_channel();
-        let _registration = routes.register("live-session", 1, updates, controls);
+        let _registration =
+            routes.register("live-session", 1, updates, controls, /*answered*/ None);
         let update = SessionNotification::new(
             "live-session",
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
@@ -545,7 +749,8 @@ pub(crate) mod tests {
         let routes = Arc::new(RouteRegistry::default());
         let (updates, _updates_receiver) = mpsc::channel(1);
         let (controls, mut controls_receiver) = mpsc::unbounded_channel();
-        let _registration = routes.register("session-1", 1, updates, controls);
+        let _registration =
+            routes.register("session-1", 1, updates, controls, /*answered*/ None);
         let update = SessionNotification::new(
             "session-1",
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
@@ -573,8 +778,8 @@ pub(crate) mod tests {
         let (old_controls, mut old_controls_receiver) = mpsc::unbounded_channel();
         let (new_updates, _new_updates_receiver) = mpsc::channel(1);
         let (new_controls, mut new_controls_receiver) = mpsc::unbounded_channel();
-        let _old = routes.register("old", 1, old_updates, old_controls);
-        let _new = routes.register("new", 2, new_updates, new_controls);
+        let _old = routes.register("old", 1, old_updates, old_controls, /*answered*/ None);
+        let _new = routes.register("new", 2, new_updates, new_controls, /*answered*/ None);
         let error = super::super::runtime_unavailable_because("connection lost");
 
         routes.fail_generation(1, error.clone());
@@ -601,7 +806,8 @@ pub(crate) mod tests {
         let routes = Arc::new(RouteRegistry::default());
         let (events, mut events_receiver) = mpsc::channel(2);
         let (controls, mut controls_receiver) = mpsc::unbounded_channel();
-        let _registration = routes.register("session-1", 1, events, controls);
+        let _registration =
+            routes.register("session-1", 1, events, controls, /*answered*/ None);
         assert!(routes.route_event(SessionEvent::Response(response)).is_ok());
         let error = super::super::runtime_unavailable_because("connection lost");
 

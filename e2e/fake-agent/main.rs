@@ -1,6 +1,7 @@
 //! Deterministic agent plugin process used by Desktop E2E tests in place of Deno and OpenCode.
 
 mod acp;
+mod journal;
 mod plugin;
 
 #[tokio::main]

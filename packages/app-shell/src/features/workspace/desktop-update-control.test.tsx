@@ -31,12 +31,15 @@ function createUpdates(status: DesktopUpdateStatus) {
 }
 
 /** Renders the control under the same explicit platform and locale providers as AppShell. */
-function renderControl(updates?: DesktopUpdateCapability) {
+function renderControl(
+  updates?: DesktopUpdateCapability,
+  onReview: () => void = () => undefined,
+) {
   const platform: PlatformAdapter = { ...createStubPlatform(), updates };
   render(
     <AppI18nProvider>
       <PlatformProvider adapter={platform}>
-        <DesktopUpdateControl />
+        <DesktopUpdateControl onReview={onReview} />
       </PlatformProvider>
     </AppI18nProvider>,
   );
@@ -50,45 +53,30 @@ describe("DesktopUpdateControl", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("advertises a downloaded release and installs it after confirmation", async () => {
-    const user = userEvent.setup();
-    const { updates, install } = createUpdates({
-      kind: "ready",
-      version: "0.3.0",
-    });
-    renderControl(updates);
-
-    const trigger = await screen.findByRole("button", {
-      name: "发现新版本 0.3.0，点击安装并重启",
-    });
-    await waitFor(() =>
-      expect(screen.getByTestId("desktop-update-badge")).not.toBeNull(),
-    );
-    expect(trigger.getAttribute("disabled")).toBeNull();
-
-    await user.click(trigger);
-    await user.click(await screen.findByRole("button", { name: "立即更新" }));
-
-    expect(install).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps a system package installation out of the install path", async () => {
-    const { updates, install } = createUpdates({
+  it.each<DesktopUpdateStatus>([
+    { kind: "ready", version: "0.3.0", notes: [] },
+    {
       kind: "manual_update",
       version: "0.3.0",
       reason: "system_package",
-    });
-    renderControl(updates);
+      notes: [],
+    },
+  ])(
+    "leads to the offered release without installing it: $kind",
+    async (status) => {
+      const user = userEvent.setup();
+      const { updates, install } = createUpdates(status);
+      const onReview = vi.fn();
+      renderControl(updates, onReview);
 
-    const trigger = await screen.findByRole("button", {
-      name: "发现新版本 0.3.0。当前通过系统软件包安装，请用软件包管理器更新。",
-    });
+      const trigger = await screen.findByRole("button", { name: /0\.3\.0/ });
+      expect(screen.getByTestId("desktop-update-badge")).not.toBeNull();
+      await user.click(trigger);
 
-    // The badge still tells the user a release exists; only the install action is withheld.
-    expect(screen.getByTestId("desktop-update-badge")).not.toBeNull();
-    expect(trigger.getAttribute("disabled")).not.toBeNull();
-    expect(install).not.toHaveBeenCalled();
-  });
+      expect(onReview).toHaveBeenCalledTimes(1);
+      expect(install).not.toHaveBeenCalled();
+    },
+  );
 
   it("reports download progress without advertising an installable release", async () => {
     const { updates } = createUpdates({
@@ -105,17 +93,22 @@ describe("DesktopUpdateControl", () => {
     expect(screen.queryByTestId("desktop-update-badge")).toBeNull();
   });
 
-  it("does not advertise a release after a failed check", async () => {
+  it("shows a failed check and leads to its reason without advertising a release", async () => {
+    const user = userEvent.setup();
     const { updates } = createUpdates({
       kind: "failed",
       message: "endpoint unreachable",
     });
-    renderControl(updates);
+    const onReview = vi.fn();
+    renderControl(updates, onReview);
 
-    await screen.findByRole("button", {
+    const trigger = await screen.findByRole("button", {
       name: "检查更新失败：endpoint unreachable",
     });
+    expect(screen.getByRole("status").textContent).toBe("检查更新失败");
     expect(screen.queryByTestId("desktop-update-badge")).toBeNull();
+    await user.click(trigger);
+    expect(onReview).toHaveBeenCalledTimes(1);
   });
 
   it("triggers a manual check when the refresh button is clicked", async () => {
@@ -145,12 +138,12 @@ describe("DesktopUpdateControl", () => {
 
     act(() => {
       for (const listener of listeners) {
-        listener({ kind: "ready", version: "0.4.0" });
+        listener({ kind: "ready", version: "0.4.0", notes: [] });
       }
     });
 
     await screen.findByRole("button", {
-      name: "发现新版本 0.4.0，点击安装并重启",
+      name: "发现新版本 0.4.0，点击查看",
     });
     expect(screen.getByTestId("desktop-update-badge")).not.toBeNull();
   });

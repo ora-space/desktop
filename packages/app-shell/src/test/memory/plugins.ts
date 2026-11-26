@@ -567,13 +567,19 @@ export function pluginHandlers(state: PluginMemoryState) {
         pluginId: req.pluginId,
         level: level ?? "info",
         configured: level !== undefined,
+        readOnlyPath: null,
       };
     },
     setPluginLogLevel: async (req) => {
       if (!state.installedPlugins.some((p) => p.id === req.pluginId))
         throw new Error(`installed plugin ${req.pluginId} not found`);
       state.pluginLogLevels.set(req.pluginId, req.level);
-      return { pluginId: req.pluginId, level: req.level, configured: true };
+      return {
+        pluginId: req.pluginId,
+        level: req.level,
+        configured: true,
+        readOnlyPath: null,
+      };
     },
     importPlugin: async (req) => {
       const target = state.importTarget;

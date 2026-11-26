@@ -19,6 +19,8 @@ enum Report {
     BeforeLoadResponse,
     /// After the `session/load` response, while Ora is still preparing the prompt.
     WhileApplyingModel,
+    /// Between `session/cancel` and the cancelled prompt's answer.
+    OnCancel,
 }
 
 /// Builds a catalog update holding exactly one command.
@@ -26,6 +28,11 @@ fn catalog(name: &str) -> SessionUpdate {
     SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(vec![
         AvailableCommand::new(name, "Runs it"),
     ]))
+}
+
+/// Builds the catalog update of an Agent that withdrew every command.
+fn empty_catalog() -> SessionUpdate {
+    SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(Vec::new()))
 }
 
 /// Frames one session update as the plugin forwards it.
@@ -86,6 +93,13 @@ async fn catalog_agent(
                     send_frame(&writer, update_frame(session_id, catalog("restored"))).await;
                 }
                 json!({"configOptions":model})
+            }
+            Some("session/cancel") => {
+                if let Report::OnCancel = report {
+                    send_frame(&writer, update_frame(session_id, catalog("cancelled"))).await;
+                    finish.add_permits(1);
+                }
+                continue;
             }
             Some("session/prompt") => {
                 let (writer, finish) = (writer.clone(), finish.clone());
@@ -313,7 +327,7 @@ fn a_load_replays_the_catalog_of_an_attached_session() {
     });
 }
 
-/// A catalog describes one attachment, so it is not replayed once the Agent process is replaced.
+/// A catalog describes one attachment, so it is not replayed once the session is stopped.
 #[test]
 fn a_detached_session_replays_no_catalog() {
     run_case(async {
@@ -336,6 +350,106 @@ fn a_detached_session_replays_no_catalog() {
             Some(SessionUpdate::UserMessageChunk(_))
         ));
         drop(detached);
+        fixture.runtime.shutdown().await;
+    });
+}
+
+/// An empty report is a real catalog: it replaces the one before it for prompts and loads alike.
+#[test]
+fn an_empty_catalog_replaces_the_one_before_it() {
+    run_case(async {
+        let fixture = CatalogFixture::new(Report::BeforeLoadResponse).await;
+        fixture.runtime.add_session("restored");
+        fixture.turn(prompt("restored")).await;
+
+        fixture.report_idle("restored", empty_catalog()).await;
+        let mut idle = fixture.load("restored").await;
+        assert!(matches!(
+            first_load_update(&mut idle).await,
+            Some(SessionUpdate::UserMessageChunk(_))
+        ));
+        drop(idle);
+        assert_eq!(
+            fixture.turn(prompt("restored")).await,
+            vec![empty_catalog()]
+        );
+        fixture.runtime.shutdown().await;
+    });
+}
+
+/// The reload that refreshes MCP is another setup, so the catalog it brings is kept as well.
+#[test]
+fn a_catalog_reported_while_refreshing_mcp_reaches_the_next_prompt() {
+    run_case(async {
+        let mut fixture = CatalogFixture::new(Report::BeforeLoadResponse).await;
+        fixture.runtime.add_session_owing_mcp_refresh("restored");
+
+        assert_eq!(
+            fixture.turn(prompt("restored")).await,
+            vec![catalog("restored")]
+        );
+        assert_eq!(fixture.runtime.next_frame().await["method"], "session/load");
+        fixture.runtime.shutdown().await;
+    });
+}
+
+/// A title poll borrows the idle channel: of the catalogs it meets only the newest is delivered.
+#[test]
+fn a_title_poll_keeps_only_the_newest_catalog() {
+    run_case(async {
+        let mut fixture = CatalogFixture::new(Report::Injected).await;
+        fixture.runtime.add_session_with_title_acquisition(
+            "restored",
+            crate::TitleAcquisition::awaiting_first_prompt(/*list_supported*/ true),
+        );
+        fixture.turn(prompt("restored")).await;
+        // The request stays unanswered, so everything below arrives while the poll runs.
+        while fixture.runtime.next_frame().await["method"] != "session/list" {}
+        let plan = SessionUpdate::Plan(Plan::new(Vec::new()));
+        fixture.report_idle("restored", catalog("first")).await;
+        fixture.report_idle("restored", plan.clone()).await;
+        fixture.report_idle("restored", catalog("second")).await;
+
+        let mut load = fixture.load("restored").await;
+        assert_eq!(first_load_update(&mut load).await, Some(catalog("second")));
+        drop(load);
+        assert_eq!(
+            fixture.turn(prompt("restored")).await,
+            vec![plan, catalog("second")]
+        );
+        fixture.runtime.shutdown().await;
+    });
+}
+
+/// A cancelled turn keeps its session, so the catalog it last reported stays replayable.
+#[test]
+fn a_catalog_reported_while_cancelling_is_replayed() {
+    run_case(async {
+        let mut fixture = CatalogFixture::new(Report::OnCancel).await;
+        fixture.runtime.add_session("restored");
+        let mut owner = fixture
+            .runtime
+            .manager
+            .prompt_session(prompt("restored"))
+            .await
+            .unwrap();
+        while fixture.runtime.next_frame().await["method"] != "session/prompt" {}
+        fixture
+            .runtime
+            .manager
+            .cancel_session_prompt(ora_contracts::CancelSessionPromptRequest {
+                session_id: "restored".into(),
+            })
+            .unwrap();
+        assert_eq!(completion(&mut owner).await, StopReason::Cancelled);
+        drop(owner);
+
+        let mut load = fixture.load("restored").await;
+        assert_eq!(
+            first_load_update(&mut load).await,
+            Some(catalog("cancelled"))
+        );
+        drop(load);
         fixture.runtime.shutdown().await;
     });
 }

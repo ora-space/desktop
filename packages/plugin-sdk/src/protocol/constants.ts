@@ -8,7 +8,9 @@ export const INTERNAL_ERROR = -32603;
 export const AGENT_NOT_INSTALLED = -32001;
 export const AGENT_UNUSABLE = -32002;
 export const SUPPORTED_ACP_VERSION = 1;
-export const SKILL_DIRECTORY_V1 = "ora/skill-directory.v1" as const;
+export const AGENT_DISCOVERY_BUDGET_MS = 60000;
+export const AGENT_COMMANDS_WAIT_CAP_MS = 2000;
+export const SKILL_DIRECTORIES_META_KEY = "ora/skillDirectories" as const;
 export const OPENCODE_MCP_CONFIG_V1 = "ora/opencode-mcp-config.v1" as const;
 export const CLAUDE_MCP_CONFIG_V1 = "ora/claude-mcp-config.v1" as const;
 export const MAX_STORAGE_FILE_BYTES = 8388608;
@@ -21,14 +23,9 @@ export const PLUGIN_METHODS = {
 export const AGENT_METHODS = {
   start: "agent/start",
   stop: "agent/stop",
+  discover: "agent/discover",
   listModels: "agent/list_models",
   acp: "agent/acp",
-} as const;
-
-export const EFFECT_METHODS = {
-  coordinate: "effect/coordinate",
-  reactivate: "effect/reactivate",
-  verifyReady: "effect/verify_ready",
 } as const;
 
 export const STORAGE_METHODS = {

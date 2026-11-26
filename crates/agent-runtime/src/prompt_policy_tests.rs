@@ -1,9 +1,13 @@
 //! Exercises prompt policy through the production admission, ACP peer, router, and session actor.
 
+#[path = "discovery_tests.rs"]
+mod discovery_tests;
 #[path = "plugin_replacement_tests.rs"]
 mod plugin_replacement_tests;
 #[path = "prompt_policy_tests/restore_replay.rs"]
 mod restore_replay;
+#[path = "skill_catalog_runtime_tests.rs"]
+mod skill_catalog_runtime_tests;
 #[path = "turn_cancel_tests.rs"]
 mod turn_cancel_tests;
 
@@ -224,6 +228,7 @@ impl Fixture {
             list_session_supported: false,
             close_session_supported: false,
             delete_session_supported: false,
+            additional_directories_supported: false,
         };
         let (state, receiver) = watch::channel(ConnectionState::Ready(connection));
         let (shutdown, mut shutdown_receiver) = mpsc::unbounded_channel();
@@ -268,6 +273,7 @@ impl Fixture {
                 list_session_supported: false,
                 close_session_supported: false,
                 delete_session_supported: false,
+                additional_directories_supported: false,
             };
             run_process_generation(&mut process, &routes, &mut shutdown_receiver).await;
             active_generation.store(0, Ordering::Release);
@@ -504,18 +510,21 @@ fn prompt(id: &str) -> PromptSessionRequest {
 /// Runs production spans and events under one scoped TRACE subscriber and controllable clock.
 fn run_case(test: impl Future<Output = ()>) {
     ora_logging::initialize_test_clock();
-    ora_logging::with_trace_logging(|| {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .start_paused(/*start_paused*/ true)
-            .build()
-            .unwrap()
-            .block_on(async {
-                tokio::time::timeout(Duration::from_secs(86400), test)
-                    .await
-                    .expect("policy test must settle within one virtual day");
-            });
-    });
+    ora_logging::with_trace_logging(|| block_on_paused_clock(test));
+}
+
+/// Drives a case on a controllable clock under whatever subscriber its caller installed.
+fn block_on_paused_clock(test: impl Future<Output = ()>) {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(/*start_paused*/ true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(Duration::from_secs(86400), test)
+                .await
+                .expect("policy test must settle within one virtual day");
+        });
 }
 
 /// Reads past ordinary setup/update traffic to assert a terminal production response.
@@ -2288,7 +2297,11 @@ fn subagent_frames_stop_renewing_once_the_parent_delegation_completed() {
 
 mod restored_sessions {
     mod command_catalog_tests;
+    mod command_limit_tests;
     mod follower_retry_tests;
+    mod follower_setup_tests;
+    mod set_config_tests;
+    mod setup_options_tests;
     use super::*;
     use pretty_assertions::assert_eq;
     /// Holds two or more sessions on one real routed ACP peer with a controllable provider.
@@ -2380,6 +2393,7 @@ mod restored_sessions {
                 list_session_supported: false,
                 close_session_supported: false,
                 delete_session_supported: false,
+                additional_directories_supported: false,
             };
             let (state, receiver) = watch::channel(ConnectionState::Ready(connection));
             let (shutdown, mut shutdown_receiver) = mpsc::unbounded_channel();
@@ -2424,6 +2438,7 @@ mod restored_sessions {
                     list_session_supported: false,
                     close_session_supported: false,
                     delete_session_supported: false,
+                    additional_directories_supported: false,
                 };
                 run_process_generation(&mut process, &routes, &mut shutdown_receiver).await;
                 active_generation.store(0, Ordering::Release);
@@ -2442,6 +2457,25 @@ mod restored_sessions {
             }
         }
 
+        /// Persists a session bound to this agent, with no actor serving it.
+        fn seed_session_on(&self, id: &str, agent_ref: &str) -> Session {
+            self.manager
+                .inner
+                .store
+                .create_session(Session::new(
+                    SessionId::new(id),
+                    WorkspaceId::new("workspace"),
+                    AgentRef::parse(agent_ref).unwrap(),
+                    id,
+                    SessionStatus::Running,
+                    SessionMcpSelection::Automatic,
+                    AuditFields::new(
+                        /*created_at*/ 0, /*updated_at*/ 0, /*is_deleted*/ false,
+                    ),
+                ))
+                .unwrap()
+        }
+
         /// Seeds an already attached session so the test measures prompt policy rather than setup.
         fn add_session(&self, id: &str) {
             self.add_session_with_title_acquisition(id, crate::TitleAcquisition::disabled());
@@ -2453,22 +2487,58 @@ mod restored_sessions {
             id: &str,
             title_acquisition: crate::TitleAcquisition,
         ) {
-            let session = self
-                .manager
-                .inner
-                .store
-                .create_session(Session::new(
-                    SessionId::new(id),
-                    WorkspaceId::new("workspace"),
-                    AgentRef::parse("official/test.agent").unwrap(),
-                    id,
-                    SessionStatus::Running,
-                    SessionMcpSelection::Automatic,
-                    AuditFields::new(
-                        /*created_at*/ 0, /*updated_at*/ 0, /*is_deleted*/ false,
-                    ),
-                ))
-                .unwrap();
+            self.add_session_with(
+                id,
+                title_acquisition,
+                /*channel*/ None,
+                LiveMcpState::Active(crate::SessionMcpRevision::default()),
+            );
+        }
+
+        /// Seeds a session on a provider channel whose MCP set no longer is the desired one.
+        fn add_session_owing_mcp_refresh(&self, id: &str) {
+            let channel = self.supervisor.open_session_channel(id, id).unwrap();
+            let stale =
+                crate::SessionMcpRevision::for_generation(/*generation*/ 1, Vec::new());
+            self.add_session_with(
+                id,
+                crate::TitleAcquisition::disabled(),
+                Some(channel),
+                LiveMcpState::Active(stale),
+            );
+        }
+
+        /// Seeds one persisted session and the actor serving it.
+        fn add_session_with(
+            &self,
+            id: &str,
+            title_acquisition: crate::TitleAcquisition,
+            channel: Option<crate::routing::SessionChannel>,
+            live_mcp: LiveMcpState,
+        ) {
+            let session = self.seed_session_on(id, "official/test.agent");
+            self.add_actor(session, title_acquisition, channel, live_mcp);
+        }
+
+        /// Seeds a session the connected agent serves while its row names another one.
+        fn add_session_bound_elsewhere(&self, id: &str, agent_ref: &str) {
+            let channel = self.supervisor.open_session_channel(id, id).unwrap();
+            self.add_actor(
+                self.seed_session_on(id, agent_ref),
+                crate::TitleAcquisition::disabled(),
+                Some(channel),
+                LiveMcpState::Active(crate::SessionMcpRevision::default()),
+            );
+        }
+
+        /// Starts the actor serving one seeded session.
+        fn add_actor(
+            &self,
+            session: Session,
+            title_acquisition: crate::TitleAcquisition,
+            channel: Option<crate::routing::SessionChannel>,
+            live_mcp: LiveMcpState,
+        ) {
             let recorder = self.manager.open_recorder(&session).unwrap().recorder;
             self.manager
                 .insert_actor(
@@ -2477,11 +2547,11 @@ mod restored_sessions {
                         session_mcp: NoSessionMcp::default(),
                         cwd: self._directory.path().to_path_buf(),
                         connection: self.supervisor.clone(),
-                        channel: None,
+                        channel,
                         recorder,
                         handoff: crate::HandoffDebt::Settled,
                         title_acquisition,
-                        live_mcp: LiveMcpState::Active(crate::SessionMcpRevision::default()),
+                        live_mcp,
                         config_options: Vec::new(),
                     },
                 )

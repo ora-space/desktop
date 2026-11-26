@@ -2,7 +2,7 @@
 
 [English](persistence.md) | 中文
 
-Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里。`ora-db` 是唯一知道 Ora SQL 的 crate：它定义迁移目录、启动数据库，并实现 `ora-application` 和 `ora-effect` 声明的仓储端口。上层调用方永远看不到行、列或软删除的记账字段。Node 有自己独立的数据库，见 [Node](../node/node.zh.md)。
+Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里。`ora-db` 是唯一知道 Ora SQL 的 crate：它定义迁移目录、启动数据库，并实现 `ora-application` 声明的仓储端口。上层调用方永远看不到行、列或软删除的记账字段。Node 有自己独立的数据库，见 [Node](../node/node.zh.md)。
 
 ## 迁移目录
 
@@ -15,32 +15,34 @@ Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里
 - 目录在版本化历史之外还可以带一份首次安装 SQL。公开构建中它为空；发行版可以填充它而无需改写迁移。
 - 已发布的迁移只追加不修改。如果别的分支先占用了编号，后合并的迁移要在合并前顺延编号；启动时会按精确的 SQL 识别一个历史情况（一个未发布的 Loop 分支曾使用 `0011`），并把它采纳为 `0013`。
 
-| 版本   | 新增                                                                                                |
-| ------ | --------------------------------------------------------------------------------------------------- |
-| `0001` | 用户配置、项目、Workspace 位置与 provisioning、Workspace、worktree、任务标签、归属 Workspace 的会话 |
-| `0002` | 带命名空间的 Skill 和可配置 Agent                                                                   |
-| `0003` | 工作流定义、快照、归属 Workspace 的运行和节点运行                                                   |
-| `0004` | 持久化的 Git 清理任务和 worktree provisioning 租约                                                  |
-| `0005` | 插件 marketplace 源配置                                                                             |
-| `0006` | 通用 Effect 持久化，见 [Effect](../agents/effects.zh.md)                                            |
-| `0007` | 每个 marketplace 源的不可变命名空间绑定，以规范 Git URL 为键                                        |
-| `0008` | 每个源的 `enabled` 标志                                                                             |
-| `0009` | 每个源的制品获取配置（默认 Direct HTTPS）                                                           |
-| `0010` | 独立的 Effect 恢复检测时间；Scope 的创建移入 Workspace 事务                                         |
-| `0011` | 每个会话持久化的 MCP 选择（已有会话得到空的显式集合）                                               |
-| `0012` | 节点运行上的 Iteration 轮次索引                                                                     |
-| `0013` | 工作流执行作用域：根执行与 Loop 轮次的身份、作用域内的节点唯一性、降级归档                          |
-| `0014` | 扩展包安装归属（`pack_installation`、`pack_installation_member`）                                   |
-| `0015` | 定时任务、定时运行和触发点                                                                          |
-| `0016` | 定时任务的调度锚点和 worktree 基础分支                                                              |
-| `0017` | 触发时选定的定时运行 worktree 基础分支                                                              |
-| `0018` | 定时运行关联的 worktree 任务                                                                        |
-| `0019` | `finalized_without_effect` 的 Effect 操作阶段，通过暂存副本重建操作日志引入                         |
-| `0020` | 定时运行的业务结论、明细与注解时间                                                                  |
-| `0021` | 定时运行的产物清单与被拒绝候选记录                                                                  |
-| `0022` | marketplace 工作流文档的终态来源记录                                                                |
-| `0023` | 会话创建时的仅宿主能力，持久化后跨重启保留                                                          |
-| `0024` | 释放卡在 `provisioning` 的本地 Main Workspace（仅数据；降级为空操作）                               |
+| 版本   | 新增                                                                                                 |
+| ------ | ---------------------------------------------------------------------------------------------------- |
+| `0001` | 用户配置、项目、Workspace 位置与 provisioning、Workspace、worktree、任务标签、归属 Workspace 的会话  |
+| `0002` | 带命名空间的 Skill 和可配置 Agent                                                                    |
+| `0003` | 工作流定义、快照、归属 Workspace 的运行和节点运行                                                    |
+| `0004` | 持久化的 Git 清理任务和 worktree provisioning 租约                                                   |
+| `0005` | 插件 marketplace 源配置                                                                              |
+| `0006` | 历史 Effect 持久化（已在 `0025` 中删除）                                                             |
+| `0007` | 每个 marketplace 源的不可变命名空间绑定，以规范 Git URL 为键                                         |
+| `0008` | 每个源的 `enabled` 标志                                                                              |
+| `0009` | 每个源的制品获取配置（默认 Direct HTTPS）                                                            |
+| `0010` | 历史 Effect 恢复检测时间；Scope 的创建移入 Workspace 事务（Effect 表已在 `0025` 中删除）             |
+| `0011` | 每个会话持久化的 MCP 选择（已有会话得到空的显式集合）                                                |
+| `0012` | 节点运行上的 Iteration 轮次索引                                                                      |
+| `0013` | 工作流执行作用域：根执行与 Loop 轮次的身份、作用域内的节点唯一性、降级归档                           |
+| `0014` | 扩展包安装归属（`pack_installation`、`pack_installation_member`）                                    |
+| `0015` | 定时任务、定时运行和触发点                                                                           |
+| `0016` | 定时任务的调度锚点和 worktree 基础分支                                                               |
+| `0017` | 触发时选定的定时运行 worktree 基础分支                                                               |
+| `0018` | 定时运行关联的 worktree 任务                                                                         |
+| `0019` | 历史 `finalized_without_effect` 的 Effect 操作阶段（Effect 表已在 `0025` 中删除）                    |
+| `0020` | 定时运行的业务结论、明细与注解时间                                                                   |
+| `0021` | 定时运行的产物清单与被拒绝候选记录                                                                   |
+| `0022` | marketplace 工作流文档的终态来源记录                                                                 |
+| `0023` | 会话创建时的仅宿主能力，持久化后跨重启保留                                                           |
+| `0024` | 释放卡在 `provisioning` 的本地 Main Workspace（仅数据；降级为空操作）                                |
+| `0025` | 在 `skills` 表记录插件 `package_root`，并在一次性旧受管 Skill 目录清理后删除已退役的 Effect 账本与表 |
+| `0026` | 运行内调试的输入证据、配置修订、预览回执与操作栅栏 |
 
 单个迁移的细节见 [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md)。目录只描述当前 schema；`migrations` 表早于 SQL 快照机制的数据库不受支持，需要重建。
 
@@ -48,7 +50,9 @@ Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里
 
 `DatabaseBootstrapper` 检查数据库和目标是否有完全相同的版本前缀，按升序补上缺失的尾部；如果数据库里有更新版本应用引入的尾部，就用那个新版本存下的 `down_sql` 逆序回滚。它从不比较共同版本的 SQL，所以打包后的应用不会因为旧迁移的定义变了就重建用户数据。
 
-如果数据库原本没有任何迁移记录，并且至少应用了一个迁移，首次安装 SQL 会在之后单独的事务里执行，并且不记录到 `migrations`。已有的数据库永远不会执行它。如果它失败，启动失败，但已提交的迁移保持生效。
+在执行 schema 步骤之前，启动器在同一个事务中创建迁移历史和独立的 `bootstrap_state` 日志。只有全新数据库才记录首装来源和待执行的发行版初始化；已有数据库不会获得首装标记。
+
+迁移完成后，待执行的首次安装 SQL 与其日志完成记录在同一个事务中提交。迁移或初始化失败时，已提交的 schema 步骤保留，重启后继续待完成任务。Marketplace 根据同一份持久化首装来源维护自己的初始化记录，不依赖可选的发行版 SQL。因此旧空源列表保持为空，首装中断后仍会补齐默认源。
 
 ## 开发期协调
 
@@ -86,7 +90,6 @@ Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里
 | `SqliteWorkflowRepository`、`SqliteWorkflowRunRepository`、`SqliteWorkflowRunEngineRepository`                         | 工作流定义、运行 CRUD 和运行引擎的事务                                           |
 | `SqliteScheduledTaskRepository`、`SqliteScheduledRunRepository`                                                        | 定时任务及其运行                                                                 |
 | `SqlitePluginMarketplaceSourceRepository`、`SqlitePluginSourceNamespaceRepository`、`SqlitePackInstallationRepository` | marketplace 源、命名空间绑定和扩展包归属                                         |
-| `SqliteEffectRepository`                                                                                               | Effect 状态，见 [Effect](../agents/effects.zh.md)                                |
 | `SqliteUserConfigRepository`                                                                                           | 用户配置的通用键值存储                                                           |
 
 新增适配器从不改变端口签名。
@@ -111,7 +114,7 @@ Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里
 
 SQLite 的执行、查询和映射失败被包装进应用层拥有的 `RepositoryError`，它把具体的 `DatabaseError` 作为 `Error::source()` 保留，而不是转成字符串。启动和迁移失败以 `DatabaseError` 形式出现。
 
-迁移记账的时间戳来自注入的 `TimestampSource`。实体的 `created_at` 和 `updated_at` 来自应用层的 `Clock`。Effect 仓储在获取写事务之后从自己的 `TimestampSource` 取样，见 [Effect](../agents/effects.zh.md#审计时间与业务时间)。
+迁移记账的时间戳来自注入的 `TimestampSource`。实体的 `created_at` 和 `updated_at` 来自应用层的 `Clock`。
 
 ## 运维日志
 

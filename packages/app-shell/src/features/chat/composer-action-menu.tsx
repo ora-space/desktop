@@ -7,6 +7,7 @@ import type {
 import { useMemo, useRef } from "react";
 import {
   IconBolt,
+  IconInfoCircle,
   IconLoader2,
   IconPhoto,
   IconPlug,
@@ -35,6 +36,8 @@ interface ComposerActionMenuProps {
   /** When set, the palette shows a status row instead of (or above) empty groups. */
   status?: "ready" | "loading" | "empty" | "error";
   statusMessage?: string;
+  /** Explains what the list cannot show yet; stays above the scrolling options. */
+  notice?: string;
   truncated?: boolean;
   /** Tighter @ file picker: shorter list, single-line rows, no group header. */
   filesPalette?: boolean;
@@ -54,6 +57,7 @@ export function ComposerActionMenu({
   onSelect,
   status = "ready",
   statusMessage,
+  notice,
   truncated = false,
   filesPalette = false,
   selectionLocked = false,
@@ -103,6 +107,20 @@ export function ComposerActionMenu({
           : "absolute bottom-[calc(100%+8px)] left-2 z-40 w-[min(324px,calc(100vw-32px))] overflow-hidden rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-[0_12px_32px_rgba(0,0,0,0.16),0_2px_8px_rgba(0,0,0,0.08)] ring-1 ring-foreground/5 dark:shadow-[0_16px_40px_rgba(0,0,0,0.45)]"
       }
     >
+      {notice !== undefined && (
+        <p
+          role="status"
+          className={`flex items-start gap-1.5 px-2 py-1.5 text-[12px] text-muted-foreground ${
+            actions.length > 0 ? "mb-1 border-b border-border/60" : ""
+          }`}
+        >
+          <IconInfoCircle
+            className="mt-0.5 size-3.5 shrink-0"
+            aria-hidden="true"
+          />
+          {notice}
+        </p>
+      )}
       <div
         ref={listRef}
         onScroll={syncHighlightUnderPointer}

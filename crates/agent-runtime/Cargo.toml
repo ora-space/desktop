@@ -22,7 +22,6 @@ agent-client-protocol-schema = { workspace = true }
 ora-acp = { workspace = true }
 ora-contracts = { workspace = true }
 ora-domain = { workspace = true }
-ora-effect = { workspace = true }
 ora-history = { workspace = true }
 ora-logging = { workspace = true }
 ora-plugin-lifecycle = { workspace = true }

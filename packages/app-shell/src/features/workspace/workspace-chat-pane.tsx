@@ -9,9 +9,7 @@ import type {
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { useChatStore } from "../../chat-store-context";
-import type { AgentEffectReadiness } from "../../state/hooks/use-agent-effect-readiness";
 import type { AgentReadiness } from "../../state/hooks/use-target-agent-readiness";
-import { localizeAgentEffectFailureSummary } from "../chat/agent-effect-failure-reason";
 import { ChatView } from "../chat/chat-view";
 import { ComposerContextBar } from "../chat/composer-context-bar";
 import { SessionHistoryBanner } from "../chat/session-history-banner";
@@ -20,6 +18,7 @@ import {
   SessionUsageIndicator,
   shouldShowSessionUsage,
 } from "../chat/session-usage-surface";
+import { useDiscoveredCommands } from "../chat/use-discovered-commands";
 
 const NO_HISTORY_NOTICES: SessionHistoryNotice[] = [];
 const NO_SETUPS: SessionSetupPresentation[] = [];
@@ -72,7 +71,6 @@ interface WorkspaceChatPaneProps {
   projectSelected: boolean;
   /** Resolved folder path when the workspace checkout is gone; null when present or unknown. */
   missingDirectory: string | null;
-  agentEffectReadiness: AgentEffectReadiness;
   targetAgentReadiness: AgentReadiness;
   showContextBar: boolean;
   onSend: (text: string, images?: acp.ImageContent[]) => void;
@@ -105,7 +103,6 @@ export function WorkspaceChatPane({
   targetAgentCli,
   projectSelected,
   missingDirectory,
-  agentEffectReadiness,
   targetAgentReadiness,
   showContextBar,
   onSend,
@@ -130,15 +127,9 @@ export function WorkspaceChatPane({
   const sendDisabledHint =
     canChat && missingDirectory !== null
       ? t("chat.workspaceDirectoryMissing")
-      : canChat && agentEffectReadiness.kind === "failed"
-        ? t("chat.agentEffectsFailed", {
-            message: localizeAgentEffectFailureSummary(agentEffectReadiness, t),
-          })
-        : canChat && agentEffectReadiness.kind === "blocked"
-          ? t("chat.agentEffectsNotReady")
-          : canChat && targetAgentReadiness === "blocked"
-            ? t("chat.pickAvailableAgent")
-            : undefined;
+      : canChat && targetAgentReadiness === "blocked"
+        ? t("chat.pickAvailableAgent")
+        : undefined;
   // A failed background session-create settles onto the draft conversation, so
   // the conversation error already covers the start-up failure path. A pending
   // send has no conversation to settle onto and carries its own.
@@ -174,6 +165,15 @@ export function WorkspaceChatPane({
     session !== undefined &&
     conversation?.isLoaded !== true &&
     conversation?.error == null;
+  const availableCommands = conversation?.availableCommands ?? null;
+  const discoveredCommands = useDiscoveredCommands({
+    sessionId,
+    hasReport: availableCommands !== null,
+    isLoadingHistory,
+    agentRef: targetAgentCli,
+    workspaceId,
+    directoryMissing: missingDirectory !== null,
+  });
 
   return (
     <ChatView
@@ -192,7 +192,8 @@ export function WorkspaceChatPane({
       pendingPermissions={conversation?.pendingPermissions ?? []}
       skills={skills}
       roles={roles}
-      availableCommands={conversation?.availableCommands ?? []}
+      availableCommands={availableCommands}
+      discoveredCommands={discoveredCommands}
       disabled={!canChat}
       // An untouched chat cannot send yet, but disabling this picker as
       // part of the composer would make choosing its first agent impossible.

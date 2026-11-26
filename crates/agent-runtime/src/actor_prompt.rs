@@ -12,58 +12,13 @@ use super::title_acquisition::PollAttempt;
 use super::tool_timing::ToolTimings;
 use super::*;
 use crate::attach::LoadRestoration;
-use crate::model_config::current_model;
+use crate::host::SkillCatalogSource;
 use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
 use ora_logging::{ora_debug, ora_warn};
-
-impl<H: AgentRuntimeHost> RuntimeActor<H> {
-    /// Ends a prompt the provider answered with a result: its stop reason describes the turn, its
-    /// usage is reported, and a completed turn may start title acquisition. Shared by the prompt
-    /// loop and by a turn cancel that found the answer already queued.
-    pub(crate) async fn finish_completed_prompt(
-        &mut self,
-        channel: SessionChannel,
-        response: PromptResponse,
-        operation_id: u64,
-        end: crate::turn_cancel::PromptEnd<'_>,
-    ) {
-        let crate::turn_cancel::PromptEnd {
-            events,
-            end_report,
-            followers,
-            tool_timings,
-        } = end;
-        self.record_cleanup(operation_id, Ok(()));
-        // The provider answered: its stop reason now describes the turn, so the end cause is not
-        // an interruption.
-        end_report.record(PromptEndCause::Settled);
-        ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
-        let token_usage = usage::normalize_token_usage(
-            &self.session.agent_ref,
-            response.usage.as_ref(),
-            response.meta.as_ref(),
-            &usage::NoUsageExtensions,
-        );
-        self.end_timed_turn(response.stop_reason, tool_timings);
-        followers.finish(response.stop_reason);
-        self.load_restoration = LoadRestoration::NotRestored;
-        self.maybe_start_title_acquisition(response.stop_reason);
-        if events
-            .try_send(Ok(PromptSessionEvent::Completed {
-                stop_reason: response.stop_reason,
-                token_usage,
-            }))
-            .is_ok()
-        {
-            self.channel = Some(channel);
-        } else {
-            self.isolate_channel(channel).await;
-        }
-    }
-}
+use stale_load::{describes_provider, stale_load_retry_allowed};
 
 /// Whether one provider update is work the user would see or a tool already ran.
 ///
@@ -79,20 +34,10 @@ pub(crate) fn produced_output(update: &SessionUpdate) -> bool {
     )
 }
 
-/// The one retry after a load is allowed only before output and only once.
-fn stale_load_retry_allowed(
-    reusable: bool,
-    produced_output: bool,
-    has_context: bool,
-    restoration: LoadRestoration,
-) -> bool {
-    reusable && !produced_output && has_context && restoration == LoadRestoration::Restored
-}
-
 /// One attempt at a prompt, including the single rebuild retry after a stale `session/load`.
 struct PromptAttempt {
-    /// Blocks a rebuilt channel must receive; `None` builds the ordinary prompt.
-    blocks: Option<Vec<ContentBlock>>,
+    /// Prompt prepared for a rebuilt channel; `None` builds the ordinary prompt.
+    blocks: Option<AgentPrompt>,
     /// The prompt was already recorded before the first attempt, so a retry must not repeat it.
     skip_record: bool,
     /// Only the attempt after a load may rebuild; the retry attempt may not recurse again.
@@ -165,7 +110,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let client = channel.connection.client.clone();
         // Catch events that arrived after the previous operation ended but before this command
         // was accepted. Setup updates in `pending_updates` are intentional and stay separate.
-        drain_idle_events(&mut channel, &self.command_sender).await;
+        drain_idle_events(self, &mut channel).await;
         if let Ok(control) = channel.controls.try_recv() {
             match control {
                 SessionControl::QueueOverflow => {
@@ -192,15 +137,29 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             }
         }
         while let Some(notification) = channel.pending_updates.pop_front() {
-            self.observe_session_update(&notification.update);
+            let update = match notification.update {
+                // What was queued may have been replaced since, and is not to be taken again.
+                SessionUpdate::ConfigOptionUpdate(_) => SessionUpdate::ConfigOptionUpdate(
+                    ConfigOptionUpdate::new(self.reported_config_options.clone()),
+                ),
+                update => {
+                    self.observe_session_update(&update);
+                    update
+                }
+            };
+            // Only a retry already has followers here, and they joined on the session it replaced.
+            if describes_provider(&update) {
+                followers.send_update(&update, None);
+            }
             if events
                 .try_send(Ok(PromptSessionEvent::SessionUpdate {
-                    update: notification.update,
+                    update,
                     tool_timing: None,
                 }))
                 .is_err()
             {
                 end_report.record(PromptEndCause::StreamDropped);
+                self.accept_changes_on(&mut channel);
                 self.isolate_channel(channel).await;
                 if attempt.skip_record {
                     self.end_turn(StopReason::Cancelled);
@@ -219,13 +178,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let AgentPrompt {
             blocks,
             settles_handoff,
+            prefix_len,
         } = match attempt.blocks.take() {
-            Some(blocks) => AgentPrompt {
-                blocks,
-                // A rebuilt channel receives the transcript with this prompt, so accepting it
-                // both settles the handoff and earns the new binding.
-                settles_handoff: true,
-            },
+            Some(prompt) => prompt,
             None => prompt_for_agent(self, &prompt),
         };
         let recorded = record_prompt.blocks.as_deref().unwrap_or(&prompt);
@@ -255,6 +210,35 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             self.finish_unsent_prompt(channel, &end_report, &events, &mut followers);
             return;
         }
+        let (blocks, catalog_commit) = match self
+            .skill_catalog
+            .skill_catalog(&self.session.workspace_id)
+        {
+            Ok(current_skills) => {
+                let skill_injection = crate::skill_catalog::prepare_skill_catalog_injection(
+                    self.announced_skills.as_ref(),
+                    &current_skills,
+                );
+                let blocks = match &skill_injection {
+                    Some(injection) => crate::skill_catalog::insert_catalog_block(
+                        blocks,
+                        injection.block_text.clone(),
+                        prefix_len,
+                    ),
+                    None => blocks,
+                };
+                (blocks, Some(skill_injection))
+            }
+            Err(error) => {
+                ora_warn!(
+                    session_id = %self.session.id,
+                    workspace_id = %self.session.workspace_id,
+                    error = %error,
+                    "failed to read skill catalog for prompt; skipping catalog injection for this turn",
+                );
+                (blocks, None)
+            }
+        };
         let agent_session_id = self.provider_session_id().to_string();
         let mut request = PromptRequest::new(agent_session_id.clone(), blocks);
         if let Some(instruction) = &record_prompt.attempt_instruction {
@@ -269,7 +253,22 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             )
             .await
         {
-            Ok(pending) => pending,
+            Ok(pending) => {
+                // Commit announced skill paths only once the ACP request is accepted on the wire:
+                // any failure before admission or send leaves the next prompt free to re-emit.
+                // A catalog read error skips both injection and commit so the next turn retries
+                // against the previous announced baseline. An initial turn with a readable empty
+                // catalog records the empty announced set (ADR D3) so a skill installed later
+                // arrives as an incremental update rather than full.
+                if let Some(skill_injection) = catalog_commit {
+                    if let Some(injection) = skill_injection {
+                        self.announced_skills = Some(injection.next_announced);
+                    } else {
+                        self.announced_skills.get_or_insert_with(Default::default);
+                    }
+                }
+                pending
+            }
             Err(error) => {
                 // The request never reached the agent, so a transcript this prompt
                 // was carrying is still owed and stays owed — in memory and, since
@@ -411,6 +410,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             {
                                 self.channel = Some(channel);
                             } else {
+                                if !session_invalid {
+                                    self.accept_changes_on(&mut channel);
+                                }
                                 self.isolate_channel(channel).await;
                             }
                         } else {
@@ -465,6 +467,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         end_report.record(PromptEndCause::StreamDropped);
                         self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                         followers.finish(StopReason::Cancelled);
+                        self.accept_changes_on(&mut channel);
                         self.cancel(&client, &permissions.pending).await;
                         self.isolate_channel(channel).await;
                         return;
@@ -492,6 +495,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {
+                        if let Some(update) = self.settle_config_change(&mut channel, response) {
+                            followers.send_update(&update, None);
+                            let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                                update,
+                                tool_timing: None,
+                            }));
+                        }
                         continue;
                     }
                     if !permissions.pending.is_empty() {
@@ -539,10 +549,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                     session_id = %self.session.id,
                                     "first prompt after session/load failed without output; rebuilding and retrying",
                                 );
-                                let model = current_model(&self.reported_config_options);
-                                self.isolate_channel(channel).await;
-                                match self.rebuild_provider_session(model.as_deref()).await {
+                                match self.replace_stale_session(channel).await {
                                     Ok(setup) => {
+                                        for update in &setup {
+                                            followers.send_update(update, None);
+                                        }
                                         if !super::actor::publish_setup(&events, setup) {
                                             self.record_cleanup(operation_id, Ok(()));
                                             end_report.record(PromptEndCause::StreamDropped);
@@ -604,6 +615,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             if reusable && delivered && !session_invalid {
                                 self.channel = Some(channel);
                             } else {
+                                if reusable && !session_invalid {
+                                    self.accept_changes_on(&mut channel);
+                                }
                                 self.isolate_channel(channel).await;
                             }
                         }
@@ -688,6 +702,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 }
                 ActiveInput::Command(RuntimeCommand::Stop { response }) => {
                     end_report.record(PromptEndCause::Unknown);
+                    self.accept_changes_on(&mut channel);
                     self.cancel(&client, &permissions.pending).await;
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
@@ -706,33 +721,19 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     events,
                     accepted,
                 }) => {
-                    // Capture the durable cutoff, the in-progress pending records, and the live
-                    // follower registration atomically (no await), then let the follower's relay
-                    // task stream the merged prefix before live events. The actor returns to its
-                    // select loop immediately, so a slow view can never backpressure the prompt.
-                    self.record_cleanup(operation_id, Ok(()));
-                    let cutoff = self.recorder.durable_bytes();
-                    let pending = self.recorder.pending_records();
-                    if accepted.send(Ok(())).is_ok() {
-                        // The follower's queue is new and empty, so this precedes its replay.
-                        if let Some(update) = channel.reported_commands() {
-                            let _ = events.try_send(Ok(LoadSessionEvent::session_update(update)));
-                        }
-                        followers.insert(
-                            operation_id,
-                            FollowerOutput {
-                                events,
-                                completion: cleanup,
-                            },
-                            self.sessions_root.clone(),
-                            self.session.id.to_string(),
-                            cutoff,
-                            pending,
-                        );
-                    }
+                    self.follow_prompt(
+                        operation_id,
+                        &channel,
+                        &mut followers,
+                        FollowerOutput {
+                            events,
+                            completion: cleanup,
+                        },
+                        accepted,
+                    );
                 }
-                ActiveInput::Command(RuntimeCommand::ClaimDirectProviderCall { response }) => {
-                    let _ = response.send(self.provider_session_id().to_string());
+                ActiveInput::Command(RuntimeCommand::ChangeConfig(request)) => {
+                    self.change_config(Some(&mut channel), request).await;
                 }
                 ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
                     self.adopt_user_title(title);
@@ -754,12 +755,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 ActiveInput::Command(RuntimeCommand::McpDesiredMaybeChanged) => {
                     self.note_desired_mcp();
                 }
-                // The Effect barrier is what makes this unreachable while an operation is in
-                // flight: a consumer is only restarted after its plugin reported every turn
-                // finished. A replacement that still raced in leaves this request unanswered, and
-                // this loop's existing failure handling ends the operation and stops the session —
-                // the same repair the idle path performs, arrived at the slower way.
-                ActiveInput::Command(RuntimeCommand::AgentProcessReplaced { .. }) => {}
                 ActiveInput::Command(RuntimeCommand::TitlePoll {
                     attempt: PollAttempt::First,
                 }) => {
@@ -787,6 +782,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     }
 }
 
+#[path = "actor_prompt/completion.rs"]
+mod completion;
+#[path = "actor_prompt/follow.rs"]
+mod follow;
+#[path = "actor_prompt/stale_load.rs"]
+mod stale_load;
 #[cfg(test)]
 #[path = "actor_prompt/tests.rs"]
 mod tests;

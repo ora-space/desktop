@@ -5,7 +5,7 @@ import {
   RemoteContractError,
   type ContractsClient,
   type SwitchSessionAgentRequest,
-  type ListAgentModelsResponse,
+  type DiscoverAgentResponse,
   type StartSessionRequest,
 } from "@ora/contracts";
 import { TooltipProvider } from "@ora/ui";
@@ -42,7 +42,6 @@ import {
   createWorkflowMemory,
   workflowHandlers,
 } from "../../test/memory/workflows";
-import { readyEffectHandlers } from "../../test/memory/effects";
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { useAgentModelPreferenceStore } from "../../state/stores/agent-model-preference-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
@@ -59,6 +58,7 @@ import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useWorkflowEditorStore } from "../workflow-editor/workflow-editor-store";
 import { directChatTitle } from "./workspace-view-utils";
 import { AGENT_REF } from "../../test/agent-identity";
+import { useDefaultAgentAdoption } from "../../state/hooks/use-default-agent-adoption";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
 function createFixtureState() {
@@ -85,7 +85,6 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
     ...agentHandlers(state),
     ...skillHandlers(state),
     ...workflowHandlers(state),
-    ...readyEffectHandlers(),
   };
 }
 
@@ -629,7 +628,7 @@ describe("WorkspaceView", () => {
     ];
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
     const client = createTestClient(clientHandlers);
-    const discover = vi.spyOn(client.agentRuntime, "listModels");
+    const discover = vi.spyOn(client.agentRuntime, "discover");
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -677,7 +676,7 @@ describe("WorkspaceView", () => {
 
     state.workspaces = state.workspaces.map((workspace) => ({
       ...workspace,
-      directory: { kind: "present" },
+      directory: { kind: "present", git: "repository" },
     }));
     await user.click(
       within(banner).getByRole("button", { name: /重新检查|Check again/ }),
@@ -1414,10 +1413,10 @@ describe("WorkspaceView", () => {
     state.projects = [{ id: "p1", name: "Ora" }];
     const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
     const baseClient = createTestClient(baseClientHandlers);
-    const discover = vi.fn(baseClient.agentRuntime.listModels);
+    const discover = vi.fn(baseClient.agentRuntime.discover);
     const client: ContractsClient = createTestClient({
       ...baseClientHandlers,
-      listAgentModels: discover,
+      discoverAgent: discover,
     });
     // One query client and one chat store across both renders, so this is the
     // same app session leaving a surface and coming back to it.
@@ -1471,11 +1470,11 @@ describe("WorkspaceView", () => {
     const state = createFixtureState();
     state.projects = [{ id: "p1", name: "Ora" }];
     const baseClientHandlers: TestHandlers = createFixtureHandlers(state);
-    let openHandshake: (response: ListAgentModelsResponse) => void = () => {};
+    let openHandshake: (response: DiscoverAgentResponse) => void = () => {};
     const client: ContractsClient = createTestClient({
       ...baseClientHandlers,
-      listAgentModels: () =>
-        new Promise<ListAgentModelsResponse>((resolve) => {
+      discoverAgent: () =>
+        new Promise<DiscoverAgentResponse>((resolve) => {
           openHandshake = resolve;
         }),
     });
@@ -1784,8 +1783,8 @@ describe("WorkspaceView", () => {
         await beforeSwitch();
         return baseClient.session.switchAgent(request, options);
       },
-      listAgentModels: async (request, options) => {
-        const response = await baseClient.agentRuntime.listModels(
+      discoverAgent: async (request, options) => {
+        const response = await baseClient.agentRuntime.discover(
           request,
           options,
         );
@@ -2069,6 +2068,171 @@ describe("WorkspaceView", () => {
     expect(state.sessions[0]?.agentRef).toBe(AGENT_REF.opencode);
   });
 
+  it("explains a reopened session's unreported commands until its first turn brings them", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        workspaceId: "workspace-t1",
+        title: "Reopened",
+      },
+    ];
+    state.sessions = [
+      {
+        id: "s1",
+        workspaceId: "workspace-t1",
+        agentRef: AGENT_REF.opencode,
+        status: "stopped",
+        title: null,
+        historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
+      },
+    ];
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    clientHandlers.promptSession = async function* () {
+      yield {
+        type: "session_update" as const,
+        update: {
+          sessionUpdate: "available_commands_update" as const,
+          availableCommands: [{ name: "review", description: "Review" }],
+        },
+      };
+      yield { type: "completed" as const, stopReason: "end_turn" as const };
+    };
+    const client = createTestClient(clientHandlers);
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+    await waitFor(() =>
+      expect(chatStore.getState().conversations.s1?.isLoaded).toBe(true),
+    );
+    const pending = appI18n.t("chat.actionMenu.commandsPending");
+    const textarea = await screen.findByRole("textbox");
+
+    await user.type(textarea, "/review");
+    expect(await screen.findByText(pending)).toBeVisible();
+    expect(textarea.querySelector(".composer-unsupported-command")).toBeNull();
+
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(chatStore.getState().conversations.s1).toMatchObject({
+        isResponding: false,
+        availableCommands: [{ name: "review" }],
+      }),
+    );
+
+    await user.type(textarea, "/");
+    expect(await screen.findByRole("option", { name: /review/ })).toBeVisible();
+    expect(screen.queryByText(pending)).not.toBeInTheDocument();
+  });
+
+  it("shows a reopened session what its agent offers until the session reports for itself", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    state.projects = [{ id: "p1", name: "Ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        workspaceId: "workspace-t1",
+        title: "Reopened",
+      },
+    ];
+    state.sessions = [
+      {
+        id: "s1",
+        workspaceId: "workspace-t1",
+        agentRef: AGENT_REF.opencode,
+        status: "stopped",
+        title: null,
+        historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
+      },
+    ];
+    state.discoveredCommandsByCli = {
+      [AGENT_REF.opencode]: [{ name: "review", description: "Review" }],
+    };
+    const clientHandlers: TestHandlers = createFixtureHandlers(state);
+    clientHandlers.promptSession = async function* () {
+      yield {
+        type: "session_update" as const,
+        update: {
+          sessionUpdate: "available_commands_update" as const,
+          availableCommands: [],
+        },
+      };
+      yield { type: "completed" as const, stopReason: "end_turn" as const };
+    };
+    const client = createTestClient(clientHandlers);
+    const discover = vi.spyOn(client.agentRuntime, "discover");
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+    const textarea = await screen.findByRole("textbox");
+    await waitFor(() =>
+      expect(chatStore.getState().conversations.s1?.isLoaded).toBe(true),
+    );
+    await user.type(textarea, "/");
+    expect(await screen.findByRole("option", { name: /review/ })).toBeVisible();
+    expect(
+      screen.queryByText(appI18n.t("chat.actionMenu.commandsPending")),
+    ).not.toBeInTheDocument();
+    // The picker and the menu share one discovery, and opening the session asked for nothing else.
+    expect(discover).toHaveBeenCalledOnce();
+    expect(chatStore.getState().conversations.s1?.availableCommands).toBeNull();
+
+    await user.type(textarea, "mcp hello");
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(chatStore.getState().conversations.s1).toMatchObject({
+        isResponding: false,
+        availableCommands: [],
+      }),
+    );
+    await user.type(textarea, "/review");
+    expect(
+      textarea.querySelector("[data-unsupported-command='review']"),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("option", { name: /review/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("resumes a session whose history stopped recording", async () => {
     const user = userEvent.setup();
     const state = createFixtureState();
@@ -2289,100 +2453,79 @@ describe("WorkspaceView", () => {
       screen.queryByLabelText(/给 Ora 的消息|Message to Ora/),
     ).not.toBeInTheDocument();
   });
-
-  it("shows the localized skill conflict path on the disabled send hint in zh-CN", async () => {
-    const previousLanguage = appI18n.language;
-    await act(() => appI18n.changeLanguage("zh-CN"));
-    try {
-      const user = userEvent.setup();
-      const state = createFixtureState();
-      state.projects = [{ id: "p1", name: "Ora" }];
-      state.sessions = [
-        {
-          id: "s1",
-          workspaceId: "workspace-p1",
-          agentRef: AGENT_REF.opencode,
-          status: "running",
-          title: null,
-          historyState: { type: "writable" },
-          mcpSelection: { mode: "automatic" },
-        },
-      ];
-      const ready = await readyEffectHandlers().getEffectTargetStatus();
-      const englishMessage =
-        "Move the unmanaged directory that occupies the skill directory: .opencode/skills/foo";
-      const clientHandlers: TestHandlers = {
-        ...createFixtureHandlers(state),
-        loadSession: vi.fn(async function* () {
-          yield { type: "completed" as const };
-        }),
-        getEffectTargetStatus: vi.fn(async () => ({
-          status: {
-            ...ready.status!,
-            targetId: "target-1",
-            phase: "planning" as const,
-            conditions: [
-              {
-                id: "condition-1",
-                ownerKind: "resource",
-                ownerId: "resource-1",
-                subjectKind: "desired_effect",
-                subjectId: "desired-1",
-                code: "preserved_item_conflict",
-                impact: "blocking" as const,
-                retry: "on_change" as const,
-                generation: 1n,
-                message: englishMessage,
-                parameters: { relativePath: ".opencode/skills/foo" },
-                firstObservedAt: 1n,
-                lastObservedAt: 1n,
-              },
-            ],
-          },
-        })),
-      };
-      const client = createTestClient(clientHandlers);
-      const chatStore = createChatStore(client.session);
-      const Wrapper = createHookWrapper(
-        client,
-        createTestQueryClient(),
-        chatStore,
-      );
-      useWorkspaceSelectionStore.getState().selectSessionBeforeTask("s1", "p1");
-
-      render(
-        <Wrapper>
-          <AppI18nProvider>
-            <PlatformProvider adapter={createStubPlatform()}>
-              <TooltipProvider>
-                <WorkspaceView userName="Eric" />
-              </TooltipProvider>
-            </PlatformProvider>
-          </AppI18nProvider>
-        </Wrapper>,
-      );
-
-      const sendButton = await screen.findByRole("button", {
-        name: /发送消息|Send message/,
-      });
-      await waitFor(() =>
-        expect(sendButton).toHaveAttribute("aria-disabled", "true"),
-      );
-      await user.hover(sendButton);
-      const hint = await screen.findByRole("tooltip", { hidden: true });
-      expect(hint).toHaveTextContent("Agent 技能同步失败");
-      expect(hint).toHaveTextContent(
-        "存在未由 Ora 管理的旧技能目录，无法覆盖：.opencode/skills/foo",
-      );
-      expect(hint).not.toHaveTextContent(englishMessage);
-    } finally {
-      await act(() => appI18n.changeLanguage(previousLanguage));
-    }
-  });
 });
 
 describe("directChatTitle", () => {
   it("normalizes whitespace and takes exactly ten Unicode characters", () => {
     expect(directChatTitle("  你好   workspace mode  ")).toBe("你好 workspa");
   });
+});
+
+/** Mirrors the shell's preference repair before a workspace's first send. */
+function UpgradedWorkspace() {
+  useDefaultAgentAdoption();
+  return <WorkspaceView userName="Tester" />;
+}
+
+it("sends with the saved v1 agent after upgrade and model selection", async () => {
+  localStorage.setItem(
+    "ora.settings.v1",
+    JSON.stringify({
+      version: 1,
+      state: {
+        settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+      },
+    }),
+  );
+  await act(async () => {
+    await useSettingsStore.persist.rehydrate();
+  });
+  const state = createFixtureState();
+  state.projects = [{ id: "p1", name: "Ora" }];
+  const handlers = createFixtureHandlers(state);
+  const baseClient = createTestClient(handlers);
+  const started: StartSessionRequest[] = [];
+  const client = createTestClient({
+    ...handlers,
+    startSession: async (request, options) => {
+      started.push(request);
+      return baseClient.session.start(request, options);
+    },
+  });
+  const Wrapper = createHookWrapper(
+    client,
+    createTestQueryClient(),
+    createChatStore(client.session),
+  );
+  useWorkspaceSelectionStore.getState().selectProject("p1");
+  render(
+    <Wrapper>
+      <AppI18nProvider>
+        <PlatformProvider adapter={createStubPlatform()}>
+          <TooltipProvider>
+            <UpgradedWorkspace />
+          </TooltipProvider>
+        </PlatformProvider>
+      </AppI18nProvider>
+    </Wrapper>,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: /选择模型|Select model/ }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Small Pickle" }),
+  );
+  await user.keyboard("{Escape}");
+  await user.type(await screen.findByRole("textbox"), "hello after upgrade");
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(started).toEqual([
+      {
+        workspaceId: "workspace-p1",
+        agentRef: AGENT_REF.opencode,
+        model: "opencode/small-pickle",
+      },
+    ]),
+  );
 });

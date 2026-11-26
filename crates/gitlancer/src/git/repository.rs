@@ -43,6 +43,11 @@ impl<R: GitRunner> Git<R> {
     }
 
     /// Discovers the owning repository root from any worktree by reading the main checkout from Git's worktree list.
+    ///
+    /// Any non-zero exit counts as `NotARepository` here on purpose: callers only need to know
+    /// whether the root is usable before acting on it. `Git::probe_work_tree` deliberately accepts only Git's
+    /// explicit message, because its answer is shown to users and a damaged repository must not
+    /// be called a plain folder. Do not unify the two.
     pub fn discover_repository(&self, root: RepoRoot) -> Result<Repository, GitlancerError> {
         let command = GitCommand::new(
             root.as_path().to_path_buf(),

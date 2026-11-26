@@ -3,7 +3,10 @@ import type { ContractsClient } from "@ora/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { invalidateSessions, refetchSessions } from "../data/sessions";
 import { invalidatePluginState } from "../data/plugin-lifecycle";
-import { invalidateAgentModels } from "../data/agent-runtime";
+import {
+  invalidateAgentCommands,
+  invalidateAllAgentCommands,
+} from "../data/agent-runtime";
 import { invalidateMcpHealth } from "../data/mcp-health";
 import { invalidateWorkflowRun } from "../data/workflow-runs";
 import { surfaceScheduledTaskEvent } from "../data/scheduled-task-events";
@@ -27,6 +30,7 @@ export function useAppEvents(client: ContractsClient) {
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
     let disposed = false;
+    let wasDisconnected = false;
 
     const scheduleReconnect = () => {
       if (disposed) return;
@@ -38,6 +42,7 @@ export function useAppEvents(client: ContractsClient) {
     };
     const handleDisconnect = () => {
       setReady(false);
+      wasDisconnected = true;
       void refetchSessions(queryClient);
       scheduleReconnect();
     };
@@ -55,6 +60,9 @@ export function useAppEvents(client: ContractsClient) {
             setReady(true);
             // The initial refetch closes the gap between database changes and stream subscription.
             void refetchSessions(queryClient);
+            // Skills may have changed while the stream was down.
+            if (wasDisconnected) void invalidateAllAgentCommands(queryClient);
+            wasDisconnected = false;
             // Facts recorded while no subscriber existed (startup recovery of missed
             // occurrences and interrupted runs) live in persistence; surface them once.
             void surfaceStartupScheduledFacts(client, queryClient, platform);
@@ -67,7 +75,7 @@ export function useAppEvents(client: ContractsClient) {
             // and are re-queried. A probe result is never carried in the event itself.
             void invalidateMcpHealth(queryClient);
           } else if (event.type === "agent_models_invalidated") {
-            void invalidateAgentModels(queryClient, event.agent_ref);
+            void invalidateAgentCommands(queryClient, event.agent_ref);
           } else if (event.type === "workflow_run_invalidated") {
             // The event names only which run changed; the run rows stay the single source of
             // truth and are re-queried here.

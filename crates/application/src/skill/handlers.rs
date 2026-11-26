@@ -4,7 +4,7 @@ use crate::skill::package_health::{
     commit_unclaimed_package, has_usable_package, manifest_is_usable, package_availability,
     persist_promoted_package, read_skill_manifest,
 };
-use crate::skill::ports::{LocalSkillSourceRevision, SkillIdGenerator, SkillRepository};
+use crate::skill::ports::{SkillIdGenerator, SkillRepository};
 use crate::skill::storage::{SkillStorage, SkillStorageError};
 use crate::{ApplicationError, Clock};
 use gray_matter::{Matter, engine::YAML};
@@ -14,7 +14,6 @@ use ora_contracts::{
     UpdateSkillRequest, UpdateSkillResponse,
 };
 use ora_domain::{AuditFields, Namespace, Skill, SkillId};
-use ora_effect::Digest;
 use ora_skill_package::manifest::{render_manifest, rewrite_manifest, rewrite_manifest_body};
 
 /// Handles atomic creation of a reusable skill definition (database plus formal directory).
@@ -106,18 +105,6 @@ where
         self.storage
             .write_manifest(&staging, manifest.as_bytes())
             .map_err(ApplicationError::from_skill_storage_error)?;
-        let source_revision = self
-            .storage
-            .formal_package_path(&skill.name)
-            .map(|package_root| {
-                LocalSkillSourceRevision::from_package(
-                    Digest::sha256(manifest.as_bytes()),
-                    package_root,
-                    &staging,
-                )
-            })
-            .transpose()
-            .map_err(ApplicationError::from_skill_storage_error)?;
         let promoted = commit_unclaimed_package(
             &self.storage,
             &skill.id,
@@ -125,12 +112,10 @@ where
             &staging,
             had_untracked_package,
         )?;
-        let created =
-            persist_promoted_package(&self.storage, &promoted, || match source_revision {
-                Some(source) => self.repository.create_skill_with_source(skill, source),
-                None => self.repository.create_skill(skill),
-            })
-            .map_err(ApplicationError::from_skill_repository_error)?;
+        let created = persist_promoted_package(&self.storage, &promoted, || {
+            self.repository.create_skill(skill)
+        })
+        .map_err(ApplicationError::from_skill_repository_error)?;
 
         Ok(CreateSkillResponse {
             skill: map_skill(created, SkillAvailability::Available),
@@ -330,18 +315,6 @@ where
         self.storage
             .write_manifest(&staging, rewritten.as_bytes())
             .map_err(ApplicationError::from_skill_storage_error)?;
-        let source_revision = self
-            .storage
-            .formal_package_path(&skill.name)
-            .map(|package_root| {
-                LocalSkillSourceRevision::from_package(
-                    Digest::sha256(rewritten.as_bytes()),
-                    package_root,
-                    &staging,
-                )
-            })
-            .transpose()
-            .map_err(ApplicationError::from_skill_storage_error)?;
         let promoted = commit_existing_package(
             &self.storage,
             &skill.id,
@@ -350,11 +323,9 @@ where
             &existing.name,
             &staging,
         )?;
-        let updated =
-            persist_promoted_package(&self.storage, &promoted, || match source_revision {
-                Some(source) => self.repository.update_skill_with_source(skill, source),
-                None => self.repository.update_skill(skill),
-            });
+        let updated = persist_promoted_package(&self.storage, &promoted, || {
+            self.repository.update_skill(skill)
+        });
         let updated = updated.map_err(ApplicationError::from_skill_repository_error)?;
 
         Ok(UpdateSkillResponse {
@@ -415,7 +386,7 @@ where
         };
         let deleted = self
             .repository
-            .soft_delete_skill_with_source(&skill_id, self.clock.now_timestamp_millis())
+            .soft_delete_skill(&skill_id, self.clock.now_timestamp_millis())
             .map_err(|error| {
                 if let Some(handle) = &handle {
                     let _ = self.storage.rollback_delete(handle);
@@ -515,17 +486,6 @@ where
     storage
         .write_manifest(&staging, manifest.as_bytes())
         .map_err(ApplicationError::from_skill_storage_error)?;
-    let source_revision = storage
-        .formal_package_path(&skill.name)
-        .map(|package_root| {
-            LocalSkillSourceRevision::from_package(
-                Digest::sha256(manifest.as_bytes()),
-                package_root,
-                &staging,
-            )
-        })
-        .transpose()
-        .map_err(ApplicationError::from_skill_storage_error)?;
     let promoted = commit_restored_package(
         storage,
         &skill.namespace,
@@ -535,9 +495,6 @@ where
         &existing.name,
         &staging,
     )?;
-    let updated = persist_promoted_package(storage, &promoted, || match source_revision {
-        Some(source) => repository.update_skill_with_source(skill, source),
-        None => repository.update_skill(skill),
-    });
+    let updated = persist_promoted_package(storage, &promoted, || repository.update_skill(skill));
     updated.map_err(ApplicationError::from_skill_repository_error)
 }

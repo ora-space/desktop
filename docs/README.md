@@ -45,9 +45,8 @@ module boundaries. Implementation details inside a crate or package live in that
 - [Agent runtime](agents/agent-runtime.md): agents from plugins, supervision, sessions, flow control, limits, host previews
 - [Session history](agents/session-history.md): recording, switching agents, degraded history, deletion
 - [Session MCP](agents/session-mcp.md): selection, delivery, live refresh, Host MCP health
-- [Agent definitions and Skills](agents/agents-and-skills.md): roles, the Skill catalog, packages and imports
+- [Agent definitions and Skills](agents/agents-and-skills.md): roles, the Skill catalog, packages, imports and session delivery
 - [Skill plugin configuration](agents/skill-configuration.md): public and secret settings, startup environment snapshots, restart behavior and security boundaries
-- [Effects](agents/effects.md): Workspace Effect convergence and Skill materialization
 
 **Plugins**
 
@@ -98,6 +97,7 @@ module boundaries. Implementation details inside a crate or package live in that
 - [Local development](development/local-development.md)
 - [Testing](development/testing.md)
 - [Changing the code](development/changing-the-code.md)
+- [Release notes](development/release-notes.md)
 
 ## Maintenance rules
 

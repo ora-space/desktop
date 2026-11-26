@@ -1,10 +1,13 @@
 import {
   type AcpSender,
+  AGENT_DISCOVERY_CLEANUP_RESERVE_MS,
   AGENT_NOT_INSTALLED,
   defineAgent,
   PluginMethodError,
+  waitForAgentCommands,
 } from "../src/mod.ts";
 import {
+  AGENT_DISCOVERY_BUDGET_MS,
   decodeFrames,
   encodeFrame,
   type JsonValue,
@@ -63,7 +66,7 @@ Deno.test("a generic Agent must apply the exact model context before start succe
         }
       },
       stop: () => {},
-      listModels: () => [],
+      discover: () => ({ models: [] }),
       onAcp: () => {},
     });
     const harness = createTransportHarness();
@@ -136,7 +139,6 @@ Deno.test("a generic Agent must apply the exact model context before start succe
 
 Deno.test("serves the whole agent contract over one run loop", async () => {
   const received: JsonValue[] = [];
-  const effectCalls: unknown[] = [];
   const discoveryContexts: unknown[] = [];
   let send: AcpSender | undefined;
   const plugin = defineAgent({
@@ -144,31 +146,16 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
       send = sender;
     },
     stop: () => {},
-    listModels: (context) => {
+    discover: ({ deadline: _, ...context }) => {
       discoveryContexts.push(context);
-      return [{ id: "opus", displayName: "Opus" }];
+      return {
+        models: [{ id: "opus", displayName: "Opus" }],
+        // Returned even when not wanted, which must not put it on the wire.
+        commands: [{ name: "review", description: "Review changes" }],
+      };
     },
     onAcp: (frame) => {
       received.push(frame);
-    },
-    effects: {
-      resources: [{
-        workspaceRelativePath: ".agents/skills",
-        materializationFormat: "ora/skill-directory.v1",
-        coordination: "quiesce_before_mutation",
-      }],
-      coordinate: (context) => {
-        effectCalls.push(context);
-        return { barrier: "held" };
-      },
-      reactivate: (context) => {
-        effectCalls.push(context);
-        return { restarted: true };
-      },
-      verifyReady: (context) => {
-        effectCalls.push(context);
-        return { loaded: true };
-      },
     },
   });
   const harness = createTransportHarness();
@@ -181,17 +168,10 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
       methods: [
         "agent/start",
         "agent/stop",
+        "agent/discover",
         "agent/list_models",
-        "effect/coordinate",
-        "effect/reactivate",
-        "effect/verify_ready",
       ],
       emits: ["agent/acp"],
-      effectResources: [{
-        workspaceRelativePath: ".agents/skills",
-        materializationFormat: "ora/skill-directory.v1",
-        coordination: "quiesce_before_mutation",
-      }],
     },
   });
 
@@ -223,55 +203,42 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     id: 2,
     result: { models: [{ id: "opus", displayName: "Opus", default: false }] },
   });
+  const discoverMessage = (id: number, includeCommands: boolean) => ({
+    jsonrpc: "2.0" as const,
+    id,
+    method: "agent/discover",
+    // Ora leaves these out when commands are not wanted, and so must the context.
+    params: { cwd: "/home/user/project", includeCommands, skills },
+  });
+  const skills = {
+    readRoots: ["/data/skills"],
+    directories: ["/data/skills/review"],
+    revision: "7",
+  };
+  const models = [{ id: "opus", displayName: "Opus", default: false }];
+  await harness.send(discoverMessage(20, true));
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    id: 20,
+    result: {
+      models,
+      commands: [{ name: "review", description: "Review changes" }],
+    },
+  });
+  await harness.send(discoverMessage(21, false));
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    id: 21,
+    result: { models },
+  });
   // Discovery happens outside any session, so the directory the host resolved is the only thing
-  // telling a plugin which project it is answering for.
-  assertEquals(discoveryContexts, [{ cwd: "/home/user/project" }]);
+  // telling a plugin which project it is answering for. The old name never asks for commands.
+  assertEquals(discoveryContexts, [
+    { cwd: "/home/user/project", includeCommands: false },
+    { cwd: "/home/user/project", includeCommands: true, skills },
+    { cwd: "/home/user/project", includeCommands: false },
+  ]);
   assertEquals(received, [{ jsonrpc: "2.0", id: 7, method: "initialize" }]);
-
-  const coordination = {
-    targetId: "target-1",
-    resourceIds: ["resource-1"],
-  };
-  await harness.send({
-    jsonrpc: "2.0",
-    id: 4,
-    method: "effect/coordinate",
-    params: coordination,
-  });
-  assertEquals((await harness.responses.next()).value, {
-    jsonrpc: "2.0",
-    id: 4,
-    result: { barrier: "held" },
-  });
-  await harness.send({
-    jsonrpc: "2.0",
-    id: 5,
-    method: "effect/reactivate",
-    params: coordination,
-  });
-  assertEquals((await harness.responses.next()).value, {
-    jsonrpc: "2.0",
-    id: 5,
-    result: { restarted: true },
-  });
-  const readiness = {
-    targetId: "target-1",
-    generation: 7,
-    consumerRevisionId: "consumer-revision-1",
-    projectionDigest: "sha256:projection",
-  };
-  await harness.send({
-    jsonrpc: "2.0",
-    id: 6,
-    method: "effect/verify_ready",
-    params: readiness,
-  });
-  assertEquals((await harness.responses.next()).value, {
-    jsonrpc: "2.0",
-    id: 6,
-    result: { loaded: true },
-  });
-  assertEquals(effectCalls, [coordination, coordination, readiness]);
 
   await send?.({ jsonrpc: "2.0", id: 7, result: { protocolVersion: 1 } });
   assertEquals((await harness.responses.next()).value, {
@@ -304,7 +271,7 @@ Deno.test("reports a missing agent with the code Ora retries quietly", async () 
       );
     },
     stop: () => {},
-    listModels: () => [],
+    discover: () => ({ models: [] }),
     onAcp: () => {},
   });
   const harness = createTransportHarness();
@@ -328,4 +295,93 @@ Deno.test("reports a missing agent with the code Ora retries quietly", async () 
   });
   await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
   await run;
+});
+
+Deno.test("keeps unknown commands apart from an empty report", async () => {
+  for (const commands of [undefined, []]) {
+    const plugin = defineAgent({
+      start: () => {},
+      stop: () => {},
+      discover: () => ({ models: [], commands }),
+      onAcp: () => {},
+    });
+    const harness = createTransportHarness();
+    const run = plugin.run(harness.transport);
+    await harness.responses.next();
+    await harness.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "agent/discover",
+      params: { cwd: "/home/user/project", includeCommands: true },
+    });
+    assertEquals((await harness.responses.next()).value, {
+      jsonrpc: "2.0",
+      id: 1,
+      result: commands === undefined
+        ? { models: [] }
+        : { models: [], commands },
+    });
+    await harness.send({ jsonrpc: "2.0", method: "ora/shutdown", params: {} });
+    await run;
+  }
+});
+
+Deno.test("gives discover the host's deadline, before which cleanup keeps its time", async () => {
+  const { now } = Date;
+  const { setTimeout: schedule } = globalThis;
+  const asked = 1_000_000;
+  // Less than a whole budget away: the request spent the rest of it on its way here.
+  const stated = asked + AGENT_DISCOVERY_BUDGET_MS / 2;
+  const discover = (deadline: number) => ({
+    method: "agent/discover",
+    params: { cwd: "/p", includeCommands: true, deadline },
+  });
+  const requests: {
+    request: { method: string; params: JsonValue };
+    expected: number;
+    allowed: number;
+  }[] = [
+    { request: discover(stated), expected: stated, allowed: 100 },
+    { request: discover(asked - 1), expected: asked, allowed: 0 },
+    {
+      request: { method: "agent/list_models", params: { cwd: "/p" } },
+      expected: asked + AGENT_DISCOVERY_BUDGET_MS,
+      allowed: 100,
+    },
+  ];
+  for (const { request, expected, allowed } of requests) {
+    let deadline: number | undefined;
+    let waited: number | undefined;
+    const plugin = defineAgent({
+      start: () => {},
+      stop: () => {},
+      discover: async (context) => {
+        deadline = context.deadline;
+        // `session/new` answers a tenth of a second before the reserve begins.
+        Date.now = () =>
+          expected - AGENT_DISCOVERY_CLEANUP_RESERVE_MS - allowed;
+        globalThis.setTimeout = ((fire: () => void, delay: number) => {
+          waited = delay;
+          return schedule(fire, 0);
+        }) as typeof setTimeout;
+        await waitForAgentCommands(context, new Promise(() => {}));
+        return { models: [] };
+      },
+      onAcp: () => {},
+    });
+    const harness = createTransportHarness();
+    const run = plugin.run(harness.transport);
+    await harness.responses.next();
+    try {
+      Date.now = () => asked;
+      await harness.send({ jsonrpc: "2.0", id: 1, ...request });
+      await harness.responses.next();
+    } finally {
+      Date.now = now;
+      globalThis.setTimeout = schedule;
+    }
+    assertEquals([deadline, waited], [expected, allowed]);
+    await harness.send({ jsonrpc: "2.0", method: "ora/shutdown", params: {} });
+    await run;
+  }
 });

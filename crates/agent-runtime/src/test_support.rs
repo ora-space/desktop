@@ -3,7 +3,7 @@
 //! These are compiled only with the `test-support` feature. Production keeps the fixed
 //! inactivity schedule in `limits.rs` and never reaches this module.
 
-use crate::{AgentRuntimeHost, AgentRuntimeManager};
+use crate::{AgentRuntimeHost, AgentRuntimeManager, SkillCatalogSource as _};
 use std::time::Duration;
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
@@ -23,5 +23,13 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             .prompt_inactivity_windows
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(windows);
+    }
+
+    /// Reports the Skill revision a discovery would be given now.
+    ///
+    /// Lets a host check that the catalog it handed the runtime counts the same changes as the code
+    /// that makes them.
+    pub fn skill_revision(&self) -> u64 {
+        self.inner.skill_catalog.revision()
     }
 }

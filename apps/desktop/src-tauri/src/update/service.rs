@@ -3,12 +3,13 @@
 use super::artifact_store::{ArtifactDescriptor, UpdateArtifactStore};
 use super::job::UpdateJob;
 use super::platform::{InstallSupport, install_support};
-use super::state::{ReadyUpdate, RuntimeUpdateState};
+use super::state::{OfferedRelease, RuntimeUpdateState};
 use super::verifier::UpdateVerifier;
 use super::{DesktopUpdateStatus, UpdateError};
 use ora_backend::Settings;
 use ora_logging::{ora_error, ora_info, ora_warn};
 use ora_scheduler::{CronHandle, DelayHandle, Scheduler};
+use ora_utils::error::error_chain;
 use semver::Version;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -129,7 +130,10 @@ impl UpdateService {
             self.set_state(RuntimeUpdateState::Checking);
         }
         if let Err(error) = self.check_and_download_inner().await {
-            ora_warn!(message = "Desktop update check failed", error = %error);
+            ora_warn!(
+                message = "Desktop update check failed",
+                error = %error_chain(&error),
+            );
             let retained_is_valid = match retained.as_ref() {
                 Some(ready) => self
                     .inner
@@ -139,19 +143,16 @@ impl UpdateService {
                     .is_ok(),
                 None => false,
             };
-            match retained {
-                Some(ready) if retained_is_valid => {
-                    self.set_state(RuntimeUpdateState::Ready(ready));
-                }
-                Some(_) | None => self.set_state(RuntimeUpdateState::Failed {
-                    message: error.to_string(),
-                }),
-            }
+            self.set_state(RuntimeUpdateState::after_failed_check(
+                retained,
+                retained_is_valid,
+                &error,
+            ));
         }
     }
 
-    /// Installs the ready artifact after re-reading its record and signature from disk.
-    pub async fn install(&self) -> Result<(), UpdateError> {
+    /// Installs the confirmed release after re-reading its record and signature from disk.
+    pub async fn install(&self, version: &str) -> Result<(), UpdateError> {
         let _operation = self.inner.operation.lock().await;
         let ready = {
             let mut state = self
@@ -159,7 +160,7 @@ impl UpdateService {
                 .state
                 .lock()
                 .expect("update state mutex is not poisoned");
-            let ready = state.begin_install()?;
+            let ready = state.begin_install(version)?;
             let status = state.status();
             drop(state);
             self.emit_status(status);
@@ -175,7 +176,7 @@ impl UpdateService {
             Ok(bytes) => bytes,
             Err(error) => {
                 self.set_state(RuntimeUpdateState::Failed {
-                    message: error.to_string(),
+                    message: error_chain(&error),
                 });
                 return Err(error);
             }
@@ -217,16 +218,19 @@ impl UpdateService {
             return Ok(());
         };
 
+        // Built from the manifest of this very check, so a status never shows another release's notes.
+        let offered = OfferedRelease::from_manifest(
+            &update.raw_json,
+            &self.inner.app.package_info().version,
+            update.version.clone(),
+        );
         if let InstallSupport::Manual(reason) = install_support() {
             self.inner.artifacts.clear();
             ora_info!(
                 message = "Desktop update requires a manual installation",
                 version = %update.version,
             );
-            self.set_state(RuntimeUpdateState::ManualUpdate {
-                version: update.version,
-                reason,
-            });
+            self.set_state(offered.manual(reason));
             return Ok(());
         }
 
@@ -244,11 +248,7 @@ impl UpdateService {
             .await?
         {
             let version = descriptor.identity.release_version.clone();
-            self.set_state(RuntimeUpdateState::Ready(ReadyUpdate {
-                installer: update,
-                descriptor,
-                artifact,
-            }));
+            self.set_state(offered.ready(update, descriptor, artifact));
             ora_info!(message = "Desktop update recovered from cache", version = %version);
             return Ok(());
         }
@@ -265,11 +265,7 @@ impl UpdateService {
             .commit(&descriptor, &bytes, &self.inner.verifier)
             .await?;
         let version = descriptor.identity.release_version.clone();
-        self.set_state(RuntimeUpdateState::Ready(ReadyUpdate {
-            installer: update,
-            descriptor,
-            artifact,
-        }));
+        self.set_state(offered.ready(update, descriptor, artifact));
         ora_info!(message = "Desktop update downloaded", version = %version);
         Ok(())
     }

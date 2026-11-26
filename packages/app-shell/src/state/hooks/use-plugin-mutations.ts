@@ -68,8 +68,8 @@ export function usePluginMutations(pluginId: string, agentRef?: string) {
     // Unlike the other lifecycle endpoints, uninstall returns only the plugin
     // id. Callers that still own the installed snapshot provide its package
     // identity so agent availability and display caches cannot survive removal.
-    onSuccess: () => {
-      forgetPluginLogLevel(queryClient, pluginId);
+    onSuccess: async () => {
+      await forgetPluginLogLevel(queryClient, pluginId);
       return agentRef === undefined
         ? invalidateAgentAvailability(queryClient)
         : refreshAgent(queryClient, agentRef, "availability");

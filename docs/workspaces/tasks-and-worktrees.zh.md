@@ -12,7 +12,7 @@
 
 `CreateTaskHandler` 在 `TaskWorktreeProvisioner` 端口之后完成整个流程，因此没有任何 Git 类型进入契约，单元测试也可以换成假的 provisioner：
 
-1. 检查项目根目录是 Git 仓库；不是时 worktree 模式显式失败。
+1. 检查项目根目录是 Git 仓库；不是时 worktree 模式显式失败。Desktop 会依据 `listWorkspaces` 报告的 `git` 能力，事先为这类项目隐藏新建 worktree 的入口，见 [Workspace 评审](workspace-review.zh.md#没有-git-的目录)。
 2. 把选中的本地基础 ref 解析为不可变的 commit id。ref 已经不存在时，在创建任何东西之前返回 `base_branch_not_found`。
 3. 预留 Task 和 Workspace id，保证它们的短分支前缀不冲突（见下文）。
 4. 持久化一个 **provisioning 租约**，写明精确的仓库根、checkout 路径和分支。

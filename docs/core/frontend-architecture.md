@@ -30,14 +30,14 @@ behavior. Features never register resources when they mount. Any test that rende
 `state/data/` owns cache identity and shared data rules. There is no global key registry or barrel:
 consumers import the owner they need.
 
-| Owner | Responsibility |
-|---|---|
-| `workspace.ts`, `sessions.ts` | Shared lists, adopting authoritative responses, scrubbing after aggregate deletion, session tree placement |
-| `workflows.ts`, `workflow-analysis.ts`, `workflow-runs.ts`, `workflow-run-retry.ts` | Definition, draft, version and execution-analysis queries; persisted run queries, mutations, projections and retry presentation |
-| `mock-workflows.ts`, `mock-workflow-runs.ts`, `mock-workflow-mounts.ts` | Memory-runtime identities and subscriptions, kept apart from persisted run caches |
-| `files.ts`, `file-watch.ts`, `diff.ts`, `workspace-status.ts`, `workspace-review.ts` | Scoped file access, watcher-driven invalidation, workspace diff, status and review refresh |
-| `plugins.ts`, `agent-runtime.ts`, `plugin-lifecycle.ts`, `mcp-health.ts` | Catalog and configuration caches, per-agent model prefixes, cross-domain lifecycle coordination, MCP health |
-| `agents.ts`, `skills.ts`, `settings.ts`, `identity.ts`, `effects.ts` | Definition, preference, identity and Effect caches |
+| Owner                                                                                | Responsibility                                                                                                                  |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `workspace.ts`, `sessions.ts`                                                        | Shared lists, adopting authoritative responses, scrubbing after aggregate deletion, session tree placement                      |
+| `workflows.ts`, `workflow-analysis.ts`, `workflow-runs.ts`, `workflow-run-retry.ts`  | Definition, draft, version and execution-analysis queries; persisted run queries, mutations, projections and retry presentation |
+| `mock-workflows.ts`, `mock-workflow-runs.ts`, `mock-workflow-mounts.ts`              | Memory-runtime identities and subscriptions, kept apart from persisted run caches                                               |
+| `files.ts`, `file-watch.ts`, `diff.ts`, `workspace-status.ts`, `workspace-review.ts` | Scoped file access, watcher-driven invalidation, workspace diff, status and review refresh                                      |
+| `plugins.ts`, `agent-runtime.ts`, `plugin-lifecycle.ts`, `mcp-health.ts`             | Catalog and configuration caches, per-agent model prefixes, cross-domain lifecycle coordination, MCP health                     |
+| `agents.ts`, `skills.ts`, `settings.ts`, `identity.ts`                               | Definition, preference and identity caches                                                                                      |
 
 UI hooks own selection, draft and composer cleanup, mutation activity and view-specific actions;
 they apply authoritative results through the data owner before coordinating UI state. Rules worth
@@ -62,11 +62,12 @@ Plugin refreshes are scoped deliberately:
 
 | Trigger | Invalidated |
 |---|---|
-| Agent activation | Runtime availability and that agent's model queries in every workspace |
-| Agent stop or removal | Runtime availability, not model discovery against the stopped runtime |
+| Agent activation | Runtime availability and that agent's discovery queries in every workspace |
+| Agent stop or removal | Runtime availability, not discovery against the stopped runtime |
 | Settled plugin mutation | Installed and available plugins, and this session's Hook lifecycle results |
 | `PluginStatusChanged` | Installed plugins, runtime availability and Skills; not available plugins or models |
-| `AgentModelsInvalidated` | Only that agent's model-query prefix |
+| `AgentModelsInvalidated` (Skills changed) | Only that agent's discoveries that include commands, cancelling requests in flight first; answers given for models alone stand, and the models of the outdated ones are kept for such callers |
+| Application stream connected again | The same for every agent, because a change may have been missed |
 | Explicit Hook initialization | Only the Hook lifecycle results |
 
 Data tests use real `QueryClient` caches and observers to verify exact invalidation and refetch
@@ -111,7 +112,7 @@ const state = createWorkspaceMemory();
 const client = createTestClient(workspaceHandlers(state));
 ```
 
-Synthetic fixtures such as `emptyFilesHandlers` and `readyEffectHandlers` describe their behavior in
+Synthetic fixtures such as `emptyFilesHandlers` describe their behavior in
 their names and are never global defaults; a test with no dependencies starts from
 `createTestClient({})`. Custom behavior, including scripted chat streams and injected failures,
 uses typed handlers. Never replace generated client methods or cast partial objects to
