@@ -4,6 +4,7 @@ export {
   AGENT_UNUSABLE,
   type AgentCommand,
   type AgentDefinition,
+  type AgentDiscoverSkills,
   type AgentDiscovery,
   type AgentDiscoveryContext,
   type AgentModel,
@@ -13,6 +14,8 @@ export {
 export {
   AGENT_DISCOVERY_CLEANUP_RESERVE_MS,
   type AgentCommandsWait,
+  type SkillSessionSetup,
+  skillSessionSetup,
   waitForAgentCommands,
 } from "./discovery.ts";
 export {

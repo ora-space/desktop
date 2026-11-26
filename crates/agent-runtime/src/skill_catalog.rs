@@ -7,16 +7,18 @@
 #[cfg(test)]
 mod tests;
 
-use crate::host::{SkillCatalogEntry, SkillCatalogSnapshot};
+use crate::host::{SkillCatalogEntry, SkillCatalogSnapshot, SkillCatalogSource};
 use agent_client_protocol_schema::v1::{
     ContentBlock, LoadSessionRequest, Meta, NewSessionRequest, TextContent,
 };
+use ora_domain::WorkspaceId;
+use ora_logging::ora_warn;
+use ora_plugin_protocol::AgentDiscoverSkills;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::path::PathBuf;
 
-/// ACP `_meta` key carrying the setup-time list of available Skill package directories.
-pub const SKILL_DIRECTORIES_META_KEY: &str = "ora/skillDirectories";
+pub use ora_plugin_protocol::SKILL_DIRECTORIES_META_KEY;
 
 /// In-memory record of the Skill entries already announced to one live provider session.
 ///
@@ -139,30 +141,64 @@ pub(crate) fn insert_catalog_block(
     blocks
 }
 
+/// Lists the package directories of these Skills as session setup and discovery name them.
+fn skill_directories(entries: &[SkillCatalogEntry]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    sorted_distinct_entries(entries)
+        .into_iter()
+        .filter(|entry| seen.insert(entry.package_dir.clone()))
+        .map(|entry| entry.package_dir.to_string_lossy().into_owned())
+        .collect()
+}
+
 /// Builds the `_meta` payload carrying current Skill package directories, or `None` when empty.
 pub(crate) fn skill_directories_meta(entries: &[SkillCatalogEntry]) -> Option<Meta> {
-    if entries.is_empty() {
-        return None;
-    }
-    let sorted = sorted_distinct_entries(entries);
-    let mut seen = BTreeSet::new();
-    let mut directories = Vec::new();
-    for entry in sorted {
-        if seen.insert(entry.package_dir.clone()) {
-            directories.push(serde_json::Value::String(
-                entry.package_dir.to_string_lossy().into_owned(),
-            ));
-        }
-    }
+    let directories = skill_directories(entries);
     if directories.is_empty() {
         return None;
     }
     let mut meta = Meta::new();
-    meta.insert(
-        SKILL_DIRECTORIES_META_KEY.to_string(),
-        serde_json::Value::Array(directories),
-    );
+    meta.insert(SKILL_DIRECTORIES_META_KEY.to_string(), directories.into());
     Some(meta)
+}
+
+/// How often discovery reads the catalog when changes land while it does.
+const DISCOVERY_CATALOG_READS: usize = 3;
+
+/// Builds what discovery tells a plugin about the Skills a session set up now would be given.
+///
+/// The revision is never newer than the catalog read with it: a plugin that caches may then hold a
+/// newer answer under an older revision, which nobody asks for again, but never the reverse.
+pub(crate) fn discovery_skills<S: SkillCatalogSource>(
+    source: &S,
+    workspace_id: &WorkspaceId,
+) -> AgentDiscoverSkills {
+    let mut revision = source.revision();
+    let mut reads = 0;
+    let entries = loop {
+        let entries = match source.skill_catalog(workspace_id) {
+            Ok(snapshot) => snapshot.entries,
+            Err(error) => {
+                ora_warn!(
+                    workspace_id = %workspace_id,
+                    error = %error,
+                    "failed to read skill catalog for agent discovery; omitting skill directories",
+                );
+                Vec::new()
+            }
+        };
+        reads += 1;
+        let now = source.revision();
+        if now == revision || reads == DISCOVERY_CATALOG_READS {
+            break entries;
+        }
+        revision = now;
+    };
+    AgentDiscoverSkills {
+        read_roots: source.extra_read_roots(),
+        directories: skill_directories(&entries),
+        revision: revision.to_string(),
+    }
 }
 
 /// ACP session setup requests that can carry readable roots and skill directory metadata.

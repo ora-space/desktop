@@ -62,6 +62,7 @@ fn test_plugins_with_host(
             SystemClock,
             events.publisher(),
             Arc::new(Settings::new(pool.clone())),
+            Default::default(),
         )
         .expect("open plugin host"),
     );
@@ -71,6 +72,7 @@ fn test_plugins_with_host(
             pool: pool.clone(),
             home_directory: root.to_path_buf(),
             skills_root: root.join("atoms").join("skills"),
+            skill_revision: Default::default(),
             relative_path_base: root.to_path_buf(),
             sessions_root: root.join("sessions"),
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),

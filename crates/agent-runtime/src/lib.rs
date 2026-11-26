@@ -298,11 +298,14 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         &self,
         request: ora_contracts::DiscoverAgentRequest,
     ) -> Result<ora_contracts::DiscoverAgentResponse, RuntimeError> {
-        let cwd = self.workspace_cwd(&WorkspaceId::new(request.workspace_id))?;
+        let workspace_id = WorkspaceId::new(request.workspace_id);
+        let cwd = self.workspace_cwd(&workspace_id)?;
         let agent_ref = domain_agent_ref(request.agent_ref)?;
         let connection = self.inner.connections.for_agent(&agent_ref)?.current()?;
         let scope = if request.include_commands {
-            plugin_agent::DiscoveryScope::ModelsAndCommands
+            plugin_agent::DiscoveryScope::ModelsAndCommands {
+                skills: skill_catalog::discovery_skills(&self.inner.skill_catalog, &workspace_id),
+            }
         } else {
             plugin_agent::DiscoveryScope::Models
         };

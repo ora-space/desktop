@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use crate::skill_revision::SkillRevision;
 use ora_agent_runtime::{
     RuntimeError, SkillCatalogEntry, SkillCatalogSnapshot, SkillCatalogSource,
 };
@@ -21,17 +22,24 @@ pub(crate) struct DesktopSkillCatalog {
     skill_repository: SqliteSkillRepository,
     skills_root: PathBuf,
     plugins_installed_root: PathBuf,
+    revision: SkillRevision,
 }
 
 impl DesktopSkillCatalog {
     /// Creates a catalog reader backed by the shared SQLite pool and Desktop storage roots.
-    pub(crate) fn new(pool: RepositoryPool, skills_root: PathBuf, home_directory: &Path) -> Self {
+    pub(crate) fn new(
+        pool: RepositoryPool,
+        skills_root: PathBuf,
+        home_directory: &Path,
+        revision: SkillRevision,
+    ) -> Self {
         Self {
             skill_repository: SqliteSkillRepository::new(pool),
             skills_root: strip_verbatim_prefix(&skills_root),
             plugins_installed_root: strip_verbatim_prefix(&ora_plugin_manager::installed_root(
                 home_directory,
             )),
+            revision,
         }
     }
 }
@@ -41,6 +49,8 @@ impl SkillCatalogSource for DesktopSkillCatalog {
         &self,
         _workspace_id: &WorkspaceId,
     ) -> Result<SkillCatalogSnapshot, RuntimeError> {
+        // Read first: a change that lands while the packages are read is counted on its own.
+        let revision = self.revision.current();
         let skills = self.skill_repository.list_skills().map_err(|error| {
             RuntimeError::internal("failed to query skill catalog for session delivery", error)
         })?;
@@ -75,10 +85,21 @@ impl SkillCatalogSource for DesktopSkillCatalog {
                 }
             }
         }
+        self.revision.observed(
+            revision,
+            entries
+                .iter()
+                .map(|entry| entry.skill_md_path.clone())
+                .collect(),
+        );
         Ok(SkillCatalogSnapshot {
             entries,
             unreadable_paths,
         })
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision.current()
     }
 
     fn extra_read_roots(&self) -> Vec<PathBuf> {

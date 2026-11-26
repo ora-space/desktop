@@ -4,8 +4,8 @@ use super::{PipeProcess, PipeSpawner};
 use crate::clock::SystemClock;
 use crate::plugin_agent::{DiscoveryScope, PluginAgentError, discover};
 use ora_plugin_protocol::{
-    AGENT_DISCOVERY_BUDGET_MS, AgentCommand, AgentDiscoverResult, AgentModel, read_message,
-    write_message,
+    AGENT_DISCOVERY_BUDGET_MS, AgentCommand, AgentDiscoverResult, AgentDiscoverSkills, AgentModel,
+    read_message, write_message,
 };
 use ora_plugin_runtime::{
     NoHostRequests, PluginLogSetup, PluginRuntime, PluginRuntimeConfig, PluginRuntimeError,
@@ -93,6 +93,17 @@ async fn discovery(
     (outcome, received)
 }
 
+/// Asks for commands, with the Skills a session would be given.
+fn with_commands() -> DiscoveryScope {
+    DiscoveryScope::ModelsAndCommands {
+        skills: AgentDiscoverSkills {
+            read_roots: vec!["/data/skills".into()],
+            directories: vec!["/data/skills/review".to_string()],
+            revision: "7".to_string(),
+        },
+    }
+}
+
 /// Answers both methods, always with one command under the new name.
 fn answer(method: &str) -> Value {
     let models = json!([{"id":"m1", "displayName":"Model 1", "default":true}]);
@@ -141,21 +152,22 @@ async fn the_new_method_is_called_alone_when_registered() {
         &["agent/list_models", "agent/discover"][..],
     ] {
         for (scope, wanted, commands) in [
-            (
-                DiscoveryScope::ModelsAndCommands,
-                true,
-                Some(vec![review.clone()]),
-            ),
+            (with_commands(), true, Some(vec![review.clone()])),
             (DiscoveryScope::Models, false, None),
         ] {
             let (outcome, mut received) = discovery(methods, answer, scope).await;
             let deadline = take_deadline(&mut received);
 
             assert_eq!(outcome, Ok(discovered(commands)));
+            let mut params = json!({"cwd":"project", "includeCommands":wanted});
+            // Models do not depend on Skills, so a plugin that caches them must not see any.
+            if wanted {
+                params["skills"] = json!({"readRoots":["/data/skills"],
+                    "directories":["/data/skills/review"], "revision":"7"});
+            }
             assert_eq!(
                 received,
-                vec![json!({"method":"agent/discover",
-                    "params":{"cwd":"project", "includeCommands":wanted}})]
+                vec![json!({"method":"agent/discover", "params":params})]
             );
             assert!(deadline.is_some());
         }
@@ -165,12 +177,7 @@ async fn the_new_method_is_called_alone_when_registered() {
 /// A plugin published before the new name still lists models, and its commands stay unknown.
 #[tokio::test]
 async fn an_older_plugin_is_asked_by_the_models_only_name() {
-    let (outcome, received) = discovery(
-        &["agent/list_models"],
-        answer,
-        DiscoveryScope::ModelsAndCommands,
-    )
-    .await;
+    let (outcome, received) = discovery(&["agent/list_models"], answer, with_commands()).await;
 
     assert_eq!(outcome, Ok(discovered(None)));
     assert_eq!(
@@ -185,7 +192,7 @@ async fn a_failure_does_not_fall_back_to_the_old_method() {
     let (outcome, received) = discovery(
         &["agent/discover", "agent/list_models"],
         |_| json!({"error":{"code":-32000, "message":"no agent"}}),
-        DiscoveryScope::ModelsAndCommands,
+        with_commands(),
     )
     .await;
 
@@ -200,12 +207,7 @@ async fn the_plugin_is_told_when_the_host_stops_waiting() {
     for method in ["agent/discover", "agent/list_models"] {
         let asked = tokio::time::Instant::now();
         let before = SystemClock.now_timestamp_millis();
-        let (outcome, mut received) = discovery(
-            &[method],
-            |_| Value::Null,
-            DiscoveryScope::ModelsAndCommands,
-        )
-        .await;
+        let (outcome, mut received) = discovery(&[method], |_| Value::Null, with_commands()).await;
         let after = SystemClock.now_timestamp_millis();
         let deadline = take_deadline(&mut received);
 

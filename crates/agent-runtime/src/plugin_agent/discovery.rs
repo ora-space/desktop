@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use ora_plugin_protocol::{
     AGENT_DISCOVER_METHOD, AGENT_DISCOVERY_BUDGET_MS, AGENT_LIST_MODELS_METHOD,
-    AgentDiscoverParams, AgentDiscoverResult, AgentListModelsParams, AgentListModelsResult,
+    AgentDiscoverParams, AgentDiscoverResult, AgentDiscoverSkills, AgentListModelsParams,
+    AgentListModelsResult,
 };
 use ora_plugin_runtime::PluginRuntime;
 use serde::Serialize;
@@ -37,11 +38,12 @@ impl Deadline {
 }
 
 /// Which facts a discovery is made for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DiscoveryScope {
-    /// Never waits for an agent to report its commands.
+    /// Never waits for an agent to report its commands, and does not depend on Skills.
     Models,
-    ModelsAndCommands,
+    /// Commands may come from Skills, so it is made with those a session would be given.
+    ModelsAndCommands { skills: AgentDiscoverSkills },
 }
 
 /// The one method a discovery calls.
@@ -74,11 +76,16 @@ pub(crate) async fn discover(
     let deadline = Deadline::from_now();
     match discovery_method(&runtime.registration().await.methods) {
         DiscoveryMethod::Discover => {
-            let include_commands = scope == DiscoveryScope::ModelsAndCommands;
+            let skills = match scope {
+                DiscoveryScope::Models => None,
+                DiscoveryScope::ModelsAndCommands { skills } => Some(skills),
+            };
+            let include_commands = skills.is_some();
             let params = AgentDiscoverParams {
                 cwd,
                 include_commands,
                 deadline: deadline.unix_millis,
+                skills,
             };
             let mut result: AgentDiscoverResult =
                 call(runtime, AGENT_DISCOVER_METHOD, params, deadline).await?;

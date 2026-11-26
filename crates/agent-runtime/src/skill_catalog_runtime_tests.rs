@@ -50,6 +50,7 @@ struct DynamicSkillCatalog {
     unreadable_paths: Arc<Mutex<BTreeSet<PathBuf>>>,
     roots: Arc<Mutex<Vec<PathBuf>>>,
     fail_reads: Arc<AtomicBool>,
+    revision: Arc<AtomicU64>,
 }
 
 impl DynamicSkillCatalog {
@@ -68,6 +69,11 @@ impl DynamicSkillCatalog {
     fn set_fail_reads(&self, fail: bool) {
         self.fail_reads.store(fail, Ordering::Release);
     }
+
+    /// Records one committed change to the Skills.
+    fn advance(&self) {
+        self.revision.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 impl SkillCatalogSource for DynamicSkillCatalog {
@@ -85,6 +91,10 @@ impl SkillCatalogSource for DynamicSkillCatalog {
             entries: self.entries.lock().unwrap().clone(),
             unreadable_paths: self.unreadable_paths.lock().unwrap().clone(),
         })
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
     }
 
     fn extra_read_roots(&self) -> Vec<PathBuf> {
@@ -307,7 +317,7 @@ async fn serve_skill_plugin(
         "jsonrpc": "2.0",
         "method": "ora/register",
         "params": {
-            "methods": ["agent/start", "agent/stop", "agent/list_models"],
+            "methods": ["agent/start", "agent/stop", "agent/list_models", "agent/discover"],
             "emits": ["agent/acp"]
         }
     });
@@ -342,6 +352,13 @@ async fn serve_skill_plugin(
                 "result": {"protocol": "acp", "acpVersion": 1}
             }),
             "agent/stop" => json!({"jsonrpc": "2.0", "id": envelope["id"], "result": {}}),
+            "agent/discover" => {
+                // Kept beside the ACP frames so a test can compare it with the setup they carry.
+                let request = json!({"method": method, "params": envelope["params"]});
+                recorded_frames.lock().unwrap().push(request);
+                let result = json!({"models": [], "commands": []});
+                json!({"jsonrpc": "2.0", "id": envelope["id"], "result": result})
+            }
             "agent/acp" => {
                 let frame = &envelope["params"];
                 recorded_frames.lock().unwrap().push(frame.clone());
@@ -1303,6 +1320,123 @@ async fn run_catalog_read_failure_scenario() {
     }
 
     scheduler.shutdown().await;
+}
+
+/// Discovers with commands given exactly the Skills a session set up from the same catalog gets,
+/// and a revision that moves with every change to them.
+async fn run_discovery_matches_session_setup_scenario() {
+    ora_logging::initialize_test_clock();
+    let dir = TempDir::new().unwrap();
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    let attach = Arc::new(MockAgentAttach::default());
+    attach
+        .install(
+            dir.path(),
+            /*provider_prefix*/ "d",
+            /*additional_directories_supported*/ true,
+            /*legacy_effect_resources*/ false,
+            frames.clone(),
+            Arc::default(),
+            Arc::default(),
+            Arc::default(),
+        )
+        .await;
+    let skills = DynamicSkillCatalog::default();
+    skills.set_roots(vec![
+        dir.path().join("atoms").join("skills"),
+        dir.path().join("plugins").join("installed"),
+    ]);
+    let skill = |name: &str, root: &str| {
+        let directory = dir.path().join(root).join(name);
+        let path = directory.join("SKILL.md");
+        entry(
+            name,
+            "A skill.",
+            &path.to_string_lossy(),
+            &directory.to_string_lossy(),
+        )
+    };
+    skills.set_entries(vec![
+        skill("alpha", "atoms/skills"),
+        skill("beta", "plugins/installed"),
+    ]);
+    let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
+    let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        attach: attach.clone(),
+        store: MemorySessionStore::default(),
+        directory: FixedDir(dir.path().to_path_buf()),
+        session_setup: ControllableMcpSetup::default(),
+        skill_catalog: skills.clone(),
+        events: RecordedEvents::default(),
+        home_directory: dir.path().to_path_buf(),
+        sessions_root: dir.path().join("sessions"),
+        scheduler: scheduler.clone(),
+    })
+    .unwrap();
+    manager
+        .wait_for_agent(&AgentRef::parse(PLUGIN_ID).unwrap())
+        .await
+        .unwrap();
+    let discover = |include_commands| {
+        manager.discover_agent(ora_contracts::DiscoverAgentRequest {
+            agent_ref: PLUGIN_ID.into(),
+            workspace_id: "ws-1".into(),
+            include_commands,
+        })
+    };
+    let discovered = || {
+        let recorded = frames.lock().unwrap();
+        let requests = acp_methods(&recorded, "agent/discover");
+        requests.last().map(|request| request["params"].clone())
+    };
+
+    manager
+        .start_session(StartSessionRequest {
+            workspace_id: "ws-1".into(),
+            agent_ref: PLUGIN_ID.into(),
+            model: None,
+        })
+        .await
+        .unwrap();
+    discover(true).await.unwrap();
+    let first = discovered().expect("discovery with commands");
+    let setup = {
+        let recorded = frames.lock().unwrap();
+        acp_methods(&recorded, "session/new")[0]["params"].clone()
+    };
+    assert_eq!(
+        setup["additionalDirectories"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(first["skills"]["readRoots"], setup["additionalDirectories"]);
+    assert_eq!(
+        first["skills"]["directories"],
+        setup["_meta"][SKILL_DIRECTORIES_META_KEY]
+    );
+
+    discover(false).await.unwrap();
+    assert_eq!(
+        discovered().expect("models-only discovery").get("skills"),
+        None
+    );
+
+    skills.advance();
+    discover(true).await.unwrap();
+    let after = discovered().expect("discovery after a change");
+    assert_eq!(after["skills"]["readRoots"], first["skills"]["readRoots"]);
+    assert_ne!(after["skills"]["revision"], first["skills"]["revision"]);
+
+    scheduler.shutdown().await;
+}
+
+#[tokio::test]
+async fn discovery_is_given_the_skills_a_session_set_up_now_would_get() {
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        run_discovery_matches_session_setup_scenario(),
+    )
+    .await
+    .expect("discovery and session setup scenario timed out");
 }
 
 #[tokio::test]

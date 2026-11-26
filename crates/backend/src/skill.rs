@@ -1,5 +1,6 @@
 use crate::BackendError;
 use crate::clock::SystemClock;
+use crate::skill_revision::{CountedSkillRepository, SkillRevision};
 use ora_application::{
     CreateSkillHandler, DeleteSkillHandler, FilesystemSkillStorage, GetSkillHandler,
     ListSkillsHandler, NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportService,
@@ -21,17 +22,17 @@ mod package_tests;
 /// Groups the concrete skill handlers and import service shared by runtime adapters.
 pub struct SkillApi {
     create: CreateSkillHandler<
-        SqliteSkillRepository,
+        CountedSkillRepository,
         FilesystemSkillStorage,
         UuidSkillIdGenerator,
         SystemClock,
     >,
-    get: GetSkillHandler<SqliteSkillRepository, FilesystemSkillStorage>,
-    list: ListSkillsHandler<SqliteSkillRepository, FilesystemSkillStorage>,
-    update: UpdateSkillHandler<SqliteSkillRepository, FilesystemSkillStorage, SystemClock>,
-    delete: DeleteSkillHandler<SqliteSkillRepository, FilesystemSkillStorage, SystemClock>,
+    get: GetSkillHandler<CountedSkillRepository, FilesystemSkillStorage>,
+    list: ListSkillsHandler<CountedSkillRepository, FilesystemSkillStorage>,
+    update: UpdateSkillHandler<CountedSkillRepository, FilesystemSkillStorage, SystemClock>,
+    delete: DeleteSkillHandler<CountedSkillRepository, FilesystemSkillStorage, SystemClock>,
     import: SkillImportService<
-        SqliteSkillRepository,
+        CountedSkillRepository,
         FilesystemSkillStorage,
         UuidSkillImportIdGenerator,
         SystemClock,
@@ -41,8 +42,13 @@ pub struct SkillApi {
 
 impl SkillApi {
     /// Builds skill handlers from the shared repository pool and formal skills root.
-    pub(crate) fn new(pool: RepositoryPool, skills_root: PathBuf, clock: SystemClock) -> Self {
-        let repository = SqliteSkillRepository::new(pool);
+    pub(crate) fn new(
+        pool: RepositoryPool,
+        skills_root: PathBuf,
+        revision: SkillRevision,
+        clock: SystemClock,
+    ) -> Self {
+        let repository = CountedSkillRepository::new(SqliteSkillRepository::new(pool), revision);
         let storage = FilesystemSkillStorage::new(skills_root.clone());
 
         Self {

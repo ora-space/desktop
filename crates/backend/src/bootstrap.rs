@@ -9,6 +9,7 @@ use crate::scheduled_task::{ScheduledTaskApi, ScheduledTaskSetup};
 use crate::session::Sessions;
 use crate::settings::Settings;
 use crate::skill::SkillApi;
+use crate::skill_revision::SkillRevision;
 use crate::task::{TaskApi, TaskSetup};
 use crate::workflow::WorkflowApi;
 use crate::workflow::run::{WorkflowRunSetup, WorkflowRuns};
@@ -166,6 +167,7 @@ impl Backend {
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
         let app_events = Arc::new(AppEventHub::new());
+        let skill_revision = SkillRevision::default();
         let plugin = Arc::new(
             PluginApi::open(
                 pool.clone(),
@@ -174,6 +176,7 @@ impl Backend {
                 clock,
                 app_events.publisher(),
                 settings.clone(),
+                skill_revision.clone(),
             )
             .map_err(BackendBootstrapError::Plugin)?,
         );
@@ -202,6 +205,7 @@ impl Backend {
                 pool: pool.clone(),
                 home_directory: paths.home_directory,
                 skills_root: skills_root.clone(),
+                skill_revision: skill_revision.clone(),
                 relative_path_base: relative_path_base.clone(),
                 sessions_root: sessions_root.clone(),
                 scheduler: scheduler.clone(),
@@ -216,6 +220,15 @@ impl Backend {
         }
         #[cfg(not(feature = "test-support"))]
         let _ = prompt_inactivity_windows;
+        skill_revision.announce_with({
+            // The runtime reads the catalog that announces, so holding it here would keep both.
+            let runtime = Arc::downgrade(&agent_runtime);
+            move || {
+                if let Some(runtime) = runtime.upgrade() {
+                    runtime.invalidate_discovered_commands();
+                }
+            }
+        });
         plugin.set_mcp_wakeup({
             let runtime = agent_runtime.clone();
             Arc::new(move || runtime.notify_mcp_desired_changed())
@@ -325,7 +338,12 @@ impl Backend {
                 )),
             ),
             agent_runtime: AgentRuntime::new(agent_runtime),
-            skill: Arc::new(SkillApi::new(pool.clone(), skills_root, clock)),
+            skill: Arc::new(SkillApi::new(
+                pool.clone(),
+                skills_root,
+                skill_revision,
+                clock,
+            )),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             workflow: Arc::new(WorkflowApi::new(pool, clock)),
             workflow_run,
@@ -446,6 +464,34 @@ mod tests {
                             .database_origin()
                     });
                     assert_eq!(origins, [DatabaseOrigin::Created, DatabaseOrigin::Existing]);
+                });
+        });
+    }
+
+    /// The runtime discovers with the revision the code that changes the Skills advances.
+    #[test]
+    fn discovery_counts_the_skill_changes_the_settings_commit() {
+        ora_logging::with_trace_logging(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(async {
+                    let temporary = TempDir::new().expect("create temporary backend directory");
+                    let backend = Backend::open(backend_paths(temporary.path(), temporary.path()))
+                        .expect("open backend");
+                    let before = backend.agent_runtime().skill_revision();
+
+                    backend
+                        .skills()
+                        .create(CreateSkillRequest {
+                            name: "review".to_string(),
+                            description: "Review changes".to_string(),
+                            content: None,
+                        })
+                        .expect("create skill");
+
+                    assert_ne!(backend.agent_runtime().skill_revision(), before);
                 });
         });
     }
