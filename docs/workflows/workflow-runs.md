@@ -336,6 +336,8 @@ Failure recovery and a whole-run restart take the run’s current revision as th
 
 If you cancel while a confirmed debug edit is stopping old work, its receipt records `stop_failed` with reason `run_cancelled`. A running workflow is cancelled; a previously finished workflow keeps its original outcome. If the edit applied first, its revision stays in history, but cancellation prevents the remaining dispatches.
 
+Once the edit applies, a session bound only to a retired attempt rejects follow-up prompts with `workflow_node_not_awaiting_input`. Open the replacement attempt to continue the conversation.
+
 On startup Desktop checks unfinished debug operations before ordinary interruption cleanup. If isolation of an external writer cannot be proved, history lists the unresolved attempt IDs and their scope remains blocked. If the revision was already applied, the scheduler can dispatch a ready, unclaimed position. An attempt already started under that revision follows ordinary interruption recovery; it is not dispatched a second time.
 
 Desktop runs the boot sweep only after it holds the application instance lock (see

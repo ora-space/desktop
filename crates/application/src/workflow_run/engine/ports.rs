@@ -428,11 +428,8 @@ pub trait WorkflowRunEngineRepository: WorkflowRetryRepository {
         now: i64,
     ) -> Result<BindWorkflowNodeSessionResult, RepositoryError>;
 
-    /// Finds the live node run bound to a session, if any.
-    ///
-    /// Session bindings are per-node (each node warms its own session), so at most one node run
-    /// carries a given session id; the interactive prompt hook uses this to flip the owning node
-    /// between `Pending` and `Running`.
+    /// Finds the session's live workflow attempt, or its most recent retired binding.
+    /// Prompt admission uses this history to distinguish retired sessions from ordinary ones.
     fn find_node_run_by_session_id(
         &self,
         session_id: &SessionId,

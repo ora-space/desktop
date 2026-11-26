@@ -106,7 +106,7 @@ pub(crate) async fn begin_human_turn(
             .find_node_run_by_session_id(&session_id)
             .map_err(repository_error)?;
         let node_run = node_run
-            .filter(|row| row.id == observed.id)
+            .filter(|row| row.id == observed.id && !row.audit_fields.is_deleted)
             .ok_or_else(|| node_not_awaiting(&observed.node_id))?;
         // The owning run must still be executing; a terminal run rejects a follow-up turn.
         let context = repository

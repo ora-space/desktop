@@ -437,7 +437,7 @@ pub(super) fn find_last_failed_attempt(
     }
 }
 
-/// Finds the live node run bound to a session, if any.
+/// Prefers a live binding and retains the last retired owner for prompt admission.
 pub(super) fn find_node_run_by_session_id(
     connection: &rusqlite::Connection,
     session_id: &SessionId,
@@ -446,7 +446,8 @@ pub(super) fn find_node_run_by_session_id(
         "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
                 started_at, finished_at, created_at, updated_at, is_deleted
          FROM workflow_node_runs
-         WHERE session_id = ?1 AND is_deleted = 0
+         WHERE session_id = ?1
+         ORDER BY is_deleted, created_at DESC, id DESC
          LIMIT 1",
     )?;
     let mut rows = statement.query(params![session_id.as_ref()])?;
