@@ -49,7 +49,9 @@ export function DesktopUpdateControl({ onReview }: { onReview: () => void }) {
           role="status"
           className="px-2 pb-1 text-xs leading-5 text-destructive"
         >
-          {t("update.failedTitle")}
+          {status.operation === "install"
+            ? t("update.installFailed", { version: status.version })
+            : t("update.failedTitle")}
         </p>
       )}
       <div className="flex items-center gap-1">
@@ -126,6 +128,11 @@ function describeStatus(
     case "installing":
       return t("update.installing", { version: status.version });
     case "failed":
-      return t("update.failed", { message: status.message });
+      return status.operation === "install"
+        ? t("update.installFailedDetail", {
+            version: status.version,
+            message: status.message,
+          })
+        : t("update.failed", { message: status.message });
   }
 }

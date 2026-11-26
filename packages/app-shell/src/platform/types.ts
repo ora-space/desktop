@@ -98,7 +98,14 @@ export type DesktopUpdateStatus =
       notes: ReleaseNote[];
     }
   | { kind: "installing"; version: string }
-  | { kind: "failed"; message: string };
+  | ({ kind: "failed"; message: string } & DesktopUpdateFailure);
+
+/**
+ * Names what failed, as the host saw it: a check covers fetching, downloading, and verifying a
+ * release before it is offered; an installation is the confirmed release's last verification.
+ */
+export type DesktopUpdateFailure =
+  { operation: "check" } | { operation: "install"; version: string };
 
 /** Exposes update status and installation without coupling shared UI to Tauri IPC. */
 export interface DesktopUpdateCapability {
