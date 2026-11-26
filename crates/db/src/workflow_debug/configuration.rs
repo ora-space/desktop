@@ -33,7 +33,7 @@ pub(super) fn prepare(
         WorkflowDebugSelection::NodeRunId(id) => db.query_row(
         "SELECT n.node_id,n.scope_id,n.iteration,s.round_index,e.container_attempt,
                 e.snapshot_id,entry.entry_state,CASE WHEN n.node_type='condition' AND json_valid(n.payload)
-                    THEN json_extract(n.payload,'$.debugCondition') ELSE COALESCE(e.dispatch_input, prior.dispatch_input) END AS observed_input,n.node_type,snap.graph,n.id,CASE WHEN e.dispatch_input IS NULL THEN prior.node_run_id END AS evidence_source
+                    THEN json_extract(n.payload,'$.debugCondition') ELSE COALESCE(entry.dispatch_input, prior_entry.dispatch_input) END AS observed_input,n.node_type,snap.graph,n.id,CASE WHEN e.dispatch_input IS NULL THEN prior.node_run_id END AS evidence_source
          FROM workflow_node_runs n JOIN workflow_runs r ON r.id=n.run_id
          JOIN workflow_run_root_scopes root ON root.run_id=r.id
          JOIN workflow_execution_scopes s ON s.id=n.scope_id
@@ -45,11 +45,12 @@ pub(super) fn prepare(
             JOIN workflow_node_runs candidate ON candidate.id=chain.value
             JOIN workflow_debug_attempts evidence ON evidence.node_run_id=candidate.id
             WHERE n.status=1 AND n.started_at IS NULL AND json_extract(CASE WHEN json_valid(n.payload) THEN n.payload END,'$.retry_wait.previous_node_run_id') IS NOT NULL
-              AND candidate.is_deleted=1 AND candidate.status=3 AND candidate.run_id=n.run_id
-              AND candidate.scope_id=n.scope_id AND candidate.node_id=n.node_id AND candidate.iteration IS n.iteration
-              AND evidence.snapshot_id=e.snapshot_id AND evidence.revision=e.revision
-              AND evidence.container_attempt IS e.container_attempt AND evidence.dispatch_input IS NOT NULL
-            ORDER BY chain.key DESC LIMIT 1)
+              AND evidence.dispatch_input IS NOT NULL ORDER BY chain.key DESC LIMIT 1)
+            AND prior.snapshot_id=e.snapshot_id AND prior.revision=e.revision AND prior.container_attempt IS e.container_attempt
+            AND EXISTS (SELECT 1 FROM workflow_node_runs candidate WHERE candidate.id=prior.node_run_id
+                AND candidate.is_deleted=1 AND candidate.status=3 AND candidate.run_id=n.run_id
+                AND candidate.scope_id=n.scope_id AND candidate.node_id=n.node_id AND candidate.iteration IS n.iteration)
+         LEFT JOIN workflow_debug_entries prior_entry ON prior_entry.node_run_id=prior.node_run_id
          JOIN workflow_snapshots snap ON snap.id=r.snapshot_id
          WHERE n.run_id=?1 AND n.id=?2 AND n.is_deleted=0
            AND (n.scope_id=root.scope_id OR (parent.scope_id=root.scope_id AND parent.is_deleted=0))

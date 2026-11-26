@@ -110,7 +110,7 @@ pub(super) fn resolve(
             .ok_or(DebugRejection::InvalidTarget)?;
         let frozen: Option<String> = db
             .query_row(
-                "SELECT json_extract(entry_state,'$.runPayload') FROM workflow_debug_attempts
+                "SELECT json_extract(workflow_debug_entries.entry_state,'$.runPayload') FROM workflow_debug_entries JOIN workflow_debug_attempts USING(node_run_id)
              WHERE node_run_id=?1 AND snapshot_id=?2",
                 params![id, snapshot],
                 |r| r.get(0),

@@ -1,5 +1,11 @@
 DROP TRIGGER workflow_debug_admit;
 DROP VIEW workflow_debug_entries;
+DROP TRIGGER workflow_debug_pack_dispatch;
+DROP VIEW workflow_debug_envelopes;
+DROP VIEW workflow_debug_restored_documents;
+DROP TRIGGER workflow_debug_pack;
+DROP VIEW workflow_debug_document_input;
+DROP TABLE workflow_debug_documents;
 DROP TABLE workflow_debug_outcomes;
 DROP TRIGGER workflow_debug_dispatch_recorded;
 DROP TRIGGER workflow_debug_node_removed;

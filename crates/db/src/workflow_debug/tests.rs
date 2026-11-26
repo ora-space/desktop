@@ -168,6 +168,17 @@ fn waiting_retry_uses_its_predecessor_until_the_timer_starts_it() {
         })
         .unwrap();
     assert_eq!(preview.input_source_node_run_id.as_deref(), Some("second"));
+    // An incompatible newer dispatch closes the search even though t3 still matches.
+    store.pool.with_connection(|db| {
+        db.execute("UPDATE workflow_debug_attempts SET container_attempt='loop' WHERE node_run_id='second'", [])?;
+        Ok(())
+    }).unwrap();
+    assert!(matches!(
+        store.preview(&request, impact),
+        Err(DatabaseError::WorkflowDebug(
+            DebugRejection::MissingInputEvidence
+        ))
+    ));
 }
 
 /// Seeds a real migrated database with two runs of the same published definition.
