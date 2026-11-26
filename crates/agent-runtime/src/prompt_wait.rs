@@ -58,14 +58,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         end_cause = "inactivity_timeout", cancellation_result,
                         "workflow prompt exceeded its silence limit");
         let failure = if matches!(settled, Ok(None)) {
-            TurnFailure {
-                code: TurnFailureCode::AgentUnavailable,
-                acp_code: None,
-                message: None,
-                message_truncated: None,
-                attempts: None,
-                answer: None,
-            }
+            crate::turn_failure::agent_unavailable_failure()
         } else {
             super::prompt_retry::no_progress_from_settled(snapshot.attempt, &settled)
         };

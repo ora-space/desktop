@@ -636,14 +636,27 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         _ => runtime_unavailable(),
                     };
                     end_report.record(PromptEndCause::SessionCrashed);
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                    // The Agent died or the transport broke before any cancel was written: the
+                    // turn fails as `agent_unavailable` (D2/D7).
+                    self.end_timed_turn_with(
+                        StopReason::Cancelled,
+                        &tool_timings,
+                        None,
+                        Some(crate::turn_failure::agent_unavailable_failure()),
+                    );
                     followers.finish(StopReason::Cancelled);
                     self.fail_prompt(&events, error);
                     return;
                 }
                 ActiveInput::Control(SessionControl::QueueOverflow) => {
                     end_report.record(PromptEndCause::Unknown);
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                    // An Ora-side queue overflow is an internal failure, not the Agent's (D2).
+                    self.end_timed_turn_with(
+                        StopReason::Cancelled,
+                        &tool_timings,
+                        None,
+                        Some(crate::turn_failure::internal_failure()),
+                    );
                     followers.finish(StopReason::Cancelled);
                     self.cancel(&client, &permissions.pending).await;
                     let _ = events.try_send(Err(session_event_overflow(

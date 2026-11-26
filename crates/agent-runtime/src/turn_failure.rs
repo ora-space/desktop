@@ -134,6 +134,30 @@ pub(crate) fn no_progress_failure(
     }
 }
 
+/// Builds an `agent_unavailable` failure: the Agent died or its ACP transport broke mid-turn.
+pub(crate) fn agent_unavailable_failure() -> TurnFailure {
+    TurnFailure {
+        code: TurnFailureCode::AgentUnavailable,
+        acp_code: None,
+        message: None,
+        message_truncated: None,
+        attempts: None,
+        answer: None,
+    }
+}
+
+/// Builds an `internal` failure: an Ora-side error stopped the turn.
+pub(crate) fn internal_failure() -> TurnFailure {
+    TurnFailure {
+        code: TurnFailureCode::Internal,
+        acp_code: None,
+        message: None,
+        message_truncated: None,
+        attempts: None,
+        answer: None,
+    }
+}
+
 /// Codes the runtime turns names in logs and telemetry, kept value-light so no Agent text leaks.
 pub(crate) fn failure_code(c: &TurnFailureCode) -> &'static str {
     match c {

@@ -142,14 +142,7 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         // A closed channel while waiting is a lost Agent, not a stalled one (D2/D5), so it is
         // `agent_unavailable`. Otherwise the watchdog gave up on a stalled turn: `no_progress`.
         let failure = if matches!(settled, Ok(None)) {
-            TurnFailure {
-                code: TurnFailureCode::AgentUnavailable,
-                acp_code: None,
-                message: None,
-                message_truncated: None,
-                attempts: None,
-                answer: None,
-            }
+            crate::turn_failure::agent_unavailable_failure()
         } else {
             no_progress_from_settled(snapshot.attempt, &settled)
         };
