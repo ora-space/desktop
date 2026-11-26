@@ -1514,7 +1514,7 @@ it("reports only the refused documents when the package created no workflow", as
     within(report).queryByText(/已导入 \d+ 个工作流|Imported \d+ workflow/),
   ).toBeNull();
   expect(
-    within(report).queryByText(/没有引用任何|reference no MCP/),
+    within(report).queryByText(/没有启用的|have no enabled MCP/),
   ).toBeNull();
   expect(listSkills).not.toHaveBeenCalled();
 });
@@ -1567,7 +1567,7 @@ it.each(["listSkills", "listInstalledPlugins"] as const)(
       within(report).queryByText(/可以直接运行|can run right away/),
     ).toBeNull();
     expect(
-      within(report).queryByText(/没有引用任何|reference no MCP/),
+      within(report).queryByText(/没有启用的|have no enabled MCP/),
     ).toBeNull();
   },
 );
@@ -1612,12 +1612,12 @@ it("preserves import outcomes while the Skills catalog is pending", async () => 
   ).toBeVisible();
   expect(within(report).getByText("document is not valid JSON")).toBeVisible();
   expect(
-    within(report).queryByText(/没有引用任何|reference no MCP/),
+    within(report).queryByText(/没有启用的|have no enabled MCP/),
   ).toBeNull();
 
   await act(async () => completeCatalog());
   expect(
-    await within(report).findByText(/没有引用任何|reference no MCP/),
+    await within(report).findByText(/没有启用的|have no enabled MCP/),
   ).toBeVisible();
   expect(
     within(report).getByText("assets/workflows/broken.json"),
@@ -1655,7 +1655,7 @@ it("withholds the readiness verdict when no imported graph could be read", async
     within(report).getByText(/1 个工作流的图无法读取|graph of 1 workflow/),
   ).toBeVisible();
   expect(
-    within(report).queryByText(/没有引用任何|reference no MCP/),
+    within(report).queryByText(/没有启用的|have no enabled MCP/),
   ).toBeNull();
   expect(
     within(report).queryByText(/可以直接运行|can run right away/),
@@ -1703,7 +1703,7 @@ it("keeps a partly unreadable package from claiming the workflows can run", asyn
     within(report).queryByText(/可以直接运行|can run right away/),
   ).toBeNull();
   expect(
-    within(report).queryByText(/没有引用任何|reference no MCP/),
+    within(report).queryByText(/没有启用的|have no enabled MCP/),
   ).toBeNull();
 });
 
@@ -1973,7 +1973,7 @@ it("reports a marketplace install whose Agent node has a null agent config", asy
   expect(within(report).getByText("发布流程")).toBeVisible();
   // A null binding is an empty binding list, not an unreadable graph.
   expect(
-    within(report).getByText(/没有引用任何 MCP 或 Skill 插件/),
+    within(report).getByText(/没有启用的 MCP 或 Skill 依赖/),
   ).toBeVisible();
   expect(within(report).queryByText(/无法读取「发布流程」的图/)).toBeNull();
 });
