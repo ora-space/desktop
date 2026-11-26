@@ -105,6 +105,7 @@ export const workspaceTranslations = {
     "update.failedTitle": "检查更新失败",
     "update.failedReason": "原因：{{reason}}",
     "update.installFailed": "安装 Ora {{version}} 失败",
+    "update.installFailedDetail": "安装 Ora {{version}} 失败：{{message}}",
     "update.installFailedRetry":
       "安装 Ora {{version}} 失败，可以重试。原因记录在诊断日志中。",
     "update.manual.system_package":
@@ -234,6 +235,8 @@ export const workspaceTranslations = {
     "update.failedTitle": "Could not check for updates",
     "update.failedReason": "Reason: {{reason}}",
     "update.installFailed": "Could not install Ora {{version}}",
+    "update.installFailedDetail":
+      "Could not install Ora {{version}}: {{message}}",
     "update.installFailedRetry":
       "Could not install Ora {{version}}. You can try again; the diagnostic log records the reason.",
     "update.manual.system_package":

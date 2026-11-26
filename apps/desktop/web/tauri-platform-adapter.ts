@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { normalizeInvokeError } from "./tauri-transport";
 import {
   isPermissionGranted,
   requestPermission,
@@ -111,7 +112,13 @@ function createTauriLocationActions(): LocationActionsCapability {
 function createTauriUpdates(): DesktopUpdateCapability {
   return {
     getStatus: () => invoke<DesktopUpdateStatus>("get_desktop_update_status"),
-    install: (version) => invoke("install_desktop_update", { version }),
+    // Decoded so the shell can tell a replaced release from a failed installation by its code.
+    install: (version) =>
+      invoke<void>("install_desktop_update", { version }).catch(
+        (error: unknown) => {
+          throw normalizeInvokeError(error);
+        },
+      ),
     check: () => invoke("check_desktop_update"),
     onStatus: (listener) =>
       listen<DesktopUpdateStatus>(DESKTOP_UPDATE_EVENT, (event) => {

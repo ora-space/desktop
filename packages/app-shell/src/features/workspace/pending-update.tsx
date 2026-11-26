@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { RemoteContractError } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,7 +25,8 @@ export function PendingUpdate() {
   const { t } = useTranslation();
   const { updates, status } = useDesktopUpdate();
   const [confirming, setConfirming] = useState(false);
-  // The host refuses an installation by rejecting; its status alone looks as if nothing happened.
+  // An installer that refuses a package rejects and leaves the release ready, so its status alone
+  // looks as if nothing happened; a package discarded before that is the host's own failed status.
   const [failedInstall, setFailedInstall] = useState<string | null>(null);
   const installable = status.kind === "ready" ? status.version : null;
   const [lastInstallable, setLastInstallable] = useState(installable);
@@ -33,13 +35,12 @@ export function PendingUpdate() {
     setLastInstallable(installable);
     setConfirming(false);
   }
-  // The sidebar and the schedule check too, so a failure only lasts until the updater moves on.
+  // The notice belongs to the release it was for while that release is still offered. Its
+  // rejection can arrive before the event that ends the installation, so that does not clear it.
   if (
     failedInstall !== null &&
-    (status.kind === "current" ||
-      status.kind === "checking" ||
-      status.kind === "downloading" ||
-      (installable !== null && installable !== failedInstall))
+    installable !== failedInstall &&
+    !(status.kind === "installing" && status.version === failedInstall)
   ) {
     setFailedInstall(null);
   }
@@ -48,9 +49,9 @@ export function PendingUpdate() {
     // The host's own status text, as in the version control's tooltip; it is not a thrown error.
     const { message: reason } = status;
     const title =
-      failedInstall === null
-        ? t("update.failedTitle")
-        : t("update.installFailed", { version: failedInstall });
+      status.operation === "install"
+        ? t("update.installFailed", { version: status.version })
+        : t("update.failedTitle");
     return (
       <section
         aria-label={title}
@@ -67,10 +68,7 @@ export function PendingUpdate() {
           size="sm"
           variant="outline"
           className="shrink-0"
-          onClick={() => {
-            setFailedInstall(null);
-            void updates.check();
-          }}
+          onClick={() => void updates.check()}
         >
           {t("common.retry")}
         </Button>
@@ -140,7 +138,11 @@ export function PendingUpdate() {
               onClick={() => {
                 setConfirming(false);
                 setFailedInstall(null);
-                updates.install(version).catch(() => setFailedInstall(version));
+                updates.install(version).catch((error: unknown) => {
+                  // The host has already offered the release that replaced this one.
+                  if (isReleaseReplaced(error)) return;
+                  setFailedInstall(version);
+                });
               }}
             >
               {t("update.confirmAction")}
@@ -149,5 +151,13 @@ export function PendingUpdate() {
         </AlertDialogContent>
       </AlertDialog>
     </section>
+  );
+}
+
+/** Recognizes the refusal of a confirmation whose release a newer one replaced. */
+function isReleaseReplaced(error: unknown): boolean {
+  return (
+    error instanceof RemoteContractError &&
+    error.code === "desktop_update_release_replaced"
   );
 }

@@ -6,6 +6,9 @@
 
 mod artifact_store;
 pub mod commands;
+mod engine;
+#[cfg(test)]
+mod engine_tests;
 mod job;
 mod platform;
 mod release_notes;
@@ -64,8 +67,23 @@ pub enum DesktopUpdateStatus {
     },
     /// The update installation has started.
     Installing { version: String },
-    /// The last check failed; the next scheduled check may retry.
-    Failed { message: String },
+    /// The last check or installation failed; the next scheduled check may retry.
+    Failed {
+        /// Which operation failed, so the webview does not infer it from its own history.
+        #[serde(flatten)]
+        operation: FailedOperation,
+        message: String,
+    },
+}
+
+/// Names the operation behind a failed status, and for an installation the release it was for.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+pub enum FailedOperation {
+    /// Checking the manifest, downloading, or verifying a package before it is offered.
+    Check,
+    /// Re-verifying a confirmed package right before it is handed to the installer.
+    Install { version: String },
 }
 
 /// Reports failures from cache preparation, updater requests, or installation.
