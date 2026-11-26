@@ -192,6 +192,7 @@ async fn complete(
     backend
         .workflow_runs()
         .complete_node(CompleteWorkflowNodeRequest {
+            node_run_id: None,
             run_id: run_id.to_string(),
             node_id: "agent".to_string(),
             force,

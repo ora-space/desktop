@@ -345,6 +345,7 @@ impl WorkflowRuns {
             return Ok(());
         };
         let request = CompleteWorkflowNodeRequest {
+            node_run_id: Some(node_run.id.to_string()),
             run_id: node_run.run_id.to_string(),
             node_id: node_run.node_id,
             force: false,
@@ -371,19 +372,6 @@ impl WorkflowRuns {
         auto_confirm: bool,
     ) -> Result<CompleteWorkflowNodeResponse, BackendError> {
         let confirm_initial_turn = request.confirm_initial_turn.unwrap_or(false);
-        // The first-turn exception is the only valid combination of these two flags. Prove it
-        // from the parked snapshot before claiming, so a contradictory request changes no state.
-        if request.force && confirm_initial_turn {
-            let pool = self.pool.clone();
-            let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
-            let node_id = request.node_id.clone();
-            spawn_repository_work(move || {
-                crate::workflow::run::interactive::validate_first_turn_force_confirmation(
-                    &pool, &run_id, &node_id,
-                )
-            })
-            .await?;
-        }
         let mut approval = CompletionApproval::PLAIN;
         approval.force = request.force;
         approval.confirm_initial_turn = confirm_initial_turn;
@@ -403,6 +391,7 @@ impl WorkflowRuns {
             let completing = self.completing_node_runs.clone();
             let run_id = run_id.clone();
             let node_id = node_id.clone();
+            let observed = request.node_run_id;
             spawn_repository_work(move || {
                 crate::workflow::run::interactive::claim_node_for_completion(
                     &pool,
@@ -410,6 +399,8 @@ impl WorkflowRuns {
                     &completing,
                     &run_id,
                     &node_id,
+                    observed.as_deref(),
+                    &approval,
                 )
             })
             .await?
@@ -424,7 +415,7 @@ impl WorkflowRuns {
             let baselines_root = self.baselines_root.clone();
             let agent_runtime = self.agent_runtime.clone();
             let run_id = run_id.clone();
-            let node_id = node_id.clone();
+            let attempt = claimed_node_run_id.clone();
             match spawn_repository_work(move || {
                 // Resolve the run workspace before preparing: the file gate reads the same
                 // workspace the node ran in, and both reads happen outside the per-run gate.
@@ -448,7 +439,7 @@ impl WorkflowRuns {
                     &baselines_root,
                     &worktree_root,
                     &run_id,
-                    &node_id,
+                    &attempt,
                     approval,
                 )?;
                 let file_changes = crate::workflow::run::interactive::completion_file_changes(

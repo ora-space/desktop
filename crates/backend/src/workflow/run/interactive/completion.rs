@@ -133,6 +133,8 @@ pub(crate) fn claim_node_for_completion(
     completing_node_runs: &Arc<CompletingNodeRuns>,
     run_id: &WorkflowRunId,
     node_id: &str,
+    observed: Option<&str>,
+    approval: &CompletionApproval,
 ) -> Result<WorkflowNodeRunId, BackendError> {
     let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
     let _gate = run_locks.acquire_exclusive(run_id.as_ref());
@@ -142,25 +144,37 @@ pub(crate) fn claim_node_for_completion(
         .ok_or_else(|| ApplicationError::WorkflowRunNotFound {
             run_id: run_id.to_string(),
         })?;
+    let rejected = || ApplicationError::WorkflowNodeNotAwaitingInput {
+        node_id: node_id.to_string(),
+    };
     if context.run.status != WorkflowRunStatus::Running {
-        return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
-            node_id: node_id.to_string(),
-        }
-        .into());
+        return Err(rejected().into());
     }
+    let attempt = match observed {
+        Some(id) => Some(WorkflowNodeRunId::new(id)),
+        None => repository
+            .unique_completion_attempt(run_id, node_id)
+            .map_err(repository_error)?,
+    }
+    .ok_or_else(rejected)?;
     let node_run = repository
-        .list_node_runs(run_id)
+        .find_node_run_by_id(&attempt)
         .map_err(repository_error)?
-        .into_iter()
-        .find(|node_run| node_run.node_id == node_id)
-        .ok_or_else(|| ApplicationError::WorkflowNodeNotFound {
-            node_id: node_id.to_string(),
-        })?;
-    if node_run.status != WorkflowNodeStatus::Pending {
-        return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
-            node_id: node_id.to_string(),
-        }
-        .into());
+        .filter(|row| {
+            &row.run_id == run_id
+                && row.node_id == node_id
+                && row.status == WorkflowNodeStatus::Pending
+        })
+        .ok_or_else(rejected)?;
+    if repository
+        .debug_dispatch_fence(run_id)
+        .map_err(repository_error)?
+        .is_some_and(|fence| fence.stopped_attempts.contains(&attempt))
+    {
+        return Err(rejected().into());
+    }
+    if approval.force && approval.confirm_initial_turn {
+        validate_first_turn_force_confirmation(&node_run)?;
     }
     // `insert` returns false when the node is already being completed, so a second concurrent
     // complete cannot both claim the same awaiting node and prepare against it.
@@ -169,10 +183,7 @@ pub(crate) fn claim_node_for_completion(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(node_run.id.clone());
     if !inserted {
-        return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
-            node_id: node_id.to_string(),
-        }
-        .into());
+        return Err(rejected().into());
     }
     Ok(node_run.id)
 }
@@ -183,20 +194,9 @@ pub(crate) fn claim_node_for_completion(
 /// unconfirmed and whose settlement carries no signal: confirmation lifts `turn_unconfirmed` and
 /// force covers the resulting `agent_signal_pending`. Anything else has no coherent meaning and
 /// must fail without changing durable state (ADR D2 row 1).
-pub(crate) fn validate_first_turn_force_confirmation(
-    pool: &RepositoryPool,
-    run_id: &WorkflowRunId,
-    node_id: &str,
+fn validate_first_turn_force_confirmation(
+    node_run: &ora_domain::WorkflowNodeRun,
 ) -> Result<(), BackendError> {
-    let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
-    let node_run = repository
-        .list_node_runs(run_id)
-        .map_err(repository_error)?
-        .into_iter()
-        .find(|node_run| node_run.node_id == node_id)
-        .ok_or_else(|| ApplicationError::WorkflowNodeNotFound {
-            node_id: node_id.to_string(),
-        })?;
     let meta = CompletionMeta::from_payload(node_run.payload.as_deref());
     let snapshot = parse_completion_snapshot(node_run.payload.as_deref());
     let has_unconfirmed = snapshot.as_ref().is_some_and(|snapshot| {
@@ -236,13 +236,14 @@ pub(crate) fn revalidate_completion(
         .ok_or_else(|| ApplicationError::WorkflowRunNotFound {
             run_id: run_id.to_string(),
         })?;
-    if context.run.status != WorkflowRunStatus::Running {
-        return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
-            node_id: node_run.node_id,
-        }
-        .into());
-    }
-    if node_run.status != WorkflowNodeStatus::Pending {
+    if context.run.status != WorkflowRunStatus::Running
+        || &node_run.run_id != run_id
+        || node_run.status != WorkflowNodeStatus::Pending
+        || repository
+            .debug_dispatch_fence(run_id)
+            .map_err(repository_error)?
+            .is_some_and(|fence| fence.stopped_attempts.contains(node_run_id))
+    {
         return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
             node_id: node_run.node_id,
         }
@@ -265,7 +266,7 @@ pub(crate) fn prepare_completion(
     baselines_root: &Path,
     worktree_root: &Path,
     run_id: &WorkflowRunId,
-    node_id: &str,
+    attempt: &WorkflowNodeRunId,
     approval: CompletionApproval,
 ) -> Result<PreparedCompletion, BackendError> {
     let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
@@ -277,21 +278,20 @@ pub(crate) fn prepare_completion(
         })?;
     if context.run.status != WorkflowRunStatus::Running {
         return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
-            node_id: node_id.to_string(),
+            node_id: attempt.to_string(),
         }
         .into());
     }
     let node_run = repository
-        .list_node_runs(run_id)
+        .find_node_run_by_id(attempt)
         .map_err(repository_error)?
-        .into_iter()
-        .find(|node_run| node_run.node_id == node_id)
+        .filter(|row| &row.run_id == run_id)
         .ok_or_else(|| ApplicationError::WorkflowNodeNotFound {
-            node_id: node_id.to_string(),
+            node_id: attempt.to_string(),
         })?;
     if node_run.status != WorkflowNodeStatus::Pending {
         return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
-            node_id: node_id.to_string(),
+            node_id: node_run.node_id,
         }
         .into());
     }
@@ -305,7 +305,7 @@ pub(crate) fn prepare_completion(
     let interactive = agent_config.is_some_and(|config| config.interactive);
     if !interactive {
         return Err(ApplicationError::WorkflowNodeNotAwaitingInput {
-            node_id: node_id.to_string(),
+            node_id: node_run.node_id,
         }
         .into());
     }

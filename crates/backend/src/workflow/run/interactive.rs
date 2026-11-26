@@ -22,7 +22,6 @@ pub(crate) use agent_signal::AgentSignalStore;
 pub(crate) use completion::{
     CompletionApproval, claim_node_for_completion, completion_file_changes, merge_completion_patch,
     prepare_completion, revalidate_completion, signal_fingerprint,
-    validate_first_turn_force_confirmation,
 };
 pub(crate) use completion_server::CompletionMcpServer;
 #[allow(unused_imports)]

@@ -119,6 +119,7 @@ impl Fixture {
     ) -> Result<CompleteWorkflowNodeResponse, crate::BackendError> {
         self.runs
             .complete_node(CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force,
@@ -589,6 +590,7 @@ fn confirming_the_opening_turn_still_requires_declared_files() {
         );
 
         let confirm = || CompleteWorkflowNodeRequest {
+            node_run_id: None,
             run_id: "run-1".to_string(),
             node_id: "agent".to_string(),
             force: false,
@@ -802,6 +804,101 @@ fn a_corrupt_baseline_warns_and_degrades_must_change() {
     });
 }
 
+/// A legacy click still works for a unique attempt; after retirement only the displayed
+/// replacement may complete, even if both attempts share a definition and parked session.
+#[test]
+fn completion_binds_to_the_displayed_attempt_across_replacement() {
+    run_test(async {
+        let first = Fixture::awaiting();
+        first.settle_turn();
+        first
+            .complete(false)
+            .await
+            .expect("unique legacy completion");
+
+        let f = Fixture::awaiting();
+        f.settle_turn();
+        let repo = SqliteWorkflowRunEngineRepository::new(f.runs.pool.clone());
+        let old = repo
+            .find_node_run_by_id(&WorkflowNodeRunId::new(&f.node_run_id))
+            .unwrap()
+            .unwrap();
+        let sqlite = rusqlite::Connection::open(f.temporary.path().join("ora.sqlite3")).unwrap();
+        sqlite
+            .execute(
+                "UPDATE workflow_node_runs SET is_deleted=1 WHERE id=?1",
+                [old.id.as_ref()],
+            )
+            .unwrap();
+        let replacement = WorkflowNodeRunId::new("replacement");
+        repo.start_ready_nodes(
+            &old.run_id,
+            &[ora_application::NodeRunToStart {
+                id: replacement.clone(),
+                scope_id: old.scope_id,
+                node_id: old.node_id,
+                node_type: old.node_type,
+                input: old.input,
+                iteration: old.iteration,
+            }],
+            70,
+        )
+        .unwrap();
+        bind_and_park(
+            &f.runs.pool,
+            &repo.find_node_run_by_id(&replacement).unwrap().unwrap(),
+        );
+
+        // A claimed request must keep its attempt on either side of the prepare/commit gap.
+        assert!(
+            prepare_completion(
+                &f.runs.pool,
+                &f.runs.sessions_root,
+                &f.runs.baselines_root,
+                &f.workspace,
+                &old.run_id,
+                &old.id,
+                CompletionApproval::FORCE,
+            )
+            .is_err()
+        );
+        assert!(
+            crate::workflow::run::interactive::revalidate_completion(
+                &f.runs.pool,
+                &old.run_id,
+                &old.id
+            )
+            .is_err()
+        );
+        let mut request: CompleteWorkflowNodeRequest = serde_json::from_value(serde_json::json!({
+            "runId":"run-1","nodeId":"agent","force":true
+        }))
+        .unwrap();
+        for observed in [None, Some(old.id.to_string())] {
+            request.node_run_id = observed;
+            let err = f.runs.complete_node(request.clone()).await.unwrap_err();
+            assert_eq!(
+                err.public_error(),
+                &PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {})
+            );
+            assert_eq!(
+                repo.find_node_run_by_id(&replacement)
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                ora_domain::WorkflowNodeStatus::Pending
+            );
+        }
+        request.force = false;
+        request.node_run_id = Some(replacement.to_string());
+        f.runs
+            .complete_node(request)
+            .await
+            .expect("fresh replacement completion");
+        assert_eq!(f.detail().run.status, WorkflowRunStatus::Succeeded);
+    });
+}
+
 /// Concurrent public completions commit once, retain the final assistant output, and clean up
 /// the owned baseline; a later prompt cannot reopen the terminal workflow node.
 #[test]
@@ -816,6 +913,7 @@ fn concurrent_completions_commit_once_and_leave_the_session_read_only() {
             .join(format!("{}.json", fixture.node_run_id));
         fs::write(&baseline, "{}").expect("worktree baseline");
         let request = CompleteWorkflowNodeRequest {
+            node_run_id: None,
             run_id: "run-1".to_string(),
             node_id: "agent".to_string(),
             force: false,
@@ -885,6 +983,7 @@ fn prepare_failure_releases_the_claim_for_retry() {
         let history = history_path(&fixture.runs.sessions_root, "session-1").expect("history path");
         fs::create_dir_all(&history).expect("inject unreadable history path");
         let request = CompleteWorkflowNodeRequest {
+            node_run_id: None,
             run_id: "run-1".to_string(),
             node_id: "agent".to_string(),
             force: false,
@@ -919,6 +1018,7 @@ fn an_unsettled_completion_is_rejected_with_its_blockers() {
         let error = fixture
             .runs
             .complete_node(CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: false,
@@ -956,6 +1056,7 @@ fn a_forced_completion_records_its_audit_in_the_completed_payload() {
         let response = fixture
             .runs
             .complete_node(CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: true,
@@ -1026,6 +1127,7 @@ fn ready_force_does_not_write_an_empty_audit() {
         let response = fixture
             .runs
             .complete_node(CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: true,
@@ -1067,6 +1169,7 @@ fn conflicting_completion_flags_are_rejected_before_claiming() {
         let error = fixture
             .runs
             .complete_node(CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: true,
@@ -1117,6 +1220,7 @@ fn failed_prompt_start_restores_the_awaiting_node_before_returning() {
         let completed = fixture
             .runs
             .complete_node(CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: false,
@@ -1156,6 +1260,7 @@ fn cancellation_commits_even_when_session_cleanup_fails() {
         let error = fixture
             .runs
             .complete_node(CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: false,
@@ -1228,6 +1333,7 @@ fn concurrent_cancel_and_complete_report_the_committed_outcome() {
                 run_id: "run-1".to_string()
             }),
             fixture.runs.complete_node(CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "agent".to_string(),
                 force: false,
@@ -1691,7 +1797,7 @@ fn completion_commit_restores_a_file_warning_lost_after_prepare() {
             &fixture.runs.baselines_root,
             &fixture.workspace,
             &run_id,
-            "agent",
+            &WorkflowNodeRunId::new(&fixture.node_run_id),
             CompletionApproval::PLAIN,
         )
         .expect("prepare a completion with a file warning");
@@ -1781,7 +1887,7 @@ fn completion_commit_keeps_forced_audit_and_file_warning_together() {
             &fixture.runs.baselines_root,
             &fixture.workspace,
             &run_id,
-            "agent",
+            &WorkflowNodeRunId::new(&fixture.node_run_id),
             CompletionApproval::FORCE,
         )
         .expect("prepare a forced completion with a file warning");
