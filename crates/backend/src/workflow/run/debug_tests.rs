@@ -4,6 +4,7 @@
 
 use super::debug::{DebugSessionStopper, WorkflowDebugCoordinator};
 
+mod reroute;
 mod retirement;
 use super::test_fixture::{RecordingExecutor, bootstrap, run_test, seeded_pending_run};
 use super::transitions::WorkflowRunTransitions;

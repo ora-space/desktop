@@ -83,7 +83,7 @@ fn reroute_schedule(input: &DebugPlanningInput, affected: &[String]) -> Vec<Stri
     let mut decisions = input
         .current_payload
         .as_ref()
-        .map(|payload| payload.condition_decisions.clone())
+        .map(WorkflowRunPayload::resolved_condition_decisions)
         .unwrap_or_default();
     decisions.insert(target.clone(), branch.clone());
     let kept = input
