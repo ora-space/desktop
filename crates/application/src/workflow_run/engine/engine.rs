@@ -283,7 +283,7 @@ where
         if self
             .repository
             .debug_dispatch_fence(run_id)?
-            .is_some_and(|f| f.stopped_attempts.contains(node_run_id))
+            .is_some_and(|f| f.affected_attempts.contains(node_run_id))
         {
             return Ok(());
         }
@@ -321,7 +321,7 @@ where
         if self
             .repository
             .debug_dispatch_fence(run_id)?
-            .is_some_and(|f| f.stopped_attempts.contains(node_run_id))
+            .is_some_and(|f| f.affected_attempts.contains(node_run_id))
         {
             return Ok(());
         }
@@ -408,7 +408,7 @@ where
                 .filter(|n| {
                     fence
                         .as_ref()
-                        .is_none_or(|f| !f.stopped_attempts.contains(&n.id))
+                        .is_none_or(|f| !f.affected_attempts.contains(&n.id))
                 })
                 .collect();
 

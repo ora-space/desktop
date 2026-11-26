@@ -123,8 +123,9 @@ pub enum LoopRoundAdvance {
 pub struct DebugDispatchFence {
     /// Root-scope node ids whose new dispatch is blocked until the operation applies.
     pub blocked_nodes: Vec<String>,
-    /// Attempts being stopped; a retry wake for one of them must not start while fenced.
-    pub stopped_attempts: Vec<WorkflowNodeRunId>,
+    /// Attempts to invalidate or stop and their enclosing container attempts. A parked attempt
+    /// stays isolated even when there is no in-flight session to stop.
+    pub affected_attempts: Vec<WorkflowNodeRunId>,
 }
 
 /// Supplies new node-run identifiers for the engine's scheduling waves.

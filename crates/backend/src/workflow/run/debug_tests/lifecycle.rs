@@ -3,6 +3,8 @@ use ora_db::DatabaseLocation;
 use pretty_assertions::assert_eq;
 use tokio::sync::Notify;
 
+mod dispatch_guards;
+
 // The independent branch can fail while x stops, or succeed and dispatch its successor.
 const INDEPENDENT_BRANCH_GRAPH: &str = r#"{"nodes":[
     {"id":"start","data":{"kind":"start"}},

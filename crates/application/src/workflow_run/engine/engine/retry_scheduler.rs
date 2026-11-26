@@ -137,7 +137,7 @@ where
         if self
             .repository
             .debug_dispatch_fence(run_id)?
-            .is_some_and(|fence| fence.stopped_attempts.contains(node_run_id))
+            .is_some_and(|fence| fence.affected_attempts.contains(node_run_id))
         {
             return Ok(());
         }

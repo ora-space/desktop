@@ -1,5 +1,8 @@
 use super::Migration;
 
+#[cfg(test)]
+mod tests;
+
 /// Gives boot recovery a single durable view of the old work protected from ordinary cleanup.
 pub fn migration() -> Migration {
     Migration::new(

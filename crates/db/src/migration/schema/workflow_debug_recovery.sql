@@ -1,11 +1,12 @@
 CREATE VIEW workflow_debug_boot_protected AS
-WITH stopped AS (
+WITH paths(path) AS (VALUES ('$.invalidate'), ('$.stop')), affected AS (
     SELECT o.run_id, x.value AS id FROM workflow_debug_operations o
-    JOIN workflow_debug_previews p ON p.id=o.preview_id JOIN json_each(p.plan,'$.stop') x
+    JOIN workflow_debug_previews p ON p.id=o.preview_id
+    CROSS JOIN paths JOIN json_each(p.plan, paths.path) x
     WHERE o.state='stopping' OR (o.state='stop_failed' AND o.released=0)
 )
-SELECT run_id,id FROM stopped UNION
-SELECT s.run_id,a.container_attempt FROM stopped s JOIN workflow_debug_attempts a ON a.node_run_id=s.id
+SELECT run_id,id FROM affected UNION
+SELECT s.run_id,a.container_attempt FROM affected s JOIN workflow_debug_attempts a ON a.node_run_id=s.id
 WHERE a.container_attempt IS NOT NULL;
 
 -- The applied receipt is history. This pointer is the live dispatch authority and ends with the
