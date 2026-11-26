@@ -51,7 +51,7 @@ export type AgentDiscoverSkills = {
    */
   readRoots: Array<string>;
   /**
-   * The session's `_meta` entry under [`SKILL_DIRECTORIES_META_KEY`], absent there when empty.
+   * The session's `_meta` entry under `ora/skillDirectories`, absent there when empty.
    */
   directories: Array<string>;
   /**

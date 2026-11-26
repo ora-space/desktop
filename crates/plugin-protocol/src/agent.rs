@@ -112,7 +112,7 @@ pub struct AgentDiscoverSkills {
     /// The session's `additionalDirectories`, for an agent that declares support for them.
     #[ts(type = "Array<string>")]
     pub read_roots: Vec<PathBuf>,
-    /// The session's `_meta` entry under [`SKILL_DIRECTORIES_META_KEY`], absent there when empty.
+    /// The session's `_meta` entry under `ora/skillDirectories`, absent there when empty.
     pub directories: Vec<String>,
     /// Differs after every change to the Skills, also one that leaves the other two alone.
     pub revision: String,
