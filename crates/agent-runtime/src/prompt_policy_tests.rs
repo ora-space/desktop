@@ -727,6 +727,21 @@ fn a_provider_crash_reports_session_crashed_rather_than_a_dropped_stream() {
             &PublicError::AgentRuntimeUnavailable(EmptyErrorParams {})
         );
         assert_eq!(stream.end_cause(), Some(PromptEndCause::SessionCrashed));
+        // The crash is recorded on the turn as `agent_unavailable`, not as a failure without a
+        // reason (case 7).
+        let history = ora_history::read_session_history(
+            &fixture._directory.path().join("sessions"),
+            "crashed",
+        )
+        .unwrap();
+        let failure = history.lines.into_iter().find_map(|line| match line.record {
+            ora_history::HistoryRecord::TurnEnded { failure, .. } => failure,
+            _ => None,
+        });
+        assert_eq!(
+            failure.map(|failure| failure.code),
+            Some(ora_history::TurnFailureCode::AgentUnavailable)
+        );
         fixture.shutdown().await;
     });
 }
