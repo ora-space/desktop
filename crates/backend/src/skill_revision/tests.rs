@@ -610,3 +610,107 @@ fn the_settings_and_the_sessions_count_a_change_once() {
         );
     });
 }
+
+/// A batch import tells every agent about each Skill it commits, many more events than a client's
+/// queue holds; while the client is not reading they are merged, so its event stream stays open
+/// and still tells it about every agent.
+#[tokio::test]
+async fn a_batch_import_keeps_the_event_stream_open() {
+    let temporary = TempDir::new().unwrap();
+    let home = temporary.path().join("home");
+    for agent in ["first", "second"] {
+        let package = home
+            .join("plugins/installed/official")
+            .join(agent)
+            .join("1.0.0");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(package.join("main.js"), "export {};\n").unwrap();
+        fs::write(
+            package.join("orax.toml"),
+            format!(
+                "resolver = 1\nidentifier = \"{agent}\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Example\"\n"
+            ),
+        )
+        .unwrap();
+    }
+    let source = temporary.path().join("source");
+    // Two agents told about each of these: more than a client's stream and queue hold together.
+    let imported = 80;
+    for index in 0..imported {
+        let name = format!("skill-{index}");
+        let package = source.join(&name);
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Does it\n---\nInstructions"),
+        )
+        .unwrap();
+    }
+    let backend = crate::Backend::open(crate::test_backend::backend_paths(
+        &temporary.path().join("app-data"),
+        &home,
+    ))
+    .unwrap();
+    let mut events = backend.app_events().subscribe();
+    let skills = backend.skills();
+    let session = skills
+        .prepare_import(PrepareSkillImportRequest {
+            source: SkillImportSource::Folder {
+                path: source.to_string_lossy().into_owned(),
+            },
+        })
+        .unwrap()
+        .session;
+    skills
+        .commit_import(CommitSkillImportRequest {
+            session_id: session.session_id.clone(),
+            decisions: Vec::new(),
+        })
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let status = skills
+            .get_import(GetSkillImportSessionRequest {
+                session_id: session.session_id.clone(),
+            })
+            .unwrap()
+            .session
+            .status;
+        if status == SkillImportSessionStatus::Completed {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{status:?}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // Only now does the client read: everything it is told arrives, and the stream did not end.
+    let mut invalidated = std::collections::BTreeSet::new();
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), events.recv()).await {
+            Err(_) => break,
+            Ok(event) => {
+                let event = event
+                    .expect("the stream stays open")
+                    .expect("the stream does not fail");
+                if let AppEvent::AgentModelsInvalidated { agent_ref } = event {
+                    invalidated.insert(agent_ref);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        invalidated.into_iter().collect::<Vec<_>>(),
+        ["official/first", "official/second"]
+    );
+    // And it still takes what comes after.
+    skills.create(create("after")).unwrap();
+    let mut after = Vec::new();
+    while after.len() < 2 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(30), events.recv());
+        if let AppEvent::AgentModelsInvalidated { agent_ref } =
+            event.await.unwrap().unwrap().unwrap()
+        {
+            after.push(agent_ref);
+        }
+    }
+}

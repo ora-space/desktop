@@ -83,7 +83,11 @@ auto-refresh state is declared by `MarketplaceAutoSyncEvent` in the plugin contr
 `apps/desktop/src-tauri/bindings/marketplace_sync.rs`, and covered by `check:contracts` through
 generated listener code and serde samples.
 
-`watchAppEvents` is an invalidation broadcast, not a replayable log. Before the Web App Shell
+`watchAppEvents` is an invalidation broadcast, not a replayable log. Each client has a bounded queue
+of events it has not taken yet; an `AgentModelsInvalidated` already waiting there stands for another
+one for the same agent, so a burst such as a batch Skill import, told to every agent, does not fill
+it. A client that still falls more than the queue behind has its stream ended, reconnects and
+re-queries. Before the Web App Shell
 mounts queries or opens that stream, its platform adapter acquires the same-origin `ora:app-window`
 Web Lock, so a second browser tab waits until the first closes. The Desktop adapter grants
 ownership immediately because the native host owns one main window.
