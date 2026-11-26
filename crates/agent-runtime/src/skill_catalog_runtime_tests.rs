@@ -1342,12 +1342,11 @@ async fn run_discovery_matches_session_setup_scenario() {
         )
         .await;
     let skills = DynamicSkillCatalog::default();
-    skills.set_roots(vec![
-        dir.path().join("atoms").join("skills"),
-        dir.path().join("plugins").join("installed"),
-    ]);
-    let skill = |name: &str, root: &str| {
-        let directory = dir.path().join(root).join(name);
+    let local_root = dir.path().join("atoms").join("skills");
+    let plugin_root = dir.path().join("plugins").join("installed");
+    skills.set_roots(vec![local_root.clone(), plugin_root.clone()]);
+    let skill = |name: &str, root: &Path| {
+        let directory = root.join(name);
         let path = directory.join("SKILL.md");
         entry(
             name,
@@ -1357,8 +1356,8 @@ async fn run_discovery_matches_session_setup_scenario() {
         )
     };
     skills.set_entries(vec![
-        skill("alpha", "atoms/skills"),
-        skill("beta", "plugins/installed"),
+        skill("alpha", &local_root),
+        skill("beta", &plugin_root),
     ]);
     let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
     let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
