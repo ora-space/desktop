@@ -219,6 +219,43 @@ mod tests {
         }
     }
 
+    /// An old build can clear the endpoint without knowing the newer Manual mode key.
+    #[test]
+    fn clearing_manual_proxy_on_downgrade_restores_system_on_upgrade() {
+        let (_temporary, repository) = repository();
+        let service = UserConfigService::new(repository.clone());
+        let manual = NetworkProxySettings {
+            host: "legacy.example.com".into(),
+            port: 8080,
+            username: None,
+            password: None,
+        };
+        service
+            .set_network_proxy_preferences(NetworkProxyMode::Manual, Some(manual.clone()))
+            .unwrap();
+
+        repository.delete_value("network_proxy_settings").unwrap();
+        let reopened = UserConfigService::new(repository.clone());
+        assert_eq!(
+            reopened.network_proxy_preferences().unwrap(),
+            NetworkProxyPreferences {
+                mode: NetworkProxyMode::System,
+                manual: None,
+            }
+        );
+        assert_eq!(
+            repository
+                .get_value("network_proxy_mode")
+                .unwrap()
+                .as_deref(),
+            Some("manual")
+        );
+        reopened
+            .set_network_proxy_preferences(NetworkProxyMode::Manual, Some(manual.clone()))
+            .unwrap();
+        assert_eq!(reopened.network_proxy_settings().unwrap(), Some(manual));
+    }
+
     /// Rejects partial writes if the endpoint row cannot be stored.
     #[test]
     fn proxy_mode_and_endpoint_are_committed_together() {

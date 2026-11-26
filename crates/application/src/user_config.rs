@@ -191,15 +191,14 @@ where
             .map(|value| value.parse_json::<NetworkProxySettings>())
             .transpose()
             .map_err(|error| corrupt_value(ConfigKey::NetworkProxySettings, error))?;
-        let mode = mode.unwrap_or(if manual.is_some() {
-            NetworkProxyMode::Manual
-        } else {
-            NetworkProxyMode::System
-        });
+        let mode = match (mode, manual.as_ref()) {
+            // Older builds only know the endpoint key and may clear it during a downgrade.
+            (None | Some(NetworkProxyMode::Manual), None) => NetworkProxyMode::System,
+            (None, Some(_)) => NetworkProxyMode::Manual,
+            (Some(mode), _) => mode,
+        };
         if mode == NetworkProxyMode::Manual
-            && !manual
-                .as_ref()
-                .is_some_and(NetworkProxySettings::has_endpoint)
+            && manual.as_ref().is_some_and(|manual| !manual.has_endpoint())
         {
             return Err(corrupt_value(
                 ConfigKey::NetworkProxySettings,
