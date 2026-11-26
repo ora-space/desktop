@@ -428,3 +428,77 @@ async fn a_change_invalidates_what_every_agent_offered() {
         );
     }
 }
+
+/// A change whose package already reached the disk when its row could not be written is rolled
+/// back, and counted once: discovery in between may have seen the swapped-in package, or no
+/// package at all, under the revision that would otherwise stay current. Create is not counted,
+/// as discovery only reads packages that have a row.
+#[test]
+fn a_rollback_after_the_package_reached_the_disk_advances_the_revision() {
+    ora_logging::with_trace_logging(|| {
+        let skills = Skills::new();
+        let api = skills.api();
+        let created = api.create(create("review")).unwrap().skill;
+        let catalog = skills.catalog();
+        let manifest = skills.root().join("review").join("SKILL.md");
+        let content = fs::read(&manifest).unwrap();
+        // Every row write fails from here on, after the package was swapped in or moved aside.
+        rusqlite::Connection::open(skills.directory.path().join("ora.sqlite3"))
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER refuse_updates BEFORE UPDATE ON skills BEGIN SELECT RAISE(ABORT, 'refused'); END;
+                 CREATE TRIGGER refuse_inserts BEFORE INSERT ON skills BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )
+            .unwrap();
+        let update = |name: &str, content: Option<&str>| UpdateSkillRequest {
+            skill_id: created.id.clone(),
+            name: name.to_string(),
+            description: "Reviews changes".to_string(),
+            content: content.map(str::to_string),
+        };
+        let failures: [(&str, &dyn Fn() -> bool, u64); 4] = [
+            (
+                "edit in place",
+                &|| {
+                    api.update(update("review", Some("Other instructions")))
+                        .is_err()
+                },
+                1,
+            ),
+            ("rename", &|| api.update(update("audit", None)).is_err(), 1),
+            (
+                "delete",
+                &|| {
+                    api.delete(DeleteSkillRequest {
+                        skill_id: created.id.clone(),
+                    })
+                    .is_err()
+                },
+                1,
+            ),
+            ("create", &|| api.create(create("audit")).is_err(), 0),
+        ];
+        for (change, fails, advanced) in failures {
+            catalog
+                .skill_catalog(&WorkspaceId::new("workspace"))
+                .unwrap();
+            let discovered = catalog.revision();
+            assert!(fails(), "{change}");
+            assert_eq!(skills.advanced_from(discovered), advanced, "{change}");
+            catalog
+                .skill_catalog(&WorkspaceId::new("workspace"))
+                .unwrap();
+            assert_eq!(
+                catalog.revision() == discovered,
+                advanced == 0,
+                "{change}: the next discovery's revision"
+            );
+            assert_eq!(
+                fs::read(&manifest).unwrap(),
+                content,
+                "{change}: the package is back"
+            );
+            assert!(!skills.root().join("audit").exists(), "{change}");
+        }
+    });
+}

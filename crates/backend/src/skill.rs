@@ -1,6 +1,6 @@
 use crate::BackendError;
 use crate::clock::SystemClock;
-use crate::skill_revision::{CountedSkillRepository, SkillRevision};
+use crate::skill_revision::{CountedSkillRepository, CountedSkillStorage, SkillRevision};
 use ora_application::{
     CreateSkillHandler, DeleteSkillHandler, FilesystemSkillStorage, GetSkillHandler,
     ListSkillsHandler, NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportService,
@@ -19,21 +19,19 @@ use std::path::PathBuf;
 #[cfg(test)]
 mod package_tests;
 
+/// The package storage the settings change Skills through.
+type Storage = CountedSkillStorage<FilesystemSkillStorage>;
+
 /// Groups the concrete skill handlers and import service shared by runtime adapters.
 pub struct SkillApi {
-    create: CreateSkillHandler<
-        CountedSkillRepository,
-        FilesystemSkillStorage,
-        UuidSkillIdGenerator,
-        SystemClock,
-    >,
-    get: GetSkillHandler<CountedSkillRepository, FilesystemSkillStorage>,
-    list: ListSkillsHandler<CountedSkillRepository, FilesystemSkillStorage>,
-    update: UpdateSkillHandler<CountedSkillRepository, FilesystemSkillStorage, SystemClock>,
-    delete: DeleteSkillHandler<CountedSkillRepository, FilesystemSkillStorage, SystemClock>,
+    create: CreateSkillHandler<CountedSkillRepository, Storage, UuidSkillIdGenerator, SystemClock>,
+    get: GetSkillHandler<CountedSkillRepository, Storage>,
+    list: ListSkillsHandler<CountedSkillRepository, Storage>,
+    update: UpdateSkillHandler<CountedSkillRepository, Storage, SystemClock>,
+    delete: DeleteSkillHandler<CountedSkillRepository, Storage, SystemClock>,
     import: SkillImportService<
         CountedSkillRepository,
-        FilesystemSkillStorage,
+        Storage,
         UuidSkillImportIdGenerator,
         SystemClock,
         NoopSkillImportProgressPublisher,
@@ -48,8 +46,12 @@ impl SkillApi {
         revision: SkillRevision,
         clock: SystemClock,
     ) -> Self {
-        let repository = CountedSkillRepository::new(SqliteSkillRepository::new(pool), revision);
-        let storage = FilesystemSkillStorage::new(skills_root.clone());
+        let repository =
+            CountedSkillRepository::new(SqliteSkillRepository::new(pool), revision.clone());
+        let storage = CountedSkillStorage::new(
+            FilesystemSkillStorage::new(skills_root.clone()),
+            revision.clone(),
+        );
 
         Self {
             create: CreateSkillHandler::new(
@@ -64,7 +66,7 @@ impl SkillApi {
             delete: DeleteSkillHandler::new(repository.clone(), storage, clock),
             import: SkillImportService::new(
                 repository,
-                FilesystemSkillStorage::new(skills_root),
+                CountedSkillStorage::new(FilesystemSkillStorage::new(skills_root), revision),
                 UuidSkillImportIdGenerator,
                 clock,
                 NoopSkillImportProgressPublisher,

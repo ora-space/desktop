@@ -1,10 +1,14 @@
 //! Tells which discoveries were made before the Skills last changed.
 
-use ora_application::{RepositoryError, SkillRepository};
+use ora_application::{
+    CreateHandle, DeleteHandle, RepositoryError, SkillRepository, SkillStorage, SkillStorageError,
+    SwapHandle, TransactionJournal,
+};
 use ora_db::{DatabaseError, PluginSkillProjection, SqliteSkillRepository};
 use ora_domain::{Namespace, PluginId, Skill, SkillId};
+use ora_utils::path::StrictRelativePath;
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 #[cfg(test)]
@@ -45,6 +49,15 @@ impl SkillRevision {
 
     /// Advances after one catalog change was committed, whatever it left the catalog at.
     pub(crate) fn committed(&self) {
+        self.advance(&mut self.lock());
+        self.announce();
+    }
+
+    /// Advances after a change whose package files already reached the disk was rolled back.
+    ///
+    /// Nothing was committed, but whoever looked at the Skills meanwhile may hold a package that
+    /// never became part of the catalog, or a catalog missing one that is back now.
+    pub(crate) fn rolled_back(&self) {
         self.advance(&mut self.lock());
         self.announce();
     }
@@ -181,5 +194,165 @@ impl SkillRepository for CountedSkillRepository {
         let deleted = self.repository.soft_delete_skill(skill_id, deleted_at)?;
         self.count(deleted);
         Ok(deleted)
+    }
+}
+
+/// The Skill packages as the code that changes them sees them: a change rolled back after its
+/// files reached the disk is counted.
+///
+/// The catalog is counted on commit (see [`CountedSkillRepository`]), but an edit swaps its new
+/// package in, and a delete or rename moves the package aside, before the row is written. A failed
+/// write then puts the old package back. Discovery in between may have cached the swapped-in
+/// package, or a catalog without the moved one, under the revision that is current again after the
+/// rollback, so the rollback advances it once. A change that fails before touching the disk, or
+/// whose rollback only removes what nobody could discover yet (a create), is not counted.
+#[derive(Clone)]
+pub(crate) struct CountedSkillStorage<S> {
+    storage: S,
+    revision: SkillRevision,
+}
+
+impl<S> CountedSkillStorage<S> {
+    pub(crate) fn new(storage: S, revision: SkillRevision) -> Self {
+        Self { storage, revision }
+    }
+}
+
+impl<S: SkillStorage> SkillStorage for CountedSkillStorage<S> {
+    fn formal_package_path(&self, name: &str) -> Option<PathBuf> {
+        self.storage.formal_package_path(name)
+    }
+
+    fn create_staging(&self) -> Result<PathBuf, SkillStorageError> {
+        self.storage.create_staging()
+    }
+
+    fn stage_existing(&self, name: &str, staging: &Path) -> Result<(), SkillStorageError> {
+        self.storage.stage_existing(name, staging)
+    }
+
+    fn write_file(
+        &self,
+        staging: &Path,
+        relative: &StrictRelativePath,
+        bytes: &[u8],
+    ) -> Result<(), SkillStorageError> {
+        self.storage.write_file(staging, relative, bytes)
+    }
+
+    fn copy_file(
+        &self,
+        staging: &Path,
+        relative: &StrictRelativePath,
+        source: &Path,
+    ) -> Result<(), SkillStorageError> {
+        self.storage.copy_file(staging, relative, source)
+    }
+
+    fn write_manifest(&self, staging: &Path, content: &[u8]) -> Result<(), SkillStorageError> {
+        self.storage.write_manifest(staging, content)
+    }
+
+    fn commit_create(
+        &self,
+        name: &str,
+        skill_id: &SkillId,
+        staging: &Path,
+    ) -> Result<CreateHandle, SkillStorageError> {
+        self.storage.commit_create(name, skill_id, staging)
+    }
+
+    fn rollback_create(&self, handle: &CreateHandle) -> Result<(), SkillStorageError> {
+        self.storage.rollback_create(handle)
+    }
+
+    fn finish_create(&self, handle: &CreateHandle) -> Result<(), SkillStorageError> {
+        self.storage.finish_create(handle)
+    }
+
+    fn commit_swap(
+        &self,
+        name: &str,
+        from_name: &str,
+        skill_id: &SkillId,
+        previous_updated_at: Option<i64>,
+        staging: &Path,
+    ) -> Result<SwapHandle, SkillStorageError> {
+        self.storage
+            .commit_swap(name, from_name, skill_id, previous_updated_at, staging)
+    }
+
+    /// Counts once the old package is back, or failed to come back: the swapped-in one was on disk
+    /// either way.
+    fn rollback_swap(&self, handle: &SwapHandle) -> Result<(), SkillStorageError> {
+        let result = self.storage.rollback_swap(handle);
+        self.revision.rolled_back();
+        result
+    }
+
+    fn finish_swap(&self, handle: &SwapHandle) -> Result<(), SkillStorageError> {
+        self.storage.finish_swap(handle)
+    }
+
+    fn commit_delete(
+        &self,
+        name: &str,
+        skill_id: &SkillId,
+    ) -> Result<DeleteHandle, SkillStorageError> {
+        self.storage.commit_delete(name, skill_id)
+    }
+
+    /// Counts once the package is back, or failed to come back: it was moved aside either way.
+    fn rollback_delete(&self, handle: &DeleteHandle) -> Result<(), SkillStorageError> {
+        let result = self.storage.rollback_delete(handle);
+        self.revision.rolled_back();
+        result
+    }
+
+    fn finish_delete(&self, handle: &DeleteHandle) -> Result<(), SkillStorageError> {
+        self.storage.finish_delete(handle)
+    }
+
+    fn formal_exists(&self, name: &str) -> bool {
+        self.storage.formal_exists(name)
+    }
+
+    fn read_package_manifest(
+        &self,
+        package_root: &Path,
+    ) -> Result<Option<Vec<u8>>, SkillStorageError> {
+        self.storage.read_package_manifest(package_root)
+    }
+
+    fn read_manifest(&self, name: &str) -> Result<Option<Vec<u8>>, SkillStorageError> {
+        self.storage.read_manifest(name)
+    }
+
+    fn list_formal_names(&self) -> Result<Vec<String>, SkillStorageError> {
+        self.storage.list_formal_names()
+    }
+
+    fn remove_temp(&self, path: &Path) -> Result<(), SkillStorageError> {
+        self.storage.remove_temp(path)
+    }
+
+    fn restore_backup(&self, backup: &Path, name: &str) -> Result<(), SkillStorageError> {
+        self.storage.restore_backup(backup, name)
+    }
+
+    fn remove_dir(&self, path: &Path) -> Result<(), SkillStorageError> {
+        self.storage.remove_dir(path)
+    }
+
+    fn remove_formal(&self, name: &str) -> Result<(), SkillStorageError> {
+        self.storage.remove_formal(name)
+    }
+
+    fn list_journals(&self) -> Result<Vec<TransactionJournal>, SkillStorageError> {
+        self.storage.list_journals()
+    }
+
+    fn remove_journal(&self, journal: &TransactionJournal) -> Result<(), SkillStorageError> {
+        self.storage.remove_journal(journal)
     }
 }
