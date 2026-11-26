@@ -92,7 +92,6 @@ async fn accepts_initial_registration() {
         PluginRegistration {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::from(["example.tick".to_string()]),
-            effect_resources: Vec::new(),
         }
     );
     assert_eq!(*inner.status_tx.borrow(), RuntimeStatus::Ready);
@@ -119,16 +118,14 @@ async fn defaults_missing_emits_to_an_empty_whitelist() {
         PluginRegistration {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::new(),
-            effect_resources: Vec::new(),
         }
     );
 }
 
-/// Effect declarations retain only Workspace-relative locators and typed coordination policy.
+/// Legacy `ora/register` payloads carrying `effectResources` and `effect/*` methods still parse
+/// cleanly; the host ignores `effectResources`.
 #[tokio::test]
-async fn parses_effect_resource_registration() {
-    use crate::{PluginEffectCoordination, PluginEffectResource};
-
+async fn tolerates_legacy_effect_resource_registration() {
     let (inner, _inbound) = test_inner();
     handle_message(
         &inner,
@@ -136,7 +133,7 @@ async fn parses_effect_resource_registration() {
             "jsonrpc": "2.0",
             "method": "ora/register",
             "params": {
-                "methods": ["effect/coordinate", "effect/reactivate", "effect/verify_ready"],
+                "methods": ["agent/start", "effect/coordinate", "effect/reactivate", "effect/verify_ready"],
                 "effectResources": [{
                     "workspaceRelativePath": ".agents/skills",
                     "materializationFormat": "skill_directory.v1",
@@ -146,16 +143,11 @@ async fn parses_effect_resource_registration() {
         }),
     )
     .await
-    .expect("register Effect Resource");
+    .expect("legacy register payload with effectResources must still parse");
 
-    assert_eq!(
-        inner.registration.read().await.effect_resources,
-        vec![PluginEffectResource {
-            workspace_relative_path: ".agents/skills".to_string(),
-            materialization_format: "skill_directory.v1".to_string(),
-            coordination: PluginEffectCoordination::QuiesceBeforeMutation,
-        }]
-    );
+    let registration = inner.registration.read().await;
+    assert!(registration.methods.contains("agent/start"));
+    assert!(registration.methods.contains("effect/verify_ready"));
 }
 
 /// Duplicate method names invalidate registration rather than selecting one handler.
@@ -403,7 +395,6 @@ async fn ignores_a_late_response_to_an_abandoned_request() {
         registration: RwLock::new(PluginRegistration {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::new(),
-            effect_resources: Vec::new(),
         }),
         status_tx,
         exited_tx,
@@ -448,7 +439,6 @@ fn callable_runtime(call_timeout: Duration) -> (PluginRuntime, mpsc::Receiver<se
         registration: RwLock::new(PluginRegistration {
             methods: HashSet::from(["example.echo".to_string()]),
             emits: HashSet::new(),
-            effect_resources: Vec::new(),
         }),
         status_tx,
         writer_tx: writer_tx.clone(),

@@ -16,6 +16,8 @@ enum Report {
     /// Within the window that collects `session/new` commands.
     InSetup,
     /// After it, while Ora applies the model the conversation was on.
+    DuringModel,
+    /// Only once setup is over.
     AfterSetup,
     Never,
     /// Never, after a stale session that had reported none either.
@@ -130,7 +132,8 @@ async fn replacing_agent(
                     Report::OptionsInSetup | Report::OptionsKept => {
                         vec![created, options("replacement", "b")]
                     }
-                    Report::AfterSetup
+                    Report::DuringModel
+                    | Report::AfterSetup
                     | Report::Never
                     | Report::NeverAny
                     | Report::Nothing
@@ -144,7 +147,8 @@ async fn replacing_agent(
                 match report {
                     Report::OptionsKept => vec![json!({"jsonrpc":"2.0", "id":id,
                         "error":{"code":-32000, "message":"refused"}})],
-                    Report::AfterSetup => vec![commands("replacement", "fresh"), applied],
+                    Report::DuringModel => vec![commands("replacement", "fresh"), applied],
+                    Report::AfterSetup => vec![applied, commands("replacement", "fresh")],
                     Report::InSetup
                     | Report::Never
                     | Report::NeverAny
@@ -218,10 +222,11 @@ fn a_follower_sees_the_state_of_the_session_that_replaced_a_stale_one() {
     let on = |model: &str| State::Model(model.to_string());
     for (report, replaced) in [
         (Report::InSetup, vec![on("a"), fresh()]),
+        (Report::DuringModel, vec![on("a"), fresh()]),
         (Report::AfterSetup, vec![on("a"), none(), fresh()]),
         (Report::Never, vec![on("a"), none()]),
         (Report::OptionsInSetup, vec![on("a"), none()]),
-        (Report::OptionsKept, vec![on("b"), none(), on("b")]),
+        (Report::OptionsKept, vec![on("b"), none()]),
         (Report::NoOptions, vec![State::NoOptions, none()]),
     ] {
         run_case(async move {

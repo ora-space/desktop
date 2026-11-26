@@ -6,6 +6,8 @@ mod discovery_tests;
 mod plugin_replacement_tests;
 #[path = "prompt_policy_tests/restore_replay.rs"]
 mod restore_replay;
+#[path = "skill_catalog_runtime_tests.rs"]
+mod skill_catalog_runtime_tests;
 #[path = "turn_cancel_tests.rs"]
 mod turn_cancel_tests;
 
@@ -226,6 +228,7 @@ impl Fixture {
             list_session_supported: false,
             close_session_supported: false,
             delete_session_supported: false,
+            additional_directories_supported: false,
         };
         let (state, receiver) = watch::channel(ConnectionState::Ready(connection));
         let (shutdown, mut shutdown_receiver) = mpsc::unbounded_channel();
@@ -270,6 +273,7 @@ impl Fixture {
                 list_session_supported: false,
                 close_session_supported: false,
                 delete_session_supported: false,
+                additional_directories_supported: false,
             };
             run_process_generation(&mut process, &routes, &mut shutdown_receiver).await;
             active_generation.store(0, Ordering::Release);
@@ -2389,6 +2393,7 @@ mod restored_sessions {
                 list_session_supported: false,
                 close_session_supported: false,
                 delete_session_supported: false,
+                additional_directories_supported: false,
             };
             let (state, receiver) = watch::channel(ConnectionState::Ready(connection));
             let (shutdown, mut shutdown_receiver) = mpsc::unbounded_channel();
@@ -2433,6 +2438,7 @@ mod restored_sessions {
                     list_session_supported: false,
                     close_session_supported: false,
                     delete_session_supported: false,
+                    additional_directories_supported: false,
                 };
                 run_process_generation(&mut process, &routes, &mut shutdown_receiver).await;
                 active_generation.store(0, Ordering::Release);
@@ -2511,6 +2517,28 @@ mod restored_sessions {
             live_mcp: LiveMcpState,
         ) {
             let session = self.seed_session_on(id, "official/test.agent");
+            self.add_actor(session, title_acquisition, channel, live_mcp);
+        }
+
+        /// Seeds a session the connected agent serves while its row names another one.
+        fn add_session_bound_elsewhere(&self, id: &str, agent_ref: &str) {
+            let channel = self.supervisor.open_session_channel(id, id).unwrap();
+            self.add_actor(
+                self.seed_session_on(id, agent_ref),
+                crate::TitleAcquisition::disabled(),
+                Some(channel),
+                LiveMcpState::Active(crate::SessionMcpRevision::default()),
+            );
+        }
+
+        /// Starts the actor serving one seeded session.
+        fn add_actor(
+            &self,
+            session: Session,
+            title_acquisition: crate::TitleAcquisition,
+            channel: Option<crate::routing::SessionChannel>,
+            live_mcp: LiveMcpState,
+        ) {
             let recorder = self.manager.open_recorder(&session).unwrap().recorder;
             self.manager
                 .insert_actor(

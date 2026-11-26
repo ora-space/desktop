@@ -3,7 +3,7 @@
 English | [中文](session-mcp.zh.md)
 
 Ora delivers configured MCP plugins as **Session runtime input**: the ACP `mcpServers` list of each
-`session/new` and `session/load`. MCP is never an Effect Resource and never a Workspace file. Every
+`session/new` and `session/load`, never as Workspace files. Every
 frame that sets up a provider session (`startSession`, the attach a prompt performs, a rebuild,
 an agent switch, a workflow start and a live refresh) uses one Session setup snapshot. Pure resolution lives in
 `crates/agent-runtime/src/mcp_resolver`; Desktop sources and health remain in Backend.
@@ -57,15 +57,15 @@ zero; a host using ordered updates supplies the generation before resolving/send
 member identities are unchanged, a newer generation requires its own successful convergence. An old
 response cannot make that newer target current. The generation contains no Settings digest.
 
-MCP refresh, Skill Effect mutation and agent replacement share one Agent Session Barrier so new
-prompts wait for a safe point. They share no Effect state.
+MCP refresh and agent replacement share one Agent Session Barrier so new prompts wait for a safe
+point.
 
 ## Secrets and files
 
 Setting values may exist in the configuration store, a short-lived in-memory snapshot and the ACP
-frame sent to the agent. They never enter Effect state, SQLite, Workspace files, logs, errors, UI
-DTOs, revision digests or agent environment variables. Errors name the plugin id, setting id,
-transport and a stable code only.
+frame sent to the agent. They never enter SQLite, Workspace files, logs, errors, UI DTOs, revision
+digests or agent environment variables. Errors name the plugin id, setting id, transport and a stable
+code only.
 
 Ora never creates, modifies or deletes `.mcp.json`, OpenCode JSON/JSONC, sidecars, Git exclude files
 or any other Workspace path for MCP; existing user-authored MCP configuration is left alone.

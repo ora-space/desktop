@@ -58,7 +58,7 @@ pub struct WorkflowRuns {
     sessions_root: PathBuf,
     baselines_root: PathBuf,
     skills_root: PathBuf,
-    /// Live plugin host used to re-resolve Skill and MCP dependencies before scheduling starts.
+    /// Live plugin host used to re-resolve MCP dependencies before scheduling starts.
     plugin_api: Arc<crate::plugin::PluginApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     engine: Arc<ConcreteWorkflowRunControl>,
@@ -103,7 +103,6 @@ impl WorkflowRuns {
             records: WorkflowRunApi::new(
                 setup.pool.clone(),
                 setup.skills_root.clone(),
-                setup.plugin_api.clone(),
                 setup.clock,
             ),
             pool: setup.pool,

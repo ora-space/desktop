@@ -70,6 +70,7 @@ fn test_plugins_with_host(
             plugin_host: host.clone(),
             pool: pool.clone(),
             home_directory: root.to_path_buf(),
+            skills_root: root.join("atoms").join("skills"),
             relative_path_base: root.to_path_buf(),
             sessions_root: root.join("sessions"),
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),

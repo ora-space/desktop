@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 
 use thiserror::Error;
 
@@ -62,8 +63,6 @@ pub enum DatabaseError {
     CorruptScheduledMissReason(String),
     #[error("workflow document import state is corrupt: {0}")]
     CorruptWorkflowDocumentSourceState(String),
-    #[error("Effect state is corrupt: {0}")]
-    CorruptEffectState(String),
     #[error(transparent)]
     WorkflowDebug(#[from] crate::workflow_debug::DebugRejection),
     #[error("workflow run execution context is incomplete")]
@@ -98,5 +97,11 @@ pub enum DatabaseError {
         direction: MigrationDirection,
         #[source]
         source: rusqlite::Error,
+    },
+    #[error("failed to back up database before migration `{version}` at {}: {message}", path.display())]
+    PreMigrationBackupFailed {
+        version: &'static str,
+        path: PathBuf,
+        message: String,
     },
 }

@@ -4,14 +4,14 @@ use super::{PipeProcess, PipeSpawner, prompt};
 use crate::host::{AgentAttach, AgentPluginAttachment, AgentRuntimeHost, WorkspaceDirectory};
 use crate::test_host::{NeverFails, RecordedEvents};
 use crate::{
-    AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp, RuntimeError,
+    AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp, NoSkillCatalog,
+    RuntimeError,
 };
 use agent_client_protocol_schema::v1::{ContentBlock, SessionUpdate, StopReason};
 use ora_contracts::{
     EmptyErrorParams, PromptSessionEvent, PublicError, StartSessionRequest, StopSessionRequest,
 };
 use ora_domain::{AgentRef, PluginId, WorkspaceId};
-use ora_effect::ConsumerDeclaration;
 use ora_plugin_lifecycle::{ConnectionError, InboundNotification, PluginGenerationKey};
 use ora_plugin_protocol::{read_message, write_message};
 use ora_plugin_runtime::{NoHostRequests, PluginLogSetup, PluginRuntime, PluginRuntimeConfig};
@@ -34,6 +34,7 @@ impl AgentRuntimeHost for ReplacementHost {
     type Store = MemorySessionStore;
     type Attach = InstalledPlugin;
     type Setup = NoSessionMcp;
+    type Skills = NoSkillCatalog;
     type Events = RecordedEvents;
     type Directory = Directory;
 }
@@ -168,15 +169,6 @@ impl AgentAttach for InstalledPlugin {
         }
         Ok(())
     }
-
-    /// This test agent has no Effect resources.
-    fn replace_agent_effect_declaration(
-        &self,
-        _plugin_id: PluginId,
-        _declaration: Option<ConsumerDeclaration>,
-    ) -> Result<(), RuntimeError> {
-        Ok(())
-    }
 }
 
 /// Speaks real plugin envelopes and ACP, with both restoring and rebuilding providers.
@@ -286,6 +278,7 @@ async fn replacement_case(load_supported: bool) {
         store: MemorySessionStore::default(),
         directory: Directory(directory.path().to_path_buf()),
         session_setup: NoSessionMcp::default(),
+        skill_catalog: NoSkillCatalog,
         events: RecordedEvents::default(),
         home_directory: directory.path().to_path_buf(),
         sessions_root: directory.path().join("sessions"),
@@ -494,6 +487,7 @@ mod default_mcp {
         type Store = MemorySessionStore;
         type Attach = InstalledPlugin;
         type Setup = Setup;
+        type Skills = NoSkillCatalog;
         type Events = RecordedEvents;
         type Directory = Directory;
     }
@@ -519,6 +513,7 @@ mod default_mcp {
                             store: MemorySessionStore::default(),
                             directory: Directory(directory.path().to_path_buf()),
                             session_setup: setup.clone(),
+                            skill_catalog: NoSkillCatalog,
                             events: RecordedEvents::default(),
                             home_directory: directory.path().to_path_buf(),
                             sessions_root: directory.path().join("sessions"),
@@ -606,6 +601,7 @@ mod default_mcp {
                             store: MemorySessionStore::default(),
                             directory: Directory(directory.path().to_path_buf()),
                             session_setup: setup.clone(),
+                            skill_catalog: NoSkillCatalog,
                             events: RecordedEvents::default(),
                             home_directory: directory.path().to_path_buf(),
                             sessions_root: directory.path().join("sessions"),
@@ -703,6 +699,7 @@ mod default_mcp {
                         store: store.clone(),
                         directory: Directory(directory.path().to_path_buf()),
                         session_setup: setup.clone(),
+                        skill_catalog: NoSkillCatalog,
                         events: RecordedEvents::default(),
                         home_directory: directory.path().to_path_buf(),
                         sessions_root: directory.path().join("sessions"),

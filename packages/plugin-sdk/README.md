@@ -194,7 +194,6 @@ import {
   AGENT_NOT_INSTALLED,
   defineAgent,
   PluginMethodError,
-  SKILL_DIRECTORY_V1,
 } from "@ora-space/plugin-sdk";
 
 let send;
@@ -207,30 +206,6 @@ const plugin = defineAgent({
     models: [{ id: "opus", displayName: "Opus", default: true }],
   }),
   onAcp: (frame) => {/* forward the frame to the CLI */},
-  effects: {
-    resources: [{
-      workspaceRelativePath: ".agents/skills",
-      materializationFormat: SKILL_DIRECTORY_V1,
-      coordination: "quiesce_before_mutation",
-    }],
-    coordinate: async ({ targetId, resourceIds }) => {
-      // Quiesce every instance that could consume this exact Resource set and retain the barrier.
-      return { targetId, resourceIds, state: "safe_to_mutate" };
-    },
-    reactivate: async ({ targetId, resourceIds }) => {
-      // Reinitialize affected instances after verification, then release the retained barrier.
-      return { targetId, resourceIds, state: "reactivated" };
-    },
-    verifyReady: async ({
-      targetId,
-      generation,
-      consumerRevisionId,
-      projectionDigest,
-    }) => {
-      // Confirm the Agent can consume this exact immutable Target projection.
-      return { targetId, generation, consumerRevisionId, projectionDigest };
-    },
-  },
 });
 await plugin.run();
 ```
@@ -303,13 +278,6 @@ Two constraints, both load-bearing:
   a timed-out handshake — and a failure outside that ownership leaves an orphan
   agent process behind. A sandboxed plugin also cannot compute the host path of
   its own bundled executable, which is why `packageCommand` exists.
-
-Effect locators are always Workspace-relative; Ora supplies and validates the
-absolute Workspace root when it coordinates a mutation. The canonical Plugin ID
-becomes the persisted consumer identity, so plugin code cannot claim another
-consumer's state. Both coordination callbacks must be idempotent because Ora may
-retry after either side has completed but before the corresponding durable
-status update is visible.
 
 ### Bundled CLI or the user's own
 

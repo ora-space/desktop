@@ -9,9 +9,6 @@ This module implements `ora-application` persistence ports on SQLite and exposes
   tagged `artifact_retrieval` JSON, and precedence position), worktrees, and typed user preferences between SQL rows and application
   values. Marketplace source updates replace editable fields in place so disable/edit does not mint
   a second identity for an already-installed plugin's namespace.
-- `SqliteEffectRepository` stores normalized Desired selections, source state, surface descriptors,
-  ownership ledgers, status, and durable operations. Desired replacement uses generation CAS;
-  operation finalization changes its ledger and journal phase in one immediate transaction.
 - Normal reads exclude soft-deleted rows. Soft deletion records timestamps rather than removing individual domain records physically.
 - `RepositoryPool` serializes access to its connection and gives repository operations a consistent error boundary.
 

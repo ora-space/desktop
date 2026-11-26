@@ -82,24 +82,46 @@ become one at all.
 ### Marketplace install and upgrade
 
 A marketplace install of a Workflow package imports the documents it carries, so the package is
-usable as soon as it lands; a pack imports what each newly installed workflow member carries. The
-copy that results is the user's data, so the marketplace keeps a durable record per source path
-(`(source namespace, plugin identifier, document path)`) and only imports paths without a terminal
-record:
+usable as soon as it lands; a pack imports what each newly installed workflow member carries (members
+already installed before the pack run are skipped and do not enter a new install cycle). The copy
+that results is the user's data, so the marketplace keeps a durable record per source path
+(`(source namespace, plugin identifier, document path)`) and evaluates each path against its current
+record, copy liveness, and the operation (`install`, `update`, or card `retry`), as specified in the
+[conflict recovery and reinstall ADR](https://github.com/ora-space/specs/blob/main/decisions/desktop/plugin/category/workflow/20261124-marketplace-workflow-conflict-recovery.md):
 
-- A path that already has a copy is skipped on every later install, upgrade and retry. The copy is
-  never overwritten, renamed, or removed, even when the new version changes that document.
-- A document whose name is already taken keeps the user's workflow and is reported as a conflict
-  skip once; later upgrades report it as an already handled path instead of failing again.
-- Any other failure leaves no record, so it can be retried. `InstallPluginResponse` and
-  `UpdatePluginResponse` report these outcomes per document, distinguishing imported, already
-  handled, first name-conflict skip, and failed, and naming the member plugin that carried each
-  document.
-- The installed Workflow package's card offers "retry failed document imports". It reconsiders only
-  paths without a terminal record, so a successful or conflict-skipped path stays as it is, and an
-  upgrade retries those same paths on its way through.
-- The records outlive the copy: uninstalling and reinstalling the package, or deleting a workflow,
-  does not make a path look new. A workflow the user deleted therefore stays deleted.
+- **Surviving copies stay untouched.** A path whose `imported` record still points to a live copy
+  (`is_deleted = 0`) returns `skipped_processed` on every later install, upgrade, and retry—even if
+  the user edited or renamed that copy or uninstalled and reinstalled the package.
+- **Name conflicts stay retryable.** Names are checked case-insensitively (`COLLATE NOCASE`). When a
+  document collides with a surviving workflow, the user's workflow keeps its name and the source
+  path records `conflict_skipped`, returning `skipped_conflict` with the blocking workflow's name and
+  whether that conflict was already recorded (`knownConflict`). Every later install, upgrade, and
+  card retry re-checks the library; once the user renames or deletes the blocking workflow, the next
+  install, upgrade, or retry imports the document.
+- **Install cycles govern deleted copies.** A successful marketplace install (including reinstalling
+  an uninstalled package) opens a new install cycle for that plugin—or, for a pack, only for the
+  workflow members this run actually installed. Reinstalling reconsiders any `imported` record whose
+  copy was soft-deleted: it re-imports the deleted copy without duplicating surviving ones, records
+  `conflict_skipped` if the name is now taken, and if recovery fails for another reason
+  conditionally clears the deleted-copy record back to unrecorded so the card retry can try again
+  (falling back to "fix and reinstall" only if clearing the record itself fails). Upgrades and card
+  retries stay inside the current cycle: they respect in-cycle deletions and return
+  `skipped_deleted_copy` with "uninstall and reinstall to restore".
+- **Card retry.** The installed Workflow plugin card offers "Retry importing the missing documents"
+  (a pack's workflow members are retried from each member's own installed card). It re-evaluates
+  unrecorded paths and `conflict_skipped` paths without reinstalling, while leaving surviving copies
+  untouched and copies deleted in the current cycle deleted.
+- **Conditional atomic writes and reporting.** Source transitions are conditional on the state that
+  was read, and copy creation commits with its draft, initial published snapshot, and `imported`
+  record in one transaction. A concurrent name collision during commit rolls back and reports
+  `skipped_conflict` rather than `failed`. Installs (including packs, naming each member and linking
+  to its installed card) and card retries open the import report whenever any conflict occurs;
+  upgrades open the report for first-time conflicts (listing sibling known conflicts as "still
+  unresolved") and keep known conflicts and deleted copies as neutral summary counts—even when the
+  upgrade report opens for another reason, deleted copies stay out of the "not imported" list. When
+  nothing is imported and there is a failure, a first conflict, or an install/retry conflict, the
+  toast stops using plain success styling. "Not imported" entries do not participate in MCP / Skill
+  dependency checks.
 
 Local `.orax` import is unchanged: it imports every document it carries and reports a name conflict
 as that document's failure.

@@ -35,7 +35,6 @@ import {
   createWorkflowMemory,
   workflowHandlers,
 } from "../../test/memory/workflows";
-import { readyEffectHandlers } from "../../test/memory/effects";
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { useAgentModelPreferenceStore } from "../../state/stores/agent-model-preference-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
@@ -91,7 +90,6 @@ function createFixtureHandlers(state: FixtureState): TestHandlers {
     ...agentHandlers(state),
     ...skillHandlers(state),
     ...workflowHandlers(state),
-    ...readyEffectHandlers(),
   };
 }
 

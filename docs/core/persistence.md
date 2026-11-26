@@ -4,7 +4,7 @@ English | [中文](persistence.zh.md)
 
 Desktop keeps its application state in one SQLite database owned by `ora-db`. `ora-db` is the only
 crate that knows Ora's SQL: it defines the migration catalog, bootstraps the database and
-implements the repository ports declared by `ora-application` and `ora-effect`. Callers above it
+implements the repository ports declared by `ora-application`. Callers above it
 never see rows, columns or soft-delete bookkeeping. The Node keeps its own, separate database; see
 [Node](../node/node.md).
 
@@ -32,11 +32,11 @@ is the only source of truth for the schema; there is no checked-in `schema.sql`.
 | `0003`  | Workflow definitions, snapshots, workspace-owned runs and node runs                                                              |
 | `0004`  | Durable Git cleanup jobs and worktree provisioning leases                                                                        |
 | `0005`  | Plugin marketplace source configuration                                                                                          |
-| `0006`  | Generic Effect persistence, see [Effects](../agents/effects.md)                                                                  |
+| `0006`  | Legacy Effect persistence (later dropped in `0025`)                                                                              |
 | `0007`  | Immutable namespace binding per marketplace source, keyed by canonical Git URL                                                   |
 | `0008`  | Per-source `enabled` flag                                                                                                        |
 | `0009`  | Per-source artifact retrieval configuration (Direct HTTPS by default)                                                            |
-| `0010`  | Independent Effect recovery detection time; Scope creation moves into Workspace transactions                                     |
+| `0010`  | Legacy Effect recovery detection time; Scope creation moves into Workspace transactions (Effect tables dropped in `0025`)        |
 | `0011`  | Each Session's persisted MCP selection (existing sessions get an empty explicit set)                                             |
 | `0012`  | Iteration round index on node runs                                                                                               |
 | `0013`  | Workflow execution scopes: root and Loop-round identities, scoped node uniqueness, downgrade archive                             |
@@ -45,12 +45,13 @@ is the only source of truth for the schema; there is no checked-in `schema.sql`.
 | `0016`  | Scheduled task scheduling anchor and worktree base branch                                                                        |
 | `0017`  | Scheduled run worktree base branch selected at admission                                                                         |
 | `0018`  | Scheduled run worktree task link                                                                                                 |
-| `0019`  | The `finalized_without_effect` Effect operation phase, added by rebuilding the operation journal through staging copies          |
+| `0019`  | Legacy `finalized_without_effect` Effect operation phase (Effect tables dropped in `0025`)                                       |
 | `0020`  | Scheduled run business verdict, detail and annotation time                                                                       |
 | `0021`  | Scheduled run artifact manifest and rejected-candidate log                                                                       |
 | `0022`  | Terminal marketplace workflow document source records                                                                            |
 | `0023`  | Host-only session capabilities, persisted so they survive a restart                                                              |
 | `0024`  | Releases local Main Workspaces stranded in `provisioning` (data only; downgrade is a no-op)                                      |
+| `0025`  | Stores plugin `package_root` on `skills` and drops the retired Effect ledger and tables (after one-time legacy Skill cleanup)    |
 | `0026` | Run-local debug evidence, configuration revisions, preview receipts and operation fences |
 
 Details of individual migrations live in [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md).
@@ -127,7 +128,6 @@ bootstrap and migration tests. Parent directories are prepared by the Desktop co
 | `SqliteWorkflowRepository`, `SqliteWorkflowRunRepository`, `SqliteWorkflowRunEngineRepository`                         | Workflow definitions, run CRUD and the run engine's transactions                                             |
 | `SqliteScheduledTaskRepository`, `SqliteScheduledRunRepository`                                                        | Scheduled tasks and their runs                                                                               |
 | `SqlitePluginMarketplaceSourceRepository`, `SqlitePluginSourceNamespaceRepository`, `SqlitePackInstallationRepository` | Marketplace sources, namespace bindings and pack ownership                                                   |
-| `SqliteEffectRepository`                                                                                               | Effect state, see [Effects](../agents/effects.md)                                                            |
 | `SqliteUserConfigRepository`                                                                                           | The generic key/value store for user configuration                                                           |
 
 Adding an adapter never changes a port signature.
@@ -174,8 +174,7 @@ SQLite execution, query and mapping failures are wrapped in the application-owne
 stringifying it. Bootstrap and migration failures surface as `DatabaseError`.
 
 Migration bookkeeping takes timestamps from an injected `TimestampSource`. Entity `created_at` and
-`updated_at` come from the application `Clock`. Effect repositories sample their own
-`TimestampSource` after acquiring the write transaction, see [Effects](../agents/effects.md#audit-and-business-time).
+`updated_at` come from the application `Clock`.
 
 ## Operational logging
 

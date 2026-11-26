@@ -27,20 +27,10 @@ A plugin declares both traffic directions once, in its `ora/register` notificati
   "method": "ora/register",
   "params": {
     "methods": [
-      "agent/start",
-      "effect/coordinate",
-      "effect/reactivate",
-      "effect/verify_ready",
+      "agent/start"
     ],
-    "emits": ["agent/acp"],
-    "effectResources": [
-      {
-        "workspaceRelativePath": ".agents/skills",
-        "materializationFormat": "ora/skill-directory.v1",
-        "coordination": "quiesce_before_mutation",
-      },
-    ],
-  },
+    "emits": ["agent/acp"]
+  }
 }
 ```
 
@@ -49,10 +39,7 @@ A plugin declares both traffic directions once, in its `ora/register` notificati
 - `emits` lists what the plugin may send on its own initiative. Notifications outside
   the whitelist invalidate the connection: a plugin whose behaviour exceeds its
   declaration cannot be trusted to correlate correctly.
-- `effectResources` optionally declares Workspace-relative filesystem Resources consumed by the
-  runtime. The runtime crate parses the locator, format, and coordination tokens strictly;
-  capability-specific code validates their meaning and derives the trusted consumer identity from
-  the launched plugin rather than from this payload.
+- Unknown legacy fields such as `effectResources` are ignored during registration.
 - Plugin requests to the host (`ora/storage/*` and the like) need no declaration: the
   launch-time handler decides what it serves and answers method-not-found otherwise.
 

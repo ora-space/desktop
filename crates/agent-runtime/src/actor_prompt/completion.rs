@@ -8,7 +8,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// loop and by a turn cancel that found the answer already queued.
     pub(crate) async fn finish_completed_prompt(
         &mut self,
-        channel: SessionChannel,
+        mut channel: SessionChannel,
         response: PromptResponse,
         operation_id: u64,
         end: crate::turn_cancel::PromptEnd<'_>,
@@ -43,6 +43,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         {
             self.channel = Some(channel);
         } else {
+            self.accept_changes_on(&mut channel);
             self.isolate_channel(channel).await;
         }
     }

@@ -9,6 +9,7 @@ mod actor;
 mod attach;
 mod clock;
 mod command;
+mod config_changes;
 mod connection;
 mod discovery;
 mod end_cause;
@@ -31,7 +32,6 @@ mod prompt_permissions;
 mod prompt_retry;
 mod prompt_wait;
 mod record;
-mod replaced;
 mod replay;
 mod restart_circuit;
 mod routing;
@@ -39,6 +39,7 @@ mod scheduling;
 mod session_config;
 mod session_followers;
 mod session_setup;
+mod skill_catalog;
 mod start;
 mod stream;
 mod subagent_update;
@@ -58,15 +59,13 @@ mod host_start_tests;
 #[cfg(test)]
 mod load_tests;
 #[cfg(test)]
-mod replaced_sessions_tests;
-#[cfg(test)]
 mod test_host;
 
 pub use end_cause::{PromptEndCause, PromptEndReport};
 pub use error::{ErrorClassification, RuntimeError, SharedError};
 pub use host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,
-    SessionStore, WorkspaceDirectory,
+    SessionStore, SkillCatalogEntry, SkillCatalogSnapshot, SkillCatalogSource, WorkspaceDirectory,
 };
 pub use mcp_resolver::{
     EligibleMcpMember, InstalledMcpCandidate, McpConfigurationEligibility, SessionMcpCatalog,
@@ -74,20 +73,15 @@ pub use mcp_resolver::{
     find_eligible_member, resolve_session_mcp, resolve_session_mcp_revision,
     revalidate_stdio_command,
 };
-pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp};
+pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp, NoSkillCatalog};
 pub use model_config::model_selector;
 pub use operations::AgentRuntime;
-pub use replaced::ReplacedAgentSessions;
-
-/// Effect Consumer calls a host makes against a running agent plugin's control channel.
-pub mod plugin_effect {
-    pub use crate::plugin_agent::{AgentEffectError, coordinate, reactivate, verify_ready};
-}
 pub use session_setup::{
     AgentSessionBarrier, AgentSessionBarriers, AgentSessionMcpCapabilities, BarrierGuard,
     BarrierReason, SessionMcpMemberRevision, SessionMcpRevision, SessionMcpSnapshot,
     SessionMcpTransportKind,
 };
+pub use skill_catalog::SKILL_DIRECTORIES_META_KEY;
 pub use start::record_session_mcp_boundary;
 pub use stream::SessionEventStream;
 
@@ -153,6 +147,7 @@ struct ManagerInner<H: AgentRuntimeHost> {
     connections: ConnectionSupervisors<H>,
     sessions_root: PathBuf,
     session_mcp: H::Setup,
+    skill_catalog: H::Skills,
     barriers: Arc<AgentSessionBarriers>,
     clock: SystemClock,
     scheduler: Scheduler,
@@ -199,6 +194,8 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     /// and offering the agent's own catalog on exactly that, and inferring it from a stale absence
     /// would silently drop a model chosen for a session that could already have been told.
     reported_config_options: Vec<SessionConfigOption>,
+    /// Changes being asked of the agent without this actor, because it held no provider.
+    direct_config_changes: Vec<oneshot::Receiver<()>>,
     /// Whether the current provider session last reported more commands than shown, so each excess is
     /// logged once.
     commands_exceed_limit: bool,
@@ -207,6 +204,8 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     title_acquisition: TitleAcquisition,
     command_sender: mpsc::WeakUnboundedSender<RuntimeCommand>,
     session_mcp: H::Setup,
+    skill_catalog: H::Skills,
+    announced_skills: Option<skill_catalog::AnnouncedSkills>,
     barriers: Arc<AgentSessionBarriers>,
     live_mcp: LiveMcpState,
     turn_cancel: Arc<turn_cancel::TurnCancelState>,
@@ -232,6 +231,8 @@ pub struct AgentRuntimeSetup<H: AgentRuntimeHost> {
     pub directory: H::Directory,
     /// Resolves session MCP with the automatic selection; sessions narrow it to their own.
     pub session_setup: H::Setup,
+    /// Supplies available Skills and readable Skill roots for session prompts and ACP setup.
+    pub skill_catalog: H::Skills,
     pub events: H::Events,
     /// Neutral directory agent plugins start in before any session names a Workspace.
     pub home_directory: PathBuf,
@@ -433,6 +434,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         } = self
             .create_provider_session(
                 &session.id,
+                &session.workspace_id,
                 &target,
                 &cwd,
                 request.model.as_deref(),
@@ -758,12 +760,15 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 rebuilt_binding: None,
                 load_restoration: Default::default(),
                 reported_config_options: setup.config_options,
+                direct_config_changes: Vec::new(),
                 commands_exceed_limit,
                 scheduler: self.inner.scheduler.clone(),
                 events: self.inner.events.clone(),
                 title_acquisition: setup.title_acquisition,
                 command_sender: commands.downgrade(),
                 session_mcp: setup.session_mcp,
+                skill_catalog: self.inner.skill_catalog.clone(),
+                announced_skills: None,
                 barriers: self.inner.barriers.clone(),
                 live_mcp: setup.live_mcp,
                 turn_cancel: Arc::clone(&handle.turn_cancel),

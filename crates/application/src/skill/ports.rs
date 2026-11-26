@@ -1,54 +1,27 @@
 use crate::RepositoryError;
 use ora_domain::{Namespace, Skill, SkillId};
-use ora_effect::{Digest, Fingerprint};
-use ora_utils::directory::fingerprint_directory;
-use std::path::PathBuf;
+use thiserror::Error;
 
-/// Exact validated Local source metadata committed with its catalog row.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LocalSkillSourceRevision {
-    pub skill_md_digest: Digest,
-    pub package_fingerprint: Fingerprint,
-    pub package_root: PathBuf,
-}
-
-impl LocalSkillSourceRevision {
-    /// Captures the final package fingerprint before persistence so repositories remain I/O-free.
-    pub fn from_package(
-        skill_md_digest: Digest,
-        package_root: PathBuf,
-        fingerprint_root: &std::path::Path,
-    ) -> Result<Self, crate::skill::SkillStorageError> {
-        let package_fingerprint =
-            fingerprint_directory(fingerprint_root, &[]).map_err(|error| {
-                crate::skill::SkillStorageError::OperationFailed {
-                    message: format!(
-                        "failed to fingerprint Skill package {}: {error}",
-                        fingerprint_root.display()
-                    ),
-                }
-            })?;
-        Ok(Self {
-            skill_md_digest,
-            package_fingerprint: Fingerprint::from(package_fingerprint),
-            package_root,
-        })
-    }
+/// Signals that a create lost the race for a namespace/name another visible skill owns.
+///
+/// The active-name unique index is the only atomic arbiter of a name claim, so adapters must
+/// report its rejection through this error instead of a generic storage failure: callers cannot
+/// rely on a preceding lookup to keep concurrent same-name creates exclusive.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error("visible skill `{namespace}/{name}` already claims this name")]
+pub struct SkillNameClaimedError {
+    pub namespace: String,
+    pub name: String,
 }
 
 /// Defines catalog persistence required by skill CRUD and import sessions.
 pub trait SkillRepository {
     /// Persists a new visible skill snapshot.
+    ///
+    /// A name already owned by another visible skill must be reported as
+    /// [`SkillNameClaimedError`], including when a concurrent writer claims it after the caller's
+    /// last lookup.
     fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError>;
-
-    /// Persists a new catalog row and its active Local source state atomically.
-    fn create_skill_with_source(
-        &self,
-        skill: Skill,
-        _source: LocalSkillSourceRevision,
-    ) -> Result<Skill, RepositoryError> {
-        self.create_skill(skill)
-    }
 
     /// Loads one visible skill by its stable identifier.
     fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError>;
@@ -66,30 +39,12 @@ pub trait SkillRepository {
     /// Replaces a visible skill identified by its stable identifier.
     fn update_skill(&self, skill: Skill) -> Result<Skill, RepositoryError>;
 
-    /// Updates a catalog row, source state, and durable propagation event atomically.
-    fn update_skill_with_source(
-        &self,
-        skill: Skill,
-        _source: LocalSkillSourceRevision,
-    ) -> Result<Skill, RepositoryError> {
-        self.update_skill(skill)
-    }
-
     /// Marks a visible skill deleted at the supplied timestamp.
     fn soft_delete_skill(
         &self,
         skill_id: &SkillId,
         deleted_at: i64,
     ) -> Result<bool, RepositoryError>;
-
-    /// Soft-deletes a Local source and uninstalls it from every Workspace atomically.
-    fn soft_delete_skill_with_source(
-        &self,
-        skill_id: &SkillId,
-        deleted_at: i64,
-    ) -> Result<bool, RepositoryError> {
-        self.soft_delete_skill(skill_id, deleted_at)
-    }
 }
 
 /// Supplies opaque identifiers for newly created skills.

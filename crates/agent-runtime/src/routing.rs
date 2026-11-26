@@ -1,5 +1,6 @@
 use super::connection::RuntimeConnection;
 use crate::RuntimeError;
+use crate::config_changes::ConfigChanges;
 use agent_client_protocol_schema::v1::{
     AvailableCommand, AvailableCommandsUpdate, SessionNotification, SessionUpdate,
 };
@@ -46,6 +47,8 @@ pub(super) struct SessionChannel {
     pub connection: RuntimeConnection,
     pub events: mpsc::Receiver<SessionEvent>,
     pub pending_updates: VecDeque<SessionNotification>,
+    /// What this provider session was asked to change and has not answered.
+    pub(crate) config_changes: ConfigChanges,
     /// The slash-command catalog this provider session last reported; empty until it reports one.
     ///
     /// It lives with the channel because it describes exactly one attachment: dropping the channel
@@ -81,12 +84,6 @@ impl SessionChannel {
         self.pending_updates
             .retain(|pending| !matches!(pending.update, SessionUpdate::AvailableCommandsUpdate(_)));
         self.pending_updates.push_back(notification.clone());
-    }
-
-    /// Drops queued configuration snapshots that a later authoritative answer replaced.
-    pub(super) fn discard_pending_options(&mut self) {
-        self.pending_updates
-            .retain(|pending| !matches!(pending.update, SessionUpdate::ConfigOptionUpdate(_)));
     }
 
     /// Renders the reported command catalog for a client loading the attached session.
