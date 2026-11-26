@@ -24,8 +24,8 @@ artifact retrieval mode. Operations: `listMarketplaceSources`, `addMarketplaceSo
   drops the source from sync, listing and installation.
 - **Proxy.** Sources with proxy routing enabled follow the [Desktop proxy mode](../desktop/settings.md#network-proxy).
   Other sources always connect directly. Git and artifact downloads honor the same policy. Ora passes
-  the selected route to Git for each operation and rejects redirects Git cannot reroute. Configure
-  the final Git URL in that case.
+  the selected route to Git for each operation. Explicitly direct sources keep Git's redirect behavior.
+  When a destination-dependent route cannot be reapplied after a redirect, configure the final Git URL.
 - **Artifact retrieval.** `Direct HTTPS` (the default) fetches absolute HTTPS release locators
   without signing. `S3 SigV4` accepts object keys, or path-style HTTPS locators on the configured
   endpoint and bucket, and signs requests with the source's region and static credential pair; it

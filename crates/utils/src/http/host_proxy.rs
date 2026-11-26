@@ -85,6 +85,11 @@ impl HostProxy {
         }
     }
 
+    /// Reports whether the policy guarantees a direct route regardless of the destination.
+    pub fn is_always_direct(&self) -> bool {
+        self.origin == ProxyOrigin::Direct
+    }
+
     /// Uses the explicitly configured endpoint for non-loopback hosts.
     pub fn manual(endpoint: Url) -> Self {
         Self {

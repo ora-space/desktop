@@ -43,7 +43,7 @@ pub(crate) fn git_proxy_env(remote_url: &str, policy: &HostProxy) -> Result<GitE
         .endpoint
         .map(String::from)
         .unwrap_or_default();
-    Ok(GitEnv::automation_defaults()
+    let env = GitEnv::automation_defaults()
         .with_english_messages()
         .with_variable("NO_PROXY", "")
         .with_variable("no_proxy", "")
@@ -51,7 +51,15 @@ pub(crate) fn git_proxy_env(remote_url: &str, policy: &HostProxy) -> Result<GitE
         .with_config(format!("http.{origin}.proxy"), proxy_url.as_str())
         .with_config(format!("http.{origin}.proxyAuthMethod"), "basic")
         .with_config(format!("http.{remote_url}.proxyAuthMethod"), "basic")
-        .with_config(format!("http.{remote_url}.proxy"), proxy_url)
+        .with_config(format!("http.{remote_url}.proxy"), proxy_url);
+    if policy.is_always_direct() {
+        // Git matches URL options against the original request. Empty proxy values pin its
+        // transport to direct, so following an allowed redirect cannot change the route.
+        return Ok(env
+            .with_config("http.proxy", "")
+            .with_config("remote.origin.proxy", ""));
+    }
+    Ok(env
         .with_config("http.followRedirects", "false")
         .with_config(format!("http.{origin}.followRedirects"), "false")
         .with_config(format!("http.{remote_url}.followRedirects"), "false"))
@@ -182,8 +190,11 @@ mod tests {
         }
     }
 
+    const UNAVAILABLE: &str =
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
     /// Receives one Git request on a socket and returns its method and target.
-    fn serve_git_request() -> (String, std::thread::JoinHandle<String>) {
+    fn serve_git_request(response: String) -> (String, std::thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
         listener.set_nonblocking(true).expect("set nonblocking");
         let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
@@ -213,7 +224,7 @@ mod tests {
                     break;
                 }
             }
-            socket.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").expect("reply to Git");
+            socket.write_all(response.as_bytes()).expect("reply to Git");
             request
         });
         (endpoint, task)
@@ -224,7 +235,7 @@ mod tests {
     fn direct_route_overrides_user_git_proxy() {
         let temp = tempfile::tempdir().expect("temp dir");
         let config = temp.path().join("gitconfig");
-        let (endpoint, server) = serve_git_request();
+        let (endpoint, server) = serve_git_request(UNAVAILABLE.to_owned());
         let remote = format!("{endpoint}/marketplace.git");
         std::fs::write(
             &config,
@@ -243,13 +254,46 @@ mod tests {
         );
     }
 
+    /// Git follows a repository redirect without consulting a conflicting proxy on either hop.
+    #[test]
+    fn direct_marketplace_git_follows_initial_redirect() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let config = temp.path().join("gitconfig");
+        let (destination, final_request) = serve_git_request(UNAVAILABLE.to_owned());
+        let redirect = format!(
+            "HTTP/1.1 301 Moved Permanently\r\nLocation: {destination}/moved.git/info/refs?service=git-upload-pack\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        let (initial, first_request) = serve_git_request(redirect);
+        let remote = format!("{initial}/initial.git");
+        std::fs::write(&config, format!(
+            "[http]\n  proxy = http://127.0.0.1:1\n[http \"{destination}\"]\n  proxy = http://127.0.0.1:1\n"
+        )).expect("git config");
+        let env = git_proxy_env(&remote, &HostProxy::direct())
+            .expect("direct env")
+            .with_variable("http_proxy", "http://127.0.0.1:1");
+        let stderr = ls_remote_stderr(&remote, env, &config);
+        assert!(stderr.contains("503"), "{stderr}");
+        assert!(
+            first_request
+                .join()
+                .expect("initial request")
+                .starts_with("GET /initial.git/info/refs?")
+        );
+        assert!(
+            final_request
+                .join()
+                .expect("redirected request")
+                .starts_with("GET /moved.git/info/refs?")
+        );
+    }
+
     /// A routed Git request reaches Ora's local proxy despite conflicting Git and bypass settings.
     #[test]
     fn proxy_route_overrides_user_git_proxy() {
         let temp = tempfile::tempdir().expect("temp dir");
         let config = temp.path().join("gitconfig");
         let remote = "http://origin.example/marketplace.git";
-        let (endpoint, server) = serve_git_request();
+        let (endpoint, server) = serve_git_request(UNAVAILABLE.to_owned());
         std::fs::write(
             &config,
             format!("[http \"{remote}\"]\n  proxy = http://127.0.0.1:1\n"),
