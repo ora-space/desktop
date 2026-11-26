@@ -10,7 +10,7 @@
 //! cannot freeze every other source's listings or make a transient outage look like a withdrawal.
 
 use super::listing::available_plugin;
-use super::{PluginApi, with_source_proxy};
+use super::{PluginApi, proxy};
 use crate::error::BackendError;
 use crate::marketplace_sources::map_marketplace_source_error;
 use gitlancer::{CliGitRunner, Git};
@@ -118,7 +118,7 @@ impl PluginApi {
     /// Callers must already hold the rebuild slot handed out by [`Self::try_begin_rebuild`].
     ///
     /// Everything that belongs to one source's refresh — its proxy requirement and its Git work —
-    /// fails only that source. Reading Ora's own state (the proxy settings, the configured sources
+    /// fails only that source. Reading Ora's own state (the configured sources
     /// and their namespace bindings) still fails the rebuild, because without it no source can be
     /// refreshed or attributed correctly. The S3 retrieval settings are not read at all: they only
     /// matter when a release is downloaded, so a source whose S3 settings cannot be read still
@@ -132,7 +132,7 @@ impl PluginApi {
     ) -> Result<SyncAvailablePluginsResponse, BackendError> {
         let git = Git::new(CliGitRunner);
         // This entire Git/cache rebuild runs synchronously on the host's blocking executor.
-        let proxy_settings = self.sync_settings.network_proxy_settings()?;
+        let mut host_proxy = None;
         let configured = self.enabled_marketplace_sources()?;
         let now_ms = self.clock.now_timestamp_millis();
         let previous = self.load_previous_registry_index();
@@ -145,18 +145,38 @@ impl PluginApi {
                 .map_err(map_marketplace_source_error)?;
             // The full error goes to the log; the recorded failure keeps only what the user can
             // act on, because it is shown on the marketplace page and persisted in the cache.
-            let failure = match with_source_proxy(
-                source.clone(),
-                configured.source().use_proxy,
-                proxy_settings.as_ref(),
-            ) {
+            let direct = Ok(ora_utils::http::HostProxy::direct());
+            let policy = if configured.source().use_proxy {
+                host_proxy.get_or_insert_with(|| {
+                    self.sync_settings
+                        .network_proxy_preferences()
+                        .map_err(BackendError::from)
+                        .and_then(|preferences| proxy::host_proxy(&preferences))
+                })
+            } else {
+                &direct
+            };
+            let git_env = policy
+                .as_ref()
+                .map_err(ToString::to_string)
+                .and_then(|policy| {
+                    proxy::git_proxy_env(source.url(), policy).map_err(|error| error.to_string())
+                });
+            let failure = match git_env.map(|git_env| source.clone().with_git_env(git_env)) {
                 Ok(proxied) => RegistrySync::sync(&git, &proxied).err().map(|error| {
+                    let failure = RegistrySourceFailure::from_sync_error(source.canonical_url(), &error);
+                    let failure = if failure.message().contains("CONNECT tunnel failed, response 407")
+                        || failure.message().contains("returned error: 407") {
+                        RegistrySourceFailure::new(source.canonical_url(), ora_utils::http::HostProxyError::Authentication.to_string())
+                    } else {
+                        failure
+                    };
                     ora_warn!(
                         message = "marketplace source refresh failed; keeping its previous listings",
                         source = %source.canonical_url(),
-                        error = %error,
+                        error = %failure.message(),
                     );
-                    RegistrySourceFailure::from_sync_error(source.canonical_url(), &error)
+                    failure
                 }),
                 Err(error) => {
                     ora_warn!(

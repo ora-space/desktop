@@ -12,7 +12,11 @@ import {
   toast,
 } from "@ora/ui";
 import { IconServer } from "@tabler/icons-react";
-import type { CheckProxySettingsResponse, ProxySettings } from "@ora/contracts";
+import type {
+  CheckProxySettingsResponse,
+  ProxyMode,
+  ProxySettings,
+} from "@ora/contracts";
 import { localizeContractError } from "../../i18n/contract-error";
 import {
   type ProxySettingsController,
@@ -25,18 +29,18 @@ interface ProxySettingsEditorProps {
   controller: ProxySettingsController;
 }
 
-/** Present a host-level proxy editor whose saved value only marketplace sources may opt into. */
+/** Edits the host proxy used by Desktop updates and opted-in marketplace sources. */
 export function ProxySettings() {
   const { t } = useTranslation();
   const controller = useProxySettings();
 
   const settingsKey = controller.settings
     ? [
-        controller.settings.host,
-        String(controller.settings.port),
-        controller.settings.username ?? "",
-        controller.settings.password ?? "",
-      ].join("\u0000")
+      controller.settings.host,
+      String(controller.settings.port),
+      controller.settings.username ?? "",
+      controller.settings.password ?? "",
+    ].join("\u0000")
     : "empty";
 
   return (
@@ -46,26 +50,30 @@ export function ProxySettings() {
         description={t("settings.proxy.description")}
       />
 
-      {!controller.hasLoaded && controller.isLoading ? (
-        <span role="status" className="text-xs text-muted-foreground">
-          {t("settings.proxy.loading")}
-        </span>
-      ) : !controller.hasLoaded && controller.loadError !== null ? (
-        <div className="space-y-3">
-          <p role="alert" className="text-sm text-destructive">
-            {t("settings.proxy.loadError")}
-          </p>
-          <Button variant="outline" onClick={() => void controller.retry()}>
-            {t("common.retry")}
-          </Button>
-        </div>
-      ) : (
-        <ProxySettingsEditor
-          key={settingsKey}
-          initialSettings={controller.settings}
-          controller={controller}
-        />
-      )}
+      {!controller.hasLoaded && controller.isLoading
+        ? (
+          <span role="status" className="text-xs text-muted-foreground">
+            {t("settings.proxy.loading")}
+          </span>
+        )
+        : !controller.hasLoaded && controller.loadError !== null
+        ? (
+          <div className="space-y-3">
+            <p role="alert" className="text-sm text-destructive">
+              {t("settings.proxy.loadError")}
+            </p>
+            <Button variant="outline" onClick={() => void controller.retry()}>
+              {t("common.retry")}
+            </Button>
+          </div>
+        )
+        : (
+          <ProxySettingsEditor
+            key={controller.mode + settingsKey}
+            initialSettings={controller.settings}
+            controller={controller}
+          />
+        )}
     </div>
   );
 }
@@ -99,6 +107,7 @@ function ProxySettingsEditor({
   controller,
 }: ProxySettingsEditorProps) {
   const { t } = useTranslation();
+  const [mode, setMode] = useState<ProxyMode>(controller.mode);
   const [host, setHost] = useState(initialSettings?.host ?? "");
   const [port, setPort] = useState(
     initialSettings ? String(initialSettings.port) : "",
@@ -108,26 +117,27 @@ function ProxySettingsEditor({
   const [checkOpen, setCheckOpen] = useState(false);
   const [checkUrl, setCheckUrl] = useState(controller.checkUrl);
 
-  const parsed = parsedProxySettings(host, port, username, password);
-  const hasFormValues =
-    host.trim() !== "" ||
+  const parsed = mode === "manual"
+    ? parsedProxySettings(host, port, username, password)
+    : null;
+  const invalid = mode === "manual" && parsed === null;
+  const hasFormValues = host.trim() !== "" ||
     port.trim() !== "" ||
     username.trim() !== "" ||
     password !== "";
-  const busy =
-    controller.isLoading ||
+  const busy = controller.isLoading ||
     controller.isSaving ||
     controller.loadError !== null;
-  const checkBlocked =
-    busy || controller.isCheckUrlLoading || controller.checkUrlError !== null;
+  const checkBlocked = busy || controller.isCheckUrlLoading ||
+    controller.checkUrlError !== null;
 
   const save = async () => {
-    if (parsed === null) {
+    if (invalid) {
       toast.error(t("settings.proxy.invalid"));
       return;
     }
     try {
-      await controller.submit(parsed);
+      await controller.submit(mode, parsed);
       toast.success(t("settings.proxy.saved"));
     } catch (cause) {
       toast.error(t("settings.proxy.updateError"), {
@@ -152,63 +162,87 @@ function ProxySettingsEditor({
       <div className="flex items-start gap-3">
         <IconServer className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium">
-                {t("settings.proxy.host")}
-              </span>
-              <Input
-                value={host}
-                onChange={(event) => setHost(event.target.value)}
-                placeholder={t("settings.proxy.hostPlaceholder")}
-                aria-label={t("settings.proxy.host")}
-                autoComplete="off"
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium">
-                {t("settings.proxy.port")}
-              </span>
-              <Input
-                value={port}
-                onChange={(event) => setPort(event.target.value)}
-                placeholder={t("settings.proxy.portPlaceholder")}
-                aria-label={t("settings.proxy.port")}
-                inputMode="numeric"
-              />
-            </label>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium">
-                {t("settings.proxy.username")}
-              </span>
-              <Input
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                placeholder={t("settings.proxy.optional")}
-                aria-label={t("settings.proxy.username")}
-                autoComplete="off"
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium">
-                {t("settings.proxy.password")}
-              </span>
-              <Input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder={t("settings.proxy.optional")}
-                aria-label={t("settings.proxy.password")}
-                autoComplete="new-password"
-              />
-            </label>
-          </div>
+          <label className="block space-y-1.5">
+            <span className="text-sm font-medium">
+              {t("settings.proxy.mode")}
+            </span>
+            <select
+              className="block w-full rounded-md border bg-background px-3 py-2 text-sm"
+              value={mode}
+              disabled={busy}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                if (
+                  value === "system" || value === "manual" || value === "direct"
+                ) setMode(value);
+              }}
+            >
+              <option value="system">{t("settings.proxy.modeSystem")}</option>
+              <option value="manual">{t("settings.proxy.modeManual")}</option>
+              <option value="direct">{t("settings.proxy.modeDirect")}</option>
+            </select>
+          </label>
+          {mode === "manual" && (
+            <>
+              <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings.proxy.host")}
+                  </span>
+                  <Input
+                    value={host}
+                    onChange={(event) => setHost(event.target.value)}
+                    placeholder={t("settings.proxy.hostPlaceholder")}
+                    aria-label={t("settings.proxy.host")}
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings.proxy.port")}
+                  </span>
+                  <Input
+                    value={port}
+                    onChange={(event) => setPort(event.target.value)}
+                    placeholder={t("settings.proxy.portPlaceholder")}
+                    aria-label={t("settings.proxy.port")}
+                    inputMode="numeric"
+                  />
+                </label>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings.proxy.username")}
+                  </span>
+                  <Input
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    placeholder={t("settings.proxy.optional")}
+                    aria-label={t("settings.proxy.username")}
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings.proxy.password")}
+                  </span>
+                  <Input
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder={t("settings.proxy.optional")}
+                    aria-label={t("settings.proxy.password")}
+                    autoComplete="new-password"
+                  />
+                </label>
+              </div>
+            </>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             <Button
               variant="outline"
-              disabled={busy || parsed === null}
+              disabled={busy || invalid}
               onClick={() => void save()}
             >
               {controller.isSaving
@@ -217,16 +251,15 @@ function ProxySettingsEditor({
             </Button>
             <Button
               variant="outline"
-              disabled={
-                busy || (!hasFormValues && controller.settings === null)
-              }
+              disabled={busy ||
+                (!hasFormValues && controller.settings === null)}
               onClick={() => void clear()}
             >
               {t("settings.proxy.clear")}
             </Button>
             <Button
               variant="outline"
-              disabled={checkBlocked || parsed === null}
+              disabled={checkBlocked || invalid}
               onClick={() => {
                 setCheckUrl(controller.checkUrl);
                 setCheckOpen(true);
@@ -268,17 +301,15 @@ function ProxySettingsEditor({
           </div>
         </div>
       </div>
-      {checkOpen && parsed !== null && (
+      {checkOpen && !invalid && (
         <CheckProxyDialog
           checking={controller.isChecking}
           blocked={checkBlocked}
-          readError={
-            controller.loadError !== null
-              ? t("settings.proxy.loadError")
-              : controller.checkUrlError !== null
-                ? t("settings.proxy.checkUrlLoadError")
-                : null
-          }
+          readError={controller.loadError !== null
+            ? t("settings.proxy.loadError")
+            : controller.checkUrlError !== null
+            ? t("settings.proxy.checkUrlLoadError")
+            : null}
           onRetry={() => void controller.retry()}
           url={checkUrl}
           onUrlChange={setCheckUrl}
@@ -287,7 +318,7 @@ function ProxySettingsEditor({
             if (!open) setCheckUrl(controller.checkUrl);
           }}
           onSaveUrl={controller.saveCheckUrl}
-          onCheck={(url) => controller.check(url, parsed)}
+          onCheck={(url) => controller.check(url, mode, parsed)}
         />
       )}
     </section>
@@ -339,9 +370,19 @@ function CheckProxyDialog({
       const result = await onCheck(nextUrl);
       if (result.outcome === "reachable") {
         toast.success(t("settings.proxy.checkSuccess"), {
-          description: t("settings.proxy.checkSuccessDetail", {
-            status: result.status,
-          }),
+          description: result.route === undefined
+            ? t("settings.proxy.checkSuccessDetail", { status: result.status })
+            : t("settings.proxy.checkRouteDetail", {
+              status: result.status,
+              route: t(
+                {
+                  direct: "settings.proxy.modeDirect",
+                  manual: "settings.proxy.modeManual",
+                  system: "settings.proxy.routeSystem",
+                  environment: "settings.proxy.routeEnvironment",
+                }[result.route],
+              ),
+            }),
         });
         onOpenChange(false);
         return;

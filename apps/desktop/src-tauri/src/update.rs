@@ -93,12 +93,10 @@ pub enum UpdateError {
     TrustConfiguration(String),
     #[error("update operation failed")]
     Updater(#[source] tauri_plugin_updater::Error),
-    #[error("failed to construct configured proxy URL")]
-    Proxy(#[source] url::ParseError),
     #[error("failed to read configured proxy settings")]
     ProxySettings(String),
-    #[error("proxy credentials could not be encoded")]
-    ProxyCredentials,
+    #[error(transparent)]
+    Proxy(#[from] ora_utils::http::HostProxyError),
     #[error("no update is ready to install")]
     NoPendingUpdate,
     #[error("the confirmed release was replaced by another one")]

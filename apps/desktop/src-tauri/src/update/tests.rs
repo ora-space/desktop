@@ -4,10 +4,8 @@ use crate::update::artifact_store::{
     ArtifactDescriptor, ArtifactVerifier, StoredArtifact, UpdateArtifactStore,
 };
 use crate::update::release_notes::{ReleaseNote, ReleaseNoteCategory, ReleaseNoteEntry};
-use crate::update::service::proxy_url;
 use crate::update::state::{OfferedRelease, ReadyUpdate, RuntimeUpdateState};
 use crate::update::{DesktopUpdateStatus, ManualUpdateReason, UpdateError};
-use ora_application::NetworkProxySettings;
 use ora_logging::with_trace_logging;
 use ora_utils::hash::sha256_reader;
 use pretty_assertions::assert_eq;
@@ -433,34 +431,6 @@ async fn a_failed_check_keeps_the_ready_release_and_its_notes() {
             }
         );
     }
-}
-
-/// Verifies proxy credentials are encoded into the updater URL.
-#[test]
-fn proxy_url_carries_the_host_port_and_credentials() {
-    let url = proxy_url(&NetworkProxySettings {
-        host: "proxy.internal".to_owned(),
-        port: 8080,
-        username: Some("agent".to_owned()),
-        password: Some("s3cr3t".to_owned()),
-    })
-    .expect("proxy URL builds");
-
-    assert_eq!(url.as_str(), "http://agent:s3cr3t@proxy.internal:8080/");
-}
-
-/// Verifies absent proxy credentials remain absent instead of becoming empty URL fields.
-#[test]
-fn proxy_url_omits_credentials_that_are_not_configured() {
-    let url = proxy_url(&NetworkProxySettings {
-        host: "proxy.internal".to_owned(),
-        port: 3128,
-        username: None,
-        password: None,
-    })
-    .expect("proxy URL builds");
-
-    assert_eq!(url.as_str(), "http://proxy.internal:3128/");
 }
 
 /// The webview switches on `kind` and reads payload fields directly, making this serialized shape

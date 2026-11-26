@@ -57,6 +57,30 @@ function renderProxy(
   );
 }
 
+it("defaults to system and keeps the saved endpoint when switching modes", async () => {
+  const state = createFixtureState();
+  const client = createTestClient(createFixtureHandlers(state));
+  const user = userEvent.setup();
+  const first = renderProxy(client);
+  const modeLabel = /代理模式|Proxy mode/;
+  expect(await screen.findByLabelText(modeLabel)).toHaveValue("system");
+  await user.selectOptions(screen.getByLabelText(modeLabel), "manual");
+  await user.type(screen.getByLabelText(/主机|Host/), "proxy.example");
+  await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() => expect(state.proxySettings?.host).toBe("proxy.example"));
+
+  await user.selectOptions(screen.getByLabelText(modeLabel), "direct");
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() => expect(state.proxyMode).toBe("direct"));
+  first.unmount();
+
+  renderProxy(client);
+  expect(await screen.findByLabelText(modeLabel)).toHaveValue("direct");
+  await user.selectOptions(screen.getByLabelText(modeLabel), "manual");
+  expect(screen.getByLabelText(/主机|Host/)).toHaveValue("proxy.example");
+});
+
 it("saves proxy settings through the backend", async () => {
   const state = createFixtureState();
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -65,6 +89,10 @@ it("saves proxy settings through the backend", async () => {
 
   renderProxy(client);
 
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
   await user.type(await screen.findByLabelText(/主机|Host/), "127.0.0.1");
   await user.type(screen.getByLabelText(/端口|Port/), "7890");
   await user.click(screen.getByRole("button", { name: /保存|Save/ }));
@@ -75,7 +103,7 @@ it("saves proxy settings through the backend", async () => {
       port: 7890,
       username: null,
       password: null,
-    }),
+    })
   );
 });
 
@@ -160,6 +188,10 @@ it("checks the current form proxy against a URL", async () => {
 
   renderProxy(client);
 
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
   await user.type(await screen.findByLabelText(/主机|Host/), "127.0.0.1");
   await user.type(screen.getByLabelText(/端口|Port/), "7890");
   await user.click(
@@ -183,7 +215,7 @@ it("checks the current form proxy against a URL", async () => {
         username: null,
         password: null,
       },
-    }),
+    })
   );
 });
 it("retains the draft and blocks actions during a production reconnect read failure", async () => {
@@ -303,7 +335,7 @@ it.each(["proxy", "url"])(
       expect(check).toHaveBeenCalledWith({
         url: "https://custom.example/probe",
         settings: state.proxySettings,
-      }),
+      })
     );
   },
 );
@@ -339,7 +371,7 @@ it("reports an unreachable probe as connectivity without changing saved settings
     expect(report).toHaveBeenCalledWith(
       expect.stringMatching(/不代表代理配置有误|settings may still be valid/),
       { description: "Target blocked by network policy" },
-    ),
+    )
   );
   expect(state.proxySettings).toEqual(saved);
   expect(set).not.toHaveBeenCalled();
@@ -405,12 +437,12 @@ it("saves a confirmed target despite an unreachable result and restores it after
     within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
   );
   await waitFor(() =>
-    expect(state.proxyCheckUrl).toBe("https://custom.example/check"),
+    expect(state.proxyCheckUrl).toBe("https://custom.example/check")
   );
   await waitFor(() =>
     expect(
       within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
-    ).toBeEnabled(),
+    ).toBeEnabled()
   );
   await user.clear(input);
   await user.type(input, "https://cancelled.example/");
@@ -469,7 +501,7 @@ it("preserves the URL draft and saved target on write failure, then retries befo
     expect(error).toHaveBeenCalledWith(
       expect.stringMatching(/网址未保存|URL was not saved/),
       expect.anything(),
-    ),
+    )
   );
   expect(input).toHaveValue("https://retry.example");
   expect(state.proxyCheckUrl).toBe("https://saved.example");
@@ -481,7 +513,7 @@ it("preserves the URL draft and saved target on write failure, then retries befo
     expect(check).toHaveBeenCalledWith({
       url: "https://retry.example",
       settings: state.proxySettings,
-    }),
+    })
   );
 });
 
@@ -537,8 +569,8 @@ it("does not let an older background response replace a newly confirmed target",
   handlers.getProxyCheckUrl = () =>
     pending
       ? new Promise<{ url: string }>((resolve) => {
-          complete = resolve;
-        })
+        complete = resolve;
+      })
       : Promise.resolve({ url: state.proxyCheckUrl });
   const client = createTestClient(handlers);
   const queryClient = new QueryClient({

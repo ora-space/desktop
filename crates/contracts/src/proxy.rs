@@ -23,7 +23,7 @@ pub struct ProxyCheckUrlResponse {
     pub url: String,
 }
 
-/// Describes an optional host-level network proxy used by marketplace traffic.
+/// Describes a manual endpoint for the Desktop updater and opted-in marketplace traffic.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
@@ -38,6 +38,28 @@ pub struct ProxySettings {
     pub password: Option<String>,
 }
 
+/// Selects how Desktop chooses a network proxy.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "proxy.ts")]
+pub enum ProxyMode {
+    #[default]
+    System,
+    Manual,
+    Direct,
+}
+
+/// Identifies the route a connectivity probe actually used.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "proxy.ts")]
+pub enum ProxyRoute {
+    System,
+    Manual,
+    Environment,
+    Direct,
+}
+
 /// Requests the configured network proxy without additional parameters.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +71,9 @@ pub struct GetProxySettingsRequest {}
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
 pub struct GetProxySettingsResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mode: Option<ProxyMode>,
     pub settings: Option<ProxySettings>,
 }
 
@@ -57,7 +82,10 @@ pub struct GetProxySettingsResponse {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
 pub struct SetProxySettingsRequest {
-    pub settings: ProxySettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mode: Option<ProxyMode>,
+    pub settings: Option<ProxySettings>,
 }
 
 /// Returns the authoritative network proxy after a save.
@@ -65,6 +93,9 @@ pub struct SetProxySettingsRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
 pub struct SetProxySettingsResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mode: Option<ProxyMode>,
     pub settings: Option<ProxySettings>,
 }
 
@@ -79,6 +110,9 @@ pub struct ClearProxySettingsRequest {}
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
 pub struct ClearProxySettingsResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mode: Option<ProxyMode>,
     pub settings: Option<ProxySettings>,
 }
 
@@ -87,16 +121,19 @@ pub struct ClearProxySettingsResponse {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
 pub struct CheckProxySettingsRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mode: Option<ProxyMode>,
     /// Absolute HTTP(S) URL to fetch through the supplied proxy.
     pub url: String,
     /// Proxy configuration to probe with, independent of whatever is currently persisted.
-    pub settings: ProxySettings,
+    pub settings: Option<ProxySettings>,
 }
 
 /// Reports whether the supplied proxy could reach the requested URL.
 ///
-/// Any HTTP response, including 4xx and 5xx, means the proxy path reached a host. Transport
-/// failures such as timeouts, refused connections, and invalid URLs are `unreachable`.
+/// HTTP 407 reports a proxy authentication failure. Other HTTP responses establish reachability.
+/// Transport and proxy-resolution failures are `unreachable`.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(
     tag = "outcome",
@@ -105,8 +142,15 @@ pub struct CheckProxySettingsRequest {
 )]
 #[ts(export_to = "proxy.ts")]
 pub enum CheckProxySettingsResponse {
-    Reachable { status: u16 },
-    Unreachable { message: String },
+    Reachable {
+        status: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        route: Option<ProxyRoute>,
+    },
+    Unreachable {
+        message: String,
+    },
 }
 
 /// Exports the complete network-proxy DTO family into one TypeScript module.
@@ -114,6 +158,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     GetProxyCheckUrlRequest::export(config)?;
     SetProxyCheckUrlRequest::export(config)?;
     ProxyCheckUrlResponse::export(config)?;
+    ProxyMode::export(config)?;
+    ProxyRoute::export(config)?;
     ProxySettings::export(config)?;
     GetProxySettingsRequest::export(config)?;
     GetProxySettingsResponse::export(config)?;
@@ -151,7 +197,8 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(SetProxySettingsRequest {
-                settings: settings.clone(),
+                settings: Some(settings.clone()),
+                mode: None,
             })
             .unwrap(),
             json!({
@@ -164,7 +211,11 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::to_value(GetProxySettingsResponse { settings: None }).unwrap(),
+            serde_json::to_value(GetProxySettingsResponse {
+                settings: None,
+                mode: None
+            })
+            .unwrap(),
             json!({ "settings": null })
         );
         assert_eq!(
@@ -172,13 +223,18 @@ mod tests {
             json!({})
         );
         assert_eq!(
-            serde_json::to_value(ClearProxySettingsResponse { settings: None }).unwrap(),
+            serde_json::to_value(ClearProxySettingsResponse {
+                settings: None,
+                mode: None
+            })
+            .unwrap(),
             json!({ "settings": null })
         );
         assert_eq!(
             serde_json::to_value(CheckProxySettingsRequest {
                 url: "https://example.com/".to_string(),
-                settings,
+                settings: Some(settings),
+                mode: None,
             })
             .unwrap(),
             json!({
@@ -192,7 +248,11 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::to_value(CheckProxySettingsResponse::Reachable { status: 200 }).unwrap(),
+            serde_json::to_value(CheckProxySettingsResponse::Reachable {
+                status: 200,
+                route: None
+            })
+            .unwrap(),
             json!({ "outcome": "reachable", "status": 200 })
         );
         assert_eq!(

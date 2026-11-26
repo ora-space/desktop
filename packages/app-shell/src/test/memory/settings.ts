@@ -1,4 +1,5 @@
 import {
+  type ProxyMode,
   type ProxySettings,
   type RuntimeLogLevelStateResponse,
 } from "@ora/contracts";
@@ -7,6 +8,7 @@ import type { TestHandlers } from "../contracts-transport";
 /** Mutable records owned by the settings test adapter. */
 export interface SettingsMemoryState {
   proxySettings: ProxySettings | null;
+  proxyMode?: ProxyMode;
   proxyCheckUrl: string;
   developerMode: { enabled: boolean };
   runtimeLogLevel: RuntimeLogLevelStateResponse;
@@ -31,18 +33,26 @@ export function settingsHandlers(state: SettingsMemoryState) {
     getProxyCheckUrl: async () => ({ url: state.proxyCheckUrl }),
     setProxyCheckUrl: async ({ url }) => {
       const parsed = new URL(url);
-      if (!["http:", "https:"].includes(parsed.protocol))
+      if (!["http:", "https:"].includes(parsed.protocol)) {
         throw new Error("Invalid probe URL");
+      }
       state.proxyCheckUrl = url.trim();
       return { url: state.proxyCheckUrl };
     },
-    getProxySettings: async () => ({ settings: state.proxySettings }),
+    getProxySettings: async () => ({
+      settings: state.proxySettings,
+      ...(state.proxyMode ? { mode: state.proxyMode } : {}),
+    }),
     setProxySettings: async (req) => {
-      state.proxySettings = structuredClone(req.settings);
-      return { settings: state.proxySettings };
+      state.proxyMode = req.mode ?? "manual";
+      if (state.proxyMode === "manual") {
+        state.proxySettings = structuredClone(req.settings);
+      }
+      return { settings: state.proxySettings, mode: state.proxyMode };
     },
     clearProxySettings: async () => {
       state.proxySettings = null;
+      state.proxyMode = "system";
       return { settings: null };
     },
     checkProxySettings: async () => ({

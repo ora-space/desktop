@@ -264,10 +264,10 @@ where
         Ok(settings)
     }
 
-    /// Removes the configured network proxy so marketplace traffic connects directly.
+    /// Forgets the explicitly saved configuration and returns to the default mode.
     pub fn clear_network_proxy_settings(&self) -> Result<(), ApplicationError> {
         self.store
-            .delete(ConfigKey::NetworkProxySettings)
+            .delete_pair(ConfigKey::NetworkProxyMode, ConfigKey::NetworkProxySettings)
             .map_err(ApplicationError::from_user_config_repository_error)?;
         Ok(())
     }

@@ -833,8 +833,7 @@ impl PluginApi {
         &self,
         namespace: &PluginNamespace,
     ) -> Result<ora_plugin_registry::RegistrySource, BackendError> {
-        let proxy_settings = self.settings.network_proxy_settings().await?;
-        let registry_sources = self.prepared_registry_sources(proxy_settings)?;
+        let registry_sources = self.prepared_registry_sources()?;
         registry_sources
             .into_iter()
             .find(|(source, _use_proxy, _s3_config)| {

@@ -10,6 +10,7 @@ use ora_backend::Settings;
 use ora_logging::{ora_error, ora_info, ora_warn};
 use ora_scheduler::{CronHandle, DelayHandle, Scheduler};
 use ora_utils::error::error_chain;
+use ora_utils::http::{HostProxy, HostProxyError, is_proxy_auth_failure};
 use semver::Version;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -17,7 +18,6 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::{Update, UpdaterExt};
 use tokio::sync::Mutex as AsyncMutex;
-use url::Url;
 
 const UPDATE_EVENT: &str = "desktop-update-status-changed";
 const INITIAL_CHECK_DELAY: Duration = Duration::from_secs(60);
@@ -201,18 +201,37 @@ impl UpdateService {
 
     /// Reconciles the current manifest with an existing artifact or a newly verified download.
     async fn check_and_download_inner(&self) -> Result<(), UpdateError> {
-        let mut updater_builder = self.inner.app.updater_builder();
-        if let Some(settings) = self
+        let policy = self
             .inner
             .settings
-            .network_proxy_settings()
+            .network_proxy_policy()
             .await
-            .map_err(|error| UpdateError::ProxySettings(error.to_string()))?
-        {
-            updater_builder = updater_builder.proxy(proxy_url(&settings)?);
+            .map_err(|error| UpdateError::ProxySettings(error.to_string()))?;
+        let config =
+            self.inner
+                .app
+                .config()
+                .plugins
+                .0
+                .get("updater")
+                .ok_or(UpdateError::Updater(
+                    tauri_plugin_updater::Error::EmptyEndpoints,
+                ))?;
+        let config: tauri_plugin_updater::Config = serde_json::from_value(config.clone())
+            .map_err(|error| UpdateError::Updater(error.into()))?;
+        for url in &config.endpoints {
+            policy.route(url)?;
         }
-        let updater = updater_builder.build().map_err(UpdateError::Updater)?;
-        let Some(update) = updater.check().await.map_err(UpdateError::Updater)? else {
+        let route = policy.clone();
+        let updater = self
+            .inner
+            .app
+            .updater_builder()
+            .no_proxy()
+            .configure_client(move |builder| configure_proxy_client(builder, &route))
+            .build()
+            .map_err(UpdateError::Updater)?;
+        let Some(update) = updater.check().await.map_err(network_update_error)? else {
             self.inner.artifacts.clear();
             self.set_state(RuntimeUpdateState::Current);
             return Ok(());
@@ -258,6 +277,7 @@ impl UpdateService {
             downloaded: 0,
             total: None,
         });
+        policy.route(&update.download_url)?;
         let bytes = self.download(&update).await?;
         let artifact = self
             .inner
@@ -294,7 +314,7 @@ impl UpdateService {
                 || {},
             )
             .await
-            .map_err(UpdateError::Updater)
+            .map_err(network_update_error)
     }
 
     /// Replaces the complete runtime state and publishes its derived webview status.
@@ -316,22 +336,41 @@ impl UpdateService {
     }
 }
 
-/// Converts persisted host proxy settings into the URL accepted by Tauri updater.
-pub(super) fn proxy_url(
-    settings: &ora_application::NetworkProxySettings,
-) -> Result<Url, UpdateError> {
-    let mut url = Url::parse("http://proxy.invalid").map_err(UpdateError::Proxy)?;
-    url.set_host(Some(&settings.host))
-        .map_err(|_| UpdateError::ProxyCredentials)?;
-    url.set_port(Some(settings.port))
-        .map_err(|_| UpdateError::ProxyCredentials)?;
-    if let Some(username) = &settings.username {
-        url.set_username(username)
-            .map_err(|_| UpdateError::ProxyCredentials)?;
+/// Applies the same policy to Tauri's manifest and package clients and to each redirect.
+fn configure_proxy_client(
+    builder: updater_http::ClientBuilder,
+    policy: &HostProxy,
+) -> updater_http::ClientBuilder {
+    use updater_http::{Proxy, redirect::Policy};
+    let proxy = policy.clone();
+    let redirect = policy.clone();
+    let limit = Policy::limited(10);
+    builder
+        .no_proxy()
+        .proxy(Proxy::custom(move |target| {
+            proxy.route(target).ok()?.endpoint
+        }))
+        .redirect(Policy::custom(move |attempt| {
+            if attempt.url().scheme() != "https"
+                || !attempt.url().username().is_empty()
+                || attempt.url().password().is_some()
+            {
+                return attempt.error("unsafe update redirect");
+            }
+            if let Err(error) = redirect.route(attempt.url()) {
+                return attempt.error(error);
+            }
+            limit.redirect(attempt)
+        }))
+}
+
+/// Reports proxy authentication failures without using a credential-bearing error URL.
+fn network_update_error(error: tauri_plugin_updater::Error) -> UpdateError {
+    if is_proxy_auth_failure(&error)
+        || matches!(&error, tauri_plugin_updater::Error::Network(message)
+        if message.starts_with("Download request failed with status: 407"))
+    {
+        return UpdateError::Proxy(HostProxyError::Authentication);
     }
-    if let Some(password) = &settings.password {
-        url.set_password(Some(password))
-            .map_err(|_| UpdateError::ProxyCredentials)?;
-    }
-    Ok(url)
+    UpdateError::Updater(error)
 }

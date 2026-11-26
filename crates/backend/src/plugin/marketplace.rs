@@ -6,7 +6,6 @@
 
 use super::{InstalledPackage, PluginApi, UpdatedPackage};
 use crate::error::{BackendError, ErrorClassification};
-use crate::proxy;
 use ora_contracts::{
     EmptyErrorParams, InstallOutcome, InstallPluginRequest, PluginPackageInvalidParams,
     PublicError, StopPluginRequest, UpdatePluginRequest,
@@ -19,8 +18,8 @@ use ora_plugin_manager::{
 use ora_plugin_manifest::{ManifestError, PluginKind, PluginManifest};
 use ora_plugin_registry::RegistryIndex;
 use ora_utils::http::{
-    DownloadError, HttpDownload, ProgressCallback, ProxyConfig, ReqwestDownloader,
-    S3AwareDownloader, S3Config,
+    DownloadError, HostProxy, HttpDownload, ProgressCallback, ReqwestDownloader, S3AwareDownloader,
+    S3Config,
 };
 #[cfg(test)]
 use ora_utils::http::{DownloadSource, LocalFileDownloader};
@@ -297,8 +296,7 @@ impl PluginApi {
         &self,
         plugin_id: &str,
     ) -> Result<(PluginManifest, PluginNamespace, bool, Option<S3Config>), BackendError> {
-        let proxy_settings = self.settings.network_proxy_settings().await?;
-        let registry_sources = self.prepared_registry_sources(proxy_settings)?;
+        let registry_sources = self.prepared_registry_sources()?;
         // A malformed identifier can never name a registry entry, so it is reported the same way
         // as an unknown one instead of leaking the id grammar as a separate error class.
         let plugin_id = PluginId::parse(plugin_id).map_err(|_| {
@@ -382,28 +380,19 @@ impl PluginApi {
         }
     }
 
-    /// Returns the downloader proxy configuration for one marketplace source's proxy policy.
-    async fn download_proxy_for(&self, use_proxy: bool) -> Result<ProxyConfig, BackendError> {
-        if !use_proxy {
-            return Ok(ProxyConfig::default());
-        }
-        let proxy_settings = self.settings.network_proxy_settings().await?;
-        proxy::download_proxy(proxy_settings.as_ref())?.ok_or_else(|| {
-            BackendError::invalid_proxy_settings(
-                "a marketplace source uses the proxy but no proxy is configured",
-            )
-        })
-    }
-
     /// Builds a source-scoped downloader that signs only the configured S3 endpoint and bucket.
     pub(super) async fn marketplace_installer(
         &self,
         use_proxy: bool,
         s3_config: Option<S3Config>,
     ) -> Result<Installer<S3AwareDownloader>, BackendError> {
-        let download_proxy = self.download_proxy_for(use_proxy).await?;
+        let download_proxy = if use_proxy {
+            self.settings.network_proxy_policy().await?
+        } else {
+            HostProxy::direct()
+        };
         Ok(Installer::new(S3AwareDownloader::new(
-            ReqwestDownloader::new(download_proxy),
+            ReqwestDownloader::for_host_proxy(download_proxy),
             s3_config,
         )))
     }

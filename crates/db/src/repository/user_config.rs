@@ -75,6 +75,18 @@ impl UserConfigRepository for SqliteUserConfigRepository {
             .map_err(repository_error_from_database)
     }
 
+    fn delete_pair(&self, first: &str, second: &str) -> Result<(), Self::Error> {
+        self.pool
+            .with_connection(|connection| {
+                connection.execute(
+                    "DELETE FROM user_config WHERE key IN (?1, ?2)",
+                    params![first, second],
+                )?;
+                Ok(())
+            })
+            .map_err(repository_error_from_database)
+    }
+
     fn delete_value(&self, key: &str) -> Result<(), Self::Error> {
         self.pool
             .with_connection(|connection| {

@@ -78,6 +78,9 @@ pub trait UserConfigRepository: Clone + Send + Sync + 'static {
     fn set_pair(&self, first: (&str, &str), second: (&str, &str)) -> Result<(), Self::Error>;
     fn set_value(&self, key: &str, value: &str) -> Result<(), Self::Error>;
     fn delete_value(&self, key: &str) -> Result<(), Self::Error>;
+
+    /// Deletes related preferences together.
+    fn delete_pair(&self, first: &str, second: &str) -> Result<(), Self::Error>;
 }
 
 /// Provides typed keys and reusable value conversions over a raw KV adapter.
@@ -142,6 +145,11 @@ where
             .map_err(SetJsonError::Repository)
     }
 
+    /// Removes two related typed keys in one operation.
+    pub fn delete_pair(&self, first: ConfigKey, second: ConfigKey) -> Result<(), R::Error> {
+        self.repository.delete_pair(first.as_str(), second.as_str())
+    }
+
     pub fn delete(&self, key: ConfigKey) -> Result<(), R::Error> {
         self.repository.delete_value(key.as_str())
     }
@@ -198,6 +206,13 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(key.to_owned(), value.to_owned());
+            Ok(())
+        }
+
+        fn delete_pair(&self, first: &str, second: &str) -> Result<(), Self::Error> {
+            let mut values = self.0.lock().unwrap();
+            values.remove(first);
+            values.remove(second);
             Ok(())
         }
 
