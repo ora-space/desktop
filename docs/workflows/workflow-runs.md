@@ -318,6 +318,12 @@ never read by scheduling, resume, rollback or snapshot switching.
 
 ## Querying run-local debug history
 
+Open **Debug history for this run** on the run page to inspect accepted operations, their impact,
+and their patches. Expand an execution ID to read the configuration recorded at dispatch. A waiting
+retry can link to the earlier execution that supplied its input. For a position selected before
+dispatch, history links to the first execution once the scheduler creates it. The Theater inspector
+also opens the selected execution record.
+
 A waiting automatic retry can preview the nearest recorded dispatch in its retry chain at the same node, scope, container attempt, iteration, snapshot and revision. The preview names that attempt in `inputSourceNodeRunId`. If that nearest dispatch differs in any coordinate, preview is refused even when an older dispatch matches. Missing dispatch evidence also prevents preview.
 
 `workflowRun.debugHistory({ runId })` returns confirmations in acceptance order with the request key, preview, patch and phase. An applied edit identifies its parent and resulting revisions. A failed stop retains its reason and the attempts that could not be proven stopped (`unsettledNodeRunIds`). Each entry also records the status and error the run had when it was accepted (`priorRunStatus`, `priorError`): a failed, cancelled or succeeded run keeps them while the stop is in flight and returns to `running` in the commit that applies the revision. After reconnecting, the request key identifies the same operation. While a stop is in progress or failed without a released fence, new previews, new confirmations, failure recovery, a whole-run restart and a snapshot switch are refused with `workflow_debug_operation_active`. Refusals reach the page as typed public errors: `workflow_debug_stale_preview`, `workflow_debug_operation_active`, `workflow_debug_request_conflict`, `workflow_debug_patch_invalid` with the field path and reason, and `workflow_debug_target_rejected` with the missing fact or position.

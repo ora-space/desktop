@@ -120,6 +120,30 @@ export const workflowRunTranslations = {
     "workflowRun.resume.previewFailed": "无法读取改动。",
     "workflowRun.resume.confirm": "从失败处继续",
     "workflowRun.inspector.attemptId": "执行记录 ID",
+    "workflowRun.debug.attempt": "查看执行记录 {{id}}",
+    "workflowRun.debug.attemptRevision": "派发时的修订：{{revision}}",
+    "workflowRun.debug.superseded": "该尝试已被替代。",
+    "workflowRun.debug.recordedConfig": "派发时的实际配置",
+    "workflowRun.debug.unrecorded": "这条执行记录没有保存实际配置。",
+    "workflowRun.debug.history": "本次运行的调试历史",
+    "workflowRun.debug.empty": "本次运行还没有已受理的调试操作。",
+    "workflowRun.debug.refresh": "刷新运行记录",
+    "workflowRun.debug.keep": "保留的结果",
+    "workflowRun.debug.invalidate": "将失效的结果",
+    "workflowRun.debug.stop": "需要先停止的尝试",
+    "workflowRun.debug.schedule": "将执行或重新计算",
+    "workflowRun.debug.item": "第 {{item}} 项",
+    "workflowRun.debug.branch": "预计分支：{{branch}}",
+    "workflowRun.debug.members": "新容器使用的成员配置",
+    "workflowRun.debug.files":
+      "保留当前工作区文件。续跑可能读到上次生成的文件。",
+    "workflowRun.debug.repeat": "发送消息等外部动作可能重复。",
+    "workflowRun.debug.stopping": "正在等待旧尝试停止。",
+    "workflowRun.debug.applied": "修订 {{revision}} 已生效。",
+    "workflowRun.debug.stopFailed":
+      "未能停稳：{{reason}}。未停稳的尝试：{{ids}}。请刷新运行记录。",
+    "workflowRun.debug.inputSource": "派发输入来自此前的执行记录",
+    "workflowRun.debug.firstAttempt": "未派发位置首次创建的执行记录",
     "workflowRun.resume.revisionReset":
       "切换版本后，本次运行内的配置修改将不再生效。旧尝试仍可在历史中查看。",
     "workflowRun.resume.switchPublished":
@@ -687,6 +711,34 @@ export const workflowRunTranslations = {
     "workflowRun.resume.previewFailed": "Could not read the changes.",
     "workflowRun.resume.confirm": "Resume from failure",
     "workflowRun.inspector.attemptId": "Execution record ID",
+    "workflowRun.debug.attempt": "Inspect execution {{id}}",
+    "workflowRun.debug.attemptRevision": "Revision at dispatch: {{revision}}",
+    "workflowRun.debug.superseded": "This attempt was superseded.",
+    "workflowRun.debug.recordedConfig": "Configuration at dispatch",
+    "workflowRun.debug.unrecorded":
+      "This execution has no recorded configuration.",
+    "workflowRun.debug.history": "Debug history for this run",
+    "workflowRun.debug.empty":
+      "No debug operations have been accepted for this run.",
+    "workflowRun.debug.refresh": "Refresh run records",
+    "workflowRun.debug.keep": "Results to keep",
+    "workflowRun.debug.invalidate": "Results to invalidate",
+    "workflowRun.debug.stop": "Attempts to stop first",
+    "workflowRun.debug.schedule": "Work to run or repeat",
+    "workflowRun.debug.item": "Item {{item}}",
+    "workflowRun.debug.branch": "Predicted branch: {{branch}}",
+    "workflowRun.debug.members": "Member configuration for the new container",
+    "workflowRun.debug.files":
+      "Workspace files are kept. The run may read files from an earlier attempt.",
+    "workflowRun.debug.repeat":
+      "External actions such as sending messages may repeat.",
+    "workflowRun.debug.stopping": "Waiting for earlier attempts to stop.",
+    "workflowRun.debug.applied": "Revision {{revision}} is in effect.",
+    "workflowRun.debug.stopFailed":
+      "Could not stop: {{reason}}. Unsettled attempts: {{ids}}. Refresh run records.",
+    "workflowRun.debug.inputSource": "Execution supplying the dispatch input",
+    "workflowRun.debug.firstAttempt":
+      "First execution of the previously undispatched position",
     "workflowRun.resume.revisionReset":
       "Switching versions stops applying this run’s configuration edits. Earlier attempts remain in its history.",
     "workflowRun.resume.switchPublished":

@@ -226,6 +226,43 @@ describe("WorkflowRunWorkspace", () => {
     runtime.dispose();
   });
 
+  it("opens persisted debug history from the run page after execution has started", async () => {
+    const state = seedRun();
+    state.workflowRuns[0].status = "succeeded";
+    const history = vi.fn(async () => ({ entries: [] }));
+    const client = createTestClient({
+      ...createFixtureHandlers(state),
+      getWorkflowDebugHistory: history,
+    });
+    const runtime = createMemoryWorkflowRuntime();
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const view = render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <Wrapper>
+          <WorkflowRunWorkspace runId="run-1" />
+        </Wrapper>
+      </PlatformProvider>,
+    );
+    const disclosure = await screen.findByText(
+      /本次运行的调试历史|Debug history for this run/,
+    );
+    expect(history).not.toHaveBeenCalled();
+    await userEvent.setup().click(disclosure);
+    expect(
+      await screen.findByText(
+        /没有已受理的调试操作|No debug operations have been accepted/,
+      ),
+    ).toBeVisible();
+    expect(history).toHaveBeenCalledTimes(1);
+    view.unmount();
+    runtime.dispose();
+  });
+
   it("exposes the run Files panel for the Workspace-owned review surface", async () => {
     const state = seedRun();
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -257,6 +294,9 @@ describe("WorkflowRunWorkspace", () => {
       name: /^文件$|^Files$/,
     });
     expect(filesButton).toBeInTheDocument();
+    expect(
+      screen.queryByText(/本次运行的调试历史|Debug history for this run/),
+    ).toBeNull();
 
     await user.click(filesButton);
     expect(

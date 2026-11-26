@@ -875,6 +875,7 @@ export function RunTheater({
               }}
             >
               <RunActInspector
+                runId={run.id}
                 roundStates={run.roundStates}
                 selectedRound={effectiveRegionRound}
                 onRoundChange={setSelectedRound}

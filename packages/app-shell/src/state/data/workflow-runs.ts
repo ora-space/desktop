@@ -98,6 +98,30 @@ export function invalidateWorkflowRun(queryClient: QueryClient, runId: string) {
   });
 }
 
+/** Run invalidations refresh history alongside detail; stopping receipts also recover missed events. */
+export function useWorkflowDebugHistory(runId: string) {
+  const client = useContractsClient();
+  return useQuery({
+    queryKey: [...workflowRunKeys.detail(runId), "debugHistory"],
+    queryFn: async ({ signal }) =>
+      (await client.workflowRun.debugHistory({ runId }, { signal })).entries,
+    refetchInterval: (query) =>
+      query.state.data?.some((entry) => entry.operation.state === "stopping")
+        ? 4000
+        : false,
+    refetchOnMount: "always",
+  });
+}
+
+export function useWorkflowDebugAttempt(runId: string, nodeRunId: string) {
+  const client = useContractsClient();
+  return useQuery({
+    queryKey: [...workflowRunKeys.detail(runId), "debugAttempt", nodeRunId],
+    queryFn: ({ signal }) =>
+      client.workflowRun.debugAttempt({ runId, nodeRunId }, { signal }),
+  });
+}
+
 /** Lists the persisted workflow runs of one project. */
 export function useWorkflowRunsByProject(
   projectId: string | null | undefined,

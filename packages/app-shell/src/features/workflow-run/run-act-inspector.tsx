@@ -18,6 +18,7 @@ import { resolveAgentRetryDisplay } from "./agent-config-display";
 import { RunActAgentConfig } from "./run-act-agent-config";
 import { RunActArtifacts } from "./run-act-artifacts";
 import { RunActFailedAttempts } from "./run-act-failed-attempts";
+import { RunDebugAttempt } from "./run-debug-attempt";
 import { RunActFileChanges } from "./run-act-file-changes";
 import { RunBriefPopover } from "./run-brief-popover";
 import { RunLoopRoundHistory } from "./run-loop-round-history";
@@ -46,6 +47,7 @@ import {
 const KNOWN_NODE_FAILURE_KINDS = new Set<string>(NODE_FAILURE_KINDS);
 
 interface RunActInspectorProps {
+  runId?: string;
   nodeId: string | null;
   data: WorkflowNodeData | null;
   state: GraphWorkflowNodeState | null;
@@ -131,6 +133,7 @@ function parseInputVariableValue(
  * execution metrics and artifacts.
  */
 export function RunActInspector({
+  runId,
   nodeId,
   data,
   state,
@@ -198,6 +201,7 @@ export function RunActInspector({
 
   return (
     <RunActInspectorPanel
+      inspectedRunId={runId}
       nodeId={nodeId}
       data={data}
       state={effectiveState ?? state}
@@ -229,6 +233,7 @@ export function RunActInspector({
 }
 
 function RunActInspectorPanel({
+  inspectedRunId,
   nodeId,
   data,
   state,
@@ -256,6 +261,7 @@ function RunActInspectorPanel({
   runStatus,
   runSnapshotId,
 }: {
+  inspectedRunId?: string;
   nodeId: string;
   data: WorkflowNodeData;
   state: GraphWorkflowNodeState;
@@ -623,13 +629,20 @@ function RunActInspectorPanel({
         </InspectorSection>
 
         <InspectorSection title={t("workflowRun.inspector.execution")}>
-          {state.nodeRunId && (
-            <ReadOnlyField
-              label={t("workflowRun.inspector.attemptId")}
-              value={state.nodeRunId}
-              mono
-            />
-          )}
+          {state.nodeRunId &&
+            (inspectedRunId ? (
+              <RunDebugAttempt
+                key={state.nodeRunId}
+                runId={inspectedRunId}
+                nodeRunId={state.nodeRunId}
+              />
+            ) : (
+              <ReadOnlyField
+                label={t("workflowRun.inspector.attemptId")}
+                value={state.nodeRunId}
+                mono
+              />
+            ))}
           {data.kind === "output" && state.output?.summary !== undefined && (
             <ReadOnlyField
               label={t("workflowRun.inspector.output")}

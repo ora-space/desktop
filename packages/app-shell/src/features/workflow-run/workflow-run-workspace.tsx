@@ -64,6 +64,7 @@ import { runStatusTone } from "./run-status-style";
 import type { WorkflowRunViewMode } from "./run-view-mode";
 import { WorkflowRunStartDialog } from "./workflow-run-start-dialog";
 import { ResumeRunDialog } from "./resume-run-dialog";
+import { RunDebugHistory } from "./run-debug-history";
 import { LocationActionsButton } from "../workspace/location-actions-button";
 import {
   WorkspaceReviewLayout,
@@ -703,6 +704,9 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
         <LocationActionsButton workspaceId={workspaceId} />
         <WindowControls />
       </header>
+      {run && run.status !== "pending" && (
+        <RunDebugHistory key={runId} runId={runId} />
+      )}
       {unrecognizedNodes.length > 0 && (
         <p
           role="status"
