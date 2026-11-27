@@ -33,6 +33,9 @@ pub enum HostProxyError {
     Automatic,
     #[error("invalid or unsupported proxy endpoint")]
     InvalidEndpoint,
+    #[cfg(all(target_os = "linux", feature = "desktop-proxy"))]
+    #[error("invalid port in the GNOME {protocol} proxy settings")]
+    InvalidGnomePort { protocol: &'static str },
     #[error("proxy authentication failed (HTTP 407)")]
     Authentication,
 }
@@ -77,6 +80,14 @@ struct StaticProxy {
 }
 
 impl HostProxy {
+    /// Records a failed system read while preserving the unconditional loopback bypass.
+    pub fn unavailable_system(error: HostProxyError) -> Self {
+        Self {
+            settings: Err(error),
+            origin: ProxyOrigin::System,
+        }
+    }
+
     /// Creates a policy that ignores every ambient proxy source.
     pub fn direct() -> Self {
         Self {
@@ -108,9 +119,12 @@ impl HostProxy {
     pub fn system() -> Self {
         #[cfg(windows)]
         {
-            Self {
-                settings: windows::read(),
-                origin: ProxyOrigin::System,
+            match windows::read() {
+                Ok(settings) => Self {
+                    settings: Ok(settings),
+                    origin: ProxyOrigin::System,
+                },
+                Err(error) => Self::unavailable_system(error),
             }
         }
         #[cfg(not(windows))]
@@ -123,12 +137,7 @@ impl HostProxy {
                         origin: ProxyOrigin::System,
                     };
                 }
-                Err(error) => {
-                    return Self {
-                        settings: Err(error),
-                        origin: ProxyOrigin::System,
-                    };
-                }
+                Err(error) => return Self::unavailable_system(error),
                 Ok(None) => {}
             }
             Self {

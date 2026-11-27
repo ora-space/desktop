@@ -31,13 +31,13 @@ fn read_settings(settings: &gio::Settings) -> Result<StaticProxy, HostProxyError
         "none" => Ok(StaticProxy::default()),
         "auto" => Err(HostProxyError::Automatic),
         "manual" => {
-            let http = endpoint(&settings.child("http"), "http")?;
+            let http = endpoint(settings, "http", "http")?;
             // GNOME uses the HTTP proxy for HTTPS unless an HTTPS proxy is configured.
-            let https = endpoint(&settings.child("https"), "http")?.or_else(|| http.clone());
+            let https = endpoint(settings, "https", "http")?.or_else(|| http.clone());
             Ok(StaticProxy {
                 http,
                 https,
-                default: endpoint(&settings.child("socks"), "socks5h")?,
+                default: endpoint(settings, "socks", "socks5h")?,
                 bypass: settings
                     .strv("ignore-hosts")
                     .iter()
@@ -50,7 +50,12 @@ fn read_settings(settings: &gio::Settings) -> Result<StaticProxy, HostProxyError
 }
 
 /// Reads the host and port of one static proxy protocol.
-fn endpoint(settings: &gio::Settings, scheme: &str) -> Result<Option<String>, HostProxyError> {
+fn endpoint(
+    settings: &gio::Settings,
+    protocol: &'static str,
+    scheme: &str,
+) -> Result<Option<String>, HostProxyError> {
+    let settings = settings.child(protocol);
     let host = settings.string("host");
     let port = settings.int("port");
     if host.is_empty() {
@@ -59,7 +64,7 @@ fn endpoint(settings: &gio::Settings, scheme: &str) -> Result<Option<String>, Ho
     let port = u16::try_from(port)
         .ok()
         .filter(|port| *port != 0)
-        .ok_or(HostProxyError::InvalidEndpoint)?;
+        .ok_or(HostProxyError::InvalidGnomePort { protocol })?;
     let mut endpoint = super::proxy_endpoint(&format!("{scheme}://{host}:{port}"))?;
     if scheme == "http"
         && settings
@@ -145,7 +150,7 @@ mod tests {
             .expect("HTTPS host");
         assert!(matches!(
             read_settings(&settings),
-            Err(HostProxyError::InvalidEndpoint)
+            Err(HostProxyError::InvalidGnomePort { protocol: "https" })
         ));
         https.set_int("port", 8443).expect("HTTPS port");
         assert_eq!(

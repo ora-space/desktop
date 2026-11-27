@@ -304,6 +304,53 @@ mod proxy_tests {
         );
     }
 
+    /// A direct listener stays untouched when either a package URL or a redirect cannot be routed.
+    #[tokio::test]
+    async fn updater_client_blocks_download_and_redirect_when_system_read_fails() {
+        let direct = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let redirect = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = "package.example.test";
+        let direct_address = direct.local_addr().unwrap();
+        let package = format!("http://{host}:{}/package", direct_address.port());
+        let manifest = format!("http://{}/update.json", redirect.local_addr().unwrap());
+        let policy = HostProxy::unavailable_system(HostProxyError::SystemRead);
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client =
+            crate::network_proxy::configure_client(updater_http::Client::builder(), &policy)
+                .resolve(host, direct_address)
+                .timeout(Duration::from_secs(3))
+                .build()
+                .unwrap();
+
+        assert!(client.get(&package).send().await.unwrap_err().is_connect());
+        let (request, response) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                proxy_exchange(
+                    redirect,
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: {package}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    ),
+                ),
+                client.get(manifest).send(),
+            )
+        })
+        .await
+        .unwrap();
+        assert!(request.starts_with("GET /update.json "));
+        let error = response.unwrap_err();
+        assert!(error.is_redirect());
+        assert!(
+            ora_utils::error::error_chain(&error)
+                .contains("could not read the system proxy settings")
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), direct.accept())
+                .await
+                .is_err(),
+            "the package origin must not receive a direct connection",
+        );
+    }
+
     /// The same updater transport reports an actual CONNECT 407 as a proxy auth failure.
     #[tokio::test]
     async fn updater_client_classifies_connect_407() {

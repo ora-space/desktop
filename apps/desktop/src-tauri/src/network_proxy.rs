@@ -12,16 +12,23 @@ use url::Url;
 mod tests;
 
 const PROXY_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+const UNROUTABLE_PROXY_HOST: &str = "proxy-resolution-failed.invalid";
 
 /// Configures the same host proxy and redirect rules for every Desktop client used here.
 pub(crate) fn configure_client(builder: ClientBuilder, policy: &HostProxy) -> ClientBuilder {
     let proxy = policy.clone();
     let redirect = policy.clone();
     let limit = Policy::limited(10);
+    // Give failed routes an explicit proxy with no socket addresses. Returning None
+    // would tell reqwest to connect directly, and an empty DNS override stays local.
+    let unroutable_proxy =
+        Url::parse(&format!("http://{UNROUTABLE_PROXY_HOST}")).expect("valid internal proxy URL");
     builder
         .no_proxy()
-        .proxy(Proxy::custom(move |target| {
-            proxy.route(target).ok()?.endpoint
+        .resolve_to_addrs(UNROUTABLE_PROXY_HOST, &[])
+        .proxy(Proxy::custom(move |target| match proxy.route(target) {
+            Ok(route) => route.endpoint,
+            Err(_) => Some(unroutable_proxy.clone()),
         }))
         .redirect(Policy::custom(move |attempt| {
             let url = attempt.url();
