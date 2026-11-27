@@ -4,7 +4,7 @@
 use ora_application::{BranchProjection, ProjectedNodeState, WorkflowGraph, WorkflowRunPayload};
 use ora_contracts::{WorkflowDebugImpact, WorkflowDebugPreview};
 use ora_db::workflow_debug::{DebugPlanningInput, DebugRejection, Transaction};
-use ora_domain::{WorkflowNodeStatus, WorkflowScopeStatus};
+use ora_domain::{WorkflowNodeStatus, WorkflowRunStatus, WorkflowScopeStatus};
 use std::collections::BTreeSet;
 
 /// Plans a top-level edit: the target plus its transitive successors are the recompute scope.
@@ -145,10 +145,11 @@ pub(in crate::workflow::run) fn settle(
     if retired.is_empty() {
         return Ok(());
     }
-    // Read at settlement so a sibling that completed after preview keeps its new values.
+    // A run that ended independently during quiescence keeps its terminal projection.
+    // Terminal-sourced edits have already reopened their run in this transaction.
     let raw: Option<String> = transaction.query_row(
-        "SELECT payload FROM workflow_runs WHERE id=?1",
-        [run_id],
+        "SELECT CASE WHEN run_status=?2 THEN payload END FROM workflow_runs WHERE id=?1",
+        (run_id, WorkflowRunStatus::Running.database_value()),
         |row| row.get(0),
     )?;
     if let Some(raw) = raw {

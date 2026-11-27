@@ -244,6 +244,11 @@ fn self_failed_stop_then_terminal_edit_uses_fresh_baseline() {
         assert_eq!(f.run_status(), WorkflowRunStatus::Failed);
         assert_eq!(dispatched(&f.executor, "x"), 1);
 
+        assert_eq!(
+            repository.find_run(&f.run_id).unwrap().unwrap().payload,
+            failed.payload
+        );
+
         let second = f.preview(original_s.id.as_ref(), 1);
         assert_eq!(second.impact.schedule, ["s"]);
         let receipt = f
