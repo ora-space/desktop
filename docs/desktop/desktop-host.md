@@ -141,6 +141,10 @@ again. Development builds keep the commands for tests but register no network wo
   refused with the public `Conflict` error `desktop_update_release_replaced` and logged at WARN. The
   replacement is already `Ready`, so the shell does not report a failure. The shell accepts no
   second confirmation until the host has answered the first.
+- A confirmation that finds nothing ready to install — the release was withdrawn or its package
+  discarded by a check, a check or download is still running, or an installation is already under
+  way — is refused with the public `Conflict` error `desktop_update_no_pending_update` and logged
+  at WARN. The shell does not report a failure and shows the status the host has published.
 - Linux releases ship an AppImage, so a `deb`/`rpm` installation or a bare executable reports
   `ManualUpdate` with a reason before any download, and the shell points the user to the release
   instead of offering an install.

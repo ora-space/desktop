@@ -82,6 +82,11 @@ Desktop application self-update orchestration around Tauri's signed updater plug
   `desktop_update_release_replaced`, logged at WARN. The replacement stays `Ready` and is never
   installed on that confirmation; the webview ignores the refusal because the new `Ready` already
   reached it.
+- A confirmation that finds nothing ready — a check withdrew the release, discarded its package, or
+  is still checking or downloading, or an installation is already under way — is refused with
+  `UpdateError::NoPendingUpdate`, mapped to the public `Conflict` error
+  `desktop_update_no_pending_update` and logged at WARN. The webview ignores it and follows the
+  status the host has published.
 - An installation that the updater cannot perform — a `deb` or `rpm` package, or a bare executable
   on Linux — is reported as `ManualUpdate` before any download is spent, because the static
   manifest only advertises an AppImage for Linux.
