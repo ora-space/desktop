@@ -136,7 +136,8 @@ structured output, interactivity, retry and prompt inactivity. The runtime meani
   (including unavailable packages) are ambiguous. A plugin ID `namespace/identifier` resolves only
   when that plugin supplies exactly one Skill. Dependency reports and uninstall checks follow the
   same resolution rules as launch preflight; only enabled references count toward launch warnings.
-  Unavailable Skills block launch; unavailable MCPs remain informational.
+  Unavailable Skills block launch. Unavailable MCPs remain informational and do not block launch,
+  but nodes using them fail when reached; check their status or configuration.
   Reports check Ora's global library, so import project-local Skills on the Skills page first.
 - **MCP bindings**: `mcps: [{ mcpId, enabled }]`, where `mcpId` is the installed plugin id. Only
   enabled ids form the node Session's allowlist; no selection (including graphs without `mcps`) means
