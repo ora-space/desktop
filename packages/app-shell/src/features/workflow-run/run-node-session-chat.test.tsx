@@ -87,6 +87,7 @@ function seededConversation(
 ): SessionConversation {
   return {
     configOptions,
+    providerLost: false,
     modelChanges: [],
     historyNotices: [],
     turns,

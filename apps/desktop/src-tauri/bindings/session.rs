@@ -19,6 +19,11 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Unary {
+        operation: "getSessionOptions",
+        handler: "commands::session::get_session_options",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "getSession",
         handler: "commands::session::get_session",
         permission: Permission::MainWebview,

@@ -227,7 +227,11 @@ where
             mapped.push(map_skill(skill, availability));
         }
         observe(&available);
-        Ok(ListSkillsResponse { skills: mapped })
+        Ok(ListSkillsResponse {
+            skills: mapped,
+            local_skill_names_for_export: Default::default(),
+            retired_skill_ids: None,
+        })
     }
 }
 

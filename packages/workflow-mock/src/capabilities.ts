@@ -42,6 +42,12 @@ export interface WorkflowCapabilities {
   agentModels: WorkflowAgentModel[];
   roles: WorkflowChoice[];
   skills: WorkflowChoice[];
+  /** Resolves persisted legacy references against the complete runtime catalog. */
+  resolveSkill?: (reference: string) => WorkflowChoice & {
+    status: "installed" | "unavailable" | "missing" | "ambiguous";
+    catalogId?: string;
+    invocationName?: string;
+  };
   /** MCP catalog choices for Agent node attachments (optional per node). */
   mcps: WorkflowMcpChoice[];
   tools: WorkflowChoice[];

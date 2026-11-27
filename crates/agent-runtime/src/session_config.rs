@@ -2,8 +2,8 @@
 
 use crate::command::{ConfigChangeRequest, RuntimeCommand};
 use crate::config_changes::{ConfigChangeOutcome, ConfigChangeRoute, ConfigChangeWrite};
-use crate::support::{agent_timed_out, runtime_unavailable};
-use crate::{AgentRuntimeHost, AgentRuntimeManager, RuntimeError, SESSION_SETUP_TIMEOUT, start};
+use crate::support::{agent_timed_out, runtime_unavailable, session_stopped};
+use crate::{AgentRuntimeHost, AgentRuntimeManager, RuntimeError, SESSION_SETUP_TIMEOUT};
 use agent_client_protocol_schema::v1::{SessionConfigId, SessionConfigOptionValue};
 use ora_contracts::{SetSessionConfigRequest, SetSessionConfigResponse};
 use tokio::sync::oneshot;
@@ -19,10 +19,13 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         let value = SessionConfigOptionValue::value_id(request.value);
         let session = self.find_session(&request.session_id)?;
         // The live actor asks, so that the answer takes its turn among the session's other frames,
-        // and addresses the session it rebuilt rather than the one still in the row. A session with
-        // no actor holds no rebuilt binding, so its row is authoritative.
-        let route = match self.lookup_actor(&session.id)? {
-            Some(handle) => {
+        // and addresses the session it rebuilt rather than the one still in the row.
+        let Some(handle) = self.lookup_actor(&session.id)? else {
+            // No actor holds a provider for it, so there are no options to change.
+            return Err(session_stopped());
+        };
+        let route = {
+            {
                 let (accepted, route) = oneshot::channel();
                 let request = ConfigChangeRequest {
                     config_id: config_id.clone(),
@@ -35,25 +38,8 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                     .map_err(|_error| runtime_unavailable())?;
                 route.await.map_err(|_error| runtime_unavailable())??
             }
-            None => ConfigChangeRoute::Direct {
-                agent_session_id: session.agent_session_id.clone(),
-                _finished: None,
-            },
         };
         let config_options = match route {
-            ConfigChangeRoute::Direct {
-                agent_session_id,
-                _finished,
-            } => {
-                start::request_config_option(
-                    &self.inner.connections,
-                    &session.agent_ref,
-                    &agent_session_id,
-                    &config_id,
-                    &value,
-                )
-                .await?
-            }
             // Giving up here does not withdraw the change: the agent may still make it, and the
             // actor adopts its answer then.
             ConfigChangeRoute::Asked { write, outcome } => {

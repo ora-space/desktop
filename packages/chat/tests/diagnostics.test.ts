@@ -155,6 +155,7 @@ test("explicit null and invalid sources clear child inheritance in a live attemp
       async *load() {
         yield { type: "completed" };
       },
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
       respondToPermission: async () => ({}),
     };
@@ -224,6 +225,7 @@ test("live observation clears on reload and remains isolated from another sessio
       };
       yield { type: "completed" as const };
     },
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
     respondToPermission: async () => ({}),
   };
@@ -315,6 +317,7 @@ test("projected text and metadata-free child tool deltas never advance the paren
     async *load() {
       yield { type: "completed" as const };
     },
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
     respondToPermission: async () => ({}),
   };
@@ -374,6 +377,7 @@ test("failure and cancellation clear transient reports while a new prompt clears
       async *load() {
         yield { type: "completed" as const };
       },
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
       respondToPermission: async () => ({}),
     };
@@ -431,6 +435,7 @@ test("a load stream that replays an open turn exposes no live observation", asyn
       await gate;
       yield { type: "completed" as const };
     },
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
     respondToPermission: async () => ({}),
   };

@@ -78,6 +78,8 @@ interface WorkflowInspectorProps {
   onCloseNode: () => void;
   /** Whole-graph nodes, for detail panels whose configuration reads graph structure. */
   graphNodes?: Node<WorkflowNodeData, "workflow">[];
+  /** Nodes included by backend reachability analysis, for launch conflict hints only. */
+  executionNodes?: Node<WorkflowNodeData, "workflow">[];
   /** Workflow-wide declarations used by graph-aware detail panels. */
   globalVariables?: WorkflowGlobalVariable[];
 }
@@ -106,6 +108,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
       onDelete={props.onDelete}
       onClose={props.onCloseNode}
       graphNodes={props.graphNodes}
+      executionNodes={props.executionNodes}
       globalVariables={props.globalVariables}
     />
   );
@@ -158,6 +161,7 @@ function WorkflowNodeInspector({
   onDelete,
   onClose,
   graphNodes,
+  executionNodes,
   globalVariables,
 }: {
   node: Node<WorkflowNodeData, "workflow">;
@@ -178,6 +182,8 @@ function WorkflowNodeInspector({
   onClose: () => void;
   /** Whole-graph nodes, for detail panels whose configuration reads graph structure. */
   graphNodes?: Node<WorkflowNodeData, "workflow">[];
+  /** Nodes included by backend reachability analysis, for launch conflict hints only. */
+  executionNodes?: Node<WorkflowNodeData, "workflow">[];
   globalVariables?: WorkflowGlobalVariable[];
 }) {
   const { t } = useTranslation();
@@ -239,6 +245,7 @@ function WorkflowNodeInspector({
                 catalogsLoading={agentCatalogsLoading}
                 catalogsError={agentCatalogsError}
                 onRetryCatalogs={onRetryAgentCatalogs}
+                executionNodes={executionNodes}
                 iterationMember={node.parentId !== undefined}
                 onChange={(config) =>
                   onUpdate({
@@ -425,6 +432,7 @@ function AgentConfigurationFields({
   catalogsError,
   onRetryCatalogs,
   iterationMember,
+  executionNodes = [],
   onChange,
 }: {
   config: WorkflowAgentConfig;
@@ -440,6 +448,7 @@ function AgentConfigurationFields({
   catalogsLoading: boolean;
   catalogsError: boolean;
   onRetryCatalogs?: () => void;
+  executionNodes?: Node<WorkflowNodeData, "workflow">[];
   iterationMember: boolean;
   onChange: (config: WorkflowAgentConfig) => void;
 }) {
@@ -454,11 +463,28 @@ function AgentConfigurationFields({
   const structuredContract =
     config.outputContract?.type === "structured" ? config.outputContract : null;
   const configuredSkillIds = new Set(
-    config.skills.map((skill) => skill.skillId),
+    config.skills.map(
+      (skill) =>
+        capabilities.resolveSkill?.(skill.skillId).catalogId ?? skill.skillId,
+    ),
   );
   const availableSkills = capabilities.skills.filter(
     (skill) => !configuredSkillIds.has(skill.value),
   );
+  const invocations = new Map<string, Set<string>>();
+  for (const node of executionNodes) {
+    for (const binding of node.data.agentConfig?.skills ?? []) {
+      if (!binding.enabled) continue;
+      const resolved = capabilities.resolveSkill?.(binding.skillId);
+      if (!resolved?.catalogId || !resolved.invocationName) continue;
+      const ids = invocations.get(resolved.invocationName) ?? new Set<string>();
+      ids.add(resolved.catalogId);
+      invocations.set(resolved.invocationName, ids);
+    }
+  }
+  const conflictingNames = [...invocations]
+    .filter(([, ids]) => ids.size > 1)
+    .map(([name]) => name);
   const enabledSkillCount = config.skills.filter(
     (skill) => skill.enabled,
   ).length;
@@ -670,13 +696,26 @@ function AgentConfigurationFields({
           {t("settings.workflow.skillRequirementHint")}
         </p>
         <div className="min-w-0 divide-y overflow-hidden rounded-md border border-border">
+          {conflictingNames.length > 0 && (
+            <p
+              role="status"
+              className="text-xs text-amber-700 dark:text-amber-400"
+            >
+              {t("settings.workflow.skillInvocationConflict", {
+                names: conflictingNames.join(", "),
+              })}
+            </p>
+          )}
           {config.skills.map((configuredSkill) => {
-            const skill = capabilities.skills.find(
-              (candidate) => candidate.value === configuredSkill.skillId,
-            ) ?? {
-              value: configuredSkill.skillId,
-              label: configuredSkill.skillId,
-            };
+            const skill = capabilities.resolveSkill?.(
+              configuredSkill.skillId,
+            ) ??
+              capabilities.skills.find(
+                (candidate) => candidate.value === configuredSkill.skillId,
+              ) ?? {
+                value: configuredSkill.skillId,
+                label: configuredSkill.skillId,
+              };
             return (
               <div
                 key={configuredSkill.skillId}

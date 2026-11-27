@@ -25,6 +25,9 @@ export function PendingUpdate() {
   const { t } = useTranslation();
   const { updates, status } = useDesktopUpdate();
   const [confirming, setConfirming] = useState(false);
+  // Until the host answers, a check can still hold its update lock and leave the release ready, and
+  // a second confirmation would queue an installation the user never saw fail.
+  const [requested, setRequested] = useState(false);
   // An installer that refuses a package rejects and leaves the release ready, so its status alone
   // looks as if nothing happened; a package discarded before that is the host's own failed status.
   const [failedInstall, setFailedInstall] = useState<string | null>(null);
@@ -102,6 +105,7 @@ export function PendingUpdate() {
             type="button"
             size="sm"
             className="shrink-0"
+            disabled={requested}
             onClick={() => setConfirming(true)}
           >
             {t("update.confirmAction")}
@@ -138,11 +142,15 @@ export function PendingUpdate() {
               onClick={() => {
                 setConfirming(false);
                 setFailedInstall(null);
-                updates.install(version).catch((error: unknown) => {
-                  // The host has already offered the release that replaced this one.
-                  if (isReleaseReplaced(error)) return;
-                  setFailedInstall(version);
-                });
+                setRequested(true);
+                updates
+                  .install(version)
+                  .catch((error: unknown) => {
+                    // The host has already offered the release that replaced this one.
+                    if (isReleaseReplaced(error)) return;
+                    setFailedInstall(version);
+                  })
+                  .finally(() => setRequested(false));
               }}
             >
               {t("update.confirmAction")}

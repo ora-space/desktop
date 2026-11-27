@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ChatStore } from "@ora/chat";
 import type { ContractsClient } from "@ora/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { invalidateSessions, refetchSessions } from "../data/sessions";
@@ -19,8 +20,13 @@ import { useOptionalPlatform } from "../../platform/use-platform";
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
-/** Maintains the application stream and invalidates authoritative session state on loss. */
-export function useAppEvents(client: ContractsClient) {
+/**
+ * Maintains the application stream and invalidates authoritative session state on loss.
+ *
+ * `chatStore` is told which sessions' options may have changed, and re-reads those on screen each
+ * time the stream is (re)subscribed, because announcements made meanwhile are lost.
+ */
+export function useAppEvents(client: ContractsClient, chatStore?: ChatStore) {
   const queryClient = useQueryClient();
   const platform = useOptionalPlatform();
   const [ready, setReady] = useState(false);
@@ -62,12 +68,15 @@ export function useAppEvents(client: ContractsClient) {
             void refetchSessions(queryClient);
             // Skills may have changed while the stream was down.
             if (wasDisconnected) void invalidateAllAgentCommands(queryClient);
+            chatStore?.getState().resyncOptions();
             wasDisconnected = false;
             // Facts recorded while no subscriber existed (startup recovery of missed
             // occurrences and interrupted runs) live in persistence; surface them once.
             void surfaceStartupScheduledFacts(client, queryClient, platform);
           } else if (event.type === "session_title_updated") {
             void invalidateSessions(queryClient);
+          } else if (event.type === "session_options_changed") {
+            chatStore?.getState().optionsChanged(event.session_id);
           } else if (event.type === "plugin_status_changed") {
             invalidatePluginState(queryClient);
           } else if (event.type === "mcp_health_changed") {
@@ -119,7 +128,7 @@ export function useAppEvents(client: ContractsClient) {
       controller.abort();
       if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
     };
-  }, [client, queryClient, platform]);
+  }, [client, queryClient, platform, chatStore]);
 
   return { ready };
 }

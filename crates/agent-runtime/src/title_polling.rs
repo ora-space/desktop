@@ -122,6 +122,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             // it is not a cancellation of the independent title fallback.
                         }
                         RuntimeCommand::CancelActivePrompt => {}
+                        // The poll borrows the channel; the session still has its provider.
+                        RuntimeCommand::ReadOptions { response } => {
+                            let _ = response.send(Some(self.reported_config_options.clone()));
+                        }
                         RuntimeCommand::TakeIdleTurnTraffic { response } => {
                             // A title poll only borrows the idle channel; hand it back and drain
                             // as an idle actor would, so the answer is not lost to the poll.
@@ -225,14 +229,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         Some(SessionEvent::Update(update, _)) => {
                             self.observe_session_update(&update.update);
                             // The other updates wait for the next prompt one by one; a catalog
-                            // replaces every earlier one.
-                            if matches!(
-                                update.update,
-                                SessionUpdate::AvailableCommandsUpdate(_)
-                            ) {
-                                channel.retain_commands(&update);
-                            } else {
-                                channel.pending_updates.push_back(update);
+                            // replaces every earlier one. Options are taken now and not again:
+                            // the next stream starts from the ones the session is on.
+                            match update.update {
+                                SessionUpdate::AvailableCommandsUpdate(_) => {
+                                    channel.retain_commands(&update);
+                                }
+                                SessionUpdate::ConfigOptionUpdate(_) => {}
+                                _ => channel.pending_updates.push_back(update),
                             }
                         }
                         Some(SessionEvent::Response(response)) => {
@@ -335,6 +339,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             // stays level with what the provider last said rather than frozen at attach.
             SessionUpdate::ConfigOptionUpdate(config) => {
                 self.reported_config_options = config.config_options.clone();
+                // Announced whatever the value, so a view can tell its change was handled.
+                self.events.session_options_changed(&self.session.id);
             }
             SessionUpdate::AvailableCommandsUpdate(commands) => {
                 let count = commands.available_commands.len();

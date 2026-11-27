@@ -516,7 +516,14 @@ fn rejects_ambiguous_bare_skill_name_while_allowing_exact_catalog_ids() {
     .expect("restore local review skill package");
 
     // Selecting either concrete catalog ID succeeds unambiguously even while both exist.
-    for exact_id in ["uuid-local-review", "plugin:official/review-pack:review"] {
+    for (skill_ref, catalog_id) in [
+        ("uuid-local-review", "uuid-local-review"),
+        (
+            "plugin:official/review-pack:review",
+            "plugin:official/review-pack:review",
+        ),
+        ("official/review-pack", "plugin:official/review-pack:review"),
+    ] {
         let exact_graph = WorkflowGraph::parse(&format!(
             r#"{{
                 "nodes":[
@@ -524,7 +531,7 @@ fn rejects_ambiguous_bare_skill_name_while_allowing_exact_catalog_ids() {
                     {{"id":"agent","data":{{"kind":"agent","agentConfig":{{
                         "executor":{{"agentCli":"opencode","modelId":"m"}},
                         "prompt":"run",
-                        "skills":[{{"skillId":"{exact_id}","enabled":true}}]
+                        "skills":[{{"skillId":"{skill_ref}","enabled":true}}]
                     }}}}}},
                     {{"id":"out","data":{{"kind":"output"}}}}
                 ],
@@ -540,7 +547,79 @@ fn rejects_ambiguous_bare_skill_name_while_allowing_exact_catalog_ids() {
             .expect("exact catalog ID must resolve despite same-named sibling");
         assert_eq!(
             receipt.bindings[0].catalog_skill_id.as_deref(),
-            Some(exact_id)
+            Some(catalog_id)
         );
+    }
+}
+
+/// Uses the same independent resolution examples as the frontend dependency reports.
+#[test]
+fn skill_references_match_shared_frontend_examples() {
+    let fixtures: serde_json::Value =
+        serde_json::from_str(include_str!("skill-reference-cases.json")).unwrap();
+    let temp = TempDir::new().unwrap();
+    let pool = test_pool(&temp);
+    let skills_root = temp.path().join("skills");
+    let repo = SqliteSkillRepository::new(pool.clone());
+    let mut plugins = std::collections::BTreeMap::<String, Vec<PluginSkillProjection>>::new();
+    for row in fixtures["skills"].as_array().unwrap() {
+        let name = row["name"].as_str().unwrap();
+        let namespace = row["namespace"].as_str().unwrap();
+        let available = row["availability"] == "available";
+        if namespace == "local" {
+            install_local_skill(&pool, &skills_root, row["id"].as_str().unwrap(), name);
+            if !available {
+                std::fs::remove_dir_all(skills_root.join(name)).unwrap();
+            }
+        } else {
+            let package_root = temp.path().join("plugins").join(namespace).join(name);
+            if available {
+                std::fs::create_dir_all(&package_root).unwrap();
+                std::fs::write(
+                    package_root.join("SKILL.md"),
+                    format!("---\nname: {name}\ndescription: test\n---\n"),
+                )
+                .unwrap();
+            }
+            plugins
+                .entry(namespace.to_string())
+                .or_default()
+                .push(PluginSkillProjection {
+                    name: name.to_string(),
+                    description: "test".to_string(),
+                    package_root,
+                });
+        }
+    }
+    for (id, projections) in plugins {
+        let (namespace, identifier) = id.split_once('/').unwrap();
+        repo.replace_plugin_skills(
+            &PluginId::new(namespace, identifier).unwrap(),
+            "1.0.0",
+            &projections,
+            /*updated_at*/ 1,
+        )
+        .unwrap();
+    }
+    for case in fixtures["cases"].as_array().unwrap() {
+        let reference = case["reference"].as_str().unwrap();
+        let resolved = resolve_graph_ref_skill_entry(&skills_root, &repo, reference);
+        match case["status"].as_str().unwrap() {
+            "installed" => assert_eq!(
+                resolved.unwrap().unwrap().catalog_skill_id,
+                case["catalogId"].as_str().unwrap(),
+                "{reference}"
+            ),
+            "ambiguous" => assert!(
+                matches!(
+                    resolved,
+                    Err(StartPrerequisitesError::WorkflowSkillAmbiguous { .. })
+                ),
+                "{reference}: {resolved:?}"
+            ),
+            // Launch rejects both an absent entry and an entry with an unusable package.
+            "missing" | "unavailable" => assert_eq!(resolved.unwrap(), None, "{reference}"),
+            other => panic!("unexpected fixture status: {other}"),
+        }
     }
 }

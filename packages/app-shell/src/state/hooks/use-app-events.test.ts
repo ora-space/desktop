@@ -1,4 +1,5 @@
 import { act, waitFor } from "@testing-library/react";
+import type { ChatStore } from "@ora/chat";
 import type { AppEvent } from "@ora/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -111,6 +112,47 @@ describe("useAppEvents", () => {
     await waitFor(() => expect(invalidated()).toEqual([true, true]));
     // Skills say nothing about models, so what was discovered for models alone stays valid.
     expect(invalidatedIn("models")).toEqual([false, false]);
+
+    unmount();
+    disconnect();
+    vi.useRealTimers();
+  });
+
+  it("tells the chat store which session's options changed, and has it read them again on each subscription", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const clientHandlers: TestHandlers = {};
+    const client = createTestClient(clientHandlers);
+    let disconnect = () => {};
+    clientHandlers.watchAppEvents =
+      async function* (): AsyncGenerator<AppEvent> {
+        yield { type: "ready" };
+        yield { type: "session_options_changed", session_id: "session-1" };
+        await new Promise<void>((resolve) => {
+          disconnect = resolve;
+        });
+      };
+    const optionsChanged = vi.fn();
+    const resyncOptions = vi.fn();
+    const chatStore = {
+      getState: () => ({ optionsChanged, resyncOptions }),
+    } as unknown as ChatStore;
+
+    const { unmount } = renderHookWithClient(
+      () => useAppEvents(client, chatStore),
+      client,
+      createTestQueryClient(),
+    );
+    await waitFor(() =>
+      expect(optionsChanged).toHaveBeenCalledWith("session-1"),
+    );
+    expect(resyncOptions).toHaveBeenCalledTimes(1);
+
+    // Announcements made while the stream was down are lost, so the options are read again.
+    await act(async () => {
+      disconnect();
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    await waitFor(() => expect(resyncOptions).toHaveBeenCalledTimes(2));
 
     unmount();
     disconnect();

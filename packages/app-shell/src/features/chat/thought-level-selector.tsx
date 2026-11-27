@@ -44,7 +44,8 @@ import { usePendingSwitch } from "../../state/stores/pending-agent-store";
  *
  * With an agent move pending, the conversation's options describe the agent it
  * is leaving, so the control withdraws until the move's handshake reports the
- * incoming agent's own levels.
+ * incoming agent's own levels. It withdraws too once the session is known to have
+ * no provider.
  */
 export function ThoughtLevelSelector({
   disabled = false,
@@ -91,8 +92,15 @@ export function ThoughtLevelSelector({
       ? undefined
       : state.conversations[optionsSessionId]?.configOptions,
   );
+  const providerLost = useStore(chatStore, (state) =>
+    optionsSessionId === null
+      ? false
+      : state.conversations[optionsSessionId]?.providerLost === true,
+  );
+  // A session without a provider has no effort to set, and no intent carries one to its next
+  // attach, so the control withdraws; a read-only one keeps naming the last level.
   const option =
-    liveOptions !== undefined && agentIsAvailable
+    liveOptions !== undefined && agentIsAvailable && (disabled || !providerLost)
       ? findThoughtLevelOption(liveOptions)
       : null;
   if (option === null || option.type !== "select") return null;

@@ -138,8 +138,10 @@ impl ClientQueue {
                 return;
             }
             // The waiting one is delivered after this change too, so it stands for both.
-            if matches!(event, AppEvent::AgentModelsInvalidated { .. })
-                && state.events.contains(&event)
+            if matches!(
+                event,
+                AppEvent::AgentModelsInvalidated { .. } | AppEvent::SessionOptionsChanged { .. }
+            ) && state.events.contains(&event)
             {
                 return;
             }
@@ -353,6 +355,40 @@ mod tests {
             agent_ref: agent.to_string(),
         }));
         expected.push(title);
+        assert_eq!(received, expected);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), stream.recv())
+                .await
+                .is_err(),
+            "nothing more, and the stream is still open"
+        );
+    }
+
+    /// A burst of option announcements for a session, as an attach replay takes frame after frame,
+    /// is merged while the client is not reading: the session is announced once and the stream stays
+    /// open.
+    #[tokio::test]
+    async fn merges_option_announcements_waiting_for_a_client() {
+        let hub = AppEventHub::new();
+        let mut stream = hub.subscribe();
+        let publisher = hub.publisher();
+        let sessions = ["first", "second"];
+        for _ in 0..100 {
+            for session in sessions {
+                publisher.try_publish(AppEvent::SessionOptionsChanged {
+                    session_id: session.to_string(),
+                });
+            }
+        }
+
+        let mut received = Vec::new();
+        for _ in 0..1 + sessions.len() {
+            received.push(stream.recv().await.unwrap().unwrap());
+        }
+        let mut expected = vec![AppEvent::Ready];
+        expected.extend(sessions.map(|session| AppEvent::SessionOptionsChanged {
+            session_id: session.to_string(),
+        }));
         assert_eq!(received, expected);
         assert!(
             tokio::time::timeout(Duration::from_millis(20), stream.recv())

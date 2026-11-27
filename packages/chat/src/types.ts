@@ -180,6 +180,13 @@ export interface SessionConversation {
    * can show once a session exists.
    */
   configOptions: acp.SessionConfigOption[];
+  /**
+   * Whether the session is known to have no provider now.
+   *
+   * Its last options are kept for what they showed, but there is nothing to configure: a choice is
+   * an intent for the next attach. Cleared by any options a stream or a read brings.
+   */
+  providerLost: boolean;
   /** Model switches recorded in this thread, oldest first. */
   modelChanges: ChatModelChange[];
   /** Known holes in Ora's durable record reported by the latest successful replay. */

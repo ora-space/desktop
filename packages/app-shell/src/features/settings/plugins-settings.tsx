@@ -1,3 +1,4 @@
+import { workflowSkillInstallQuery } from "../workflow-editor/workflow-skill-reference";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -285,7 +286,11 @@ export function PluginsSettings({
         // Missing MCPs and Skills are installed from the marketplace, which is this pane's list.
         setConfigurationPlugin(null);
         setManaging(false);
-        setQuery(dependency.id);
+        setQuery(
+          dependency.kind === "skill"
+            ? workflowSkillInstallQuery(dependency.id)
+            : dependency.id,
+        );
         return;
       case "configureMcp":
         setManaging(true);

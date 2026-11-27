@@ -37,6 +37,14 @@
       "exports": ["workflowEditorTranslations"],
       "purpose": "The single i18n composition loads this feature's pure resource bundle.",
       "kind": "resources"
+    },
+    "./workflow-skill-reference": {
+      "exports": [
+        "resolveWorkflowSkill",
+        "workflowSkillLabel",
+        "workflowSkillInstallQuery"
+      ],
+      "purpose": "The run inspector and Settings use the editor-owned workflow Skill reference rules and source labels."
     }
   }
 }

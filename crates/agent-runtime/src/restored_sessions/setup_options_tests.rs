@@ -28,6 +28,8 @@ enum Intent {
     PushedBeforeAnswer,
     /// The same, but setup is answered without options at all.
     PushedBeforeBareAnswer,
+    /// The same, but setup is answered with an empty list, which is a set of options too.
+    PushedBeforeEmptyAnswer,
 }
 
 /// The conversation that acquires the provider session.
@@ -78,6 +80,10 @@ async fn pushing_agent(
                         let bare = answer(json!({"sessionId":"created"}));
                         vec![options("created", "a"), bare, mode("created")]
                     }
+                    Intent::PushedBeforeEmptyAnswer => {
+                        let empty = answer(json!({"sessionId":"created", "configOptions":[]}));
+                        vec![options("created", "a"), empty, mode("created")]
+                    }
                     _ => vec![answered, options("created", "b"), mode("created")],
                 }
             }
@@ -112,7 +118,8 @@ async fn pushing_agent(
                 | Intent::NotOffered
                 | Intent::Absent
                 | Intent::PushedBeforeAnswer
-                | Intent::PushedBeforeBareAnswer => {
+                | Intent::PushedBeforeBareAnswer
+                | Intent::PushedBeforeEmptyAnswer => {
                     vec![answer(json!({"configOptions":model("a")}))]
                 }
             },
@@ -143,7 +150,10 @@ async fn views(acquired: Acquired, intent: Intent) -> (Vec<State>, Vec<State>, V
         | Intent::Refused
         | Intent::RefusedAfterPush => Some("a".to_string()),
         Intent::NotOffered => Some("z".to_string()),
-        Intent::Absent | Intent::PushedBeforeAnswer | Intent::PushedBeforeBareAnswer => None,
+        Intent::Absent
+        | Intent::PushedBeforeAnswer
+        | Intent::PushedBeforeBareAnswer
+        | Intent::PushedBeforeEmptyAnswer => None,
     };
     let mut request_model = None;
     let (session_id, config_options) = match acquired {
@@ -192,11 +202,17 @@ async fn views(acquired: Acquired, intent: Intent) -> (Vec<State>, Vec<State>, V
     let mut prompted = Vec::new();
     while let Some(event) = turn.recv().await {
         match event.unwrap() {
-            PromptSessionEvent::SessionUpdate { update, .. } => prompted.extend(state(update)),
+            PromptSessionEvent::SessionUpdate { update, .. } => prompted.push(state(update)),
             PromptSessionEvent::Completed { .. } => break,
             unexpected => panic!("unexpected prompt event: {unexpected:?}"),
         }
     }
+    // A session set up before its first prompt is attached, so that prompt starts from the options
+    // setup reported; a restored one reports them as it attaches.
+    if !matches!(acquired, Acquired::Restored) {
+        assert_eq!(prompted.remove(0), setup);
+    }
+    let prompted = prompted.into_iter().flatten().collect::<Vec<_>>();
     let mut load = fixture
         .manager
         .load_session(LoadSessionRequest {
@@ -257,6 +273,21 @@ fn a_snapshot_pushed_before_setup_was_answered_does_not_undo_the_answer() {
             assert_eq!(
                 views(acquired, Intent::PushedBeforeAnswer).await,
                 (on("b"), vec![mode], on("b"))
+            );
+        });
+    }
+}
+
+/// An answer with an empty list is a set of options, and replaces the snapshot pushed before it.
+#[test]
+fn an_empty_answer_replaces_a_snapshot_pushed_before_it() {
+    let mode = State::Mode("plan".to_string());
+    for acquired in [Acquired::Started, Acquired::Switched] {
+        let mode = mode.clone();
+        run_case(async move {
+            assert_eq!(
+                views(acquired, Intent::PushedBeforeEmptyAnswer).await,
+                (vec![State::NoOptions], vec![mode], vec![State::NoOptions])
             );
         });
     }

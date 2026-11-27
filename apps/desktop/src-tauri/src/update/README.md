@@ -77,6 +77,11 @@ Desktop application self-update orchestration around Tauri's signed updater plug
   retry; the webview reports it from the rejected install command. A package that fails the
   pre-install record, digest, or signature checks is removed and transitions to a failed `install`
   instead of advertising a broken retry.
+- A confirmation for a release that a background check has since replaced is refused with
+  `UpdateError::ReleaseReplaced`, which the install command maps to the public `Conflict` error
+  `desktop_update_release_replaced`, logged at WARN. The replacement stays `Ready` and is never
+  installed on that confirmation; the webview ignores the refusal because the new `Ready` already
+  reached it.
 - An installation that the updater cannot perform — a `deb` or `rpm` package, or a bare executable
   on Linux — is reported as `ManualUpdate` before any download is spent, because the static
   manifest only advertises an AppImage for Linux.

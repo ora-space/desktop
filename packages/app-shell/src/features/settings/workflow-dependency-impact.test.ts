@@ -91,7 +91,7 @@ describe("uninstallDependencyTargets", () => {
         skillOwnedBy("user-owned", "another-owner"),
       ],
     );
-    expect(targets).toEqual([{ kind: "skill", name: "release-notes" }]);
+    expect(targets).toEqual([{ kind: "skill", id: "skill-release-notes" }]);
   });
 
   it("keeps an MCP package bound by its own id", () => {
@@ -127,7 +127,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -174,7 +174,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -268,7 +268,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -308,7 +308,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -336,7 +336,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills: [],
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({ dependents: [], unreadable: 7 });
@@ -375,7 +375,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills: [skillOwnedBy("release-notes", "official/release")],
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     // A null config declares no bindings; the install report reads it the same way.
@@ -427,7 +427,7 @@ describe("findWorkflowDependents", () => {
       ],
       plugins: [skillPlugin("official/release")],
       skills,
-      targets: [{ kind: "skill", name: "release-notes" }],
+      targets: [{ kind: "skill", id: "skill-release-notes" }],
     });
 
     expect(impact).toEqual({
@@ -508,4 +508,153 @@ describe("findImportedWorkflowsFromPlugins", () => {
       { workflowId: "wf-second", name: "第二个流程" },
     ]);
   });
+});
+
+it("compares exact IDs, legacy names, and single/multi Skill plugin references before removal", () => {
+  const pluginId = "official/release";
+  const pLint = {
+    ...skillOwnedBy("lint", pluginId),
+    id: `plugin:${pluginId}:lint`,
+    namespace: pluginId,
+  };
+  const pReview = {
+    ...skillOwnedBy("review", pluginId),
+    id: `plugin:${pluginId}:review`,
+    namespace: pluginId,
+  };
+  const localLint: Skill = {
+    ...pLint,
+    id: "local-lint",
+    namespace: "local",
+    source: { kind: "local" },
+  };
+  const skills = [pLint, pReview, localLint];
+  const targets = uninstallDependencyTargets(
+    [pluginId],
+    [skillPlugin(pluginId)],
+    skills,
+  );
+  const references = [pLint.id, pluginId, "ns:REVIEW", "lint", "unrelated"];
+  const result = findWorkflowDependents({
+    workflows: references.map((reference) => ({
+      workflowId: reference,
+      name: reference,
+      draftGraph: graph({ skills: [reference] }),
+    })),
+    plugins: [skillPlugin(pluginId)],
+    skills,
+    targets,
+  });
+  expect(result).toEqual({
+    dependents: references.slice(0, 3).map((reference) => ({
+      workflowId: reference,
+      name: reference,
+      nodeTitles: ["发布说明"],
+    })),
+    unreadable: 0,
+  });
+});
+
+it("ignores disabled Skill bindings and their node titles while retaining enabled and published references", () => {
+  const pluginId = "official/release";
+  const skill = skillOwnedBy("release-notes", pluginId);
+  const disabled = JSON.parse(graph({ skills: [skill.id] }, "Disabled"));
+  disabled.nodes[0].data.agentConfig.skills[0].enabled = false;
+  const enabled = JSON.parse(graph({ skills: [skill.id] }, "Enabled"));
+  const mixed = {
+    ...disabled,
+    nodes: [...disabled.nodes, { ...enabled.nodes[0], id: "enabled" }],
+  };
+  const result = findWorkflowDependents({
+    workflows: [
+      {
+        workflowId: "disabled",
+        name: "disabled",
+        draftGraph: JSON.stringify(disabled),
+      },
+      { workflowId: "mixed", name: "mixed", draftGraph: JSON.stringify(mixed) },
+      {
+        workflowId: "published",
+        name: "published",
+        draftGraph: JSON.stringify(disabled),
+        publishedGraph: JSON.stringify(enabled),
+      },
+    ],
+    plugins: [],
+    skills: [skill],
+    targets: [{ kind: "skill", id: skill.id }],
+  });
+  expect(result).toEqual({
+    dependents: [
+      { workflowId: "mixed", name: "mixed", nodeTitles: ["Enabled"] },
+      { workflowId: "published", name: "published", nodeTitles: ["Enabled"] },
+    ],
+    unreadable: 0,
+  });
+});
+
+it("keeps Agent dependencies when unused non-Agent nodes retain malformed Skill config", () => {
+  const skill = skillOwnedBy("release-notes", "official/release");
+  const document = JSON.parse(graph({ skills: [skill.id] }, "Active Agent"));
+  document.nodes.push({
+    id: "spare-output",
+    type: "workflow",
+    position: { x: 100, y: 0 },
+    data: { kind: "output", title: "Spare", agentConfig: { skills: {} } },
+  });
+  expect(
+    findWorkflowDependents({
+      workflows: [
+        {
+          workflowId: "workflow",
+          name: "workflow",
+          draftGraph: JSON.stringify(document),
+        },
+      ],
+      plugins: [],
+      skills: [skill],
+      targets: [{ kind: "skill", id: skill.id }],
+    }),
+  ).toEqual({
+    dependents: [
+      {
+        workflowId: "workflow",
+        name: "workflow",
+        nodeTitles: ["Active Agent"],
+      },
+    ],
+    unreadable: 0,
+  });
+});
+
+it("does not add uninstall impact when a bare Skill remains ambiguous after removal", () => {
+  const pluginId = "official/review";
+  const removed = {
+    ...skillOwnedBy("review", pluginId),
+    id: "plugin:official/review:review",
+  };
+  const local = {
+    ...removed,
+    id: "local-review",
+    source: { kind: "local" as const },
+  };
+  const remaining = {
+    ...removed,
+    id: "plugin:other/review:review",
+    source: { kind: "plugin" as const, pluginId: "other/review" },
+  };
+  expect(
+    findWorkflowDependents({
+      workflows: [
+        {
+          workflowId: "review",
+          name: "Review",
+          draftGraph: graph({ skills: ["review"] }),
+        },
+      ],
+      plugins: [],
+      skills: [removed, local, remaining],
+      targets: [{ kind: "skill", id: removed.id }],
+    }),
+  ).toEqual({ dependents: [], unreadable: 0 });
 });

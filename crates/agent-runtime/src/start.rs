@@ -6,7 +6,7 @@ use super::routing::{SessionChannel, SessionEvent, SetupActivity};
 use super::support::{agent_timed_out, map_acp_error};
 use super::support::{contract_session, domain_agent_ref};
 use super::{ActorSetup, HandoffDebt, SessionVisibility, TitleAcquisition};
-use super::{AgentRuntimeManager, SESSION_SETUP_TIMEOUT, session_setup_window};
+use super::{AgentRuntimeManager, session_setup_window};
 use crate::AgentRuntimeHost;
 use crate::config_changes::ask_during_setup;
 use crate::events::settle_idle_event;
@@ -23,8 +23,7 @@ use crate::{ErrorClassification, RuntimeError};
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AvailableCommand, CloseSessionRequest, CloseSessionResponse,
     DeleteSessionRequest, DeleteSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
-    SessionConfigId, SessionConfigOption, SessionConfigOptionValue, SessionNotification,
-    SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+    SessionConfigOption, SessionConfigOptionValue, SessionNotification, SessionUpdate,
 };
 use ora_acp::{AcpClient, AcpTransport, ReadOrder};
 use ora_contracts::{EmptyErrorParams, PublicError, StartSessionRequest, StartSessionResponse};
@@ -588,34 +587,6 @@ pub(super) async fn apply_model_intent(
             None
         }
     }
-}
-
-/// Sends one persisted-session configuration request and returns the provider's full report.
-pub(super) async fn request_config_option<H: AgentRuntimeHost>(
-    connections: &ConnectionSupervisors<H>,
-    agent_ref: &AgentRef,
-    agent_session_id: &str,
-    config_id: &SessionConfigId,
-    value: &SessionConfigOptionValue,
-) -> Result<Vec<SessionConfigOption>, RuntimeError> {
-    let connection = connections.for_agent(agent_ref)?.current()?;
-    let response = timeout(
-        SESSION_SETUP_TIMEOUT,
-        connection
-            .client
-            .request::<_, SetSessionConfigOptionResponse>(
-                AGENT_METHOD_NAMES.session_set_config_option,
-                &SetSessionConfigOptionRequest::new(
-                    agent_session_id.to_string(),
-                    config_id.clone(),
-                    value.clone(),
-                ),
-            ),
-    )
-    .await
-    .map_err(|_| agent_timed_out("agent configuration timed out"))?
-    .map_err(map_acp_error)?;
-    Ok(response.config_options)
 }
 
 /// Releases a provider session that never became visible to a user.

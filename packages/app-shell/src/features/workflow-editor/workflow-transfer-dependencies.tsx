@@ -1,3 +1,4 @@
+import { workflowSkillInstallQuery } from "./workflow-skill-reference";
 import { useTranslation } from "react-i18next";
 import { cn } from "@ora/ui";
 import { useUiStore } from "../../state/stores/ui-store";
@@ -26,7 +27,8 @@ const PILL_TONES: Record<PillTone, string> = {
 const STATUS_TONES: Record<WorkflowDependencyStatus, PillTone> = {
   installed: "ok",
   missing: "warn",
-  unavailable: "muted",
+  unavailable: "warn",
+  ambiguous: "warn",
 };
 
 /** Status chip with a leading dot so state reads by shape as well as color. */
@@ -63,6 +65,7 @@ interface WorkflowTransferDependenciesProps {
    * destination (the plugin import report navigates inside the pane it opened from) passes its
    * own handler; the editor import preview keeps the default.
    */
+  onChooseSkillSource?: () => void;
   onResolve?: (
     dependency: WorkflowDependency,
     fix: WorkflowDependencyFix,
@@ -75,6 +78,7 @@ export function WorkflowTransferDependencies({
   dependencies,
   variant,
   onResolve,
+  onChooseSkillSource,
 }: WorkflowTransferDependenciesProps) {
   const { t } = useTranslation();
   const openSettingsAt = useUiStore((state) => state.openSettingsAt);
@@ -89,7 +93,13 @@ export function WorkflowTransferDependencies({
     switch (fix) {
       case "install":
         // Missing MCPs and Skills are installed from the marketplace first.
-        openPluginSettings({ kind: "marketplaceSearch", query: dependency.id });
+        openPluginSettings({
+          kind: "marketplaceSearch",
+          query:
+            dependency.kind === "skill"
+              ? workflowSkillInstallQuery(dependency.id)
+              : dependency.id,
+        });
         return;
       case "configureMcp":
         openPluginSettings({
@@ -128,6 +138,12 @@ export function WorkflowTransferDependencies({
               })}
         </span>
       </header>
+      {variant === "import" &&
+        dependencies.some((dependency) => dependency.kind === "skill") && (
+          <p className="px-3 py-2 text-xs text-muted-foreground">
+            {t("settings.workflow.transfer.globalSkillScope")}
+          </p>
+        )}
       {dependencies.length === 0 ? (
         <p className="px-3 py-3 text-[12px] text-muted-foreground">
           {t("settings.workflow.transfer.noDependencies")}
@@ -164,6 +180,27 @@ export function WorkflowTransferDependencies({
                       `settings.workflow.transfer.status.${dependency.status}`,
                     )}
                   </WorkflowTransferPill>
+                  {!dependency.enabled && (
+                    <span className="text-[11px] text-muted-foreground">
+                      {t("settings.workflow.transfer.bindingDisabled")}
+                    </span>
+                  )}
+                  {dependency.status === "ambiguous" &&
+                    (onChooseSkillSource ? (
+                      <button
+                        type="button"
+                        className="text-[11.5px] text-blue-600 hover:underline"
+                        onClick={onChooseSkillSource}
+                      >
+                        {t(
+                          "settings.workflow.transfer.chooseSkillSourceAction",
+                        )}
+                      </button>
+                    ) : (
+                      <span className="max-w-44 text-[11px] text-muted-foreground">
+                        {t("settings.workflow.transfer.chooseSkillSource")}
+                      </span>
+                    ))}
                   {dependency.fix !== null && (
                     <button
                       type="button"

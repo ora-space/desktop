@@ -32,6 +32,7 @@ export interface RefusedWorkflowReport {
 
 /** How many distinct plugin references of one readiness state the import brought in. */
 export interface WorkflowImportDependencyCounts {
+  ambiguous: number;
   installed: number;
   unavailable: number;
   missing: number;
@@ -210,6 +211,7 @@ export function buildWorkflowImportReport(input: {
   graphs: ReadonlyMap<string, string>;
   plugins: readonly InstalledPlugin[];
   skills: readonly Skill[];
+  retiredSkillIds?: readonly string[];
 }): WorkflowImportReport {
   const workflows: ImportedWorkflowReport[] = [];
   const refused: RefusedWorkflowReport[] = [];
@@ -235,9 +237,11 @@ export function buildWorkflowImportReport(input: {
       parseWorkflowGraph(graph).nodes,
       input.plugins,
       input.skills,
+      input.retiredSkillIds,
     );
     for (const dependency of dependencies) {
-      counted.set(`${dependency.kind}:${dependency.id}`, dependency.status);
+      if (dependency.enabled)
+        counted.set(`${dependency.kind}:${dependency.id}`, dependency.status);
     }
     workflows.push({
       workflowId: outcome.workflowId,
@@ -248,6 +252,7 @@ export function buildWorkflowImportReport(input: {
   }
 
   const counts: WorkflowImportDependencyCounts = {
+    ambiguous: 0,
     installed: 0,
     unavailable: 0,
     missing: 0,

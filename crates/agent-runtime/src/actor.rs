@@ -43,6 +43,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Serializes operations for one logical session while the shared connection remains concurrent.
     pub(super) async fn run(mut self) {
         loop {
+            self.announce_provider_change();
             // Residual events belong to the previous provider turn. Consume the current queue
             // snapshot before accepting a new command so they cannot cross turns. Turn traffic
             // among them is remembered for a caller judging a stopped turn.
@@ -168,6 +169,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     }));
                 }
                 RuntimeCommand::CancelActivePrompt => {}
+                RuntimeCommand::ReadOptions { response } => {
+                    let options = self
+                        .channel
+                        .is_some()
+                        .then(|| self.reported_config_options.clone());
+                    let _ = response.send(options);
+                }
                 RuntimeCommand::TakeIdleTurnTraffic { response } => {
                     // The idle loop drained the queue before dispatching this command.
                     let _ = response.send(self.turn_cancel.take_idle_traffic());
@@ -225,10 +233,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             return;
         }
         // Ahead of the replay, and only while attached: these describe the provider serving this
-        // conversation, so a client can read their presence as "this session has an agent to
-        // configure" and their absence as "offer the agent's own catalog and let the next message
-        // carry the choice". Not recorded — this is the session's present, not its transcript.
-        if self.channel.is_some() && !self.reported_config_options.is_empty() {
+        // conversation, so a view starts from the options the session is on, an empty list
+        // included, and one without them knows to ask whether the session has a provider. Not
+        // recorded — this is the session's present, not its transcript.
+        if self.channel.is_some() {
             let update = SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
                 self.reported_config_options.clone(),
             ));
@@ -310,6 +318,18 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         match &self.rebuilt_binding {
             Some(rebuilt) => &rebuilt.agent_session_id,
             None => &self.session.agent_session_id,
+        }
+    }
+
+    /// Announces that this session gained or lost its provider since the actor last looked.
+    ///
+    /// Looked at between operations: one that borrows the channel still holds the provider, and
+    /// every path that loses it, whatever the cause, comes back here before anything else is read.
+    fn announce_provider_change(&mut self) {
+        let holds = self.channel.is_some();
+        if holds != self.held_provider {
+            self.held_provider = holds;
+            self.events.session_options_changed(&self.session.id);
         }
     }
 
@@ -467,7 +487,7 @@ mod tests {
             rebuilt_binding: None,
             load_restoration: Default::default(),
             reported_config_options: Vec::new(),
-            direct_config_changes: Vec::new(),
+            held_provider: false,
             commands_exceed_limit: false,
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
@@ -553,7 +573,7 @@ mod tests {
             rebuilt_binding: None,
             load_restoration: Default::default(),
             reported_config_options: Vec::new(),
-            direct_config_changes: Vec::new(),
+            held_provider: false,
             commands_exceed_limit: false,
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
@@ -640,7 +660,7 @@ mod tests {
             rebuilt_binding: None,
             load_restoration: Default::default(),
             reported_config_options: Vec::new(),
-            direct_config_changes: Vec::new(),
+            held_provider: false,
             commands_exceed_limit: false,
             scheduler: scheduler.clone(),
             events: RecordedEvents::default(),
