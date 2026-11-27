@@ -1,6 +1,10 @@
 // Pure translation data: safe to compose without importing feature implementation.
 export const pluginTranslations = {
   "zh-CN": {
+    "plugins.origin.official": "官方",
+    "plugins.origin.officialDescription": "Ora 官方插件市场，只读，随插件更新",
+    "plugins.origin.marketplaceDescription":
+      "第三方插件市场，首次从该市场引入，只读，随插件更新",
     "errors.plugin_not_found": "未找到该插件。",
     "errors.plugin_log_levels_read_only":
       "插件日志设置处于只读保护状态。请修复 {{path}} 后重启应用，再修改日志级别。",
@@ -441,6 +445,11 @@ export const pluginTranslations = {
     "settings.plugins.catalog.tokens": "读取与更新设计令牌",
   },
   "en-US": {
+    "plugins.origin.official": "Official",
+    "plugins.origin.officialDescription":
+      "Ora's official plugin marketplace. Read-only; updates with the plugin.",
+    "plugins.origin.marketplaceDescription":
+      "Third-party plugin marketplace this plugin was first brought in from. Read-only; updates with the plugin.",
     "errors.plugin_not_found": "The plugin was not found.",
     "errors.plugin_log_levels_read_only":
       "Plugin log settings are protected as read-only. Repair {{path}} and restart the app before editing log levels.",

@@ -607,6 +607,49 @@ it("renders marketplace plugins from the registry index", async () => {
   ).toHaveClass("items-center");
 });
 
+it("labels each marketplace card with its source and tells a fork apart", async () => {
+  const state = createFixtureState();
+  state.installedPlugins = [];
+  const listing = {
+    name: "weather",
+    title: "Weather",
+    kind: "agent",
+    version: "1.2.0",
+    description: "Weather plugin",
+    logo: null,
+    compatibility: "compatible",
+  } as const;
+  state.availablePlugins.push(
+    {
+      ...listing,
+      id: "official/weather",
+      namespace: "official",
+      sourceUrl: "https://github.com/ora-space/marketplace",
+    },
+    {
+      ...listing,
+      id: "marketplace.1a2b3c4d/weather",
+      namespace: "marketplace.1a2b3c4d",
+      sourceUrl: "https://github.com/obsismc/marketplace",
+    },
+  );
+  renderSettings(createTestClient(createFixtureHandlers(state)));
+
+  const cards = await screen.findAllByRole("button", {
+    name: /查看 Weather 的 README|View Weather README/,
+  });
+  expect(
+    cards.map(
+      (card) => card.querySelector("[data-slot=origin-tag]")?.textContent,
+    ),
+  ).toEqual([
+    expect.stringMatching(/^(官方|Official)$/),
+    "obsismc/marketplace",
+  ]);
+  // The digest-suffixed namespace is identity only and never reaches the card.
+  expect(screen.queryByText(/1a2b3c4d/)).not.toBeInTheDocument();
+});
+
 /** Installing goes through the backend and refreshes the installed surface. */
 it("adopts a deep-linked marketplace search once", async () => {
   const { client } = clientWithWeather();

@@ -52,6 +52,8 @@ import { usePluginImport } from "../../state/hooks/use-plugin-import";
 import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-sync";
 import { useMarketplaceSyncStore } from "../../state/stores/marketplace-sync-store";
 import { PluginLogo } from "./plugin-logo";
+import { OriginTag, type PluginOriginDisplay } from "./origin-tag";
+import { marketplaceSourceLabels } from "./marketplace-source-label";
 import { PluginSourcesManager } from "./plugin-sources-manager";
 import { PluginManager } from "./plugin-manager";
 import { PluginReadmeView } from "./plugin-readme-view";
@@ -211,6 +213,16 @@ export function PluginsSettings({
       byId.set(plugin.id, plugin);
     return byId;
   }, [available.data]);
+
+  // Labels are derived over the whole listing, not the filtered view, so searching never changes
+  // how a card names its source.
+  const sourceLabels = useMemo(
+    () =>
+      marketplaceSourceLabels(
+        (available.data?.plugins ?? []).map((plugin) => plugin.sourceUrl),
+      ),
+    [available.data],
+  );
 
   const needle = query.trim().toLowerCase();
   const visiblePlugins = useMemo(
@@ -571,6 +583,7 @@ export function PluginsSettings({
                         key={plugin.id}
                         plugin={plugin}
                         installed={installedById.get(plugin.id)}
+                        origin={listingOrigin(plugin, sourceLabels)}
                         onSelect={setReadmePlugin}
                         onWorkflowReport={setImportReport}
                       />
@@ -718,15 +731,35 @@ function PackMemberStateBadge({
   );
 }
 
-/** One marketplace entry presented as a compact card with its brand, title, and summary. */
+/**
+ * The origin a marketplace listing shows on its card.
+ *
+ * A stopgap until the contract carries a backend-computed label: the `official` namespace is the
+ * first-party marketplace, and every other source is named by its URL-derived label.
+ */
+function listingOrigin(
+  plugin: AvailablePlugin,
+  sourceLabels: Map<string, string>,
+): PluginOriginDisplay {
+  if (plugin.namespace === "official") return { kind: "official" };
+  return {
+    kind: "marketplace",
+    label: sourceLabels.get(plugin.sourceUrl) ?? plugin.sourceUrl,
+  };
+}
+
+/** One marketplace entry presented as a compact card with its brand, title, source, and summary. */
 function AvailablePluginCard({
   plugin,
   installed,
+  origin,
   onSelect,
   onWorkflowReport,
 }: {
   plugin: AvailablePlugin;
   installed: InstalledPlugin | undefined;
+  /** Where the listing comes from; two sources may publish look-alike cards (ADR 20260831 D6). */
+  origin: PluginOriginDisplay;
   onSelect: (plugin: AvailablePlugin) => void;
   /** Opens the import report when the package delivered workflow documents. */
   onWorkflowReport: (input: WorkflowImportReportInput) => void;
@@ -838,8 +871,11 @@ function AvailablePluginCard({
       >
         <PluginLogo logo={plugin.logo} />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">
-            {plugin.title || plugin.name}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-sm font-medium">
+              {plugin.title || plugin.name}
+            </span>
+            <OriginTag origin={origin} className="shrink-0" />
           </span>
           {plugin.description !== "" && (
             <span className="mt-0.5 block truncate text-xs text-muted-foreground">
