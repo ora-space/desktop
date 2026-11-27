@@ -368,7 +368,11 @@ it("retains the draft and blocks actions during a production reconnect read fail
   });
   await screen.findByRole("alert", {}, { timeout: 5000 });
   expect(screen.getByLabelText(/主机|Host/)).toHaveValue("draft.example");
-  for (const name of [/保存|Save/, /清空|Clear/, /验证代理|Check connection/]) {
+  for (const name of [
+    /^保存$|^Save$/,
+    /清空|Clear/,
+    /验证代理|Check connection/,
+  ]) {
     const button = screen.getByRole("button", { name });
     expect(button).toBeDisabled();
     await user.click(button);

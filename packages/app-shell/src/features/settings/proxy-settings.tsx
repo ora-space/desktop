@@ -28,13 +28,17 @@ interface ProxySettingsEditorProps {
   initialSettings: ProxySettings | null;
   controller: ProxySettingsController;
   replacingUnreadable: boolean;
+  onReplaceUnreadable: () => void;
 }
 
 /** Edits the host proxy used by Desktop updates and opted-in marketplace sources. */
 export function ProxySettings() {
   const { t } = useTranslation();
   const controller = useProxySettings();
-  const [replaceUnreadable, setReplaceUnreadable] = useState(false);
+  const [replacementError, setReplacementError] = useState<Error | null>(null);
+  const replacingUnreadable =
+    controller.loadError !== null && controller.loadError === replacementError;
+  const replaceUnreadable = () => setReplacementError(controller.loadError);
 
   const settingsKey = controller.settings
     ? [
@@ -58,7 +62,7 @@ export function ProxySettings() {
         </span>
       ) : !controller.hasLoaded &&
         controller.loadError !== null &&
-        !replaceUnreadable ? (
+        !replacingUnreadable ? (
         <div className="space-y-3">
           <p role="alert" className="text-sm text-destructive">
             {t("settings.proxy.loadError")}
@@ -66,7 +70,7 @@ export function ProxySettings() {
           <Button variant="outline" onClick={() => void controller.retry()}>
             {t("common.retry")}
           </Button>
-          <Button variant="outline" onClick={() => setReplaceUnreadable(true)}>
+          <Button variant="outline" onClick={replaceUnreadable}>
             {t("settings.proxy.replaceUnreadable")}
           </Button>
         </div>
@@ -75,7 +79,8 @@ export function ProxySettings() {
           key={controller.mode + settingsKey}
           initialSettings={controller.settings}
           controller={controller}
-          replacingUnreadable={!controller.hasLoaded && replaceUnreadable}
+          replacingUnreadable={replacingUnreadable}
+          onReplaceUnreadable={replaceUnreadable}
         />
       )}
     </div>
@@ -110,6 +115,7 @@ function ProxySettingsEditor({
   initialSettings,
   controller,
   replacingUnreadable,
+  onReplaceUnreadable,
 }: ProxySettingsEditorProps) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<ProxyMode>(controller.mode);
@@ -320,6 +326,11 @@ function ProxySettingsEditor({
                 >
                   {t("common.retry")}
                 </Button>
+                {!replacingUnreadable && (
+                  <Button variant="outline" onClick={onReplaceUnreadable}>
+                    {t("settings.proxy.replaceUnreadable")}
+                  </Button>
+                )}
               </>
             )}
             {controller.updateError !== null && (

@@ -63,3 +63,29 @@ impl ArtifactVerifier for UpdateVerifier {
         self.public_key.verify(bytes, &signature, true).is_ok()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Checks the wire-format verifier with the published minisign-verify test vector.
+    #[test]
+    fn rejects_a_package_with_a_signature_for_different_bytes() {
+        let verifier = UpdateVerifier {
+            public_key: PublicKey::from_base64(
+                "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3",
+            )
+            .unwrap(),
+            trust_root_fingerprint: "fixture".to_owned(),
+        };
+        let signature = STANDARD.encode(concat!(
+            "untrusted comment: signature from minisign secret key\n",
+            "RUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/",
+            "z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\n",
+            "trusted comment: timestamp:1633700835\tfile:test\tprehashed\n",
+            "wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJAgAooBQ==",
+        ));
+        assert!(verifier.verify(b"test", &signature));
+        assert!(!verifier.verify(b"tampered package", &signature));
+    }
+}

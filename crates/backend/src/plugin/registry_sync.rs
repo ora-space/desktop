@@ -170,8 +170,7 @@ impl PluginApi {
             let failure = match git_env.map(|git_env| source.clone().with_git_env(git_env)) {
                 Ok(proxied) => RegistrySync::sync(&git, &proxied).err().map(|error| {
                     let failure = RegistrySourceFailure::from_sync_error(source.canonical_url(), &error);
-                    let failure = if failure.message().contains("CONNECT tunnel failed, response 407")
-                        || failure.message().contains("returned error: 407") {
+                    let failure = if proxy::git_proxy_auth_failure(failure.message()) {
                         RegistrySourceFailure::new(source.canonical_url(), ora_utils::http::HostProxyError::Authentication.to_string())
                     } else {
                         failure

@@ -32,6 +32,12 @@ pub(crate) fn proxy_error(error: HostProxyError) -> BackendError {
     BackendError::invalid_proxy_settings(error.to_string())
 }
 
+/// Recognizes Git's English HTTP and CONNECT proxy authentication diagnostics.
+pub(crate) fn git_proxy_auth_failure(message: &str) -> bool {
+    message.contains("CONNECT tunnel failed, response 407")
+        || message.contains("returned error: 407")
+}
+
 /// Pins a single Git operation to its selected route and disallows redirects Git cannot reroute.
 pub(crate) fn git_proxy_env(remote_url: &str, policy: &HostProxy) -> Result<GitEnv, BackendError> {
     let url = Url::parse(remote_url)
@@ -332,5 +338,25 @@ mod tests {
                 .unwrap()
                 .starts_with("GET http://origin.example/")
         );
+    }
+
+    /// Real Git diagnostics from both proxy handshakes are recognized by marketplace sync.
+    #[test]
+    fn git_reports_proxy_authentication_failure() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let config = temp.path().join("gitconfig");
+        for (remote, method) in [
+            ("http://origin.example/marketplace.git", "GET "),
+            ("https://origin.example/marketplace.git", "CONNECT "),
+        ] {
+            let (endpoint, server) = serve_git_request(
+                "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+            );
+            let policy = HostProxy::manual(Url::parse(&endpoint).expect("fixture URL"));
+            let env = git_proxy_env(remote, &policy).expect("proxy env");
+            let stderr = ls_remote_stderr(remote, env, &config);
+            assert!(git_proxy_auth_failure(&stderr), "{stderr}");
+            assert!(server.join().unwrap().starts_with(method));
+        }
     }
 }

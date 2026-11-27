@@ -265,6 +265,15 @@ mod proxy_tests {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
+    /// Mirrors the updater's ring initialization before building a test transport.
+    fn client_for(policy: &HostProxy) -> updater_http::Client {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        configure_proxy_client(updater_http::Client::builder(), policy)
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap()
+    }
+
     /// Captures a request at the configured proxy and returns a controlled HTTP response.
     async fn proxy_exchange(listener: TcpListener, response: String) -> String {
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -295,10 +304,7 @@ mod proxy_tests {
         let response = format!(
             "HTTP/1.1 302 Found\r\nLocation: https://{target}/package\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         );
-        let client = configure_proxy_client(updater_http::Client::builder(), &policy)
-            .timeout(Duration::from_secs(3))
-            .build()
-            .unwrap();
+        let client = client_for(&policy);
         let accept_direct = async {
             let (mut socket, _) = direct.accept().await.unwrap();
             assert_eq!(socket.read_u8().await.unwrap(), 0x16, "TLS handshake");
@@ -331,10 +337,7 @@ mod proxy_tests {
                 .unwrap(),
         );
         let response = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\n\r\n";
-        let client = configure_proxy_client(updater_http::Client::builder(), &policy)
-            .timeout(Duration::from_secs(3))
-            .build()
-            .unwrap();
+        let client = client_for(&policy);
         let (request, result) = tokio::time::timeout(Duration::from_secs(5), async {
             tokio::join!(
                 proxy_exchange(proxy, response.to_owned()),
@@ -348,6 +351,12 @@ mod proxy_tests {
         assert!(request.starts_with("CONNECT manifest.example.test:443 "));
         assert!(matches!(
             network_update_error(result.unwrap_err().into()),
+            UpdateError::Proxy(HostProxyError::Authentication)
+        ));
+        assert!(matches!(
+            network_update_error(tauri_plugin_updater::Error::Network(
+                "Download request failed with status: 407 Proxy Authentication Required".to_owned()
+            )),
             UpdateError::Proxy(HostProxyError::Authentication)
         ));
     }
