@@ -10,7 +10,11 @@ import { localizeContractError } from "../../i18n/contract-error";
 import { useWorkflowDebugHistory } from "../../state/data/workflow-runs";
 import { RunDebugAttempt } from "./run-debug-attempt";
 
-function Operation({ operation }: { operation: WorkflowDebugOperation }) {
+export function DebugOperation({
+  operation,
+}: {
+  operation: WorkflowDebugOperation;
+}) {
   const { t } = useTranslation();
   return (
     <p>
@@ -26,7 +30,7 @@ function Operation({ operation }: { operation: WorkflowDebugOperation }) {
   );
 }
 
-function Impact({ preview: p }: { preview: WorkflowDebugPreview }) {
+export function DebugImpact({ preview: p }: { preview: WorkflowDebugPreview }) {
   const { t } = useTranslation();
   return (
     <div className="space-y-2">
@@ -83,8 +87,8 @@ function History({
                 <summary>
                   {e.preview.target.nodeId} · {e.operation.operationId}
                 </summary>
-                <Operation operation={e.operation} />
-                <Impact preview={e.preview} />
+                <DebugOperation operation={e.operation} />
+                <DebugImpact preview={e.preview} />
                 <pre>{JSON.stringify(e.patch, null, 2)}</pre>
                 {e.preview.target.nodeRunId && (
                   <RunDebugAttempt

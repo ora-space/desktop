@@ -242,6 +242,21 @@ describe("buildDisplayRun iteration projection", () => {
     expect(display.roundStates?.start).toBeUndefined();
     expect(display.roundStates?.iter).toBeUndefined();
   });
+
+  it("projects the server's current root and bound item before any member is dispatched", () => {
+    const display = buildDisplayRun(
+      {
+        ...detail,
+        rootScopeId: "after-restart",
+        nodes: detail.nodes.filter((node) => node.nodeId !== "fix"),
+        variables: [{ selector: ["iter", "index"], value: 0 }],
+      },
+      ITERATION_GRAPH,
+    );
+    expect(display.rootScopeId).toBe("after-restart");
+    expect(display.nodeStates.iter.boundItemIndex).toBe(0);
+    expect(display.roundStates?.fix).toBeUndefined();
+  });
 });
 
 describe("buildDisplayRun", () => {

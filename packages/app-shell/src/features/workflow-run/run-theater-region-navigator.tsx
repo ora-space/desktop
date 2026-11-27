@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { iterationItemIndices } from "./run-debug-position";
 import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@ora/ui";
@@ -59,7 +60,7 @@ export function RunTheaterRegionNavigator({
   const memberIds = region.phases.flatMap((phase) => phase.nodeIds);
   const hasMultipleAttempts =
     new Set(loopRounds.map((round) => round.parentLoopNodeRunId)).size > 1;
-  const rounds = availableRounds(run, memberIds);
+  const rounds = iterationItemIndices(run, region.nodeId, memberIds);
   const effectiveRound =
     selectedRound !== null && rounds.includes(selectedRound)
       ? selectedRound
@@ -405,17 +406,6 @@ function stateDuration(state: GraphWorkflowNodeState | null): string | null {
     return null;
   }
   return formatElapsedDuration(finishedAt - startedAt);
-}
-
-/** Returns all persisted rounds represented by any member in this region. */
-function availableRounds(run: GraphWorkflowRun, memberIds: string[]): number[] {
-  const rounds = new Set<number>();
-  for (const nodeId of memberIds) {
-    for (const state of run.roundStates?.[nodeId] ?? []) {
-      if (state.iteration !== undefined) rounds.add(state.iteration);
-    }
-  }
-  return [...rounds].sort((left, right) => left - right);
 }
 
 /** Resolves only the requested round so an older/newer result cannot leak into the view. */

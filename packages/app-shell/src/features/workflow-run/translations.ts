@@ -139,6 +139,10 @@ export const workflowRunTranslations = {
       "保留当前工作区文件。续跑可能读到上次生成的文件。",
     "workflowRun.debug.repeat": "发送消息等外部动作可能重复。",
     "workflowRun.debug.stopping": "正在等待旧尝试停止。",
+    "workflowRun.debug.edit": "从此位置编辑并续跑",
+    "workflowRun.debug.confirm": "确认并续跑",
+    "workflowRun.debug.uncertain":
+      "未收到确认结果。可用同一请求重试，或查看本次运行的调试历史。",
     "workflowRun.debug.applied": "修订 {{revision}} 已生效。",
     "workflowRun.debug.stopFailed":
       "未能停稳：{{reason}}。未停稳的尝试：{{ids}}。请刷新运行记录。",
@@ -733,6 +737,10 @@ export const workflowRunTranslations = {
     "workflowRun.debug.repeat":
       "External actions such as sending messages may repeat.",
     "workflowRun.debug.stopping": "Waiting for earlier attempts to stop.",
+    "workflowRun.debug.edit": "Edit and resume from here",
+    "workflowRun.debug.confirm": "Confirm and resume",
+    "workflowRun.debug.uncertain":
+      "Confirmation was not received. Retry this request or check this run’s debug history.",
     "workflowRun.debug.applied": "Revision {{revision}} is in effect.",
     "workflowRun.debug.stopFailed":
       "Could not stop: {{reason}}. Unsettled attempts: {{ids}}. Refresh run records.",
