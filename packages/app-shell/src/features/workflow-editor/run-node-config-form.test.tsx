@@ -7,6 +7,7 @@ import {
 } from "@ora/workflow-mock";
 import { appI18n } from "../../i18n/i18n-instance";
 import conditionSample from "./fixtures/run-condition-preview.json";
+import defaults from "./fixtures/run-debug-defaults.json";
 import { RunNodeConfigForm, type RunNodeConfig } from "./run-node-config-form";
 
 beforeEach(async () => {
@@ -456,17 +457,18 @@ it("keeps the rule structure fixed and emits only the existing case logic leaf",
       {...input}
       effective={{
         kind: "condition",
-        config: { cases: [{ id: "A", conditions }] },
+        config: { cases: defaults.condition.data.cases },
       }}
     />,
   );
   expect(submit()).toBeDisabled();
+  expect(screen.getByLabelText(/Branch 1 logic/)).toHaveTextContent(
+    defaults.condition.default.toUpperCase(),
+  );
   await user.click(screen.getByLabelText(/Branch 1 logic/));
   await user.click(await screen.findByRole("option", { name: /OR/ }));
   await user.click(submit());
-  expect(input.onSubmit.mock.calls[1]?.[0].patch).toEqual([
-    { op: "replace", path: "/cases/0/logic", value: "or" },
-  ]);
+  expect(input.onSubmit.mock.calls[1]?.[0]).toEqual(defaults.condition.preview);
 });
 
 it("edits an existing carried variable's type-compatible feedback", async () => {
@@ -511,10 +513,7 @@ it("filters nested arrays and edits the iteration failure strategy", async () =>
   const user = userEvent.setup();
   const input = props({
     kind: "iteration",
-    config: {
-      iteratorSelector: ["start", "items"],
-      collectSelector: ["member", "output"],
-    },
+    config: defaults.iteration.data.iterationConfig,
   });
   input.variables.push({
     ...variable("body", "items", "array"),
@@ -530,24 +529,22 @@ it("filters nested arrays and edits the iteration failure strategy", async () =>
       .sort(),
   ).toEqual(["start.items", "start.other"]);
   await user.keyboard("{Escape}");
-  await user.click(
-    screen.getByLabelText(
-      appI18n.t("settings.workflow.field.iterationErrorStrategy"),
+  const strategy = screen.getByLabelText(
+    appI18n.t("settings.workflow.field.iterationErrorStrategy"),
+  );
+  expect(strategy).toHaveTextContent(
+    appI18n.t(
+      `settings.workflow.iteration.${defaults.iteration.default}Strategy`,
     ),
   );
+  await user.click(strategy);
   await user.click(
     await screen.findByRole("option", {
       name: appI18n.t("settings.workflow.iteration.continueStrategy"),
     }),
   );
   await user.click(submit());
-  expect(input.onSubmit.mock.calls[0]?.[0].patch).toEqual([
-    {
-      op: "replace",
-      path: "/iterationConfig/errorStrategy",
-      value: "continue",
-    },
-  ]);
+  expect(input.onSubmit.mock.calls[0]?.[0]).toEqual(defaults.iteration.preview);
   await user.click(
     screen.getByLabelText(
       appI18n.t("settings.workflow.field.iterationErrorStrategy"),

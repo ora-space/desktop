@@ -1,6 +1,9 @@
 use super::*;
 use ora_application::render_variable_template;
 
+#[cfg(test)]
+mod form_samples;
+
 /// Joins the row to its immutable snapshot and rejects superseded attempts and prior root executions.
 pub(super) fn prepare(
     db: &Connection,
