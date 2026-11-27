@@ -172,9 +172,9 @@ where
     /// run and all of its transitive successors are cleared, succeeded work is kept, and
     /// scheduling recomputes the ready set from the surviving state.
     ///
-    /// The resume unit for anything inside a region is the owning composite node. Partial
-    /// in-loop resume is explicitly out of scope: a failed or cancelled region row, or a
-    /// failed/cancelled composite row, restarts the loop from round 1.
+    /// A failed or cancelled region row normally restarts its owning composite from round 1.
+    /// A foreach with a parked debug replay retains its already-settled prefix so recovery
+    /// can continue from the selected item. A failed owner still restarts as a whole.
     ///
     /// The invalidation is published after the resume transaction commits and before the
     /// scheduling wave, matching every other committed transition (ADR "node runtime
@@ -192,8 +192,13 @@ where
         }
         let graph = WorkflowGraph::parse(&context.graph_json)?;
         let node_runs = self.repository.list_node_runs(run_id)?;
-        let to_clear =
-            crate::workflow_run::engine::region::resume_clear_node_ids(&graph, &node_runs);
+        let payload = execution_payload_from(context.run.payload.as_deref());
+        let to_clear = super::region::resume_with_parked_foreach(
+            &graph,
+            &node_runs,
+            &payload,
+            &context.root_scope_id,
+        );
         if to_clear.is_empty() {
             return Ok(ResumeWorkflowRunResult::NotResumable);
         }

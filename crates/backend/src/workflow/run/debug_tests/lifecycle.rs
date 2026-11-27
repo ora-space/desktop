@@ -19,9 +19,9 @@ const INDEPENDENT_BRANCH_GRAPH: &str = r#"{"nodes":[
 
 /// Holds the runtime's actual stop future across a concurrent cancellation.
 #[derive(Default)]
-struct StopBarrier {
-    entered: Notify,
-    release: Notify,
+pub(super) struct StopBarrier {
+    pub(super) entered: Notify,
+    pub(super) release: Notify,
 }
 impl DebugSessionStopper for StopBarrier {
     fn stop(

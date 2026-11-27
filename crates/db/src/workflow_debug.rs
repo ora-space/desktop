@@ -13,6 +13,9 @@ pub use rusqlite::Transaction;
 
 mod attempts;
 mod configuration;
+mod foreach_replay;
+pub use foreach_replay::ForeachReplay;
+pub(crate) use foreach_replay::resume_foreach_replays;
 pub(crate) mod fence;
 mod normalize;
 mod operations;
@@ -87,6 +90,44 @@ pub struct WorkflowDebugStore {
 }
 
 impl WorkflowDebugStore {
+    /// Resolves the confirmed foreach position under the apply transaction, before its old
+    /// rows are retired. The patch and selection come from the server-issued receipt.
+    pub fn confirmed_foreach_input(
+        tx: &Transaction<'_>,
+        preview: &WorkflowDebugPreview,
+    ) -> Result<(String, DebugPlanningInput), DatabaseError> {
+        let (run_id, patch): (String, String) = tx.query_row(
+            "SELECT run_id, patch FROM workflow_debug_previews WHERE id=?1",
+            [&preview.preview_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let target = &preview.target;
+        let selection = match &target.node_run_id {
+            Some(id) => WorkflowDebugSelection::NodeRunId(id.clone()),
+            None => WorkflowDebugSelection::PendingTarget(PendingWorkflowDebugTarget {
+                root_scope_id: target
+                    .root_scope_id
+                    .clone()
+                    .ok_or(DebugRejection::InvalidTarget)?,
+                scope_id: target.scope_id.clone(),
+                node_id: target.node_id.clone(),
+                container_node_run_id: target.container_node_run_id.clone(),
+                index: target.index,
+            }),
+        };
+        let input = configuration::prepare(
+            tx,
+            &PreviewWorkflowDebugRequest {
+                run_id: run_id.clone(),
+                selection,
+                base_revision: preview.base_revision,
+                patch: serde_json::from_str(&patch)?,
+            },
+            preview.input_source_node_run_id.as_deref(),
+        )?;
+        Ok((run_id, input))
+    }
+
     /// Uses the same database pool as workflow scheduling.
     pub fn new(pool: RepositoryPool) -> Self {
         Self { pool }
@@ -109,8 +150,9 @@ impl WorkflowDebugStore {
             if revision != request.base_revision {
                 return Err(DebugRejection::StalePreview.into());
             }
-            let input = configuration::prepare(&tx, request)?;
-            let (impact, fence_nodes) = plan(&input)?;
+            let mut input = configuration::prepare(&tx, request, /*confirmed_retry_source*/ None)?;
+            let (mut impact, fence_nodes) = plan(&input)?;
+            foreach_replay::include_parked_schedule(&tx, &request.run_id, &mut impact, &mut input.read_nodes)?;
             let nodes = serde_json::to_string(&input.read_nodes)?;
             let facts = read_set::facts(&tx, &request.run_id, &nodes)?;
             let kind = input.candidate.execution_node(&input.target.node_id).ok_or(DebugRejection::InvalidTarget)?.node_type.as_str();

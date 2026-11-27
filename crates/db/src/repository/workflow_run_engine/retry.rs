@@ -18,6 +18,23 @@ pub(super) const RETRY_WAIT_PATH: &str = "$.retry_wait";
 /// Error recorded on a waiting attempt the run gave up on before it could start.
 pub(super) const RETRY_ABANDONED: &str = r#"{"reason":"retry_abandoned"}"#;
 
+impl SqliteWorkflowRunEngineRepository {
+    /// Abandons pending backoffs atomically with a run failure, allowing immediate manual recovery.
+    pub(crate) fn abandon_retry_waits(
+        tx: &Transaction<'_>,
+        run: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        settle_retry_waits(
+            tx,
+            run,
+            WorkflowNodeStatus::Cancelled,
+            Some(RETRY_ABANDONED),
+            now,
+        )
+    }
+}
+
 impl WorkflowRetryRepository for SqliteWorkflowRunEngineRepository {
     fn schedule_node_retry(
         &self,

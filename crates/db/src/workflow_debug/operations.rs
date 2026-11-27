@@ -99,13 +99,16 @@ impl WorkflowDebugStore {
                 params![entry.preview.preview_id,entry.preview.target.node_run_id,entry.preview.target.scope_id,entry.preview.target.node_id,entry.preview.target.index,entry.preview.target.container_node_run_id],|r|r.get(0))?;
             if !target_current { return Err(DebugRejection::StalePreview.into()); }
             let revision = revision.checked_add(1).ok_or(DebugRejection::StalePreview)?;
+            // A rejected projection must discard every tentative effect, including the
+            // revision and terminal reactivation, before persisting the failure receipt.
+            tx.execute_batch("SAVEPOINT debug_projection")?;
             // The strategy may create new attempts inside settle. They must see the new revision.
             tx.execute("UPDATE workflow_debug_operations SET state='applied',revision=?3
                 WHERE run_id=?1 AND request_id=?2",params![run,request,revision])?;
             // A run accepted in a terminal state returns to running together with the revision,
             // but only while it still shows that very state. One that moved on while the stop was
             // in flight keeps its own outcome; recovery then reads the new revision.
-            tx.execute(
+            let reopened = tx.execute(
                 "UPDATE workflow_runs SET run_status=?2,error=NULL,output=NULL,finished_at=NULL,updated_at=?3
                 WHERE id=?1 AND run_status=(SELECT prior_status FROM workflow_debug_operations
                     WHERE run_id=?1 AND request_id=?4) AND run_status<>?2",
@@ -116,11 +119,42 @@ impl WorkflowDebugStore {
                     request
                 ],
             )?;
+            if reopened == 1 {
+                resume_foreach_replays(&tx, run, &entry.preview.impact.invalidate)?;
+            }
             let live_before: String = tx.query_row(
                 "SELECT json_group_array(id) FROM workflow_node_runs WHERE run_id=?1 AND is_deleted=0",
                 [run], |row| row.get(0),
             )?;
-            settle(&tx, &entry.preview)?;
+            match settle(&tx, &entry.preview) {
+                Err(error @ DatabaseError::ForeachProjection(_)) => {
+                    tx.execute_batch("ROLLBACK TO debug_projection; RELEASE debug_projection")?;
+                    let reason = error.to_string();
+                    // Quiescence succeeded. Release the fence together with the failure
+                    // receipt, preserving any independent terminal outcome.
+                    tx.execute(
+                        "UPDATE workflow_debug_operations SET state='stop_failed',released=1,
+                         failure=?3,unsettled_attempts='[]' WHERE run_id=?1 AND request_id=?2",
+                        params![run, request, reason],
+                    )?;
+                    let failed = tx.execute(
+                        "UPDATE workflow_runs SET run_status=?2,error=?3,finished_at=?4,updated_at=?4
+                         WHERE id=?1 AND run_status=?5",
+                        params![run, ora_domain::WorkflowRunStatus::Failed.database_value(), reason,
+                                now, ora_domain::WorkflowRunStatus::Running.database_value()],
+                    )?;
+                    if failed == 1 {
+                        crate::SqliteWorkflowRunEngineRepository::abandon_retry_waits(&tx, run, now)?;
+                    }
+                    tx.commit()?;
+                    return Ok(WorkflowDebugOperation {
+                        phase: WorkflowDebugPhase::StopFailed { reason, unsettled_node_run_ids: Vec::new() },
+                        ..entry.operation
+                    });
+                }
+                result => result?,
+            }
+            tx.execute_batch("RELEASE debug_projection")?;
             // Keep the first applied operation as the baseline until the run ends. A later
             // confirmation records its own acceptance state, but extends this dispatch scope.
             tx.execute(

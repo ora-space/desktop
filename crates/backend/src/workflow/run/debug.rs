@@ -213,11 +213,11 @@ impl WorkflowDebugCoordinator {
                 strategy::settle(tx, &request.run_id, now, preview)
             })
             .map_err(store_error)?;
+        self.transitions.publish_run_invalidated(&run_id);
         if matches!(
             applied.phase,
             ora_contracts::WorkflowDebugPhase::Applied { .. }
         ) {
-            self.transitions.publish_run_invalidated(&run_id);
             drop(_gate);
             let _dispatch_gate = self.run_locks.acquire_exclusive(request.run_id.clone());
             self.engine

@@ -7,10 +7,15 @@ use ora_db::workflow_debug::{DebugPlanningInput, DebugRejection, Transaction};
 use ora_domain::{WorkflowNodeStatus, WorkflowRunStatus, WorkflowScopeStatus};
 use std::collections::BTreeSet;
 
+mod foreach;
+
 /// Plans a top-level edit: the target plus its transitive successors are the recompute scope.
 pub(in crate::workflow::run) fn plan(
     input: &DebugPlanningInput,
 ) -> Result<(WorkflowDebugImpact, Vec<String>), DebugRejection> {
+    if input.target.index.is_some() || input.candidate.region(&input.target.node_id).is_some() {
+        return foreach::plan(input);
+    }
     // Container members are scoped by their round/item, not the root DAG; the container strategies
     // (#1431/#1432) own them. Refuse here rather than mis-scope a member as a top-level node.
     if input.target.container_node_run_id.is_some() {
@@ -134,6 +139,16 @@ pub(in crate::workflow::run) fn settle(
     now: i64,
     preview: &WorkflowDebugPreview,
 ) -> Result<(), ora_db::DatabaseError> {
+    let is_foreach = preview.target.index.is_some()
+        || transaction.query_row(
+            "SELECT node_type='iteration' FROM workflow_debug_previews WHERE id=?1",
+            [&preview.preview_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+    if is_foreach {
+        foreach::restore(transaction, preview)
+            .map_err(|error| ora_db::DatabaseError::ForeachProjection(Box::new(error)))?;
+    }
     let mut retired = BTreeSet::new();
     let ids = serde_json::to_string(&preview.impact.invalidate)?;
     let mut writers = transaction.prepare("SELECT DISTINCT node_id FROM workflow_node_runs WHERE run_id=?1 AND id IN (SELECT value FROM json_each(?2))")?;
@@ -142,7 +157,7 @@ pub(in crate::workflow::run) fn settle(
     }
     transaction.execute("UPDATE workflow_node_runs SET is_deleted=1,updated_at=?3 WHERE run_id=?1 AND is_deleted=0 AND id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now))?;
     transaction.execute("UPDATE workflow_execution_scopes SET status=?4,updated_at=?3 WHERE run_id=?1 AND status IN (?5,?6) AND parent_loop_node_run_id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now,WorkflowScopeStatus::Cancelled.database_value(),WorkflowScopeStatus::Pending.database_value(),WorkflowScopeStatus::Running.database_value()))?;
-    if retired.is_empty() {
+    if is_foreach || retired.is_empty() {
         return Ok(());
     }
     // A run that ended independently during quiescence keeps its terminal projection.
