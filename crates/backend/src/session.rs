@@ -96,6 +96,14 @@ impl Sessions {
         Ok(self.agent_runtime.set_session_config(request).await?)
     }
 
+    /// Reads the options a session is on, or that it has no provider, without asking its agent.
+    pub async fn get_options(
+        &self,
+        request: GetSessionOptionsRequest,
+    ) -> Result<GetSessionOptionsResponse, BackendError> {
+        Ok(self.agent_runtime.get_session_options(request).await?)
+    }
+
     /// Gets one session through the shared application composition.
     pub fn get(&self, request: GetSessionRequest) -> Result<GetSessionResponse, BackendError> {
         self.get.handle(request).map_err(BackendError::from)

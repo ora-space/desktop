@@ -380,11 +380,14 @@ fn title_polling_admission_preserves_a_waiting_prompt_policy() {
             "waiting",
             crate::TitleAcquisition::awaiting_first_prompt(/*list_supported*/ true),
         );
-        let mut first = fixture
-            .manager
-            .prompt_session(prompt("waiting"))
-            .await
-            .unwrap();
+        let mut first = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("waiting"))
+                .await
+                .unwrap(),
+        )
+        .await;
         fixture.next_frame().await;
         fixture
             .agent
@@ -397,14 +400,17 @@ fn title_polling_admission_preserves_a_waiting_prompt_policy() {
         // The real scheduler starts the bounded fallback. Its unanswered request proves the
         // next admission enters title_polling's preemption branch rather than the idle loop.
         assert_eq!(fixture.next_frame().await["method"], "session/list");
-        let mut waiting = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(
-                prompt("waiting"),
-                PromptInactivityPolicy::Unbounded,
-            )
-            .await
-            .unwrap();
+        let mut waiting = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Unbounded,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(7200)).await;
         assert!(waiting.try_recv().is_none());
@@ -495,6 +501,21 @@ async fn fake_agent(
     exited.send_replace(true);
 }
 
+/// Takes the options every prompt stream of a session with a provider starts with.
+///
+/// These sessions are attached already, so the options come before anything the turn sends.
+async fn opened(
+    mut stream: SessionEventStream<PromptSessionEvent>,
+) -> SessionEventStream<PromptSessionEvent> {
+    match stream.recv().await {
+        Some(Ok(PromptSessionEvent::SessionUpdate {
+            update: SessionUpdate::ConfigOptionUpdate(_),
+            ..
+        })) => stream,
+        other => panic!("expected the session's options first, got {other:?}"),
+    }
+}
+
 /// Builds the same public request ordinary chat and workflow execution admit.
 fn prompt(id: &str) -> PromptSessionRequest {
     PromptSessionRequest {
@@ -545,20 +566,26 @@ fn unbounded_prompt_survives_silence_while_default_session_retries() {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
         fixture.add_session("default");
-        let mut waiting = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(
-                prompt("waiting"),
-                PromptInactivityPolicy::Unbounded,
-            )
-            .await
-            .unwrap();
+        let mut waiting = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Unbounded,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["params"]["sessionId"], "waiting");
-        let mut default = fixture
-            .manager
-            .prompt_session(prompt("default"))
-            .await
-            .unwrap();
+        let mut default = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("default"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(45)).await;
         let cancelled = fixture.next_frame().await;
@@ -610,11 +637,14 @@ fn the_prompt_reports_who_ended_the_turn() {
 
         // The user cancels the active prompt from the session UI.
         fixture.add_session("stopped");
-        let mut stopped = fixture
-            .manager
-            .prompt_session(prompt("stopped"))
-            .await
-            .unwrap();
+        let mut stopped = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("stopped"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         fixture
             .manager
@@ -628,11 +658,14 @@ fn the_prompt_reports_who_ended_the_turn() {
 
         // The turn's owner abandons the stream without answering it.
         fixture.add_session("dropped");
-        let mut dropped = fixture
-            .manager
-            .prompt_session(prompt("dropped"))
-            .await
-            .unwrap();
+        let mut dropped = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("dropped"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         dropped.cancel_and_wait().await.unwrap();
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");
@@ -640,11 +673,14 @@ fn the_prompt_reports_who_ended_the_turn() {
 
         // The inactivity schedule runs out of retries while the provider stays silent.
         fixture.add_session("timed-out");
-        let mut timed_out = fixture
-            .manager
-            .prompt_session(prompt("timed-out"))
-            .await
-            .unwrap();
+        let mut timed_out = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("timed-out"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         let mut failure = None;
         while let Some(event) = timed_out.recv().await {
@@ -675,11 +711,14 @@ fn a_provider_crash_reports_session_crashed_rather_than_a_dropped_stream() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("crashed");
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("crashed"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("crashed"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         fixture.agent.send(AgentInput::Disconnect).unwrap();
         let error = stream.recv().await.unwrap().unwrap_err();
@@ -698,11 +737,14 @@ fn projected_child_activity_does_not_keep_an_unrelated_parent_prompt_alive() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("parent");
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("parent"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("parent"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(30)).await;
         for value in [
@@ -746,11 +788,14 @@ fn projected_child_permission_does_not_rearm_the_parent_prompt() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("parent");
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("parent"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("parent"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(30)).await;
         fixture
@@ -798,11 +843,14 @@ fn parent_permission_rearms_the_prompt_window() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("parent");
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("parent"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("parent"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(30)).await;
         fixture
@@ -847,14 +895,17 @@ fn unbounded_prompt_remains_cancellable_and_reusable() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(
-                prompt("waiting"),
-                PromptInactivityPolicy::Unbounded,
-            )
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Unbounded,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(7200)).await;
         assert!(stream.try_recv().is_none());
@@ -867,23 +918,29 @@ fn unbounded_prompt_remains_cancellable_and_reusable() {
             .unwrap();
         assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
 
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(
-                prompt("waiting"),
-                PromptInactivityPolicy::Unbounded,
-            )
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Unbounded,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(7200)).await;
         stream.cancel_and_wait().await.unwrap();
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");
-        let mut next = fixture
-            .manager
-            .prompt_session(prompt("waiting"))
-            .await
-            .unwrap();
+        let mut next = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("waiting"))
+                .await
+                .unwrap(),
+        )
+        .await;
         fixture.next_frame().await;
         tokio::time::advance(Duration::from_secs(45)).await;
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");
@@ -903,14 +960,17 @@ fn dropping_a_waiting_prompt_cancels_its_owner() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(
-                prompt("waiting"),
-                PromptInactivityPolicy::Unbounded,
-            )
-            .await
-            .unwrap();
+        let stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Unbounded,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         fixture.next_frame().await;
         tokio::time::advance(Duration::from_secs(7200)).await;
         drop(stream);
@@ -933,11 +993,17 @@ fn confirmed_bounded_timeout_can_prompt_again_without_reloading() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Wait,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(1800)).await;
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");
@@ -945,11 +1011,14 @@ fn confirmed_bounded_timeout_can_prompt_again_without_reloading() {
             stream.recv().await.unwrap().unwrap_err().public_error(),
             &PublicError::AgentTimedOut(EmptyErrorParams {})
         );
-        let mut next = fixture
-            .manager
-            .prompt_session(prompt("waiting"))
-            .await
-            .unwrap();
+        let mut next = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("waiting"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         fixture
             .agent
@@ -966,11 +1035,17 @@ fn wait_uses_the_routed_arrival_time_even_when_processed_after_the_deadline() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Wait,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(1799)).await;
         let arrived = tokio::time::Instant::now();
@@ -1028,11 +1103,17 @@ fn bounded_settlement_cancels_a_pending_permission_at_the_boundary() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Wait,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(1799)).await;
         queue_fixture_permission(&fixture);
@@ -1055,11 +1136,17 @@ fn renewed_wait_resumes_a_deferred_permission() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Wait,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(1799)).await;
         queue_fixture_permission(&fixture);
@@ -1094,11 +1181,17 @@ fn renewed_wait_settles_a_ready_terminal_before_deferred_work() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Wait,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         tokio::time::advance(Duration::from_secs(1799)).await;
         let terminal = crate::routing::tests::session_response("waiting").await;
@@ -1143,11 +1236,17 @@ fn unconfirmed_wait_drains_the_queued_tail_before_failure() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Wait,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         let mut follower = fixture
             .manager
@@ -1238,11 +1337,17 @@ fn waiting_prompt_times_out_without_a_cancellation_acknowledgement() {
             .state
             .send_replace(ConnectionState::Ready(connection));
         fixture.add_session("waiting");
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(prompt("waiting"), PromptInactivityPolicy::Wait)
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Wait,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         let mut follower = fixture
             .manager
@@ -1350,14 +1455,17 @@ fn provider_disconnect_ends_an_unbounded_prompt() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let mut stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(
-                prompt("waiting"),
-                PromptInactivityPolicy::Unbounded,
-            )
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Unbounded,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         fixture.next_frame().await;
         fixture.agent.send(AgentInput::Disconnect).unwrap();
         let error = stream.recv().await.unwrap().unwrap_err();
@@ -1377,14 +1485,17 @@ fn releasing_the_host_and_stream_ends_a_silent_waiting_actor() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("waiting");
-        let stream = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(
-                prompt("waiting"),
-                PromptInactivityPolicy::Unbounded,
-            )
-            .await
-            .unwrap();
+        let stream = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("waiting"),
+                    PromptInactivityPolicy::Unbounded,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         fixture.next_frame().await;
         tokio::time::advance(Duration::from_secs(7200)).await;
         let Fixture {
@@ -1416,11 +1527,14 @@ fn running_delegate_pauses_default_policy_until_it_finishes() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("parent");
-        let mut parent = fixture
-            .manager
-            .prompt_session(prompt("parent"))
-            .await
-            .unwrap();
+        let mut parent = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("parent"))
+                .await
+                .unwrap(),
+        )
+        .await;
         fixture.next_frame().await;
         for status in [
             agent_client_protocol_schema::v1::ToolCallStatus::InProgress,
@@ -1461,11 +1575,14 @@ fn cleared_child_source_keeps_the_delegate_pause_and_settles_on_completion() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("parent");
-        let mut parent = fixture
-            .manager
-            .prompt_session(prompt("parent"))
-            .await
-            .unwrap();
+        let mut parent = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("parent"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         for value in [
             json!({"sessionUpdate":"tool_call","toolCallId":"delegate","title":"Explore","status":"in_progress"}),
@@ -1519,11 +1636,14 @@ fn default_policy_exhausts_three_retries() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("default");
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("default"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("default"))
+                .await
+                .unwrap(),
+        )
+        .await;
         fixture.next_frame().await;
         for (retry, window) in [(1, 45), (2, 60), (3, 90)] {
             tokio::time::advance(Duration::from_secs(window)).await;
@@ -1552,17 +1672,26 @@ fn child_updates_do_not_rearm_the_parent_prompt() {
         let mut fixture = Fixture::new().await;
         fixture.add_session("parent");
         fixture.add_session("child");
-        let mut parent = fixture
-            .manager
-            .prompt_session(prompt("parent"))
-            .await
-            .unwrap();
+        let mut parent = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("parent"))
+                .await
+                .unwrap(),
+        )
+        .await;
         fixture.next_frame().await;
-        let mut child = fixture
-            .manager
-            .prompt_session_with_inactivity_policy(prompt("child"), PromptInactivityPolicy::Wait)
-            .await
-            .unwrap();
+        let mut child = opened(
+            fixture
+                .manager
+                .prompt_session_with_inactivity_policy(
+                    prompt("child"),
+                    PromptInactivityPolicy::Wait,
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         fixture.next_frame().await;
         fixture
             .agent
@@ -1622,11 +1751,14 @@ fn unconfirmed_cancellation_fences_never_resend_the_prompt() {
                 })
                 .unwrap();
             confirmed.await.unwrap();
-            let mut stream = fixture
-                .manager
-                .prompt_session(prompt("default"))
-                .await
-                .unwrap();
+            let mut stream = opened(
+                fixture
+                    .manager
+                    .prompt_session(prompt("default"))
+                    .await
+                    .unwrap(),
+            )
+            .await;
             fixture.next_frame().await;
             tokio::time::advance(Duration::from_secs(45)).await;
             assert_eq!(fixture.next_frame().await["method"], "session/cancel");
@@ -1704,14 +1836,17 @@ fn bounded_timeout_logs_the_window_and_settlement_outcome() {
             .block_on(async {
                 let mut fixture = Fixture::new().await;
                 fixture.add_session("waiting");
-                let mut stream = fixture
-                    .manager
-                    .prompt_session_with_inactivity_policy(
-                        prompt("waiting"),
-                        PromptInactivityPolicy::Wait,
-                    )
-                    .await
-                    .unwrap();
+                let mut stream = opened(
+                    fixture
+                        .manager
+                        .prompt_session_with_inactivity_policy(
+                            prompt("waiting"),
+                            PromptInactivityPolicy::Wait,
+                        )
+                        .await
+                        .unwrap(),
+                )
+                .await;
                 assert_eq!(fixture.next_frame().await["method"], "session/prompt");
                 tokio::time::advance(Duration::from_secs(1800)).await;
                 assert!(stream.recv().await.unwrap().is_err());
@@ -1752,7 +1887,8 @@ fn inactivity_diagnostics_record_the_window_tools_and_cancellation_result() {
                     request.prompt = vec![ContentBlock::Text(TextContent::new(
                         "private-prompt-sentinel",
                     ))];
-                    let mut stream = fixture.manager.prompt_session(request).await.unwrap();
+                    let mut stream =
+                        opened(fixture.manager.prompt_session(request).await.unwrap()).await;
                     fixture.next_frame().await;
                     fixture
                         .agent
@@ -1827,11 +1963,14 @@ fn routes_subagent_update_extensions_in_wire_order_through_process_generation() 
         fixture.add_session("main-session");
         fixture.add_session("other-session");
 
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("main-session"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("main-session"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
 
         for frame in [
@@ -2074,11 +2213,14 @@ fn real_s1_intervals_never_cancel_the_parent_prompt_under_default_timeout() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("sess-1");
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("sess-1"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("sess-1"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
 
         let (updates, response_offset) = s1_real_replay();
@@ -2112,11 +2254,14 @@ fn s1_timeline_with_unknown_outer_id_cancels_after_45s() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("sess-1");
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("sess-1"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("sess-1"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
 
         let (updates, _) = s1_real_replay();
@@ -2172,11 +2317,14 @@ fn a_silent_subagent_still_times_out_after_renewing_the_parent_window() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("sess-1");
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("sess-1"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("sess-1"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         fixture
             .agent
@@ -2229,11 +2377,14 @@ fn subagent_frames_stop_renewing_once_the_parent_delegation_completed() {
     run_case(async {
         let mut fixture = Fixture::new().await;
         fixture.add_session("sess-1");
-        let mut stream = fixture
-            .manager
-            .prompt_session(prompt("sess-1"))
-            .await
-            .unwrap();
+        let mut stream = opened(
+            fixture
+                .manager
+                .prompt_session(prompt("sess-1"))
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         fixture
             .agent
@@ -2669,11 +2820,14 @@ mod restored_sessions {
         run_case(async {
             let mut fixture = ReviewDrainFixture::new().await;
             fixture.add_session("restored");
-            let mut stream = fixture
-                .manager
-                .prompt_session(prompt("restored"))
-                .await
-                .unwrap();
+            let mut stream = opened(
+                fixture
+                    .manager
+                    .prompt_session(prompt("restored"))
+                    .await
+                    .unwrap(),
+            )
+            .await;
             assert_eq!(fixture.next_frame().await["method"], "session/load");
             assert_eq!(fixture.next_frame().await["method"], "session/prompt");
             tokio::time::advance(Duration::from_secs(45)).await;

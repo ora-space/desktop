@@ -12,6 +12,12 @@ pub enum AppEvent {
     Ready,
     /// Tells clients that the persisted session row should be queried again.
     SessionTitleUpdated { session_id: String },
+    /// Tells clients that a session's options may have changed, or that it has no provider now.
+    ///
+    /// Carries no options: a view without a stream reads them with `getSessionOptions`, and a view
+    /// with one takes the stream's. Sent for every options frame the session's actor adopts, also
+    /// one with the same value, and while a turn runs.
+    SessionOptionsChanged { session_id: String },
     /// Tells clients that the cached plugin lifecycle snapshot should be queried again.
     PluginStatusChanged { plugin_id: String },
     /// Tells clients that commands discovered from this agent were discovered with other Skills.
@@ -77,6 +83,16 @@ mod tests {
             .expect("title invalidation serializes"),
             serde_json::json!({
                 "type": "session_title_updated",
+                "session_id": "session-1",
+            }),
+        );
+        assert_eq!(
+            serde_json::to_value(AppEvent::SessionOptionsChanged {
+                session_id: "session-1".to_string(),
+            })
+            .expect("options invalidation serializes"),
+            serde_json::json!({
+                "type": "session_options_changed",
                 "session_id": "session-1",
             }),
         );

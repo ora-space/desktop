@@ -67,11 +67,14 @@ fn a_cancel_merged_into_a_watchdog_stop_owns_its_deadline() {
                 })
                 .unwrap();
             confirmed.await.unwrap();
-            let mut stream = fixture
-                .manager
-                .prompt_session(prompt("default"))
-                .await
-                .unwrap();
+            let mut stream = super::opened(
+                fixture
+                    .manager
+                    .prompt_session(prompt("default"))
+                    .await
+                    .unwrap(),
+            )
+            .await;
             assert_eq!(fixture.next_frame().await["method"], "session/prompt");
             tokio::time::advance(Duration::from_secs(45)).await;
             assert_eq!(fixture.next_frame().await["method"], "session/cancel");
@@ -226,40 +229,7 @@ fn a_catalog_ahead_of_an_already_queued_answer_is_kept() {
         // No actor reads the channel, so once everything is quiet both are queued on it.
         tokio::time::sleep(Duration::from_secs(1)).await;
 
-        let inner = &fixture.manager.inner;
-        let (commands, receiver) = mpsc::unbounded_channel();
-        let mut actor = crate::RuntimeActor::<TestHost> {
-            cleanup_outcomes: HashMap::new(),
-            recorder: fixture.manager.open_recorder(&session).unwrap().recorder,
-            session,
-            cwd: fixture._directory.path().to_path_buf(),
-            repository: inner.store.clone(),
-            clock: inner.clock,
-            connection: fixture.supervisor.clone(),
-            channel: None,
-            commands: receiver,
-            sessions_root: inner.sessions_root.clone(),
-            connections: inner.connections.clone(),
-            handoff: crate::HandoffDebt::Settled,
-            rebuilt_binding: None,
-            load_restoration: Default::default(),
-            reported_config_options: Vec::new(),
-            direct_config_changes: Vec::new(),
-            commands_exceed_limit: false,
-            scheduler: inner.scheduler.clone(),
-            events: inner.events.clone(),
-            title_acquisition: crate::TitleAcquisition::disabled(),
-            command_sender: commands.downgrade(),
-            session_mcp: NoSessionMcp::default(),
-            skill_catalog: inner.skill_catalog.clone(),
-            announced_skills: None,
-            barriers: inner.barriers.clone(),
-            live_mcp: LiveMcpState::Inactive,
-            turn_cancel: Default::default(),
-            #[cfg(feature = "test-support")]
-            test_prompt_inactivity_windows: None,
-            exit_probe: None,
-        };
+        let (mut actor, _commands) = unrun_actor(&fixture, session);
         actor
             .turn_cancel
             .request(Instant::now() + Duration::from_secs(15));
@@ -294,5 +264,244 @@ fn a_catalog_ahead_of_an_already_queued_answer_is_kept() {
         );
         drop(actor);
         fixture.shutdown().await;
+    });
+}
+
+/// Builds the actor of `session` without running it, so a test drives its steps one by one.
+fn unrun_actor(
+    fixture: &Fixture,
+    session: Session,
+) -> (
+    crate::RuntimeActor<TestHost>,
+    mpsc::UnboundedSender<crate::command::RuntimeCommand>,
+) {
+    let inner = &fixture.manager.inner;
+    let (commands, receiver) = mpsc::unbounded_channel();
+    let actor = crate::RuntimeActor::<TestHost> {
+        cleanup_outcomes: HashMap::new(),
+        recorder: fixture.manager.open_recorder(&session).unwrap().recorder,
+        session,
+        cwd: fixture._directory.path().to_path_buf(),
+        repository: inner.store.clone(),
+        clock: inner.clock,
+        connection: fixture.supervisor.clone(),
+        channel: None,
+        commands: receiver,
+        sessions_root: inner.sessions_root.clone(),
+        connections: inner.connections.clone(),
+        handoff: crate::HandoffDebt::Settled,
+        rebuilt_binding: None,
+        load_restoration: Default::default(),
+        reported_config_options: Vec::new(),
+        held_provider: false,
+        commands_exceed_limit: false,
+        scheduler: inner.scheduler.clone(),
+        events: inner.events.clone(),
+        title_acquisition: crate::TitleAcquisition::disabled(),
+        command_sender: commands.downgrade(),
+        session_mcp: NoSessionMcp::default(),
+        skill_catalog: inner.skill_catalog.clone(),
+        announced_skills: None,
+        barriers: inner.barriers.clone(),
+        live_mcp: LiveMcpState::Inactive,
+        turn_cancel: Default::default(),
+        #[cfg(feature = "test-support")]
+        test_prompt_inactivity_windows: None,
+        exit_probe: None,
+    };
+    (actor, commands)
+}
+
+/// What a change's caller is eventually told.
+type Outcome = oneshot::Receiver<crate::config_changes::ConfigChangeOutcome>;
+
+/// A turn started on `answered` without an actor, and the parts a test needs to settle it.
+struct UnrunTurn {
+    fixture: Fixture,
+    actor: crate::RuntimeActor<TestHost>,
+    _commands: mpsc::UnboundedSender<crate::command::RuntimeCommand>,
+    /// Until a step that consumes them takes them.
+    channel: Option<SessionChannel>,
+    client: crate::connection::AgentAcpClient,
+    pending: Option<ora_acp::PendingSessionRequest<PromptResponse>>,
+}
+
+impl UnrunTurn {
+    /// Opens the session's channel and writes a prompt to it, which the agent holds open.
+    async fn start() -> Self {
+        let mut fixture = Fixture::new().await;
+        let session = fixture.seed_session("answered");
+        let channel = fixture
+            .supervisor
+            .open_session_channel("answered", "answered")
+            .unwrap();
+        let client = channel.connection.client.clone();
+        let pending = client
+            .start_session_request::<_, PromptResponse>(
+                AcpSessionId::new("answered"),
+                AGENT_METHOD_NAMES.session_prompt,
+                &PromptRequest::new("answered", Vec::new()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        let (actor, commands) = unrun_actor(&fixture, session);
+        Self {
+            fixture,
+            actor,
+            _commands: commands,
+            channel: Some(channel),
+            client,
+            pending: Some(pending),
+        }
+    }
+
+    /// Asks the agent for model `a` and returns the request it was sent, unanswered.
+    async fn change(&mut self) -> (Outcome, Value) {
+        let (accepted, route) = oneshot::channel();
+        self.actor
+            .change_config(
+                self.channel.as_mut(),
+                crate::command::ConfigChangeRequest {
+                    config_id: agent_client_protocol_schema::v1::SessionConfigId::new("model"),
+                    value: agent_client_protocol_schema::v1::SessionConfigOptionValue::value_id(
+                        "a",
+                    ),
+                    accepted,
+                },
+            )
+            .await;
+        let crate::config_changes::ConfigChangeRoute::Asked { write, outcome } =
+            route.await.unwrap().unwrap();
+        assert!(write.is_none(), "the agent reads, so the actor wrote it");
+        let request = self.fixture.next_frame().await;
+        assert_eq!(request["method"], "session/set_config_option");
+        (outcome, request)
+    }
+
+    /// Has the agent answer a change with model `a`.
+    fn answer(&self, request: &Value) {
+        let options = json!([{"id":"model", "name":"Model", "category":"model", "type":"select",
+            "currentValue":"a", "options":[{"value":"a","name":"A"}]}]);
+        let answer =
+            json!({"jsonrpc":"2.0", "id":request["id"], "result":{"configOptions":options}});
+        self.fixture
+            .agent
+            .send(AgentInput::RawFrame(answer))
+            .unwrap();
+    }
+
+    /// Has the agent end the turn as cancelled, and lets its frames queue up unread.
+    async fn cancelled(&self) {
+        self.fixture
+            .agent
+            .send(AgentInput::Finish(
+                "answered".to_string(),
+                StopReason::Cancelled,
+            ))
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    /// Settles the turn as a cancel past its grace, telling `events` how it ended.
+    async fn settle(&mut self, events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>) {
+        self.actor
+            .turn_cancel
+            .request(Instant::now() + Duration::from_secs(15));
+        let channel = self.channel.take().unwrap();
+        let pending = self.pending.take().unwrap();
+        let end_report = crate::PromptEndReport::new();
+        self.actor
+            .settle_prompt_cancel(
+                channel,
+                pending,
+                crate::turn_cancel::PromptStop {
+                    operation_id: 1,
+                    client: &self.client,
+                    permissions: &HashMap::new(),
+                    events,
+                    end_report: &end_report,
+                    followers: &mut crate::session_followers::SessionFollowers::new(),
+                    tool_timings: &crate::tool_timing::ToolTimings::default(),
+                    saw_output: &mut false,
+                },
+                /*notify_owner*/ true,
+                /*completion*/ None,
+            )
+            .await;
+    }
+}
+
+/// Names the model a change's caller was told about.
+async fn told(outcome: Outcome) -> Option<String> {
+    crate::model_config::current_model(&outcome.await.unwrap().unwrap())
+}
+
+/// An answer already queued when the cancel settles is taken in its turn, not dropped with the
+/// turn's other traffic.
+#[test]
+fn a_change_answered_before_a_cancel_settles_is_taken() {
+    run_case(async {
+        let mut turn = UnrunTurn::start().await;
+        let (outcome, request) = turn.change().await;
+        turn.answer(&request);
+        turn.cancelled().await;
+        let (events, _owner) = mpsc::channel(/*buffer*/ 8);
+
+        turn.settle(&events).await;
+
+        assert_eq!(told(outcome).await, Some("a".to_string()));
+        assert_eq!(
+            crate::model_config::current_model(&turn.actor.reported_config_options),
+            Some("a".to_string())
+        );
+        drop(turn.actor);
+        turn.fixture.shutdown().await;
+    });
+}
+
+/// So is one read ahead of writing the cancel, among the frames already queued.
+#[test]
+fn a_change_answered_before_the_cancel_is_written_is_taken() {
+    run_case(async {
+        let mut turn = UnrunTurn::start().await;
+        let (outcome, request) = turn.change().await;
+        turn.answer(&request);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let (events, _owner) = mpsc::channel(/*buffer*/ 8);
+
+        crate::events::drain_queued_prompt_events(
+            &mut turn.actor,
+            turn.channel.as_mut().unwrap(),
+            &turn.client,
+            &events,
+            &mut false,
+            &mut crate::session_followers::SessionFollowers::new(),
+        )
+        .await;
+
+        assert_eq!(told(outcome).await, Some("a".to_string()));
+        drop(turn.actor);
+        turn.fixture.shutdown().await;
+    });
+}
+
+/// A cancelled turn whose receiver left takes the provider with it, but a change still in flight
+/// is made rather than failed: nobody gave up on the agent.
+#[test]
+fn a_change_in_flight_is_made_when_a_cancelled_turn_has_nobody_to_tell() {
+    run_case(async {
+        let mut turn = UnrunTurn::start().await;
+        let (outcome, _request) = turn.change().await;
+        turn.cancelled().await;
+        let (events, owner) = mpsc::channel(/*buffer*/ 8);
+        drop(owner);
+
+        turn.settle(&events).await;
+
+        assert!(outcome.await.unwrap().is_ok());
+        assert!(turn.actor.channel.is_none());
+        drop(turn.actor);
+        turn.fixture.shutdown().await;
     });
 }

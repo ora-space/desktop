@@ -449,3 +449,87 @@ async fn a_direct_answer_is_ordered_among_the_events_read_around_it() {
     assert_eq!(received(before.event), expected("before"));
     assert_eq!(received(after.event), expected("after"));
 }
+
+/// Prepares one session request on a fresh peer, which numbers it 1, without writing it.
+fn prepare_prompt(
+    peer: &AcpPeer<MemoryTransport>,
+    session_id: &SessionId,
+) -> (
+    crate::client::PendingSessionRequest<Value>,
+    impl std::future::Future<Output = Result<(), AcpError>> + use<>,
+) {
+    peer.client.prepare_session_request::<_, Value>(
+        session_id.clone(),
+        "session/prompt",
+        &json!({ "sessionId": session_id }),
+    )
+}
+
+/// A request is registered before its frame is written, so an answer that overtakes the write
+/// still reaches the handle in order with the session's events.
+#[tokio::test]
+async fn an_answer_that_overtakes_its_write_is_ordered_for_the_handle() {
+    let (mut peer, mut link) = spawn_peer();
+    let session_id = SessionId::new("session-1");
+    let (pending, write) = prepare_prompt(&peer, &session_id);
+
+    link.send(response_frame(
+        &json!(1),
+        json!({ "stopReason": "end_turn" }),
+    ));
+    let response = match peer.next_event().await.expect("answer event") {
+        AcpInboundEvent::SessionResponse(response) => response,
+        other => panic!("expected the answer, got {other:?}"),
+    };
+    write.await.expect("write the request");
+
+    assert_eq!(link.next_outbound().await["id"], 1);
+    assert_eq!(
+        pending.finish(response).expect("finish session request"),
+        json!({ "stopReason": "end_turn" })
+    );
+}
+
+/// A write that is dropped never reaches the agent, and the handle dropped with it retires the id,
+/// so an answer to it anyway is ignored rather than failing the connection.
+#[tokio::test]
+async fn a_dropped_write_sends_nothing() {
+    let (mut peer, mut link) = spawn_peer();
+    let session_id = SessionId::new("session-1");
+    let (pending, write) = prepare_prompt(&peer, &session_id);
+    drop(write);
+    drop(pending);
+
+    link.send(response_frame(
+        &json!(1),
+        json!({ "stopReason": "end_turn" }),
+    ));
+    link.send(update_frame("session-1", "after"));
+
+    expect_update(peer.next_event().await.expect("later event"));
+    assert!(link.outbound.try_recv().is_err());
+}
+
+/// A handle dropped after its request was written retires the id: the late answer is ignored and
+/// the session's later events still arrive.
+#[tokio::test]
+async fn a_dropped_handle_ignores_its_late_answer() {
+    let (mut peer, mut link) = spawn_peer();
+    let session_id = SessionId::new("session-1");
+    let (pending, write) = prepare_prompt(&peer, &session_id);
+    write.await.expect("write the request");
+    let request = link.next_outbound().await;
+    drop(pending);
+
+    link.send(response_frame(
+        &request["id"],
+        json!({ "stopReason": "end_turn" }),
+    ));
+    link.send(update_frame("session-1", "after"));
+
+    let event = peer.next_event().await.expect("later event");
+    assert!(
+        matches!(event, AcpInboundEvent::SessionUpdate(_)),
+        "{event:?}"
+    );
+}

@@ -120,6 +120,7 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       cancelPrompt: (request, options) => executeOperation("cancelSessionPrompt", request, transport, options),
       delete: (request, options) => executeOperation("deleteSession", request, transport, options),
       get: (request, options) => executeOperation("getSession", request, transport, options),
+      getOptions: (request, options) => executeOperation("getSessionOptions", request, transport, options),
       list: (request, options) => executeOperation("listSessions", request, transport, options),
       load: (request, options) => executeStreamOperation("loadSession", request, transport, options),
       prompt: (request, options) => executeStreamOperation("promptSession", request, transport, options),

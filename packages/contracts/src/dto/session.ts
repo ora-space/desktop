@@ -94,6 +94,21 @@ export type GetAgentRuntimeStatusResponse = {
 };
 
 /**
+ * Asks which options a session is on, without asking its agent.
+ */
+export type GetSessionOptionsRequest = { sessionId: string };
+
+/**
+ * The options a session is on, or `null` when it has no provider and a choice is an intent for
+ * its next attach.
+ */
+export type GetSessionOptionsResponse = {
+  configOptions:
+    | Array<import("@agentclientprotocol/sdk").SessionConfigOption>
+    | null;
+};
+
+/**
  * Identifies which session to fetch.
  */
 export type GetSessionRequest = { sessionId: string };

@@ -239,13 +239,14 @@ fn a_follower_sees_the_state_of_the_session_that_replaced_a_stale_one() {
     }
 }
 
-/// Nothing is withdrawn that was never reported: an empty report would say the agent has none.
+/// No command catalog is withdrawn that was never reported: an empty one would say the agent has
+/// none. Options are another matter: each setup starts from them, an empty list included.
 #[test]
 fn a_replacement_withdraws_nothing_the_stale_session_never_reported() {
     let on_a = || State::Model("a".to_string());
     for (report, expected) in [
         (Report::NeverAny, vec![on_a(), on_a()]),
-        (Report::Nothing, Vec::new()),
+        (Report::Nothing, vec![State::NoOptions, State::NoOptions]),
     ] {
         run_case(async move {
             assert_eq!(replaced_turn(report).await, (expected.clone(), expected));

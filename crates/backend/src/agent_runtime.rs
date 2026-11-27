@@ -328,6 +328,12 @@ impl RuntimeEvents for AppEventPublisher {
         });
     }
 
+    fn session_options_changed(&self, session_id: &SessionId) {
+        self.try_publish(AppEvent::SessionOptionsChanged {
+            session_id: session_id.to_string(),
+        });
+    }
+
     fn agent_models_invalidated(&self, agent_ref: &AgentRef) {
         self.try_publish(AppEvent::AgentModelsInvalidated {
             agent_ref: agent_ref.to_string(),

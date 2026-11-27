@@ -57,8 +57,8 @@ pub(super) struct RebuiltBinding<H: AgentRuntimeHost> {
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
     /// Ensures this session holds a live provider channel carrying the MCP set configured now.
     ///
-    /// Returns the setup this attach observed, as the session updates a prompt stream can carry —
-    /// empty when the session was already attached and nothing new was reported.
+    /// Returns what the prompt stream starts with: the options the session is on, even none, and
+    /// the commands an attach just observed.
     ///
     /// The MCP check runs either way. An attach resolved its Snapshot moments earlier, but the
     /// configured set can change between that handshake and admission, and a session that was
@@ -73,7 +73,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
         let attaching = self.channel.is_none();
         let setup = match self.channel {
-            Some(_) => Vec::new(),
+            Some(_) => vec![SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+                self.reported_config_options.clone(),
+            ))],
             None => self.attach_provider_session(model).await?,
         };
         // Node's final host commit checks freshness atomically. Do not turn a just-completed
@@ -140,7 +142,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             self.session_mcp.mcp_failed(&error);
             return Err(error);
         }
-        self.finish_direct_changes().await;
         let channel = self
             .connection
             .open_session_channel(self.provider_session_id(), self.session.id.as_ref())?;
@@ -362,7 +363,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         // rather than owing the refresh that an attach through `session/load` has to record.
         self.live_mcp = LiveMcpState::Active(mcp_revision);
         self.persist_session_status(SessionStatus::Running);
-        self.reported_config_options = config_options.clone();
+        self.adopt_config_options(config_options.clone());
         // Setup already recorded the replacement's own excess.
         self.commands_exceed_limit =
             crate::discovery::exceeds_shown_commands(available_commands.len());
@@ -440,17 +441,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 /// Renders what one handshake reported as the updates a prompt stream can carry ahead of its turn.
 ///
 /// Both are session-scoped rather than part of the turn, and neither is recorded: they describe
-/// the provider serving this conversation right now, not what was said in it.
+/// the provider serving this conversation right now, not what was said in it. The options lead even
+/// when there are none, because every stream of a session with a provider starts from them.
 fn setup_updates(
     config_options: Vec<SessionConfigOption>,
     available_commands: Vec<AvailableCommand>,
 ) -> Vec<SessionUpdate> {
-    let mut updates = Vec::new();
-    if !config_options.is_empty() {
-        updates.push(SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
-            config_options,
-        )));
-    }
+    let mut updates = vec![SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+        config_options,
+    ))];
     if !available_commands.is_empty() {
         updates.push(SessionUpdate::AvailableCommandsUpdate(
             AvailableCommandsUpdate::new(available_commands),

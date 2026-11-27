@@ -334,6 +334,9 @@ impl<L: SessionLedger> RuntimeEvents for ThreadMirror<L> {
     /// A Thread has no title of its own; Cloud names the run.
     fn session_title_updated(&self, _session_id: &SessionId) {}
 
+    /// A session execution has no model selector to tell.
+    fn session_options_changed(&self, _session_id: &SessionId) {}
+
     /// A session execution never offers a model choice after it starts.
     fn agent_models_invalidated(&self, _agent_ref: &AgentRef) {}
 

@@ -157,12 +157,18 @@ impl CatalogFixture {
     }
 
     /// Runs one turn to completion and returns the session updates its stream carried.
+    ///
+    /// Leaves out the options every stream starts with: these cases are about the catalog.
     async fn turn(&self, request: PromptSessionRequest) -> Vec<SessionUpdate> {
         self.finish.add_permits(1);
         let mut stream = self.runtime.manager.prompt_session(request).await.unwrap();
         let mut updates = Vec::new();
         while let Some(event) = stream.recv().await {
             match event.unwrap() {
+                PromptSessionEvent::SessionUpdate {
+                    update: SessionUpdate::ConfigOptionUpdate(_),
+                    ..
+                } => {}
                 PromptSessionEvent::SessionUpdate { update, .. } => updates.push(update),
                 PromptSessionEvent::Completed { .. } => break,
                 unexpected => panic!("unexpected prompt event: {unexpected:?}"),
@@ -306,6 +312,13 @@ fn a_load_replays_the_catalog_of_an_attached_session() {
             .prompt_session(prompt("restored"))
             .await
             .unwrap();
+        assert!(matches!(
+            owner.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::SessionUpdate {
+                update: SessionUpdate::ConfigOptionUpdate(_),
+                ..
+            }
+        ));
         // The turn itself replaces the catalog, so the follower must see the replacement.
         fixture
             .inject
