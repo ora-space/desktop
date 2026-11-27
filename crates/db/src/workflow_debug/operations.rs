@@ -127,7 +127,19 @@ impl WorkflowDebugStore {
                 Err(error @ DatabaseError::ForeachProjection(_)) => {
                     tx.execute_batch("ROLLBACK TO debug_projection; RELEASE debug_projection")?;
                     let reason = error.to_string();
-                    tx.execute("UPDATE workflow_debug_operations SET state='stop_failed',failure=?3,unsettled_attempts='[]' WHERE run_id=?1 AND request_id=?2", params![run, request, reason])?;
+                    // Quiescence succeeded. Release the fence together with the failure
+                    // receipt, preserving any independent terminal outcome.
+                    tx.execute(
+                        "UPDATE workflow_debug_operations SET state='stop_failed',released=1,
+                         failure=?3,unsettled_attempts='[]' WHERE run_id=?1 AND request_id=?2",
+                        params![run, request, reason],
+                    )?;
+                    tx.execute(
+                        "UPDATE workflow_runs SET run_status=?2,error=?3,finished_at=?4,updated_at=?4
+                         WHERE id=?1 AND run_status=?5",
+                        params![run, ora_domain::WorkflowRunStatus::Failed.database_value(), reason,
+                                now, ora_domain::WorkflowRunStatus::Running.database_value()],
+                    )?;
                     tx.commit()?;
                     return Ok(WorkflowDebugOperation {
                         phase: WorkflowDebugPhase::StopFailed { reason, unsettled_node_run_ids: Vec::new() },

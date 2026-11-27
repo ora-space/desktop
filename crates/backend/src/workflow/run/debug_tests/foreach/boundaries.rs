@@ -227,9 +227,29 @@ fn unprovable_projection_rolls_back_the_revision_and_records_stop_failed() {
                 .unwrap(),
             op
         );
-        assert!(f.store.dispatch_fence(f.run_id.as_ref()).unwrap().is_some());
+        assert!(f.store.dispatch_fence(f.run_id.as_ref()).unwrap().is_none());
+        let failed = SqliteWorkflowRunRepository::new(f.pool.clone())
+            .find_run(&f.run_id)
+            .unwrap()
+            .unwrap();
+        let WorkflowDebugPhase::StopFailed {
+            reason,
+            unsettled_node_run_ids,
+        } = &op.phase
+        else {
+            unreachable!()
+        };
+        assert!(unsettled_node_run_ids.is_empty());
+        assert_eq!(failed.status, WorkflowRunStatus::Failed);
+        assert_eq!(failed.error.as_ref(), Some(reason));
+        assert!(failed.finished_at.is_some());
         assert_eq!(dispatched(&f.executor, "member"), 2);
         assert!(node_runs(&f.pool, &f.run_id).iter().any(|r| r.id == row.id));
+        assert_eq!(
+            f.engine.resume_from_failure(&f.run_id).unwrap(),
+            ora_application::ResumeWorkflowRunResult::Resumed
+        );
+        assert_eq!(active(&f, "member").iteration, Some(0));
     });
 }
 
