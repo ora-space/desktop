@@ -43,13 +43,15 @@ export function useProxySettings() {
     onSuccess: adoptSettings,
   });
   const checkMutation = useMutation({
-    mutationFn: (
-      { url, settings, mode }: {
-        url: string;
-        settings: ProxySettings | null;
-        mode: ProxyMode;
-      },
-    ) =>
+    mutationFn: ({
+      url,
+      settings,
+      mode,
+    }: {
+      url: string;
+      settings: ProxySettings | null;
+      mode: ProxyMode;
+    }) =>
       client.proxy.check({
         url,
         settings,

@@ -51,13 +51,12 @@ pub(crate) fn git_proxy_env(remote_url: &str, policy: &HostProxy) -> Result<GitE
         .with_config(format!("http.{origin}.proxy"), proxy_url.as_str())
         .with_config(format!("http.{origin}.proxyAuthMethod"), "basic")
         .with_config(format!("http.{remote_url}.proxyAuthMethod"), "basic")
+        .with_config("remote.origin.proxy", proxy_url.as_str())
         .with_config(format!("http.{remote_url}.proxy"), proxy_url);
     if policy.is_always_direct() {
         // Git matches URL options against the original request. Empty proxy values pin its
         // transport to direct, so following an allowed redirect cannot change the route.
-        return Ok(env
-            .with_config("http.proxy", "")
-            .with_config("remote.origin.proxy", ""));
+        return Ok(env.with_config("http.proxy", ""));
     }
     Ok(env
         .with_config("http.followRedirects", "false")
@@ -243,7 +242,7 @@ mod tests {
         let remote = format!("{endpoint}/marketplace.git");
         std::fs::write(
             &config,
-            format!("[http \"{remote}\"]\n  proxy = http://127.0.0.1:1\n"),
+            format!("[http \"{remote}\"]\n  proxy = http://127.0.0.1:1\n[remote \"origin\"]\n  proxy = http://127.0.0.1:1\n"),
         )
         .expect("git config");
         let env = git_proxy_env(&remote, &HostProxy::direct())
@@ -300,12 +299,12 @@ mod tests {
         let (endpoint, server) = serve_git_request(UNAVAILABLE.to_owned());
         std::fs::write(
             &config,
-            format!("[http \"{remote}\"]\n  proxy = http://127.0.0.1:1\n"),
+            format!("[http \"{remote}\"]\n  proxy = http://127.0.0.1:1\n[remote \"origin\"]\n  url = {remote}\n  proxy = http://127.0.0.1:1\n"),
         )
         .expect("git config");
         let policy = HostProxy::manual(Url::parse(&endpoint).expect("fixture URL"));
         let env = git_proxy_env(remote, &policy).expect("proxy env");
-        let stderr = ls_remote_stderr(remote, env, &config);
+        let stderr = ls_remote_stderr("origin", env, &config);
         assert!(stderr.contains("503"), "{stderr}");
         let line = server.join().expect("fixture");
         assert!(

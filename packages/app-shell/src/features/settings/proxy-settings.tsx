@@ -27,20 +27,22 @@ import { SettingsHeading } from "./settings-heading";
 interface ProxySettingsEditorProps {
   initialSettings: ProxySettings | null;
   controller: ProxySettingsController;
+  replacingUnreadable: boolean;
 }
 
 /** Edits the host proxy used by Desktop updates and opted-in marketplace sources. */
 export function ProxySettings() {
   const { t } = useTranslation();
   const controller = useProxySettings();
+  const [replaceUnreadable, setReplaceUnreadable] = useState(false);
 
   const settingsKey = controller.settings
     ? [
-      controller.settings.host,
-      String(controller.settings.port),
-      controller.settings.username ?? "",
-      controller.settings.password ?? "",
-    ].join("\u0000")
+        controller.settings.host,
+        String(controller.settings.port),
+        controller.settings.username ?? "",
+        controller.settings.password ?? "",
+      ].join("\u0000")
     : "empty";
 
   return (
@@ -50,30 +52,32 @@ export function ProxySettings() {
         description={t("settings.proxy.description")}
       />
 
-      {!controller.hasLoaded && controller.isLoading
-        ? (
-          <span role="status" className="text-xs text-muted-foreground">
-            {t("settings.proxy.loading")}
-          </span>
-        )
-        : !controller.hasLoaded && controller.loadError !== null
-        ? (
-          <div className="space-y-3">
-            <p role="alert" className="text-sm text-destructive">
-              {t("settings.proxy.loadError")}
-            </p>
-            <Button variant="outline" onClick={() => void controller.retry()}>
-              {t("common.retry")}
-            </Button>
-          </div>
-        )
-        : (
-          <ProxySettingsEditor
-            key={controller.mode + settingsKey}
-            initialSettings={controller.settings}
-            controller={controller}
-          />
-        )}
+      {!controller.hasLoaded && controller.isLoading ? (
+        <span role="status" className="text-xs text-muted-foreground">
+          {t("settings.proxy.loading")}
+        </span>
+      ) : !controller.hasLoaded &&
+        controller.loadError !== null &&
+        !replaceUnreadable ? (
+        <div className="space-y-3">
+          <p role="alert" className="text-sm text-destructive">
+            {t("settings.proxy.loadError")}
+          </p>
+          <Button variant="outline" onClick={() => void controller.retry()}>
+            {t("common.retry")}
+          </Button>
+          <Button variant="outline" onClick={() => setReplaceUnreadable(true)}>
+            {t("settings.proxy.replaceUnreadable")}
+          </Button>
+        </div>
+      ) : (
+        <ProxySettingsEditor
+          key={controller.mode + settingsKey}
+          initialSettings={controller.settings}
+          controller={controller}
+          replacingUnreadable={!controller.hasLoaded && replaceUnreadable}
+        />
+      )}
     </div>
   );
 }
@@ -105,6 +109,7 @@ function parsedProxySettings(
 function ProxySettingsEditor({
   initialSettings,
   controller,
+  replacingUnreadable,
 }: ProxySettingsEditorProps) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<ProxyMode>(controller.mode);
@@ -117,20 +122,30 @@ function ProxySettingsEditor({
   const [checkOpen, setCheckOpen] = useState(false);
   const [checkUrl, setCheckUrl] = useState(controller.checkUrl);
 
-  const parsed = mode === "manual"
-    ? parsedProxySettings(host, port, username, password)
-    : null;
+  const parsed =
+    mode === "manual"
+      ? parsedProxySettings(host, port, username, password)
+      : null;
   const invalid = mode === "manual" && parsed === null;
-  const hasFormValues = host.trim() !== "" ||
+  const hasFormValues =
+    host.trim() !== "" ||
     port.trim() !== "" ||
     username.trim() !== "" ||
     password !== "";
-  const canClear = hasFormValues || controller.settings !== null ||
-    controller.mode !== "system" || mode !== "system";
-  const busy = controller.isLoading ||
+  const canClear =
+    replacingUnreadable ||
+    hasFormValues ||
+    controller.settings !== null ||
+    controller.mode !== "system" ||
+    mode !== "system";
+  const busy =
+    controller.isLoading ||
     controller.isSaving ||
-    controller.loadError !== null;
-  const checkBlocked = busy || controller.isCheckUrlLoading ||
+    (controller.loadError !== null && !replacingUnreadable);
+  const checkBlocked =
+    busy ||
+    replacingUnreadable ||
+    controller.isCheckUrlLoading ||
     controller.checkUrlError !== null;
 
   const save = async () => {
@@ -180,8 +195,11 @@ function ProxySettingsEditor({
               onChange={(event) => {
                 const value = event.currentTarget.value;
                 if (
-                  value === "system" || value === "manual" || value === "direct"
-                ) setMode(value);
+                  value === "system" ||
+                  value === "manual" ||
+                  value === "direct"
+                )
+                  setMode(value);
               }}
             >
               <option value="system">{t("settings.proxy.modeSystem")}</option>
@@ -189,8 +207,13 @@ function ProxySettingsEditor({
               <option value="direct">{t("settings.proxy.modeDirect")}</option>
             </select>
           </label>
+          {mode === "system" && (
+            <p className="text-xs text-muted-foreground">
+              {t("settings.proxy.systemHint")}
+            </p>
+          )}
           {mode === "manual" && (
-            <>
+            <fieldset disabled={busy} className="min-w-0 space-y-4">
               <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
                 <label className="space-y-1.5">
                   <span className="text-sm font-medium">
@@ -244,7 +267,7 @@ function ProxySettingsEditor({
                   />
                 </label>
               </div>
-            </>
+            </fieldset>
           )}
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -311,11 +334,13 @@ function ProxySettingsEditor({
         <CheckProxyDialog
           checking={controller.isChecking}
           blocked={checkBlocked}
-          readError={controller.loadError !== null
-            ? t("settings.proxy.loadError")
-            : controller.checkUrlError !== null
-            ? t("settings.proxy.checkUrlLoadError")
-            : null}
+          readError={
+            controller.loadError !== null
+              ? t("settings.proxy.loadError")
+              : controller.checkUrlError !== null
+                ? t("settings.proxy.checkUrlLoadError")
+                : null
+          }
           onRetry={() => void controller.retry()}
           url={checkUrl}
           onUrlChange={setCheckUrl}
@@ -376,19 +401,22 @@ function CheckProxyDialog({
       const result = await onCheck(nextUrl);
       if (result.outcome === "reachable") {
         toast.success(t("settings.proxy.checkSuccess"), {
-          description: result.route === undefined
-            ? t("settings.proxy.checkSuccessDetail", { status: result.status })
-            : t("settings.proxy.checkRouteDetail", {
-              status: result.status,
-              route: t(
-                {
-                  direct: "settings.proxy.modeDirect",
-                  manual: "settings.proxy.modeManual",
-                  system: "settings.proxy.routeSystem",
-                  environment: "settings.proxy.routeEnvironment",
-                }[result.route],
-              ),
-            }),
+          description:
+            result.route === undefined
+              ? t("settings.proxy.checkSuccessDetail", {
+                  status: result.status,
+                })
+              : t("settings.proxy.checkRouteDetail", {
+                  status: result.status,
+                  route: t(
+                    {
+                      direct: "settings.proxy.modeDirect",
+                      manual: "settings.proxy.modeManual",
+                      system: "settings.proxy.routeSystem",
+                      environment: "settings.proxy.routeEnvironment",
+                    }[result.route],
+                  ),
+                }),
         });
         onOpenChange(false);
         return;

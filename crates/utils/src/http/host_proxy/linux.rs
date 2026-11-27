@@ -17,7 +17,11 @@ pub(super) fn read() -> Result<Option<StaticProxy>, HostProxyError> {
     else {
         return Ok(None);
     };
-    let settings = gio::Settings::new_full(&schema, gio::SettingsBackend::NONE, None);
+    let backend = gio::SettingsBackend::default();
+    if backend.type_().name() == "GMemorySettingsBackend" {
+        return Ok(None);
+    }
+    let settings = gio::Settings::new_full(&schema, Some(&backend), None);
     read_settings(&settings).map(Some)
 }
 
@@ -49,10 +53,13 @@ fn read_settings(settings: &gio::Settings) -> Result<StaticProxy, HostProxyError
 fn endpoint(settings: &gio::Settings, scheme: &str) -> Result<Option<String>, HostProxyError> {
     let host = settings.string("host");
     let port = settings.int("port");
-    if host.is_empty() || port == 0 {
+    if host.is_empty() {
         return Ok(None);
     }
-    let port = u16::try_from(port).map_err(|_| HostProxyError::InvalidEndpoint)?;
+    let port = u16::try_from(port)
+        .ok()
+        .filter(|port| *port != 0)
+        .ok_or(HostProxyError::InvalidEndpoint)?;
     let mut endpoint = super::proxy_endpoint(&format!("{scheme}://{host}:{port}"))?;
     if scheme == "http"
         && settings
@@ -75,7 +82,43 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    /// Exercises HTTP fallback, explicit HTTPS precedence and disabled endpoints through GSettings.
+    /// Checks the real default GSettings backend in a fresh process, before GIO caches it.
+    #[test]
+    fn host_proxy_gnome_memory_backend_uses_environment() {
+        use crate::http::{HostProxy, ProxyOrigin};
+
+        const CHILD: &str = "ORA_TEST_GNOME_PROXY_MEMORY_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let route = HostProxy::system()
+                .route(&"https://example.test/".parse().unwrap())
+                .unwrap();
+            assert_eq!(route.origin, ProxyOrigin::Environment);
+            assert_eq!(route.endpoint.unwrap().as_str(), "http://127.0.0.1:3128/");
+            return;
+        }
+        let name = format!(
+            "{}::host_proxy_gnome_memory_backend_uses_environment",
+            module_path!()
+        );
+        let name = name.split_once("::").unwrap().1;
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name])
+            .env(CHILD, "1")
+            .env("XDG_CURRENT_DESKTOP", "GNOME")
+            .env("GSETTINGS_BACKEND", "memory")
+            .env("https_proxy", "http://127.0.0.1:3128")
+            .env_remove("no_proxy")
+            .env_remove("NO_PROXY")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}"
+        );
+    }
+
+    /// Exercises HTTP fallback, explicit HTTPS precedence and invalid ports through GSettings.
     #[test]
     fn host_proxy_gnome_https_follows_http_until_an_override_is_enabled() {
         let schema = gio::SettingsSchemaSource::default()
@@ -89,11 +132,6 @@ mod tests {
             .expect("HTTP host");
         http.set_int("port", 8080).expect("HTTP port");
         let https = settings.child("https");
-        https
-            .set_string("host", "https-proxy.example")
-            .expect("HTTPS host");
-        // GNOME treats a retained hostname with port zero as a disabled protocol override.
-        https.set_int("port", 0).expect("disabled HTTPS port");
         assert_eq!(
             read_settings(&settings)
                 .expect("HTTP fallback")
@@ -102,6 +140,13 @@ mod tests {
             Some("http://http-proxy.example:8080/")
         );
 
+        https
+            .set_string("host", "https-proxy.example")
+            .expect("HTTPS host");
+        assert!(matches!(
+            read_settings(&settings),
+            Err(HostProxyError::InvalidEndpoint)
+        ));
         https.set_int("port", 8443).expect("HTTPS port");
         assert_eq!(
             read_settings(&settings)

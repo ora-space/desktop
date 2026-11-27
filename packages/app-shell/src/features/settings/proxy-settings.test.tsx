@@ -103,7 +103,7 @@ it("saves proxy settings through the backend", async () => {
       port: 7890,
       username: null,
       password: null,
-    })
+    }),
   );
 });
 
@@ -160,6 +160,37 @@ it("blocks editing on read failure and restores saved values after retry", async
   expect(screen.getByLabelText(/密码|Password/)).toHaveValue("secret");
 });
 
+it.each(["save", "clear"])(
+  "can %s after explicitly replacing an unreadable preference",
+  async (action) => {
+    const state = createFixtureState();
+    const handlers = createFixtureHandlers(state);
+    handlers.getProxySettings = () =>
+      Promise.reject(new Error("unknown stored mode"));
+    const client = createTestClient(handlers);
+    const user = userEvent.setup();
+    renderProxy(client);
+    await screen.findByRole("alert");
+    const write = vi.spyOn(client.proxy, action === "save" ? "set" : "clear");
+    await user.click(
+      screen.getByRole("button", {
+        name: /替换已保存的代理配置|Replace saved proxy settings/,
+      }),
+    );
+    expect(write).not.toHaveBeenCalled();
+    const mode = screen.getByLabelText(/代理模式|Proxy mode/);
+    if (action === "save") await user.selectOptions(mode, "direct");
+    await user.click(
+      screen.getByRole("button", {
+        name: action === "save" ? /^保存$|^Save$/ : /^清空$|^Clear$/,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(state.proxyMode).toBe(action === "save" ? "direct" : "system");
+    expect(write).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("clears saved proxy settings through the backend", async () => {
   const state = createFixtureState();
   state.proxySettings = {
@@ -191,7 +222,7 @@ it("resets persisted direct mode even without a saved manual endpoint", async ()
   );
   await user.click(screen.getByRole("button", { name: /清空|Clear/ }));
   await waitFor(() =>
-    expect(screen.getByLabelText(/代理模式|Proxy mode/)).toHaveValue("system")
+    expect(screen.getByLabelText(/代理模式|Proxy mode/)).toHaveValue("system"),
   );
   first.unmount();
   renderProxy(client);
@@ -212,7 +243,7 @@ it("discards a manual draft when clearing an already-default configuration", asy
   await user.click(screen.getByRole("button", { name: /清空|Clear/ }));
 
   await waitFor(() =>
-    expect(screen.getByLabelText(modeLabel)).toHaveValue("system")
+    expect(screen.getByLabelText(modeLabel)).toHaveValue("system"),
   );
   await user.selectOptions(screen.getByLabelText(modeLabel), "manual");
   expect(screen.getByLabelText(/主机|Host/)).toHaveValue("");
@@ -249,14 +280,16 @@ it("keeps the saved mode when an older background read completes", async () => {
   await waitFor(() => expect(resolveRead).toBeDefined());
   await user.click(screen.getByRole("button", { name: /保存|Save/ }));
   await waitFor(() =>
-    expect(queryClient.getQueryData(settingsKeys.proxySettings))
-      .toMatchObject({ mode: "direct" })
+    expect(queryClient.getQueryData(settingsKeys.proxySettings)).toMatchObject({
+      mode: "direct",
+    }),
   );
   await act(async () => {
     resolveRead!();
   });
-  expect(queryClient.getQueryData(settingsKeys.proxySettings))
-    .toMatchObject({ mode: "direct" });
+  expect(queryClient.getQueryData(settingsKeys.proxySettings)).toMatchObject({
+    mode: "direct",
+  });
   expect(screen.getByLabelText(modeLabel)).toHaveValue("direct");
 });
 
@@ -296,7 +329,7 @@ it("checks the current form proxy against a URL", async () => {
         username: null,
         password: null,
       },
-    })
+    }),
   );
 });
 it("retains the draft and blocks actions during a production reconnect read failure", async () => {
@@ -416,7 +449,7 @@ it.each(["proxy", "url"])(
       expect(check).toHaveBeenCalledWith({
         url: "https://custom.example/probe",
         settings: state.proxySettings,
-      })
+      }),
     );
   },
 );
@@ -452,7 +485,7 @@ it("reports an unreachable probe as connectivity without changing saved settings
     expect(report).toHaveBeenCalledWith(
       expect.stringMatching(/不代表代理配置有误|settings may still be valid/),
       { description: "Target blocked by network policy" },
-    )
+    ),
   );
   expect(state.proxySettings).toEqual(saved);
   expect(set).not.toHaveBeenCalled();
@@ -518,12 +551,12 @@ it("saves a confirmed target despite an unreachable result and restores it after
     within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
   );
   await waitFor(() =>
-    expect(state.proxyCheckUrl).toBe("https://custom.example/check")
+    expect(state.proxyCheckUrl).toBe("https://custom.example/check"),
   );
   await waitFor(() =>
     expect(
       within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
-    ).toBeEnabled()
+    ).toBeEnabled(),
   );
   await user.clear(input);
   await user.type(input, "https://cancelled.example/");
@@ -582,7 +615,7 @@ it("preserves the URL draft and saved target on write failure, then retries befo
     expect(error).toHaveBeenCalledWith(
       expect.stringMatching(/网址未保存|URL was not saved/),
       expect.anything(),
-    )
+    ),
   );
   expect(input).toHaveValue("https://retry.example");
   expect(state.proxyCheckUrl).toBe("https://saved.example");
@@ -594,7 +627,7 @@ it("preserves the URL draft and saved target on write failure, then retries befo
     expect(check).toHaveBeenCalledWith({
       url: "https://retry.example",
       settings: state.proxySettings,
-    })
+    }),
   );
 });
 
@@ -650,8 +683,8 @@ it("does not let an older background response replace a newly confirmed target",
   handlers.getProxyCheckUrl = () =>
     pending
       ? new Promise<{ url: string }>((resolve) => {
-        complete = resolve;
-      })
+          complete = resolve;
+        })
       : Promise.resolve({ url: state.proxyCheckUrl });
   const client = createTestClient(handlers);
   const queryClient = new QueryClient({

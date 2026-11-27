@@ -148,7 +148,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y liblzma-dev openssh-server
+          sudo apt-get install -y liblzma-dev openssh-server gsettings-desktop-schemas libglib2.0-dev
           # The test daemon itself runs as the ordinary runner user on an ephemeral port.
           sudo install -d -m 0755 /run/sshd
       # ora-fs search tests spawn ripgrep by command name. Keep the downloaded
@@ -169,6 +169,10 @@ jobs:
         env:
           RG_VERSION: 15.2.0
       - run: task test:crates
+      - name: Test and lint Desktop proxy backends
+        run: |
+          cargo test --locked -p ora-utils --features http-reqwest,desktop-proxy http::
+          cargo clippy --locked -p ora-utils --features http-reqwest,desktop-proxy --all-targets -- -D warnings
 
   tauri:
     needs: changes

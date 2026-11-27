@@ -67,6 +67,9 @@ export const settingsTranslations = {
     "settings.proxy.invalid": "请输入有效的主机和端口。",
     "settings.proxy.mode": "代理模式",
     "settings.proxy.modeSystem": "跟随系统代理（默认）",
+    "settings.proxy.systemHint":
+      "在 Windows 上使用系统的静态代理。仅开启自动检测时将直连，不运行 WPAD。",
+    "settings.proxy.replaceUnreadable": "替换已保存的代理配置",
     "settings.proxy.modeManual": "手动代理",
     "settings.proxy.modeDirect": "直连",
     "settings.proxy.routeSystem": "系统代理",
@@ -249,6 +252,9 @@ export const settingsTranslations = {
     "settings.proxy.invalid": "Enter a valid host and port.",
     "settings.proxy.mode": "Proxy mode",
     "settings.proxy.modeSystem": "Follow system proxy (default)",
+    "settings.proxy.systemHint":
+      "On Windows, Ora uses the static system proxy. With only automatic detection enabled, it connects directly without running WPAD.",
+    "settings.proxy.replaceUnreadable": "Replace saved proxy settings",
     "settings.proxy.modeManual": "Manual proxy",
     "settings.proxy.modeDirect": "Direct connection",
     "settings.proxy.routeSystem": "System proxy",
