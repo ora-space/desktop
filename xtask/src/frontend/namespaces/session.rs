@@ -30,6 +30,14 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
+        operation_name: "getSessionOptions",
+        namespace: NAMESPACE,
+        member_name: "getOptions",
+        request_type: "GetSessionOptionsRequest",
+        response_type: "GetSessionOptionsResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "getSession",
         namespace: NAMESPACE,
         member_name: "get",

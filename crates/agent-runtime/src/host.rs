@@ -248,6 +248,14 @@ pub trait RuntimeEvents: Clone + Send + Sync + 'static {
     /// A session's persisted title changed.
     fn session_title_updated(&self, session_id: &SessionId);
 
+    /// A session's options may have changed: its actor took options from the agent, or it no
+    /// longer has a provider.
+    ///
+    /// Says only which session; a client reads the options from the session. Sent for every
+    /// adopted options frame, whether or not its value changed, and whether or not a turn is
+    /// running, so a view without a stream never misses a change it could otherwise observe.
+    fn session_options_changed(&self, session_id: &SessionId);
+
     /// Commands discovered from this agent were discovered with other Skills.
     fn agent_models_invalidated(&self, agent_ref: &AgentRef);
 

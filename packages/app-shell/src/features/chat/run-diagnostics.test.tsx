@@ -81,6 +81,7 @@ describe("run diagnostics", () => {
         async *load() {
           yield { type: "completed" };
         },
+        getOptions: async () => ({ configOptions: null }),
         setConfig: async () => ({ configOptions: [] }),
         respondToPermission: async () => ({}),
       };

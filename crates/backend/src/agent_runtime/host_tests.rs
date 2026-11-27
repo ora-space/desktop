@@ -93,12 +93,13 @@ async fn publishes_runtime_notifications_as_application_events() {
     let publisher = hub.publisher();
 
     publisher.session_title_updated(&SessionId::new("session-1"));
+    publisher.session_options_changed(&SessionId::new("session-1"));
     publisher.agent_models_invalidated(
         &AgentRef::parse("official/ora-space.opencode").expect("agent identity"),
     );
 
     let mut received = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..4 {
         received.push(events.recv().await.expect("stream is open").expect("event"));
     }
     assert_eq!(
@@ -106,6 +107,9 @@ async fn publishes_runtime_notifications_as_application_events() {
         vec![
             AppEvent::Ready,
             AppEvent::SessionTitleUpdated {
+                session_id: "session-1".to_string(),
+            },
+            AppEvent::SessionOptionsChanged {
                 session_id: "session-1".to_string(),
             },
             AppEvent::AgentModelsInvalidated {

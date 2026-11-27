@@ -62,6 +62,7 @@ test("live batching and reload keep colliding child text ids and annotations dis
         { type: "turn_ended", stopReason: "end_turn" },
         { type: "completed" },
       ]),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
     respondToPermission: async () => ({}),
   };
@@ -117,6 +118,7 @@ test("late attribution, opaque replacement and unknown child outcomes survive fi
       } satisfies PromptSessionEvent;
     },
     load: () => events<LoadSessionEvent>([]),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
     respondToPermission: async () => ({}),
   };
@@ -189,6 +191,7 @@ test("cleared or invalid child sources settle as parent tools in live and reload
           { type: "turn_ended", stopReason: "end_turn" },
           { type: "completed" },
         ]),
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
       respondToPermission: async () => ({}),
     };
@@ -223,6 +226,7 @@ test("a source switch does not discard leading whitespace or merge unidentified 
         { type: "completed", stopReason: "end_turn" },
       ]),
     load: () => events<LoadSessionEvent>([]),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
     respondToPermission: async () => ({}),
   };
@@ -283,6 +287,7 @@ test("replaces _subagent/update plans by child source id across changing extra m
         { type: "turn_ended", stopReason: "end_turn" },
         { type: "completed" },
       ]),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
     respondToPermission: async () => ({}),
   };

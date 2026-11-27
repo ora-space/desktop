@@ -450,6 +450,8 @@ fn options_an_mcp_refresh_answers_with_are_taken() {
         driven.push("a");
         driven.answer(&refresh, json!({"configOptions":model("b")}));
         let mut turn = admitted.await.unwrap();
+        // The turn starts from what the refresh answered, not what the session was on before it.
+        assert_eq!(first_update(&mut turn).await, on("b"));
         let running = driven.asked("session/prompt").await;
         driven.end_turn(&running);
         assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
@@ -543,29 +545,29 @@ fn a_session_stops_while_its_agent_reads_nothing() {
     });
 }
 
-/// A session that is asked directly while it holds no provider is not attached meanwhile, so that
-/// what the agent restores it with comes after what it was asked for.
+/// A session without a provider has no options to change: asking fails at once and asks the agent
+/// nothing, whether no actor has opened it yet or its actor let the provider go.
 #[test]
-fn attaching_waits_for_a_change_asked_directly() {
+fn a_change_asked_without_a_provider_fails_and_asks_nothing() {
     run_case(async {
         let mut driven = Driven::new().await;
-        driven.fixture.add_session(SESSION);
-        let (choice, request) = driven.choose().await;
-        let admitted = driven.prompt();
-        for _ in 0..8 {
-            tokio::task::yield_now().await;
-        }
-        let early = driven.fixture.frames.try_recv();
-        assert!(early.is_err(), "restored too early: {early:?}");
-        assert_eq!(driven.accept(choice, &request).await, Some("a".to_string()));
+        // No actor serves it yet.
+        driven
+            .fixture
+            .seed_session_on(SESSION, "official/test.agent");
+        let stopped = || PublicError::SessionStopped(EmptyErrorParams {});
+        let refused = driven.fixture.manager.set_session_config(change()).await;
+        assert_eq!(refused.unwrap_err().public_error(), &stopped());
+        assert_eq!(read_options(&driven).await, None);
+        assert!(driven.fixture.frames.try_recv().is_err());
 
-        let restore = driven.asked("session/load").await;
-        driven.answer(&restore, json!({"configOptions":model("a")}));
-        let mut turn = admitted.await.unwrap();
-        let running = driven.asked("session/prompt").await;
+        let (mut turn, running) = driven.restored(model("b")).await;
         driven.end_turn(&running);
         assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
-        assert_eq!(loaded(driven.load().await).await, on("a"));
+        driven.fixture.manager.stop_session(stop()).await.unwrap();
+        let refused = driven.fixture.manager.set_session_config(change()).await;
+        assert_eq!(refused.unwrap_err().public_error(), &stopped());
+        assert!(driven.fixture.frames.try_recv().is_err());
         drop(turn);
         driven.fixture.shutdown().await;
     });
@@ -619,7 +621,8 @@ fn a_session_restored_without_options_is_on_none() {
         driven.end_turn(&running);
         assert_eq!(completion(&mut again).await, StopReason::EndTurn);
 
-        assert_eq!(loaded(driven.load().await).await, Vec::new());
+        // An empty list, not what the earlier attachment reported.
+        assert_eq!(loaded(driven.load().await).await, vec![State::NoOptions]);
         drop((turn, again));
         driven.fixture.shutdown().await;
     });
@@ -975,4 +978,309 @@ fn chunk() -> crate::routing::SessionEvent {
             )),
         ),
     )
+}
+
+/// Reads which options the session is on, as a view without a stream does.
+async fn read_options(driven: &Driven) -> Option<Vec<State>> {
+    let response = driven
+        .fixture
+        .manager
+        .get_session_options(ora_contracts::GetSessionOptionsRequest {
+            session_id: SESSION.into(),
+        })
+        .await
+        .unwrap();
+    response.config_options.map(|options| {
+        state(SessionUpdate::ConfigOptionUpdate(
+            agent_client_protocol_schema::v1::ConfigOptionUpdate::new(options),
+        ))
+        .into_iter()
+        .collect()
+    })
+}
+
+/// How many times the session was announced to have other options.
+fn announced(driven: &Driven) -> usize {
+    driven.fixture.manager.inner.events.options_changed().len()
+}
+
+/// Lets every task, the actor included, go quiet on the paused clock.
+async fn settled() {
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+}
+
+/// Reads the first event of a prompt stream.
+async fn first_update(turn: &mut SessionEventStream<PromptSessionEvent>) -> Vec<State> {
+    match turn.recv().await.unwrap().unwrap() {
+        PromptSessionEvent::SessionUpdate { update, .. } => state(update).into_iter().collect(),
+        unexpected => panic!("expected the session's options first, got {unexpected:?}"),
+    }
+}
+
+/// Every stream of a session with a provider starts from the options it is on now, changed since the
+/// last stream or empty, and a view opened without a provider starts from none.
+#[test]
+fn every_stream_starts_from_the_options_the_session_is_on() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        assert_eq!(loaded(driven.load().await).await, Vec::new());
+        let (mut turn, running) = driven.restored(json!([])).await;
+        assert_eq!(first_update(&mut turn).await, vec![State::NoOptions]);
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        assert_eq!(loaded(driven.load().await).await, vec![State::NoOptions]);
+
+        driven.push("a");
+        settled().await;
+        let mut again = driven
+            .fixture
+            .manager
+            .prompt_session(prompt(SESSION))
+            .await
+            .unwrap();
+        assert_eq!(first_update(&mut again).await, on("a"));
+        let running = driven.asked("session/prompt").await;
+        // A view following the turn starts from them too.
+        let follower = driven.load().await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut again).await, StopReason::EndTurn);
+        assert_eq!(loaded(follower).await.first(), on("a").first());
+        drop((turn, again));
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// Every options frame the actor takes is announced, also one that changes nothing and one taken
+/// during a turn, and a view without a stream reads the options it announced.
+#[test]
+fn every_options_frame_is_announced_and_can_be_read() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        settled().await;
+
+        for (current, mid_turn) in [("a", false), ("a", false), ("b", true)] {
+            let before = announced(&driven);
+            let mut busy = None;
+            if mid_turn {
+                let mut stream = driven
+                    .fixture
+                    .manager
+                    .prompt_session(prompt(SESSION))
+                    .await
+                    .unwrap();
+                first_update(&mut stream).await;
+                busy = Some((stream, driven.asked("session/prompt").await));
+            }
+            driven.push(current);
+            settled().await;
+            assert_eq!(
+                announced(&driven),
+                before + 1,
+                "{current} mid-turn {mid_turn}"
+            );
+            // Answered while the turn still runs.
+            assert_eq!(read_options(&driven).await, Some(on(current)));
+            if let Some((mut stream, running)) = busy {
+                driven.end_turn(&running);
+                assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+            }
+        }
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// A session without a provider reads as none: before anything opened it, and once it stopped,
+/// which is announced. Reading waits for an attach in progress rather than answering mid-way.
+#[test]
+fn a_session_without_a_provider_reads_as_none() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        assert_eq!(read_options(&driven).await, None);
+
+        let admitted = driven.prompt();
+        let restore = driven.asked("session/load").await;
+        let manager = driven.fixture.manager.clone();
+        let reading = tokio::spawn(async move {
+            manager
+                .get_session_options(ora_contracts::GetSessionOptionsRequest {
+                    session_id: SESSION.into(),
+                })
+                .await
+                .unwrap()
+                .config_options
+        });
+        settled().await;
+        assert!(!reading.is_finished(), "read before the attach finished");
+        driven.answer(&restore, json!({"configOptions":model("b")}));
+        let mut turn = admitted.await.unwrap();
+        let read = reading.await.unwrap().map(|options| options.len());
+        assert_eq!(read, Some(1));
+        let running = driven.asked("session/prompt").await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+
+        let before = announced(&driven);
+        driven.fixture.manager.stop_session(stop()).await.unwrap();
+        settled().await;
+        assert_eq!(announced(&driven), before + 1);
+        assert_eq!(read_options(&driven).await, None);
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// Reading the options asks the agent nothing and leaves the session and its history alone.
+#[test]
+fn reading_the_options_changes_nothing() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        settled().await;
+        let history =
+            ora_history::history_path(&driven.fixture.manager.inner.sessions_root, SESSION)
+                .unwrap();
+        let recorded = std::fs::read(&history).unwrap();
+        let row = driven.fixture.manager.find_session(SESSION).unwrap();
+        let before = announced(&driven);
+
+        assert_eq!(read_options(&driven).await, Some(on("b")));
+        settled().await;
+
+        assert!(driven.fixture.frames.try_recv().is_err());
+        assert_eq!(std::fs::read(&history).unwrap(), recorded);
+        assert_eq!(driven.fixture.manager.find_session(SESSION).unwrap(), row);
+        assert_eq!(announced(&driven), before);
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// An idle session whose queue overflows loses its provider, which is announced and read as none.
+#[test]
+fn a_session_that_overflows_while_idle_reads_as_none() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        settled().await;
+        let before = announced(&driven);
+
+        // Routed without a pause, so the idle actor cannot read any of it first.
+        let routes = driven.fixture.supervisor.routes.clone();
+        for _ in 0..=crate::CONTRACT_QUEUE_CAPACITY {
+            let _ = routes.route_event(chunk());
+        }
+        settled().await;
+
+        assert_eq!(announced(&driven), before + 1);
+        assert_eq!(read_options(&driven).await, None);
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// A title poll and an MCP refresh borrow the provider, so the options are read at once while
+/// either is waiting for the agent.
+#[test]
+fn the_options_are_read_at_once_during_a_title_poll_and_an_mcp_refresh() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session_with_title_acquisition(
+            SESSION,
+            crate::TitleAcquisition::awaiting_first_prompt(/*list_supported*/ true),
+        );
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        // Left unanswered, so the poll is still waiting.
+        driven.asked("session/list").await;
+        assert_eq!(read_options(&driven).await, Some(on("b")));
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session_owing_mcp_refresh(SESSION);
+        let admitted = driven.prompt();
+        // Left unanswered, so the refresh is still waiting.
+        let refresh = driven.asked("session/load").await;
+        assert_eq!(read_options(&driven).await, Some(vec![State::NoOptions]));
+        driven.answer(&refresh, json!({}));
+        let mut turn = admitted.await.unwrap();
+        let running = driven.asked("session/prompt").await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// A turn the agent refuses while its owner has no room left in the stream cannot be told how it
+/// ended, so it gives its provider up; the change in flight is made.
+#[test]
+fn a_change_in_flight_is_made_when_a_refused_turn_cannot_be_told() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        let (choice, _request) = driven.choose().await;
+        let routes = driven.fixture.supervisor.routes.clone();
+        for _ in 1..crate::CONTRACT_QUEUE_CAPACITY {
+            let _ = routes.route_event(chunk());
+        }
+        settled().await;
+        driven.fail(&running);
+        settled().await;
+
+        assert!(choice.await.unwrap().is_ok(), "the change failed");
+        assert_eq!(
+            turn.end_cause(),
+            Some(crate::PromptEndCause::Unknown),
+            "the turn ended as a refused prompt"
+        );
+        // The turn never had room for its failure, and was not cancelled.
+        let mut received = 0;
+        while let Some(event) = turn.recv().await {
+            assert!(event.is_ok(), "the failure was told: {event:?}");
+            received += 1;
+        }
+        assert_eq!(received, crate::CONTRACT_QUEUE_CAPACITY);
+        while let Ok(frame) = driven.fixture.frames.try_recv() {
+            assert_ne!(frame["method"], "session/cancel");
+        }
+        driven.fixture.shutdown().await;
+    });
+}
+
+#[test]
+fn the_options_are_read_without_waiting_for_a_title_poll() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session_with_title_acquisition(
+            SESSION,
+            crate::TitleAcquisition::awaiting_first_prompt(/*list_supported*/ true),
+        );
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        driven.asked("session/list").await;
+        // The clock is paused, so only an answer that needs no time beats this.
+        let read =
+            tokio::time::timeout(std::time::Duration::from_millis(1), read_options(&driven)).await;
+        assert_eq!(read.ok(), Some(Some(on("b"))));
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
 }

@@ -40,6 +40,7 @@ fn live_preview_precedes_durable_message_and_clears_at_turn_end() {
     struct PreviewEvents(Arc<Mutex<Vec<Vec<ora_history::AssembledRecord>>>>);
     impl RuntimeEvents for PreviewEvents {
         fn session_title_updated(&self, _session: &SessionId) {}
+        fn session_options_changed(&self, _session: &SessionId) {}
         fn agent_models_invalidated(&self, _agent: &AgentRef) {}
         fn record_settled(&self, _session: &SessionId, _line: &HistoryLine) {}
         fn wants_record_previews(&self) -> bool {

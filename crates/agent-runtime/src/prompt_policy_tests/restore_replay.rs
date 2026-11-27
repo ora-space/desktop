@@ -81,6 +81,11 @@ fn session_load_isolates_subagent_replay_from_live_updates() {
         let mut completions = Vec::new();
         while let Some(event) = stream.recv().await {
             match event.unwrap() {
+                // The restored session's options lead the stream; they are not part of the turn.
+                PromptSessionEvent::SessionUpdate {
+                    update: SessionUpdate::ConfigOptionUpdate(_),
+                    ..
+                } => {}
                 PromptSessionEvent::SessionUpdate { update, .. } => forwarded.push(update),
                 PromptSessionEvent::Completed { stop_reason, .. } => completions.push(stop_reason),
                 _ => {}

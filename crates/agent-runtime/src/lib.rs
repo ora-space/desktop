@@ -194,8 +194,9 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     /// and offering the agent's own catalog on exactly that, and inferring it from a stale absence
     /// would silently drop a model chosen for a session that could already have been told.
     reported_config_options: Vec<SessionConfigOption>,
-    /// Changes being asked of the agent without this actor, because it held no provider.
-    direct_config_changes: Vec<oneshot::Receiver<()>>,
+    /// Whether this actor held a provider when it last looked, so that gaining or losing one is
+    /// announced once, between operations.
+    held_provider: bool,
     /// Whether the current provider session last reported more commands than shown, so each excess is
     /// logged once.
     commands_exceed_limit: bool,
@@ -595,6 +596,33 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         received.await.map_err(runtime_unavailable_with)
     }
 
+    /// Reads the options a session is on, without asking its agent or changing anything.
+    ///
+    /// Answers `None` when the session holds no provider, including one no actor has opened. The
+    /// answer comes as soon as the actor reads its commands: at once during a turn, a title poll or
+    /// an MCP refresh, after steps that read none, such as attaching or replaying a load.
+    pub async fn get_session_options(
+        &self,
+        request: ora_contracts::GetSessionOptionsRequest,
+    ) -> Result<ora_contracts::GetSessionOptionsResponse, RuntimeError> {
+        let session = self.find_session(&request.session_id)?;
+        let config_options = match self.lookup_actor(&session.id)? {
+            None => None,
+            Some(handle) => {
+                let (response, received) = oneshot::channel();
+                match handle
+                    .commands
+                    .send(RuntimeCommand::ReadOptions { response })
+                {
+                    // An actor that went away holds no provider either.
+                    Err(_closed) => None,
+                    Ok(()) => received.await.unwrap_or(None),
+                }
+            }
+        };
+        Ok(ora_contracts::GetSessionOptionsResponse { config_options })
+    }
+
     /// Stops one logical session without terminating its shared CLI process.
     pub async fn stop_session(
         &self,
@@ -763,7 +791,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 rebuilt_binding: None,
                 load_restoration: Default::default(),
                 reported_config_options: setup.config_options,
-                direct_config_changes: Vec::new(),
+                held_provider: false,
                 commands_exceed_limit,
                 scheduler: self.inner.scheduler.clone(),
                 events: self.inner.events.clone(),

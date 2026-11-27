@@ -97,6 +97,7 @@ impl AgentAttach for InstalledAgents {
 #[derive(Clone, Default)]
 pub(crate) struct RecordedEvents {
     settled: Arc<Mutex<Vec<(SessionId, HistoryLine)>>>,
+    options_changed: Arc<Mutex<Vec<SessionId>>>,
 }
 
 impl RecordedEvents {
@@ -107,10 +108,25 @@ impl RecordedEvents {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
+
+    /// Returns every session the runtime said may have other options, in announcement order.
+    pub(crate) fn options_changed(&self) -> Vec<SessionId> {
+        self.options_changed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
 }
 
 impl RuntimeEvents for RecordedEvents {
     fn session_title_updated(&self, _session_id: &SessionId) {}
+
+    fn session_options_changed(&self, session_id: &SessionId) {
+        self.options_changed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(session_id.clone());
+    }
 
     fn agent_models_invalidated(&self, _agent_ref: &AgentRef) {}
 

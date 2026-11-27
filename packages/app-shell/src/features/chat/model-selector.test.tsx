@@ -1,3 +1,4 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import {
   act,
   cleanup,
@@ -95,6 +96,7 @@ function renderModelSelector(
   seed: (state: FixtureState) => void = () => {},
   sessionId?: string,
   discoveryScope: AgentDiscoveryScope = "modelsAndCommands",
+  disabled = false,
 ) {
   const state = createFixtureState();
   state.tasks = [
@@ -134,6 +136,7 @@ function renderModelSelector(
             <ModelSelector
               discoveryScope={discoveryScope}
               sessionId={sessionId}
+              disabled={disabled}
             />
           </TooltipProvider>
         </PlatformProvider>
@@ -298,6 +301,76 @@ describe("ModelSelector for a session that has not attached", () => {
         expect.objectContaining({ sessionId: "s1", value: "session/other" }),
       ),
     );
+    expect(discover).not.toHaveBeenCalled();
+  });
+});
+
+/** The options a session reported while it had a provider. */
+function sessionOptions(): acp.SessionConfigOption[] {
+  return [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "session/current",
+      options: [
+        { value: "session/current", name: "Session Current" },
+        { value: "session/other", name: "Session Other" },
+      ],
+    },
+  ];
+}
+
+/** Has the conversation learn that its session has no provider now, keeping its last options. */
+function loseProvider(chatStore: ReturnType<typeof createChatStore>) {
+  act(() => {
+    chatStore.getState().setConfigOptions("s1", sessionOptions());
+    chatStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        s1: { ...state.conversations.s1!, providerLost: true },
+      },
+    }));
+  });
+}
+
+describe("ModelSelector for a session that lost its provider", () => {
+  /**
+   * The last options still say which model the session was on, but nothing is behind them to
+   * configure: asking would fail, so the pick waits for the message that attaches again.
+   */
+  it("records a pick as an intent although the session kept its last options", async () => {
+    const { setConfig, chatStore } = renderModelSelector(
+      selectPersistedSession,
+    );
+    loseProvider(chatStore);
+    const user = userEvent.setup();
+
+    await user.click(picker());
+    const menu = await screen.findByRole("menu");
+    await user.click(within(menu).getByText(/Small Pickle/));
+
+    await waitFor(() =>
+      expect(
+        usePendingAgentStore.getState().models[
+          `session:s1|agent:${AGENT_REF.opencode}`
+        ],
+      ).toEqual("opencode/small-pickle"),
+    );
+    expect(setConfig).not.toHaveBeenCalled();
+  });
+
+  it("keeps naming the last model in a read-only picker", async () => {
+    const { discover, chatStore } = renderModelSelector(
+      selectPersistedSession,
+      "s1",
+      "models",
+      /*disabled*/ true,
+    );
+    loseProvider(chatStore);
+
+    await waitFor(() => expect(picker()).toHaveTextContent(/Session Current/));
     expect(discover).not.toHaveBeenCalled();
   });
 });

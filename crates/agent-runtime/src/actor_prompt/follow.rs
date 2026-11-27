@@ -23,16 +23,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         if accepted.send(Ok(())).is_err() {
             return;
         }
-        // The follower's queue is new and empty, so these precede its replay. Without the options a
-        // view would take the session for one that holds no provider to configure.
-        if !self.reported_config_options.is_empty() {
-            let update = SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
-                self.reported_config_options.clone(),
-            ));
-            let _ = output
-                .events
-                .try_send(Ok(LoadSessionEvent::session_update(update)));
-        }
+        // The follower's queue is new and empty, so these precede its replay. A turn holds the
+        // provider, so the follower starts from the options the session is on, even none.
+        let update = SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+            self.reported_config_options.clone(),
+        ));
+        let _ = output
+            .events
+            .try_send(Ok(LoadSessionEvent::session_update(update)));
         if let Some(update) = channel.reported_commands() {
             let _ = output
                 .events
