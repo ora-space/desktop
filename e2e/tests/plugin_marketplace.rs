@@ -1039,12 +1039,15 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
         let (mut socket, _) = package.accept().await?;
         socket.read_u8().await
     };
-    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+    let first_byte = tokio::time::timeout(std::time::Duration::from_secs(8), async {
         tokio::select! {
-            result = install => panic!("install ended before reaching the package endpoint: {result:?}"),
-            first_byte = observe => assert_eq!(first_byte.expect("TLS request"), 0x16),
+            result = install => Err(Box::<dyn std::error::Error>::from(format!(
+                "install ended before reaching the package endpoint: {result:?}"
+            ))),
+            first_byte = observe => Ok(first_byte?),
         }
     })
-    .await?;
+    .await??;
+    assert_eq!(first_byte, 0x16);
     Ok(())
 }
