@@ -50,10 +50,8 @@ pub(in crate::workflow::run) fn plan(
                 .is_some_and(is_affected)
         {
             invalidate.push(attempt.id.to_string());
-            // Only an in-flight attempt needs quiescing; a settled one is retired by the settle.
-            if attempt.status == WorkflowNodeStatus::Running
-                || (attempt.status == WorkflowNodeStatus::Pending && attempt.session_id.is_some())
-            {
+            // Parked attempts are isolated by the fence until retirement; only running ones need a stop.
+            if attempt.status == WorkflowNodeStatus::Running {
                 stop.push(attempt.id.to_string());
             }
         } else {

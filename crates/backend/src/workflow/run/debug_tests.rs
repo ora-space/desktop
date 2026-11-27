@@ -214,24 +214,17 @@ impl Fixture {
             .unwrap()
     }
 
-    /// Builds the same root Agent edit for coordinator and store admission tests.
-    fn preview_request(
-        &self,
-        node_run_id: &str,
-        base_revision: u32,
-    ) -> ora_contracts::PreviewWorkflowDebugRequest {
-        serde_json::from_value(json!({
-            "runId": self.run_id.as_ref(),
-            "nodeRunId": node_run_id,
-            "baseRevision": base_revision,
-            "patch": [{"op":"replace","path":"/agentConfig/prompt","value":"new"}]
-        }))
-        .unwrap()
-    }
-
     fn preview(&self, node_run_id: &str, base_revision: u32) -> WorkflowDebugPreview {
         self.coordinator
-            .preview(self.preview_request(node_run_id, base_revision))
+            .preview(
+                serde_json::from_value(json!({
+                    "runId": self.run_id.as_ref(),
+                    "nodeRunId": node_run_id,
+                    "baseRevision": base_revision,
+                    "patch": [{"op":"replace","path":"/agentConfig/prompt","value":"new"}]
+                }))
+                .unwrap(),
+            )
             .unwrap()
     }
 

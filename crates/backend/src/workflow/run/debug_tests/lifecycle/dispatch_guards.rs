@@ -25,17 +25,7 @@ fn parked_session_rejects_followup_until_the_fence_is_released() {
     run_test(async {
         let f = parked_fixture();
         let old = f.row("x");
-        let request = f.preview_request(old.id.as_ref(), /*base_revision*/ 0);
-        // Isolate the admission guard: the full affected set must protect a session
-        // even when the planner has requested no physical stops.
-        let preview = f
-            .store
-            .preview(&request, |input| {
-                let (mut impact, fence) = crate::workflow::run::debug::strategy::plan(input)?;
-                impact.stop.clear();
-                Ok((impact, fence))
-            })
-            .unwrap();
+        let preview = f.preview(old.id.as_ref(), /*base_revision*/ 0);
         assert!(preview.impact.stop.is_empty());
         assert!(preview.impact.invalidate.contains(&old.id.to_string()));
         f.store
@@ -76,7 +66,7 @@ fn retired_parked_session_is_not_admitted_after_apply() {
         let f = parked_fixture();
         let old = f.row("x");
         let preview = f.preview(old.id.as_ref(), /*base_revision*/ 0);
-        assert_eq!(preview.impact.stop, [old.id.to_string()]);
+        assert!(preview.impact.stop.is_empty());
         let receipt = f
             .coordinator
             .commit(f.commit_request(&preview, "edit"))
@@ -117,6 +107,46 @@ fn retired_parked_session_is_not_admitted_after_apply() {
             .await
             .unwrap();
         assert_eq!(f.row("x").status, WorkflowNodeStatus::Running);
+    });
+}
+
+/// A restart after claim can settle an edit with only a parked, fenced session.
+#[test]
+fn restart_applies_parked_only_edit_and_dispatches_replacement() {
+    run_test(async {
+        let f = parked_fixture();
+        f.engine
+            .complete_node(
+                &f.run_id,
+                &f.row("s").id,
+                Some("done".into()),
+                None,
+                None,
+                vec![],
+            )
+            .unwrap();
+        let old = f.row("x");
+        assert_eq!(old.status, WorkflowNodeStatus::Pending);
+        assert_eq!(
+            old.session_id.as_ref().map(|id| id.as_ref()),
+            Some("session-1")
+        );
+        let preview = f.preview(old.id.as_ref(), /*base_revision*/ 0);
+        assert_eq!(preview.impact.invalidate, [old.id.to_string()]);
+        let request = f.commit_request(&preview, "parked-boot");
+        f.store.claim(&request).unwrap();
+        assert!(f.coordinator.ensure_no_fence(f.run_id.as_ref()).is_err());
+        boot_with_calls(&f._temp, "x");
+        assert_eq!(
+            f.store.history(f.run_id.as_ref()).unwrap()[0]
+                .operation
+                .phase,
+            WorkflowDebugPhase::Applied { revision: 1 }
+        );
+        f.coordinator.ensure_no_fence(f.run_id.as_ref()).unwrap();
+        let replacement = f.row("x");
+        assert_ne!(replacement.id, old.id);
+        assert_eq!(replacement.status, WorkflowNodeStatus::Running);
     });
 }
 

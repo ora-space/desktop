@@ -67,35 +67,6 @@ fn successful_terminal_run_dispatches_the_revised_agent() {
     });
 }
 
-/// Parked interactive attempts still own live sessions; failed isolation cannot authorize a revision.
-#[test]
-fn pending_bound_agent_must_stop_before_apply() {
-    run_test(async {
-        let f = Fixture::new(Arc::new(UnprovableStop));
-        let x = f.row("x").id;
-        SqliteWorkflowRunEngineRepository::new(f.pool.clone())
-            .transition_node_run_status(
-                &x,
-                WorkflowNodeStatus::Running,
-                WorkflowNodeStatus::Pending,
-                60,
-            )
-            .unwrap();
-        let p = f.preview(x.as_ref(), 0);
-        assert_eq!(p.impact.stop, vec![x.to_string()]);
-        let result = f
-            .coordinator
-            .commit(f.commit_request(&p, "parked"))
-            .await
-            .unwrap();
-        assert!(
-            matches!(result.phase,WorkflowDebugPhase::StopFailed{unsettled_node_run_ids,..} if unsettled_node_run_ids==vec![x.to_string()])
-        );
-        assert_eq!(f.row("x").status, WorkflowNodeStatus::Cancelled);
-        assert_eq!(dispatched(&f.executor, "x"), 1);
-    });
-}
-
 /// An independent input keeps D live when the edited condition drops its edge to D.
 fn reroute_fixture(stopper: Arc<dyn DebugSessionStopper>) -> Fixture {
     let agent = |id| {

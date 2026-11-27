@@ -3,7 +3,7 @@ use crate::workflow::run::interactive::{claim_node_for_completion, revalidate_co
 use ora_db::workflow_debug::WorkflowDebugStore;
 use pretty_assertions::assert_eq;
 
-/// Builds a real preview whose bound parked target must stop before retirement.
+/// Builds a real preview whose parked target will be retired without a stop acknowledgement.
 fn edit_parked(f: &Fixture) -> CommitWorkflowDebugRequest {
     let preview = f
         .runs
@@ -15,7 +15,7 @@ fn edit_parked(f: &Fixture) -> CommitWorkflowDebugRequest {
             .unwrap(),
         )
         .unwrap();
-    assert_eq!(preview.impact.stop, [f.node_run_id.clone()]);
+    assert!(preview.impact.stop.is_empty());
     assert!(preview.impact.invalidate.contains(&f.node_run_id));
     CommitWorkflowDebugRequest {
         run_id: "run-1".into(),

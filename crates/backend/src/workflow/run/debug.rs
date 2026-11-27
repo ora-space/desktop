@@ -133,17 +133,14 @@ impl WorkflowDebugCoordinator {
             {
                 let repository = SqliteWorkflowRunEngineRepository::new(self.pool.clone());
                 for id in &stop_ids {
-                    // Invalidate the parked manual action before a stop can release the run gate.
-                    for from in [WorkflowNodeStatus::Pending, WorkflowNodeStatus::Running] {
-                        repository
-                            .transition_node_run_status(
-                                id,
-                                from,
-                                WorkflowNodeStatus::Cancelled,
-                                now,
-                            )
-                            .map_err(|source| ApplicationError::WorkflowRunRepository { source })?;
-                    }
+                    repository
+                        .transition_node_run_status(
+                            id,
+                            WorkflowNodeStatus::Running,
+                            WorkflowNodeStatus::Cancelled,
+                            now,
+                        )
+                        .map_err(|source| ApplicationError::WorkflowRunRepository { source })?;
                 }
             }
 
