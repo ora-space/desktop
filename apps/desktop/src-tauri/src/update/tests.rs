@@ -89,7 +89,7 @@ async fn commit_release(
 }
 
 /// The version that a running build of these tests claims to be.
-pub(super) fn running() -> Version {
+fn running() -> Version {
     Version::new(0, 2, 0)
 }
 
