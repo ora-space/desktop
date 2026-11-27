@@ -7,6 +7,10 @@ use serde_json::Value;
 use thiserror::Error;
 use uuid::Uuid;
 
+/// The settle transaction handed to `apply_after_stop`'s projection closure; re-exported so
+/// coordinators outside this crate can name the parameter without depending on rusqlite directly.
+pub use rusqlite::Transaction;
+
 mod attempts;
 mod configuration;
 pub(crate) mod fence;
@@ -14,6 +18,7 @@ mod normalize;
 mod operations;
 mod pending;
 mod read_set;
+mod recovery;
 pub use operations::DebugClaim;
 #[cfg(test)]
 mod tests;

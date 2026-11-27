@@ -53,6 +53,7 @@ is the only source of truth for the schema; there is no checked-in `schema.sql`.
 | `0024`  | Releases local Main Workspaces stranded in `provisioning` (data only; downgrade is a no-op)                                      |
 | `0025`  | Stores plugin `package_root` on `skills` and drops the retired Effect ledger and tables (after one-time legacy Skill cleanup)    |
 | `0026` | Run-local debug evidence, configuration revisions, preview receipts and operation fences |
+| `0027` | `workflow_debug_boot_protected` identifies attempts to preserve at startup. `workflow_debug_dispatch` points to the operation governing re-dispatch. `workflow_debug_end_dispatch` clears the pointer when the run leaves Running. |
 
 Details of individual migrations live in [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md).
 The catalog describes only the current schema; databases whose `migrations` table predates SQL

@@ -1,7 +1,8 @@
 //! Workflow-run use cases own scheduling gates, manual completion, and session cleanup.
 
 use super::api::WorkflowRunApi;
-use super::engine::ConcreteWorkflowRunControl;
+use super::debug::WorkflowDebugCoordinator;
+use super::engine::{ConcreteWorkflowRunControl, ConcreteWorkflowRunEngine};
 use super::interactive::{
     AgentSignalStore, CompletingNodeRuns, CompletionApproval, WorkflowSessionTurns,
     merge_completion_patch, signal_fingerprint,
@@ -37,6 +38,8 @@ pub(crate) struct WorkflowRunSetup {
     pub baselines_root: PathBuf,
     pub agent_runtime: Arc<AgentRuntimeManager>,
     pub engine: Arc<ConcreteWorkflowRunControl>,
+    /// The raw engine, used by the debug coordinator to re-dispatch after a revision applies.
+    pub raw_engine: Arc<ConcreteWorkflowRunEngine>,
     pub run_locks: Arc<KeyedResourceLocks>,
     pub transitions: Arc<WorkflowRunTransitions>,
     pub plugin_api: Arc<crate::plugin::PluginApi>,
@@ -62,6 +65,8 @@ pub struct WorkflowRuns {
     plugin_api: Arc<crate::plugin::PluginApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     engine: Arc<ConcreteWorkflowRunControl>,
+    /// Execution coordination for run-local debugging (fence → quiesce → apply → re-dispatch).
+    debug: WorkflowDebugCoordinator,
     run_locks: Arc<KeyedResourceLocks>,
     completing_node_runs: Arc<CompletingNodeRuns>,
     transitions: Arc<WorkflowRunTransitions>,
@@ -97,8 +102,32 @@ impl WorkflowRuns {
             .map_err(BackendError::from_debug_store)
     }
 
+    /// Plans a read-only debug preview of an edit from a selected execution position.
+    pub fn debug_preview(
+        &self,
+        request: PreviewWorkflowDebugRequest,
+    ) -> Result<WorkflowDebugPreview, BackendError> {
+        self.debug.preview(request)
+    }
+
+    /// Confirms a debug preview and carries it through quiescence to the new dispatch.
+    pub async fn debug_commit(
+        &self,
+        request: CommitWorkflowDebugRequest,
+    ) -> Result<WorkflowDebugOperation, BackendError> {
+        self.debug.commit(request).await
+    }
+
     /// Captures the instances composed at startup; no lock, worker, or supervisor is restarted.
     pub(crate) fn new(setup: WorkflowRunSetup) -> Self {
+        let debug = WorkflowDebugCoordinator::new(
+            setup.pool.clone(),
+            setup.run_locks.clone(),
+            setup.agent_runtime.clone(),
+            setup.raw_engine,
+            setup.transitions.clone(),
+            setup.clock,
+        );
         Self {
             records: WorkflowRunApi::new(
                 setup.pool.clone(),
@@ -112,6 +141,7 @@ impl WorkflowRuns {
             plugin_api: setup.plugin_api,
             agent_runtime: setup.agent_runtime,
             engine: setup.engine,
+            debug,
             run_locks: setup.run_locks,
             completing_node_runs: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             transitions: setup.transitions,
@@ -202,14 +232,24 @@ impl WorkflowRuns {
         let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
         let engine = self.engine.clone();
         let run_locks = self.run_locks.clone();
-        let response = spawn_repository_work(move || {
+        let pool = self.pool.clone();
+        let (response, was_running) = spawn_repository_work(move || {
             // Serialize the `Cancelled` transition against every other mutation for the run; the
             // async session cleanup below runs outside the gate.
             let _gate = run_locks.acquire_exclusive(request.run_id.clone());
-            engine.cancel(request).map_err(BackendError::from)
+            let was_running = SqliteWorkflowRunEngineRepository::new(pool)
+                .find_execution_context(&ora_domain::WorkflowRunId::new(&request.run_id))
+                .map_err(|source| ApplicationError::WorkflowRunRepository { source })?
+                .is_some_and(|ctx| ctx.run.status == ora_domain::WorkflowRunStatus::Running);
+            Ok((
+                engine.cancel(request).map_err(BackendError::from)?,
+                was_running,
+            ))
         })
         .await?;
-        self.stop_workflow_run_sessions(&run_id).await;
+        if was_running {
+            self.stop_workflow_run_sessions(&run_id).await;
+        }
         Ok(response)
     }
 
@@ -529,6 +569,7 @@ impl WorkflowRuns {
         request: RestartWorkflowRunRequest,
     ) -> Result<RestartWorkflowRunResponse, BackendError> {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        self.debug.ensure_no_fence(&request.run_id)?;
         self.precheck_dependencies(&request.run_id, StartOperation::Restart)?;
         self.engine
             .restart(request)
@@ -542,9 +583,7 @@ impl WorkflowRuns {
     ) -> Result<ResumeWorkflowRunResponse, BackendError> {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
         // Rollback may restore files before the repository writes the new run state.
-        ora_db::workflow_debug::WorkflowDebugStore::new(self.pool.clone())
-            .ensure_debug_operation_inactive(&request.run_id)
-            .map_err(BackendError::from_debug_store)?;
+        self.debug.ensure_no_fence(&request.run_id)?;
         super::rollback::resume_from_failure(
             self.dependency_sources(),
             &self.agent_runtime,

@@ -91,23 +91,23 @@ pub(crate) async fn begin_human_turn(
     let session_id = SessionId::new(session_id);
     tokio::task::spawn_blocking(move || {
         let repository = SqliteWorkflowRunEngineRepository::new(pool);
-        let node_run = repository
+        let observed = repository
             .find_node_run_by_session_id(&session_id)
             .map_err(repository_error)?;
-        let Some(node_run) = node_run else {
+        let Some(observed) = observed else {
             // No workflow node is bound to this session: an ordinary session prompt.
             return Ok(HumanTurnAdmission::Ordinary);
         };
         // Serialize against completion/cancel/scheduling for this run before deciding whether the
         // prompt may start, so a concurrent completion cannot be raced past.
-        let _gate = run_locks.acquire_exclusive(node_run.run_id.as_ref());
+        let _gate = run_locks.acquire_exclusive(observed.run_id.as_ref());
         // Re-read the node under the gate: its status may have changed since the first read.
         let node_run = repository
             .find_node_run_by_session_id(&session_id)
             .map_err(repository_error)?;
-        let Some(node_run) = node_run else {
-            return Ok(HumanTurnAdmission::Ordinary);
-        };
+        let node_run = node_run
+            .filter(|row| row.id == observed.id && !row.audit_fields.is_deleted)
+            .ok_or_else(|| node_not_awaiting(&observed.node_id))?;
         // The owning run must still be executing; a terminal run rejects a follow-up turn.
         let context = repository
             .find_execution_context(&node_run.run_id)
@@ -119,7 +119,12 @@ pub(crate) async fn begin_human_turn(
             return Err(node_not_awaiting(&node_run.node_id));
         }
         // A terminal node is read-only; a non-Pending node is not awaiting input.
-        if node_run.status != WorkflowNodeStatus::Pending {
+        if node_run.status != WorkflowNodeStatus::Pending
+            || repository
+                .debug_dispatch_fence(&node_run.run_id)
+                .map_err(repository_error)?
+                .is_some_and(|fence| fence.affected_attempts.contains(&node_run.id))
+        {
             return Err(node_not_awaiting(&node_run.node_id));
         }
         if completing_node_runs

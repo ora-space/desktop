@@ -61,7 +61,9 @@ where
             .cancel(&run_id)
             .map_err(ApplicationError::from_workflow_engine_error)?
         {
-            CancelWorkflowRunResult::Cancelled | CancelWorkflowRunResult::NotActive => {}
+            CancelWorkflowRunResult::Cancelled
+            | CancelWorkflowRunResult::DebugAbandoned
+            | CancelWorkflowRunResult::NotActive => {}
             CancelWorkflowRunResult::NotFound => {
                 return Err(ApplicationError::WorkflowRunNotFound {
                     run_id: request.run_id,

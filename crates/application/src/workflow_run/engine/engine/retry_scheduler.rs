@@ -74,6 +74,15 @@ where
         let Some(node) = graph.execution_node(&node_run.node_id) else {
             return Ok(false);
         };
+        // While a debug confirmation is stopping the affected scope, a failure must not arm a new
+        // retry under the old configuration; the coordinator settles the scope instead.
+        if self
+            .repository
+            .debug_dispatch_fence(run_id)?
+            .is_some_and(|fence| fence.blocked_nodes.contains(&node_run.node_id))
+        {
+            return Ok(false);
+        }
         let Some(RegisteredNodeRuntime::Async(runtime)) = self.runtimes.runtime(node.node_type)
         else {
             return Ok(false);
@@ -123,6 +132,15 @@ where
         run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
     ) -> Result<(), EngineError> {
+        // A stopping debug confirmation fences the affected attempts: a retry wake must not start
+        // a new attempt under the old configuration while the coordinator quiesces the scope.
+        if self
+            .repository
+            .debug_dispatch_fence(run_id)?
+            .is_some_and(|fence| fence.affected_attempts.contains(node_run_id))
+        {
+            return Ok(());
+        }
         let now = self.clock.now_timestamp_millis();
         let node_run = match self.repository.begin_node_retry(node_run_id, now)? {
             BeginNodeRetryResult::Started(node_run) => *node_run,

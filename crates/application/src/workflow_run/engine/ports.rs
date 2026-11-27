@@ -115,6 +115,19 @@ pub enum LoopRoundAdvance {
     Fail { error: String },
 }
 
+/// The active debug dispatch fence for a run whose confirmation is still stopping (or failed and
+/// unreleased). While present, the scheduler must not dispatch the fenced positions or finish the
+/// run, so the coordinator can quiesce the affected scope and apply the new revision atomically.
+/// Independent branches outside the fence keep scheduling and committing normally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugDispatchFence {
+    /// Root-scope node ids whose new dispatch is blocked until the operation applies.
+    pub blocked_nodes: Vec<String>,
+    /// Attempts to invalidate or stop and their enclosing container attempts. A parked attempt
+    /// stays isolated even when there is no in-flight session to stop.
+    pub affected_attempts: Vec<WorkflowNodeRunId>,
+}
+
 /// Supplies new node-run identifiers for the engine's scheduling waves.
 pub trait WorkflowNodeRunIdGenerator {
     /// Produces the identifier for a newly created node run.
@@ -218,6 +231,8 @@ pub enum AdvanceWorkflowRunResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelWorkflowRunResult {
     Cancelled,
+    /// The debug intent was abandoned; the original terminal run and its reason were preserved.
+    DebugAbandoned,
     NotActive,
     NotFound,
 }
@@ -327,12 +342,39 @@ pub const INVALID_START_OPTION_DETAIL: &str = "value is not one of the configure
 ///
 /// Automatic retries persist through the [`WorkflowRetryRepository`] supertrait.
 pub trait WorkflowRunEngineRepository: WorkflowRetryRepository {
+    /// An operation reopened from a terminal run authorizes only its confirmed schedule, even
+    /// after process restart. A running run continues ordinary independent work.
+    fn terminal_debug_schedule(
+        &self,
+        _run: &WorkflowRunId,
+    ) -> Result<Option<Vec<String>>, RepositoryError> {
+        Ok(None)
+    }
+
+    /// Restores the saved outcome after a terminal run's limited scheduling scope drains.
+    fn restore_debug_outcome(
+        &self,
+        _run: &WorkflowRunId,
+        _now: i64,
+    ) -> Result<(), RepositoryError> {
+        Ok(())
+    }
     /// Returns the graph overlay bound to this physical attempt when debug revisions are active.
     fn revised_graph(
         &self,
         _run_id: &WorkflowRunId,
         _attempt: &WorkflowNodeRunId,
     ) -> Result<Option<WorkflowGraph>, RepositoryError> {
+        Ok(None)
+    }
+
+    /// Returns the active debug dispatch fence while a confirmation is stopping or failed and
+    /// unreleased. The scheduler consults it to hold the affected scope's new dispatch and the
+    /// run's finish until the coordinator applies the revision; `None` means normal scheduling.
+    fn debug_dispatch_fence(
+        &self,
+        _run_id: &WorkflowRunId,
+    ) -> Result<Option<DebugDispatchFence>, RepositoryError> {
         Ok(None)
     }
 
@@ -386,11 +428,8 @@ pub trait WorkflowRunEngineRepository: WorkflowRetryRepository {
         now: i64,
     ) -> Result<BindWorkflowNodeSessionResult, RepositoryError>;
 
-    /// Finds the live node run bound to a session, if any.
-    ///
-    /// Session bindings are per-node (each node warms its own session), so at most one node run
-    /// carries a given session id; the interactive prompt hook uses this to flip the owning node
-    /// between `Pending` and `Running`.
+    /// Finds the session's live workflow attempt, or its most recent retired binding.
+    /// Prompt admission uses this history to distinguish retired sessions from ordinary ones.
     fn find_node_run_by_session_id(
         &self,
         session_id: &SessionId,

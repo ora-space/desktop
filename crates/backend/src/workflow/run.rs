@@ -5,6 +5,9 @@ mod aggregator_persistence_tests;
 mod api;
 mod checkpoint;
 mod completion_snapshot;
+mod debug;
+#[cfg(test)]
+mod debug_tests;
 mod diagnosis;
 mod engine;
 mod executor;
