@@ -1226,3 +1226,61 @@ fn the_options_are_read_at_once_during_a_title_poll_and_an_mcp_refresh() {
         driven.fixture.shutdown().await;
     });
 }
+
+/// A turn the agent refuses while its owner has no room left in the stream cannot be told how it
+/// ended, so it gives its provider up; the change in flight is made.
+#[test]
+fn a_change_in_flight_is_made_when_a_refused_turn_cannot_be_told() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        let (choice, _request) = driven.choose().await;
+        let routes = driven.fixture.supervisor.routes.clone();
+        for _ in 1..crate::CONTRACT_QUEUE_CAPACITY {
+            let _ = routes.route_event(chunk());
+        }
+        settled().await;
+        driven.fail(&running);
+        settled().await;
+
+        assert!(choice.await.unwrap().is_ok(), "the change failed");
+        assert_eq!(
+            turn.end_cause(),
+            Some(crate::PromptEndCause::Unknown),
+            "the turn ended as a refused prompt"
+        );
+        // The turn never had room for its failure, and was not cancelled.
+        let mut received = 0;
+        while let Some(event) = turn.recv().await {
+            assert!(event.is_ok(), "the failure was told: {event:?}");
+            received += 1;
+        }
+        assert_eq!(received, crate::CONTRACT_QUEUE_CAPACITY);
+        while let Ok(frame) = driven.fixture.frames.try_recv() {
+            assert_ne!(frame["method"], "session/cancel");
+        }
+        driven.fixture.shutdown().await;
+    });
+}
+
+#[test]
+fn the_options_are_read_without_waiting_for_a_title_poll() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session_with_title_acquisition(
+            SESSION,
+            crate::TitleAcquisition::awaiting_first_prompt(/*list_supported*/ true),
+        );
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        driven.asked("session/list").await;
+        // The clock is paused, so only an answer that needs no time beats this.
+        let read =
+            tokio::time::timeout(std::time::Duration::from_millis(1), read_options(&driven)).await;
+        assert_eq!(read.ok(), Some(Some(on("b"))));
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}

@@ -559,3 +559,28 @@ fn a_change_in_flight_is_made_when_a_stopped_turn_has_nobody_to_tell() {
         });
     }
 }
+
+/// A turn cancel that finds the agent already refused the prompt ends the turn as that refusal;
+/// with its owner gone, the change still in flight is made, not failed.
+#[test]
+fn a_change_in_flight_is_made_when_a_cancel_finds_a_refusal_nobody_reads() {
+    run_case(async {
+        let mut turn = UnrunTurn::start().await;
+        let (outcome, _request) = turn.change().await;
+        turn.refused().await;
+        let (events, owner) = mpsc::channel(/*buffer*/ 8);
+        drop(owner);
+
+        // With a turn-cancel deadline, so the queued refusal is read before any cancel is written.
+        turn.settle(&events).await;
+
+        assert!(outcome.await.unwrap().is_ok());
+        assert!(turn.actor.channel.is_none());
+        assert!(
+            turn.fixture.frames.try_recv().is_err(),
+            "a cancel was written"
+        );
+        drop(turn.actor);
+        turn.fixture.shutdown().await;
+    });
+}

@@ -288,3 +288,29 @@ test("a load that brings no options keeps a lost provider lost, whether it compl
     assert.equal(conversation()?.providerLost, true, `after, fails ${fails}`);
   }
 });
+
+test("replaying an unfinished turn keeps a lost provider lost", async () => {
+  const { store, conversation, streams, loseProvider } = session();
+  await loseProvider();
+  const ending = gate();
+  streams(async function* () {
+    // A turn the record never closed, as an interrupted process leaves it.
+    yield {
+      type: "session_update",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "hello" },
+      },
+    } as LoadSessionEvent;
+    await ending.promise;
+    yield { type: "completed" } as const;
+  });
+
+  const loading = store.getState().loadSession("ora-1");
+  // Text is previewed once per frame.
+  await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  assert.equal(conversation()?.isResponding, true, "the unfinished turn is previewed");
+  assert.equal(conversation()?.providerLost, true, "the preview cleared providerLost");
+  ending.resolve();
+  await loading;
+});
