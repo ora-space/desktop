@@ -41,7 +41,7 @@ describe("useWorkflowUninstallImpact", () => {
     const client = createTestClient({ listWorkflows });
     const queryClient = createWarmQueryClient();
     queryClient.setQueryData(pluginKeys.installedPlugins, [skillPlugin]);
-    queryClient.setQueryData(skillKeys.skills, []);
+    queryClient.setQueryData(skillKeys.skills, { skills: [] });
 
     const { result } = renderHookWithClient(
       () => useWorkflowUninstallImpact([skillPlugin.id], true),
@@ -122,16 +122,18 @@ describe("useWorkflowUninstallImpact", () => {
     });
     const queryClient = createWarmQueryClient();
     queryClient.setQueryData(pluginKeys.installedPlugins, [skillPlugin]);
-    queryClient.setQueryData(skillKeys.skills, [
-      {
-        id: "release-notes",
-        namespace: "local",
-        name: "release-notes",
-        description: "Writes release notes",
-        source: { kind: "plugin", pluginId: skillPlugin.id },
-        availability: "available",
-      },
-    ]);
+    queryClient.setQueryData(skillKeys.skills, {
+      skills: [
+        {
+          id: "release-notes",
+          namespace: "local",
+          name: "release-notes",
+          description: "Writes release notes",
+          source: { kind: "plugin", pluginId: skillPlugin.id },
+          availability: "available",
+        },
+      ],
+    });
 
     const { result } = renderHookWithClient(
       () => useWorkflowUninstallImpact([skillPlugin.id], true),

@@ -156,7 +156,8 @@ describe("useCreateSkill", () => {
     expect(state.skills[0]!.name).toBe("New Skill");
     await skills.queryClient.refetchQueries({ queryKey: skillKeys.skills });
     expect(
-      skills.queryClient.getQueryData<Skill[]>(skillKeys.skills),
+      skills.queryClient.getQueryData<{ skills: Skill[] }>(skillKeys.skills)
+        ?.skills,
     ).toHaveLength(1);
   });
 });

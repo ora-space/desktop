@@ -252,7 +252,7 @@ describe("RunActInspector agent config", () => {
       ).toBeInTheDocument();
       expect(
         screen.getByRole("button", {
-          name: "查看 Skill「openspec-explore」简介",
+          name: "查看 Skill「openspec-explore · 本地」简介",
         }),
       ).toBeInTheDocument();
     });
@@ -269,7 +269,7 @@ describe("RunActInspector agent config", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "查看 Skill「openspec-explore」简介",
+        name: "查看 Skill「openspec-explore · 本地」简介",
       }),
     );
     expect(await screen.findByText("探索仓库结构与约束")).toBeInTheDocument();

@@ -471,11 +471,18 @@ function PreviewStage({
   const [name, setName] = useState(workflow.name.trim());
   const [version, setVersion] = useState(state.suggestedVersion ?? "");
   const [publish, setPublish] = useState(true);
-  const missing = dependencies.filter(
-    (dependency) => dependency.status === "missing",
+  const blocked = dependencies.filter(
+    (dependency) =>
+      dependency.enabled &&
+      (dependency.status === "missing" ||
+        dependency.status === "ambiguous" ||
+        (dependency.kind === "skill" && dependency.status === "unavailable")),
   ).length;
-  const unavailable = dependencies.filter(
-    (dependency) => dependency.status === "unavailable",
+  const unavailableMcps = dependencies.filter(
+    (dependency) =>
+      dependency.enabled &&
+      dependency.kind === "mcp" &&
+      dependency.status === "unavailable",
   ).length;
   const summary = summarizeWorkflowTransfer(workflow);
   const trimmedVersion = version.trim();
@@ -565,22 +572,22 @@ function PreviewStage({
             </div>
           ))}
         </dl>
-        {missing > 0 ? (
+        {blocked > 0 ? (
           <Banner tone="warn" role="status">
             <b className="font-semibold">
               {t("settings.workflow.transfer.missingWarningTitle", {
-                total: missing,
+                total: blocked,
               })}
             </b>
             {t("settings.workflow.transfer.missingWarning")}
           </Banner>
-        ) : unavailable > 0 ? (
+        ) : unavailableMcps > 0 ? (
           <Banner tone="info" role="status">
             {t("settings.workflow.transfer.unavailableWarning", {
-              total: unavailable,
+              total: unavailableMcps,
             })}
           </Banner>
-        ) : dependencies.length > 0 ? (
+        ) : dependencies.some((dependency) => dependency.enabled) ? (
           <Banner tone="ok" role="status">
             {t("settings.workflow.transfer.allInstalled")}
           </Banner>
@@ -624,7 +631,7 @@ function PreviewStage({
           {t("common.cancel")}
         </Button>
         <Button disabled={!canConfirm} onClick={confirm}>
-          {missing > 0
+          {blocked > 0
             ? t("settings.workflow.transfer.importAnyway")
             : t("settings.workflow.transfer.confirmImport")}
         </Button>

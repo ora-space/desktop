@@ -76,6 +76,36 @@ impl SqliteSkillRepository {
         })
     }
 
+    /// Lists retired exact identities so reports cannot resolve them through another source.
+    pub fn retired_skill_ids(&self) -> Result<Vec<String>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                let mut statement =
+                    connection.prepare("SELECT id FROM skills WHERE is_deleted = 1 ORDER BY id")?;
+                Ok(statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<_, _>>()?)
+            })
+            .map_err(skill_repository_error_from_database)
+    }
+
+    /// Provides portable names for local workflow references, even after their package was deleted.
+    pub fn local_skill_names_for_export(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, String>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                let mut statement =
+                    connection.prepare("SELECT id, name FROM skills WHERE namespace = 'local'")?;
+                Ok(statement
+                    .query_map([], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })?
+                    .collect::<Result<_, _>>()?)
+            })
+            .map_err(skill_repository_error_from_database)
+    }
+
     /// Makes every Skill from an uninstalled plugin disappear from the catalog.
     ///
     /// Returns whether it had any.

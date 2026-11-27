@@ -21,6 +21,7 @@ import {
   WORKFLOW_NODE_INITIAL_HEIGHT,
   WORKFLOW_NODE_WIDTH,
   type DemoWorkflow,
+  type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import {
   parseWorkflowGraph,
@@ -250,7 +251,7 @@ function renderEditor(
       availability: "available",
     },
     {
-      id: "openspec-archive-change",
+      id: "uuid-archive-change",
       namespace: "local",
       name: "openspec-archive-change",
       description: "skill",
@@ -1968,12 +1969,13 @@ describe("WorkflowEditor", () => {
 
   it("adds, disables, and removes configured Agent Skills", async () => {
     const user = userEvent.setup();
-    renderEditor();
+    const state = createFixtureState();
+    renderEditor(undefined, state);
 
     const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
     await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
-    const existingSkillSwitch = screen.getByRole("switch", {
-      name: "启用或禁用 code-defect-scan",
+    const existingSkillSwitch = await screen.findByRole("switch", {
+      name: "启用或禁用 code-defect-scan · 未安装",
     });
     expect(existingSkillSwitch).toBeChecked();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
@@ -1982,22 +1984,37 @@ describe("WorkflowEditor", () => {
     expect(screen.queryByText("missing-skill")).not.toBeInTheDocument();
     const skillSearch = screen.getByLabelText("搜索可添加的 Skill");
     await user.type(skillSearch, "archive");
-    await user.click(screen.getByText("openspec-archive-change"));
+    await user.click(screen.getByText("openspec-archive-change · 本地"));
 
     const archiveSwitch = screen.getByRole("switch", {
-      name: "启用或禁用 openspec-archive-change",
+      name: "启用或禁用 openspec-archive-change · 本地",
     });
     expect(archiveSwitch).toBeChecked();
+    await waitFor(() => {
+      const saved = JSON.parse(state.workflows[0]!.draft.graph);
+      const skills = saved.nodes.flatMap(
+        (node: { data: WorkflowNodeData }) =>
+          node.data.agentConfig?.skills ?? [],
+      );
+      expect(skills).toContainEqual({
+        skillId: "uuid-archive-change",
+        enabled: true,
+      });
+      expect(skills).toContainEqual({
+        skillId: "code-defect-scan",
+        enabled: true,
+      });
+    });
     await user.click(archiveSwitch);
     expect(archiveSwitch).not.toBeChecked();
 
     await user.click(
       screen.getByRole("button", {
-        name: "移除 openspec-archive-change",
+        name: "移除 openspec-archive-change · 本地",
       }),
     );
     expect(
-      screen.queryByText("openspec-archive-change"),
+      screen.queryByText("openspec-archive-change · 本地"),
     ).not.toBeInTheDocument();
   });
 
@@ -2554,7 +2571,9 @@ describe("WorkflowEditor", () => {
 
     expect(screen.queryAllByText("还没有工作流")).toHaveLength(0);
     // Both the main pane and the sidebar list offer first-run actions.
-    expect(await screen.findAllByText("还没有工作流")).toHaveLength(2);
+    await waitFor(() =>
+      expect(screen.getAllByText("还没有工作流")).toHaveLength(2),
+    );
     expect(screen.queryByLabelText("工作流画布")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "导入" })).toBeInTheDocument();
   });
@@ -2802,6 +2821,206 @@ describe("WorkflowEditor", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });
+
+  it("shows the converted local Skill reference in both draft and published export lists", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    renderEditor(undefined, state, () => {
+      const record = state.workflows[0]!;
+      for (const snapshot of [record.draft, ...record.published]) {
+        const graph = JSON.parse(snapshot.graph);
+        const node = graph.nodes.find(
+          (node: { data: WorkflowNodeData }) => node.data.kind === "agent",
+        );
+        node.data.title =
+          snapshot === record.draft
+            ? "Draft export dependency"
+            : "Published export dependency";
+        node.data.agentConfig.skills = [
+          { skillId: "uuid-archive-change", enabled: true },
+        ];
+        snapshot.graph = JSON.stringify(graph);
+      }
+    });
+    await screen.findByLabelText("工作流画布");
+    await user.click(screen.getByRole("button", { name: "导出" }));
+    const dialog = await screen.findByRole("dialog");
+    const assertConverted = () => {
+      const list = within(dialog).getByRole("region", {
+        name: "随文件记录的插件引用",
+      });
+      expect(
+        within(list).getAllByText("openspec-archive-change").length,
+      ).toBeGreaterThan(0);
+      expect(dialog).toHaveTextContent('"skillId": "openspec-archive-change"');
+      expect(dialog).not.toHaveTextContent("uuid-archive-change");
+    };
+    await waitFor(assertConverted);
+    const [, version] = within(dialog).getAllByRole("radio");
+    await user.click(version);
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent(
+        '"title": "Published export dependency"',
+      );
+      assertConverted();
+    });
+  });
+
+  it.each(["draft", "published"] as const)(
+    "writes portable Skill references to the actual %s export file",
+    async (source) => {
+      const user = userEvent.setup();
+      const state = createFixtureState();
+      const platform = createStubPlatform();
+      const saveTextFile = vi.fn(platform.saveTextFile).mockResolvedValue(true);
+      platform.saveTextFile = saveTextFile;
+      renderEditor(
+        <PlatformProvider adapter={platform}>
+          <WorkflowEditorList />
+          <WorkflowEditor />
+        </PlatformProvider>,
+        state,
+        (handlers) => {
+          handlers.listSkills = async () => ({
+            skills: [...state.skills],
+            localSkillNamesForExport: {
+              "uuid-archive-change": "openspec-archive-change",
+              "deleted-local-uuid": "deleted-review",
+            },
+            retiredSkillIds: ["deleted-local-uuid"],
+          });
+          const record = state.workflows[0]!;
+          for (const snapshot of [record.draft, ...record.published]) {
+            const graph = JSON.parse(snapshot.graph);
+            const node = graph.nodes.find(
+              (node: { data: WorkflowNodeData }) => node.data.kind === "agent",
+            );
+            node.data.title =
+              snapshot === record.draft ? "Draft file" : "Published file";
+            node.data.agentConfig.skills = [
+              "uuid-archive-change",
+              "deleted-local-uuid",
+              "plugin:official/review:review",
+            ].map((skillId) => ({ skillId, enabled: true }));
+            snapshot.graph = JSON.stringify(graph);
+          }
+        },
+      );
+      await screen.findByLabelText("工作流画布");
+      await user.click(screen.getByRole("button", { name: "导出" }));
+      const dialog = await screen.findByRole("dialog");
+      if (source === "published")
+        await user.click(within(dialog).getAllByRole("radio")[1]!);
+      await waitFor(() => {
+        expect(dialog).toHaveTextContent(
+          `"title": "${source === "draft" ? "Draft file" : "Published file"}"`,
+        );
+        expect(dialog).toHaveTextContent('"skillId": "deleted-review"');
+        expect(dialog).not.toHaveTextContent("deleted-local-uuid");
+      });
+      await user.click(within(dialog).getByRole("button", { name: "导出…" }));
+      await waitFor(() => expect(saveTextFile).toHaveBeenCalledOnce());
+      const saved = JSON.parse(saveTextFile.mock.calls[0]![0].content);
+      const node = saved.nodes.find(
+        (node: { data: WorkflowNodeData }) =>
+          node.data.title ===
+          (source === "draft" ? "Draft file" : "Published file"),
+      );
+      expect(
+        node.data.agentConfig.skills.map(
+          (binding: { skillId: string }) => binding.skillId,
+        ),
+      ).toEqual([
+        "openspec-archive-change",
+        "deleted-review",
+        "plugin:official/review:review",
+      ]);
+      expect(saveTextFile.mock.calls[0]![0].content).not.toMatch(
+        /uuid-archive-change|deleted-local-uuid/,
+      );
+      expect(
+        state.skills.some((skill) => skill.id === "deleted-local-uuid"),
+      ).toBe(false);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    },
+  );
+
+  it.each(["disabled", "unavailable-skill", "unavailable-mcp"] as const)(
+    "counts only launch blockers in the import preview (%s)",
+    async (scenario) => {
+      const user = userEvent.setup();
+      const state = createFixtureState();
+      state.installedPlugins.push({
+        id: "official/unavailable-mcp",
+        namespace: "official",
+        name: "unavailable-mcp",
+        displayName: "Unavailable MCP",
+        version: "1.0.0",
+        description: "",
+        homepage: null,
+        license: null,
+        kind: "mcp",
+        logo: null,
+        installationValidity: {
+          validity: "invalid_declaration",
+          errorCode: "invalid_manifest",
+        },
+        configuration: { state: "not_declared" },
+        runtime: "stopped",
+      });
+      renderEditor(undefined, state);
+      await screen.findByLabelText("工作流画布");
+      const imported = createMockWorkflow("zh-CN");
+      for (const node of imported.nodes)
+        if (node.data.agentConfig) {
+          node.data.agentConfig.skills = [];
+          node.data.agentConfig.mcps = [];
+        }
+      const agent = imported.nodes.find((node) => node.data.kind === "agent")!;
+      agent.data.agentConfig!.skills = [
+        { skillId: "openspec-explore", enabled: true },
+        { skillId: "missing-skill", enabled: scenario === "unavailable-skill" },
+        { skillId: "not-installed", enabled: false },
+      ];
+      agent.data.agentConfig!.mcps = [
+        {
+          mcpId: "official/unavailable-mcp",
+          enabled: scenario === "unavailable-mcp",
+        },
+      ];
+      fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+      await user.click(
+        await screen.findByRole("menuitem", { name: "导入工作流…" }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      await user.upload(
+        within(dialog).getByLabelText("拖入文件，或点击选择"),
+        new File([JSON.stringify(imported)], "readiness.json", {
+          type: "application/json",
+        }),
+      );
+      if (scenario === "disabled") {
+        expect(
+          await within(dialog).findByText(
+            "所有引用的插件都已安装，导入后可以直接运行。",
+          ),
+        ).toBeVisible();
+        expect(within(dialog).getAllByText("未安装").length).toBeGreaterThan(0);
+      } else if (scenario === "unavailable-skill") {
+        expect(
+          await within(dialog).findByText("1 项启用依赖尚未就绪。"),
+        ).toBeVisible();
+      } else {
+        expect(
+          await within(dialog).findByText(
+            "1 个 MCP 已安装但当前不可用，请检查其状态或配置。",
+          ),
+        ).toBeVisible();
+      }
+      if (scenario !== "unavailable-skill")
+        expect(within(dialog).queryByText(/项启用依赖尚未就绪/)).toBeNull();
+    },
+  );
 });
 
 describe("useCreateWorkflow", () => {
