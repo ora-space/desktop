@@ -754,9 +754,10 @@ fn listed_versions(plugins: &[ora_contracts::AvailablePlugin]) -> Vec<String> {
 async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
 -> Result<(), Box<dyn std::error::Error>> {
     use ora_contracts::{
-        AddMarketplaceSourceRequest, MarketplaceArtifactRetrievalUpdate,
+        AddMarketplaceSourceRequest, InstallPluginRequest, MarketplaceArtifactRetrievalUpdate,
         MarketplaceSourceSyncFailure, UpdateMarketplaceSourceRequest,
     };
+    use tokio::io::AsyncReadExt;
 
     const THIRD_PARTY_URL: &str = "https://github.com/acme/plugins";
     const THIRD_PARTY_CANONICAL: &str = "https://github.com/acme/plugins";
@@ -1011,5 +1012,39 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
         ),
         (vec!["ora-space.weather@0.2.0".to_owned()], Vec::new()),
     );
+
+    // ---- Step 6: a direct source can also reach its package with the corrupt mode still stored.
+    let package = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = package.local_addr()?;
+    stage_listing(
+        &official_origin,
+        "ora-space.weather",
+        &format!(
+            "resolver = 1\nidentifier = \"ora-space.weather\"\nkind = \"skill\"\nversion = \"0.3.0\"\ndescription = \"Direct download fixture\"\nurl = \"https://{address}/weather.orax\"\nsha256 = \"{}\"\n",
+            "ab".repeat(32)
+        ),
+    )?;
+    publish(&official_origin, &git_config, "publish package fixture")?;
+    let published = plugins.sync_available(SyncAvailablePluginsRequest {})?;
+    let listing = published
+        .plugins
+        .iter()
+        .find(|entry| entry.name == "ora-space.weather" && entry.version == "0.3.0")
+        .ok_or("package fixture was not indexed")?;
+    let install = plugins.install(InstallPluginRequest {
+        plugin_id: listing.id.clone(),
+        hook_execution_acknowledged: false,
+    });
+    let observe = async {
+        let (mut socket, _) = package.accept().await?;
+        socket.read_u8().await
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        tokio::select! {
+            result = install => panic!("install ended before reaching the package endpoint: {result:?}"),
+            first_byte = observe => assert_eq!(first_byte.expect("TLS request"), 0x16),
+        }
+    })
+    .await?;
     Ok(())
 }
