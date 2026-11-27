@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledPlugin } from "@ora/contracts";
-import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
+import {
+  filterDiscoveredPlugins,
+  filterInstalledPlugins,
+} from "./filter-discovered-plugins";
 
 const plugins: InstalledPlugin[] = [
   {
@@ -71,5 +74,55 @@ describe("filterDiscoveredPlugins", () => {
 
   it("returns no dynamic packages when the query does not match", () => {
     expect(filterDiscoveredPlugins(plugins, "missing")).toEqual([]);
+  });
+});
+
+describe("filterInstalledPlugins", () => {
+  /** Two installed packages whose canonical ids differ only by a suffix. */
+  const siblings: InstalledPlugin[] = [
+    { ...plugins[0]!, id: "official/ora-space.review" },
+    { ...plugins[0]!, id: "official/ora-space.review.v2" },
+  ];
+
+  it("locates exactly the named plugin when a sibling id extends it as a prefix", () => {
+    expect(
+      filterInstalledPlugins(siblings, {
+        kind: "locate",
+        pluginId: "official/ora-space.review",
+      }).map((plugin) => plugin.id),
+    ).toEqual(["official/ora-space.review"]);
+  });
+
+  it("keeps fuzzy search for typed text, so the prefix sibling matches too", () => {
+    expect(
+      filterInstalledPlugins(siblings, {
+        kind: "search",
+        text: "official/ora-space.review",
+      }).map((plugin) => plugin.id),
+    ).toEqual(["official/ora-space.review", "official/ora-space.review.v2"]);
+  });
+
+  it("matches a located id case-insensitively, like search matches ids", () => {
+    expect(
+      filterInstalledPlugins(plugins, {
+        kind: "locate",
+        pluginId: "OFFICIAL/ORA.REVIEWER",
+      }).map((plugin) => plugin.id),
+    ).toEqual(["official/ora.reviewer"]);
+  });
+
+  it("returns nothing when the located plugin is not installed", () => {
+    expect(
+      filterInstalledPlugins(plugins, {
+        kind: "locate",
+        pluginId: "official/missing",
+      }),
+    ).toEqual([]);
+  });
+
+  it("returns every plugin for an empty typed search", () => {
+    expect(
+      filterInstalledPlugins(plugins, { kind: "search", text: "" }),
+    ).toEqual(plugins);
   });
 });
