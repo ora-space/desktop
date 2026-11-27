@@ -64,9 +64,10 @@ pub(super) fn plan(
         .rewind_iteration_ledger(owner, first.unwrap_or_default())
         .map_err(|_| DebugRejection::MissingInputEvidence)?;
     let (mut keep, mut invalidate, mut stop) = (Vec::new(), Vec::new(), Vec::new());
+    let rebuilt = super::rebuilt_rounds(input, |id| after.contains(id));
     for row in &input.current_attempts {
         let affected = if row.scope_id.as_ref() != input.target.scope_id {
-            false
+            rebuilt.contains(&row.scope_id)
         } else if graph.region_owner(&row.node_id) == Some(owner) {
             match (first, row.iteration) {
                 (None, _) => true,
