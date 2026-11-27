@@ -84,7 +84,7 @@ export const settingsTranslations = {
     "settings.proxy.check": "验证代理",
     "settings.proxy.checkTitle": "验证代理设置",
     "settings.proxy.checkDescription":
-      "验证会保存探测网址，并使用当前代理设置跟随跳转。最终收到 HTTP 2xx 表示目标网址连接成功。",
+      "验证会保存探测网址，使用当前代理设置跟随跳转，最终收到 HTTP 2xx 时显示成功。代理配置需单独保存。",
     "settings.proxy.checkUrl": "探测网址",
     "settings.proxy.checkUrlRequired": "请输入要探测的网址。",
     "settings.proxy.checkUrlLoadError":
@@ -92,13 +92,10 @@ export const settingsTranslations = {
     "settings.proxy.checkUrlSaveError":
       "探测网址未保存，未执行探测。请检查网址并重试。",
     "settings.proxy.checkConfirm": "验证",
-    "settings.proxy.checkAndSave": "验证并保存",
-    "settings.proxy.checkSaved": "代理已验证并保存。",
-    "settings.proxy.checkSaveError": "已验证的代理配置保存失败。",
     "settings.proxy.checking": "验证中",
     "settings.proxy.checkSuccess": "目标网址连接成功。",
     "settings.proxy.checkDraft":
-      "当前有未保存的设置。验证通过后将保存这套配置。",
+      "正在验证未保存的设置。检查更新使用已保存的配置。",
     "settings.proxy.checkBypassedManual":
       "最终请求走了直连，无法确认手动代理。可换一个需要通过代理访问的网址。",
     "settings.proxy.checkSuccessDetail": "HTTP 状态码 {{status}}。",
@@ -280,7 +277,7 @@ export const settingsTranslations = {
     "settings.proxy.check": "Check connection",
     "settings.proxy.checkTitle": "Check proxy settings",
     "settings.proxy.checkDescription":
-      "Check saves the test URL and follows redirects using the current proxy settings. A final HTTP 2xx response means the test URL was reached successfully.",
+      "Check saves the test URL and follows redirects using the current proxy settings. A final HTTP 2xx response counts as success. Save proxy settings separately.",
     "settings.proxy.checkUrl": "URL to check",
     "settings.proxy.checkUrlRequired": "Enter a URL to check.",
     "settings.proxy.checkUrlLoadError":
@@ -288,14 +285,10 @@ export const settingsTranslations = {
     "settings.proxy.checkUrlSaveError":
       "The URL was not saved and no check was run. Check the URL and retry.",
     "settings.proxy.checkConfirm": "Check",
-    "settings.proxy.checkAndSave": "Check and save",
-    "settings.proxy.checkSaved": "Proxy settings checked and saved.",
-    "settings.proxy.checkSaveError":
-      "Saving the verified proxy settings failed.",
     "settings.proxy.checking": "Checking",
     "settings.proxy.checkSuccess": "The test URL was reached successfully.",
     "settings.proxy.checkDraft":
-      "Your settings have unsaved changes. A successful check will save them.",
+      "This check uses unsaved settings. Updates use saved settings.",
     "settings.proxy.checkBypassedManual":
       "The final request connected directly. Try a URL that uses the manual proxy.",
     "settings.proxy.checkSuccessDetail": "HTTP status {{status}}.",

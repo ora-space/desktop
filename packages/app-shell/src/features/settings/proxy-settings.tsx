@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
@@ -368,9 +368,8 @@ function ProxySettingsEditor({
       {checkOpen && !invalid && (
         <CheckProxyDialog
           mode={mode}
-          onSaveProxy={
-            usingDraft ? () => controller.submit(mode, parsed) : undefined
-          }
+          usingDraft={usingDraft}
+          checking={controller.isChecking}
           blocked={checkBlocked}
           readError={
             controller.loadError !== null
@@ -396,7 +395,8 @@ function ProxySettingsEditor({
 
 interface CheckProxyDialogProps {
   mode: ProxyMode;
-  onSaveProxy: (() => Promise<void>) | undefined;
+  usingDraft: boolean;
+  checking: boolean;
   blocked: boolean;
   readError: string | null;
   onRetry: () => void;
@@ -410,7 +410,8 @@ interface CheckProxyDialogProps {
 /** Prompts for a URL and reports whether the current form proxy can reach it. */
 function CheckProxyDialog({
   mode,
-  onSaveProxy,
+  usingDraft,
+  checking,
   blocked,
   readError,
   onRetry,
@@ -421,27 +422,14 @@ function CheckProxyDialog({
   onSaveUrl,
 }: CheckProxyDialogProps) {
   const { t } = useTranslation();
-  const verificationPending = useRef(false);
-  const [checking, setChecking] = useState(false);
 
   const verify = async () => {
-    if (blocked || verificationPending.current) return;
+    if (blocked || checking) return;
     const nextUrl = url.trim();
     if (nextUrl === "") {
       toast.error(t("settings.proxy.checkUrlRequired"));
       return;
     }
-    verificationPending.current = true;
-    setChecking(true);
-    try {
-      await checkConnection(nextUrl);
-    } finally {
-      verificationPending.current = false;
-      setChecking(false);
-    }
-  };
-
-  const checkConnection = async (nextUrl: string) => {
     try {
       await onSaveUrl(nextUrl);
     } catch (cause) {
@@ -461,16 +449,6 @@ function CheckProxyDialog({
           });
           return;
         }
-        if (onSaveProxy) {
-          try {
-            await onSaveProxy();
-          } catch (cause) {
-            toast.error(t("settings.proxy.checkSaveError"), {
-              description: localizeContractError(cause, t),
-            });
-            return;
-          }
-        }
         const routeDetail =
           result.route === undefined
             ? t("settings.proxy.checkSuccessDetail", { status: result.status })
@@ -485,14 +463,11 @@ function CheckProxyDialog({
                   }[result.route],
                 ),
               });
-        toast.success(
-          t(
-            onSaveProxy
-              ? "settings.proxy.checkSaved"
-              : "settings.proxy.checkSuccess",
-          ),
-          { description: routeDetail },
-        );
+        toast.success(t("settings.proxy.checkSuccess"), {
+          description: usingDraft
+            ? routeDetail + " " + t("settings.proxy.checkDraft")
+            : routeDetail,
+        });
         onOpenChange(false);
         return;
       }
@@ -515,12 +490,7 @@ function CheckProxyDialog({
   };
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!verificationPending.current) onOpenChange(open);
-      }}
-    >
+    <Dialog open onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t("settings.proxy.checkTitle")}</DialogTitle>
@@ -546,7 +516,7 @@ function CheckProxyDialog({
             }}
           />
         </label>
-        {onSaveProxy && (
+        {usingDraft && (
           <p className="text-sm text-muted-foreground">
             {t("settings.proxy.checkDraft")}
           </p>
@@ -573,11 +543,7 @@ function CheckProxyDialog({
           >
             {checking
               ? t("settings.proxy.checking")
-              : t(
-                  onSaveProxy
-                    ? "settings.proxy.checkAndSave"
-                    : "settings.proxy.checkConfirm",
-                )}
+              : t("settings.proxy.checkConfirm")}
           </Button>
         </DialogFooter>
       </DialogContent>
