@@ -55,7 +55,7 @@ export const workflowRunTranslations = {
     "errors.workflow_run_not_editable": "该工作流运行当前不可编辑。",
     "errors.workflow_node_not_found": "未找到该工作流节点。",
     "errors.workflow_node_not_awaiting_input":
-      "该节点当前不在等待人工输入，无法完成。",
+      "请刷新运行详情；若当前尝试仍在等待输入，请重新确认。",
     "errors.workflow_node_incomplete":
       "本轮尚未完成，不能直接完成当前节点；请继续当前步骤或显式强制完成。",
     "errors.workflow_node_turn_changed":
@@ -642,7 +642,7 @@ export const workflowRunTranslations = {
       "The workflow run is not editable right now.",
     "errors.workflow_node_not_found": "Workflow node not found.",
     "errors.workflow_node_not_awaiting_input":
-      "This node is not awaiting input and cannot be completed.",
+      "Refresh the run and confirm the current attempt if it is still awaiting input.",
     "errors.workflow_node_incomplete":
       "This turn is incomplete. Continue it or complete it with an explicit force.",
     "errors.workflow_node_turn_changed":

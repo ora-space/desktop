@@ -471,7 +471,7 @@ impl ApplicationError {
     }
 
     /// Maps run-engine failures into stable application errors.
-    pub(crate) fn from_workflow_engine_error(error: EngineError) -> Self {
+    pub fn from_workflow_engine_error(error: EngineError) -> Self {
         match error {
             EngineError::WorkflowRunNotFound { run_id } => Self::WorkflowRunNotFound { run_id },
             EngineError::GraphParse(error) => Self::WorkflowRunGraphParse(error),

@@ -1,6 +1,14 @@
 {
   "owner": "Workflow definition editing",
   "modules": {
+    "./run-node-config-form": {
+      "exports": [
+        "RunNodeConfigForm",
+        "RunNodeConfigFormProps",
+        "RunNodeConfig"
+      ],
+      "purpose": "The run view edits execution-scoped configuration and receives validated changes for preview."
+    },
     "./workflow-editor": {
       "exports": ["WorkflowEditor"],
       "purpose": "Workspace hosts the definition editor through its top-level view."

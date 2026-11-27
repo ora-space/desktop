@@ -158,10 +158,12 @@ export function RunTheaterActCard({
     sessionChatIdentity !== null &&
     interactive &&
     runId !== undefined &&
-    nodeId !== undefined
+    nodeId !== undefined &&
+    state.nodeRunId !== undefined
       ? {
           runId,
           nodeId,
+          nodeRunId: state.nodeRunId,
           ...(state.completion !== undefined
             ? { completion: state.completion }
             : {}),
@@ -453,6 +455,7 @@ export function RunTheaterActCard({
           >
             {sessionChatIdentity !== null ? (
               <RunNodeSessionChat
+                key={state.nodeRunId ?? state.sessionId}
                 sessionId={sessionChatIdentity.sessionId}
                 status={state.status}
                 interaction={sessionInteraction}

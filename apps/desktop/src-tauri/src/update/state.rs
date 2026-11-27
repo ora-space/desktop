@@ -1,7 +1,7 @@
 //! Runtime state machine for one Desktop update operation.
 
 use super::release_notes::visible_notes;
-use super::{DesktopUpdateStatus, ManualUpdateReason, ReleaseNote, UpdateError};
+use super::{DesktopUpdateStatus, FailedOperation, ManualUpdateReason, ReleaseNote, UpdateError};
 use crate::update::artifact_store::{ArtifactDescriptor, StoredArtifact};
 use ora_utils::error::error_chain;
 use semver::Version;
@@ -71,6 +71,7 @@ pub(super) enum RuntimeUpdateState<I> {
     },
     Installing(ReadyUpdate<I>),
     Failed {
+        operation: FailedOperation,
         message: String,
     },
 }
@@ -106,7 +107,8 @@ impl<I: Clone> RuntimeUpdateState<I> {
             Self::Installing(ready) => DesktopUpdateStatus::Installing {
                 version: ready.descriptor.identity.release_version.clone(),
             },
-            Self::Failed { message } => DesktopUpdateStatus::Failed {
+            Self::Failed { operation, message } => DesktopUpdateStatus::Failed {
+                operation: operation.clone(),
                 message: message.clone(),
             },
         }
@@ -125,18 +127,29 @@ impl<I: Clone> RuntimeUpdateState<I> {
         }
     }
 
-    /// Decides what a failed check leaves behind: an update that is still installable keeps its notes,
-    /// anything else reports the failure.
+    /// Decides what a failed check leaves behind: an update whose package still verifies keeps its
+    /// notes, anything else reports the failure.
+    ///
+    /// The caller passes only a retained update it has re-verified, so a discarded package cannot be
+    /// offered again by mistake.
     pub(super) fn after_failed_check(
-        retained: Option<ReadyUpdate<I>>,
-        retained_is_valid: bool,
+        verified: Option<ReadyUpdate<I>>,
         error: &UpdateError,
     ) -> Self {
-        match retained {
-            Some(ready) if retained_is_valid => Self::Ready(ready),
-            Some(_) | None => Self::Failed {
+        match verified {
+            Some(ready) => Self::Ready(ready),
+            None => Self::Failed {
+                operation: FailedOperation::Check,
                 message: error_chain(error),
             },
+        }
+    }
+
+    /// Reports that a confirmed package failed its last verification and was discarded.
+    pub(super) fn after_failed_install(version: String, error: &UpdateError) -> Self {
+        Self::Failed {
+            operation: FailedOperation::Install { version },
+            message: error_chain(error),
         }
     }
 

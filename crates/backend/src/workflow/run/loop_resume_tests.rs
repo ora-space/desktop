@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use tempfile::TempDir;
 
 /// One Loop whose body is `entry → writer`; the loop ends once the writer answers `done`.
-const LOOP_GRAPH: &str = r#"{"schemaVersion":2,"nodes":[
+pub(super) const LOOP_GRAPH: &str = r#"{"schemaVersion":2,"nodes":[
     {"id":"start","data":{"kind":"start"}},
     {"id":"loop","data":{"kind":"loop","loopConfig":{
         "maxIterations":3,
@@ -169,6 +169,46 @@ fn active_round_scopes(temp: &TempDir, run_id: &WorkflowRunId) -> i64 {
             |row| row.get(0),
         )
         .unwrap()
+}
+
+/// In round two an old client cannot identify the parked writer by its graph node alone.
+#[test]
+fn second_round_completion_requires_the_displayed_writer_attempt() {
+    use super::interactive::{CompletionApproval, claim_node_for_completion};
+    use super::test_fixture::{bind_and_park, locks};
+    use ora_contracts::{EmptyErrorParams, PublicError};
+    with_trace_logging(|| {
+        let (temp, pool) = bootstrap();
+        let graph = LOOP_GRAPH.replace(
+            "\"prompt\":\"revise\"",
+            "\"prompt\":\"revise\",\"interactive\":true",
+        );
+        let (run, nodes, engine) =
+            started_run_with(&temp, &pool, &graph, RecordingExecutor::default());
+        let first = running_writer(&nodes);
+        complete(&engine, &run, &first.id, "again");
+        let rows = live_nodes(&pool, &run);
+        let second = running_writer(&rows);
+        assert_ne!(first.scope_id, second.scope_id);
+        bind_and_park(&pool, second);
+        let (gate, completing) = locks();
+        let claim = |observed| {
+            claim_node_for_completion(
+                &pool,
+                &gate,
+                &completing,
+                &run,
+                "writer",
+                observed,
+                &CompletionApproval::PLAIN,
+            )
+        };
+        assert_eq!(
+            claim(None).unwrap_err().public_error(),
+            &PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {})
+        );
+        assert_eq!(claim(Some(second.id.as_ref())).unwrap(), second.id);
+    });
 }
 
 /// A failure in round 2 fails the Loop and the run; resume soft-deletes every round row and

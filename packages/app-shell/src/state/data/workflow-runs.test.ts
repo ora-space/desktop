@@ -191,6 +191,7 @@ describe("buildDisplayRun iteration projection", () => {
       },
       {
         nodeId: "fix",
+        id: "fix-attempt-0",
         status: "succeeded",
         startedAt: 3n,
         finishedAt: 4n,
@@ -201,6 +202,7 @@ describe("buildDisplayRun iteration projection", () => {
       },
       {
         nodeId: "fix",
+        id: "fix-attempt-1",
         status: "failed",
         startedAt: 4n,
         finishedAt: 5n,
@@ -230,13 +232,13 @@ describe("buildDisplayRun iteration projection", () => {
     });
     expect(display.roundStates?.fix).toHaveLength(2);
     expect(display.roundStates?.fix[0]).toMatchObject({
-      nodeRunId: "fix-0",
+      nodeRunId: "fix-attempt-0",
       status: "succeeded",
       iteration: 0,
       output: { summary: "fixed round 0" },
     });
     expect(display.roundStates?.fix[1]).toMatchObject({
-      nodeRunId: "fix-1",
+      nodeRunId: "fix-attempt-1",
       status: "failed",
       iteration: 1,
     });

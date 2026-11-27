@@ -669,6 +669,7 @@ describe("buildDisplayRun failed attempts", () => {
     const round1State = {
       nodeRunId: "fix-round-1-attempt-2",
       iteration: 1,
+      nodeRunId: "fix-round-1-attempt-2",
       status: "retry_waiting",
       retryWait: {
         attempt: 2,
@@ -691,6 +692,7 @@ describe("buildDisplayRun failed attempts", () => {
       {
         nodeRunId: "fix-round-0-attempt-2",
         iteration: 0,
+        nodeRunId: "fix-round-0-attempt-2",
         status: "succeeded",
         sessionId: "session-fix-round-0-2",
         startedAt: iso(20_000),

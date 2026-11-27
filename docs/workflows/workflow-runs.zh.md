@@ -64,6 +64,10 @@
 
 ### 交互节点
 
+人工完成（包括强制完成和信号确认）绑定运行页所示尝试的 `nodeRunId`。尝试已更换时，请刷新运行详情后重新确认。旧客户端仅在本次运行内该节点只有一个尝试且仍有效时可以省略这个字段。
+
+调试操作正在停稳，或停稳失败且栅栏尚未释放时，受影响的交互尝试会拒绝后续提示和人工完成。即使完成请求先于调试操作受理，提交前也会再次校验尝试。被此校验拒绝的请求返回 `workflow_node_not_awaiting_input`。
+
 交互的 Agent 节点在第一个回合之后停下等待输入。后续消息作为人工回合在同一会话上运行，`completeWorkflowNode` 手动完成节点；一个完成认领防止后续回合与手动完成竞争。Iteration 区域的成员默认不是交互的，运行时拒绝交互成员。
 
 每个停靠回合都会写入完成快照：turn key、stop reason、blockers 和最终 assistant 文本的 digest。新建或重新保存的交互 Agent 节点默认 `completionSignal: agent`：host 向该节点会话注入 loopback 完成工具，只有 agent 为结算的 attempt 调用它、并且用户确认（或节点配置了 `autoAcceptAgentCompletion`）后节点才完成。本轮没有信号时快照带 `agent_signal_pending`，有信号但未确认时带 `agent_confirmation_pending`，两者与其他 blocker 一起物化进停靠快照。`completionSignal: end_turn` 的遗留图仍按旧规则：只有 `EndTurn` 且没有 blocker 的回合才能正常完成。停止、截断、拒答或未知终态会保持等待输入，`completeWorkflowNode` 返回 `workflow_node_incomplete`（带上全部 blocker），除非显式传 `force`；turn key 或 digest 变化分别返回 `workflow_node_turn_changed` / `workflow_node_output_changed`，并给出 expected 与 actual。会话末尾的步骤卡片和右下角按钮是两个显式推进入口：继续、二次确认后的强制完成，或卡片 ready 时的完成并推进。确认请求携带用户看到的 `signalId`；过期 id 返回 `workflow_node_signal_changed`，不会落到新的回合上。attempt 失败、节点完成和运行取消都会撤销对应的 token；Desktop 重启后完成工具随持久化会话一起恢复。
@@ -152,5 +156,11 @@ Start 输入把表单控件与变量池类型分开：文本、段落和下拉�
 失败恢复和整次重启都以运行当前的有效修订作为配置基线。重启会创建新的根，顶层的修改继续生效；两个入口重建容器时都从容器的入口配置开始，绑定在旧容器执行上的成员覆盖只留在历史里。只有成功切换发布快照才会开始新的基线：新快照和新的运行修订一起提交，之前的补丁和尝试留在历史里可供查询但不再重放，切回曾用过的快照也一样，切换前取得的预览随之过期。被拒绝的切换保留原快照和已有修订。
 
 ## 重启后的恢复
+
+确认调试后，如果在旧尝试停稳期间取消，操作回执记为 `stop_failed`，原因为 `run_cancelled`。正在执行的工作流转为取消；原本已结束的工作流保留原终态和原因。如果修订先生效，则修订保留在历史里，取消阻止剩余派发。
+
+修订生效后，只绑定到退役尝试的会话会拒绝后续提示，并返回 `workflow_node_not_awaiting_input`。要继续对话，请打开替代尝试。
+
+启动时，Desktop 先检查未结束的调试操作，再做普通中断清理。无法证明外部写入已隔离时，历史列出未停稳的尝试 ID，该范围继续阻塞。若修订已生效，调度器可补派已就绪但未认领的位置；新修订下已经启动的尝试按普通中断规则处理，不会再派发一次。
 
 Desktop 只有在持有应用实例锁之后才运行启动扫尾（见 [Desktop 宿主](../desktop/desktop-host.zh.md#启动)），所以存活的第二个进程永远不会把运行中的工作标记为已中断。被中断的外层行以 `interrupted_by_restart` 失败并让运行失败；运行中的容器内被中断的行失败，容器和运行保留，该轮以失败结算。合法的交互等待被保留，副作用未知的工具从不自动重放。

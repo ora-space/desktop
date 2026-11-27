@@ -119,6 +119,7 @@ pub(super) fn fail_orphaned_run(
         "SELECT EXISTS(
             SELECT 1 FROM workflow_node_runs
             WHERE run_id = ?1 AND status = ?2 AND is_deleted = 0
+              AND id NOT IN (SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1)
          )",
         params![
             run_id.as_ref(),
@@ -132,7 +133,8 @@ pub(super) fn fail_orphaned_run(
     let nodes = {
         let mut statement = transaction.prepare(
             "SELECT id, node_id, payload FROM workflow_node_runs
-             WHERE run_id = ?1 AND status IN (?2, ?3) AND is_deleted = 0",
+             WHERE run_id = ?1 AND status IN (?2, ?3) AND is_deleted = 0
+               AND id NOT IN (SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1)",
         )?;
         let rows = statement.query_map(
             params![
@@ -179,6 +181,7 @@ pub(super) fn fail_orphaned_run(
     transaction.execute(
         "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
          WHERE run_id = ?1 AND parent_loop_node_run_id IS NOT NULL
+           AND parent_loop_node_run_id NOT IN (SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1)
            AND status IN (0, 1)",
         params![
             run_id.as_ref(),
@@ -189,6 +192,7 @@ pub(super) fn fail_orphaned_run(
     transaction.execute(
         "UPDATE sessions SET status = ?2, updated_at = ?3
          WHERE workspace_id = (SELECT workspace_id FROM workflow_runs WHERE id = ?1 AND is_deleted = 0)
+           AND id NOT IN (SELECT n.session_id FROM workflow_node_runs n JOIN workflow_debug_boot_protected p ON n.id=p.id WHERE n.session_id IS NOT NULL)
            AND status = ?4 AND is_deleted = 0",
         params![
             run_id.as_ref(),

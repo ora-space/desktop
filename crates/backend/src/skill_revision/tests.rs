@@ -525,3 +525,192 @@ fn a_create_rolled_back_leaves_the_revision_alone() {
         assert_eq!(advanced, 0);
     });
 }
+
+/// A package that breaks or comes back without a commit is counted when the settings list it, as
+/// when a session's catalog reads it, and a commit is not counted again by the next list.
+#[test]
+fn the_settings_list_notices_another_set_of_available_skills() {
+    ora_logging::with_trace_logging(|| {
+        let skills = Skills::new();
+        let api = skills.api();
+        api.create(create("review")).unwrap();
+        let list = || {
+            let before = skills.revision.current();
+            api.list(ora_contracts::ListSkillsRequest {}).unwrap();
+            skills.advanced_from(before)
+        };
+        assert_eq!([list(), list()], [0, 0], "the commit was counted");
+
+        let manifest = skills.root().join("review").join("SKILL.md");
+        let content = fs::read(&manifest).unwrap();
+        fs::remove_file(&manifest).unwrap();
+        assert_eq!([list(), list()], [1, 0], "it stopped being available");
+        fs::write(&manifest, content).unwrap();
+        assert_eq!([list(), list()], [1, 0], "it is available again");
+    });
+}
+
+/// The settings and the sessions read the same Skills, local and from a plugin, as the same set:
+/// neither counts a change for what the other one already saw.
+#[test]
+fn the_settings_and_the_sessions_count_a_change_once() {
+    ora_logging::with_trace_logging(|| {
+        let skills = Skills::new();
+        let api = skills.api();
+        api.create(create("review")).unwrap();
+        let package = skills.directory.path().join("plugin").join("audit");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("SKILL.md"),
+            "---\nname: audit\ndescription: Audits\n---\nInstructions",
+        )
+        .unwrap();
+        let projection = PluginSkillProjection {
+            name: "audit".to_string(),
+            description: "Audits".to_string(),
+            package_root: package,
+        };
+        skills
+            .repository()
+            .replace_plugin_skills(
+                &PluginId::new("official", "review").unwrap(),
+                "1.0.0",
+                &[projection],
+                1,
+            )
+            .unwrap();
+        let catalog = skills.catalog();
+        let look = || {
+            let before = skills.revision.current();
+            catalog
+                .skill_catalog(&WorkspaceId::new("workspace"))
+                .unwrap();
+            skills.advanced_from(before)
+        };
+        let list = || {
+            let before = skills.revision.current();
+            api.list(ora_contracts::ListSkillsRequest {}).unwrap();
+            skills.advanced_from(before)
+        };
+        assert_eq!([look(), list(), look(), list()], [0, 0, 0, 0]);
+
+        let manifest = skills.root().join("review").join("SKILL.md");
+        let content = fs::read(&manifest).unwrap();
+        fs::remove_file(&manifest).unwrap();
+        assert_eq!(
+            [list(), look(), list()],
+            [1, 0, 0],
+            "the settings saw it first"
+        );
+        fs::write(&manifest, content).unwrap();
+        assert_eq!(
+            [look(), list(), look()],
+            [1, 0, 0],
+            "a session saw it first"
+        );
+    });
+}
+
+/// A batch import tells every agent about each Skill it commits, many more events than a client's
+/// queue holds; while the client is not reading they are merged, so its event stream stays open
+/// and still tells it about every agent.
+#[tokio::test]
+async fn a_batch_import_keeps_the_event_stream_open() {
+    let temporary = TempDir::new().unwrap();
+    let home = temporary.path().join("home");
+    for agent in ["first", "second"] {
+        let package = home
+            .join("plugins/installed/official")
+            .join(agent)
+            .join("1.0.0");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(package.join("main.js"), "export {};\n").unwrap();
+        fs::write(
+            package.join("orax.toml"),
+            format!(
+                "resolver = 1\nidentifier = \"{agent}\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Example\"\n"
+            ),
+        )
+        .unwrap();
+    }
+    let source = temporary.path().join("source");
+    // Two agents told about each of these: more than a client's stream and queue hold together.
+    let imported = 80;
+    for index in 0..imported {
+        let name = format!("skill-{index}");
+        let package = source.join(&name);
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Does it\n---\nInstructions"),
+        )
+        .unwrap();
+    }
+    let backend = crate::Backend::open(crate::test_backend::backend_paths(
+        &temporary.path().join("app-data"),
+        &home,
+    ))
+    .unwrap();
+    let mut events = backend.app_events().subscribe();
+    let skills = backend.skills();
+    let session = skills
+        .prepare_import(PrepareSkillImportRequest {
+            source: SkillImportSource::Folder {
+                path: source.to_string_lossy().into_owned(),
+            },
+        })
+        .unwrap()
+        .session;
+    skills
+        .commit_import(CommitSkillImportRequest {
+            session_id: session.session_id.clone(),
+            decisions: Vec::new(),
+        })
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let status = skills
+            .get_import(GetSkillImportSessionRequest {
+                session_id: session.session_id.clone(),
+            })
+            .unwrap()
+            .session
+            .status;
+        if status == SkillImportSessionStatus::Completed {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{status:?}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // Only now does the client read: everything it is told arrives, and the stream did not end.
+    let mut invalidated = std::collections::BTreeSet::new();
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), events.recv()).await {
+            Err(_) => break,
+            Ok(event) => {
+                let event = event
+                    .expect("the stream stays open")
+                    .expect("the stream does not fail");
+                if let AppEvent::AgentModelsInvalidated { agent_ref } = event {
+                    invalidated.insert(agent_ref);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        invalidated.into_iter().collect::<Vec<_>>(),
+        ["official/first", "official/second"]
+    );
+    // And it still takes what comes after.
+    skills.create(create("after")).unwrap();
+    let mut after = Vec::new();
+    while after.len() < 2 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(30), events.recv());
+        if let AppEvent::AgentModelsInvalidated { agent_ref } =
+            event.await.unwrap().unwrap().unwrap()
+        {
+            after.push(agent_ref);
+        }
+    }
+}

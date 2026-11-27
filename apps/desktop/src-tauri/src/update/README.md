@@ -31,6 +31,10 @@ Desktop application self-update orchestration around Tauri's signed updater plug
   `packages/app-shell/src/platform/types.ts`.
 - `DesktopUpdateMode` lets the composition root disable network work in development builds while
   keeping the commands and the state machine reachable from tests.
+- The state machine lives in `UpdateEngine`, which reaches the Tauri updater, the running package's
+  version, and the webview only through the `UpdateHost` and `OfferedPackage` traits.
+  `UpdateService` supplies the Tauri implementations, the scheduler registrations, and the restart
+  after an installation; tests drive the engine with a scripted host.
 
 ## Lifecycle
 
@@ -63,13 +67,16 @@ Desktop application self-update orchestration around Tauri's signed updater plug
 
 ## Failure semantics
 
-- A failed check is logged and surfaced as `Failed` only when nothing was installable in the
-  current process before it. A persisted candidate is retained for a later reconciliation retry.
-  The log and the surfaced message carry the whole cause chain.
+- `Failed` names the operation that failed: `check` for fetching, downloading, or verifying a
+  release before it is offered, and `install` with the confirmed version for its last
+  verification. The webview titles a failure from this field and keeps no history of its own.
+- A failed check is logged and surfaced as a failed `check` only when nothing installable in the
+  current process still verifies. A persisted candidate is retained for a later reconciliation
+  retry. The log and the surfaced message carry the whole cause chain.
 - A plugin installation failure restores `Ready` and keeps the verified artifact so the user can
   retry; the webview reports it from the rejected install command. A package that fails the
-  pre-install record, digest, or signature checks is removed and transitions to `Failed` instead of
-  advertising a broken retry.
+  pre-install record, digest, or signature checks is removed and transitions to a failed `install`
+  instead of advertising a broken retry.
 - An installation that the updater cannot perform — a `deb` or `rpm` package, or a bare executable
   on Linux — is reported as `ManualUpdate` before any download is spent, because the static
   manifest only advertises an AppImage for Linux.

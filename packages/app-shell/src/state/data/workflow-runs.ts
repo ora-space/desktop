@@ -337,6 +337,7 @@ export function useCompleteWorkflowNode() {
     mutationFn: (input: {
       runId: string;
       nodeId: string;
+      nodeRunId: string;
       force?: boolean;
       /**
        * Explicitly accepts the workflow's opening turn. `confirmInitialTurn` only lifts
@@ -349,6 +350,7 @@ export function useCompleteWorkflowNode() {
       client.workflowRun.completeNode({
         runId: input.runId,
         nodeId: input.nodeId,
+        nodeRunId: input.nodeRunId,
         force: input.force ?? false,
         ...(input.confirmInitialTurn === undefined
           ? {}
@@ -788,7 +790,7 @@ function projectPersistedNodeState(
         )
       : undefined;
   return {
-    ...(nodeRun.id ? { nodeRunId: nodeRun.id } : {}),
+    ...(nodeRun.id !== undefined ? { nodeRunId: nodeRun.id } : {}),
     ...(nodeRun.iteration != null ? { iteration: nodeRun.iteration } : {}),
     status,
     ...(nodeRun.sessionId != null && nodeRun.sessionId !== ""

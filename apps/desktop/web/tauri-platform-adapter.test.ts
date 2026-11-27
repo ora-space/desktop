@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PathSelectionInProgressError } from "@ora/app-shell/platform";
+import { RemoteContractError } from "@ora/contracts";
 import { createTauriPlatformAdapter } from "./tauri-platform-adapter";
 
 const { onDragDropEventMock } = vi.hoisted(() => ({
@@ -50,6 +51,21 @@ describe("TauriPlatformAdapter", () => {
     expect(invokeMock).toHaveBeenCalledExactlyOnceWith(
       "install_desktop_update",
       { version: "0.8.0" },
+    );
+  });
+
+  it("rejects an installation with the decoded contract error", async () => {
+    invokeMock.mockRejectedValueOnce({
+      code: "desktop_update_release_replaced",
+      params: {},
+      requestId: "00000000-0000-4000-8000-000000000001",
+    });
+    const { updates } = createTauriPlatformAdapter();
+
+    const rejection = await updates?.install("0.8.0").catch((error) => error);
+    expect(rejection).toBeInstanceOf(RemoteContractError);
+    expect((rejection as RemoteContractError).code).toBe(
+      "desktop_update_release_replaced",
     );
   });
 
