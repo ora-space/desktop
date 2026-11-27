@@ -133,6 +133,13 @@ function ProxySettingsEditor({
       ? parsedProxySettings(host, port, username, password)
       : null;
   const invalid = mode === "manual" && parsed === null;
+  const usingDraft =
+    mode !== controller.mode ||
+    (parsed !== null &&
+      (parsed.host !== initialSettings?.host ||
+        parsed.port !== initialSettings.port ||
+        parsed.username !== initialSettings.username ||
+        parsed.password !== initialSettings.password));
   const hasFormValues =
     host.trim() !== "" ||
     port.trim() !== "" ||
@@ -343,6 +350,9 @@ function ProxySettingsEditor({
       </div>
       {checkOpen && !invalid && (
         <CheckProxyDialog
+          mode={mode}
+          usingDraft={usingDraft}
+          updateUrl={controller.updateUrl}
           checking={controller.isChecking}
           blocked={checkBlocked}
           readError={
@@ -368,6 +378,9 @@ function ProxySettingsEditor({
 }
 
 interface CheckProxyDialogProps {
+  mode: ProxyMode;
+  usingDraft: boolean;
+  updateUrl: string | undefined;
   checking: boolean;
   blocked: boolean;
   readError: string | null;
@@ -381,6 +394,9 @@ interface CheckProxyDialogProps {
 
 /** Prompts for a URL and reports whether the current form proxy can reach it. */
 function CheckProxyDialog({
+  mode,
+  usingDraft,
+  updateUrl,
   checking,
   blocked,
   readError,
@@ -411,23 +427,32 @@ function CheckProxyDialog({
     try {
       const result = await onCheck(nextUrl);
       if (result.outcome === "reachable") {
+        if (result.route === "direct" && mode === "manual") {
+          toast.warning(t("settings.proxy.checkBypassedManual"), {
+            description: t("settings.proxy.checkSuccessDetail", {
+              status: result.status,
+            }),
+          });
+          return;
+        }
+        const routeDetail =
+          result.route === undefined
+            ? t("settings.proxy.checkSuccessDetail", { status: result.status })
+            : t("settings.proxy.checkRouteDetail", {
+                status: result.status,
+                route: t(
+                  {
+                    direct: "settings.proxy.modeDirect",
+                    manual: "settings.proxy.modeManual",
+                    system: "settings.proxy.routeSystem",
+                    environment: "settings.proxy.routeEnvironment",
+                  }[result.route],
+                ),
+              });
         toast.success(t("settings.proxy.checkSuccess"), {
-          description:
-            result.route === undefined
-              ? t("settings.proxy.checkSuccessDetail", {
-                  status: result.status,
-                })
-              : t("settings.proxy.checkRouteDetail", {
-                  status: result.status,
-                  route: t(
-                    {
-                      direct: "settings.proxy.modeDirect",
-                      manual: "settings.proxy.modeManual",
-                      system: "settings.proxy.routeSystem",
-                      environment: "settings.proxy.routeEnvironment",
-                    }[result.route],
-                  ),
-                }),
+          description: usingDraft
+            ? routeDetail + " " + t("settings.proxy.checkDraft")
+            : routeDetail,
         });
         onOpenChange(false);
         return;
@@ -465,6 +490,7 @@ function CheckProxyDialog({
           </span>
           <Input
             value={url}
+            disabled={checking}
             onChange={(event) => onUrlChange(event.target.value)}
             aria-label={t("settings.proxy.checkUrl")}
             autoComplete="off"
@@ -476,6 +502,20 @@ function CheckProxyDialog({
             }}
           />
         </label>
+        {updateUrl !== undefined && (
+          <Button
+            variant="outline"
+            disabled={blocked || checking}
+            onClick={() => onUrlChange(updateUrl)}
+          >
+            {t("settings.proxy.useUpdateUrl")}
+          </Button>
+        )}
+        {usingDraft && (
+          <p className="text-sm text-muted-foreground">
+            {t("settings.proxy.checkDraft")}
+          </p>
+        )}
         {readError !== null && (
           <div className="space-y-2">
             <p role="alert">{readError}</p>

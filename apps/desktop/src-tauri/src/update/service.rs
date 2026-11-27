@@ -140,17 +140,7 @@ impl UpdateHost for TauriUpdateHost {
             .network_proxy_policy()
             .await
             .map_err(|error| UpdateError::ProxySettings(error.to_string()))?;
-        let config = self
-            .app
-            .config()
-            .plugins
-            .0
-            .get("updater")
-            .ok_or(UpdateError::Updater(
-                tauri_plugin_updater::Error::EmptyEndpoints,
-            ))?;
-        let config: tauri_plugin_updater::Config = serde_json::from_value(config.clone())
-            .map_err(|error| UpdateError::Updater(error.into()))?;
+        let config = updater_config(&self.app)?;
         for url in &config.endpoints {
             policy.route(url)?;
         }
@@ -159,7 +149,9 @@ impl UpdateHost for TauriUpdateHost {
             .app
             .updater_builder()
             .no_proxy()
-            .configure_client(move |builder| configure_proxy_client(builder, &route))
+            .configure_client(move |builder| {
+                crate::network_proxy::configure_client(builder, &route)
+            })
             .build()
             .map_err(UpdateError::Updater)?;
         updater
@@ -174,6 +166,28 @@ impl UpdateHost for TauriUpdateHost {
             ora_error!(message = "failed to publish Desktop update status", error = %error);
         }
     }
+}
+
+/// Gives the settings probe the updater's configured manifest endpoint.
+pub(crate) fn probe_url(app: &AppHandle) -> Option<String> {
+    updater_config(app)
+        .ok()?
+        .endpoints
+        .first()
+        .map(ToString::to_string)
+}
+
+/// Reads the release transport configuration from its Tauri source of truth.
+fn updater_config(app: &AppHandle) -> Result<tauri_plugin_updater::Config, UpdateError> {
+    let config = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .ok_or(UpdateError::Updater(
+            tauri_plugin_updater::Error::EmptyEndpoints,
+        ))?;
+    serde_json::from_value(config.clone()).map_err(|error| UpdateError::Updater(error.into()))
 }
 
 /// Keeps the manifest's routing snapshot with the package that it offered.
@@ -220,34 +234,6 @@ impl OfferedPackage for RoutedUpdate {
     }
 }
 
-/// Applies the same policy to Tauri's manifest and package clients and to each redirect.
-fn configure_proxy_client(
-    builder: updater_http::ClientBuilder,
-    policy: &HostProxy,
-) -> updater_http::ClientBuilder {
-    use updater_http::{Proxy, redirect::Policy};
-    let proxy = policy.clone();
-    let redirect = policy.clone();
-    let limit = Policy::limited(10);
-    builder
-        .no_proxy()
-        .proxy(Proxy::custom(move |target| {
-            proxy.route(target).ok()?.endpoint
-        }))
-        .redirect(Policy::custom(move |attempt| {
-            if attempt.url().scheme() != "https"
-                || !attempt.url().username().is_empty()
-                || attempt.url().password().is_some()
-            {
-                return attempt.error("unsafe update redirect");
-            }
-            if let Err(error) = redirect.route(attempt.url()) {
-                return attempt.error(error);
-            }
-            limit.redirect(attempt)
-        }))
-}
-
 /// Reports proxy authentication failures without using a credential-bearing error URL.
 fn network_update_error(error: tauri_plugin_updater::Error) -> UpdateError {
     if is_proxy_auth_failure(&error)
@@ -268,7 +254,7 @@ mod proxy_tests {
     /// Mirrors the updater's ring initialization before building a test transport.
     fn client_for(policy: &HostProxy) -> updater_http::Client {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        configure_proxy_client(updater_http::Client::builder(), policy)
+        crate::network_proxy::configure_client(updater_http::Client::builder(), policy)
             .timeout(Duration::from_secs(3))
             .build()
             .unwrap()

@@ -1,14 +1,9 @@
 use gitlancer::GitEnv;
 use ora_application::{NetworkProxyMode, NetworkProxyPreferences, NetworkProxySettings};
-use ora_contracts::CheckProxySettingsResponse;
-use ora_utils::http::{HostProxy, HostProxyError, ReqwestDownloader};
-use std::time::Duration;
+use ora_utils::http::{HostProxy, HostProxyError};
 use url::Url;
 
 use crate::BackendError;
-
-/// Time budget for one proxy connectivity probe, including connect and the first response headers.
-const PROXY_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Creates the policy shared by Desktop updates, marketplace traffic and the settings probe.
 pub(crate) fn host_proxy(preferences: &NetworkProxyPreferences) -> Result<HostProxy, BackendError> {
@@ -127,54 +122,6 @@ fn normalized_proxy_url(settings: &NetworkProxySettings) -> Result<String, Backe
     })
 }
 
-/// Probes a target along its resolved route without persisting form edits.
-pub(crate) async fn check_proxy(
-    preferences: &NetworkProxyPreferences,
-    url: &str,
-) -> Result<CheckProxySettingsResponse, BackendError> {
-    use ora_contracts::ProxyRoute;
-    let unreachable = |message: String| CheckProxySettingsResponse::Unreachable { message };
-    let Ok(parsed) = Url::parse(url) else {
-        return Ok(unreachable("invalid probe URL".to_owned()));
-    };
-    if !matches!(parsed.scheme(), "http" | "https")
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-    {
-        return Ok(unreachable(
-            "URL must use HTTP(S) without credentials".to_owned(),
-        ));
-    }
-    let policy = match host_proxy(preferences) {
-        Ok(policy) => policy,
-        Err(error) => return Ok(unreachable(error.to_string())),
-    };
-    let (status, final_url) = match ReqwestDownloader::for_host_proxy(policy.clone())
-        .probe(parsed, PROXY_CHECK_TIMEOUT)
-        .await
-    {
-        Ok(result) => result,
-        Err(error) => return Ok(unreachable(error.to_string())),
-    };
-    if !(200..300).contains(&status) {
-        return Ok(CheckProxySettingsResponse::HttpError { status });
-    }
-    let origin = match policy.route(&final_url) {
-        Ok(route) => route.origin,
-        Err(error) => return Ok(unreachable(error.to_string())),
-    };
-    let route = match origin {
-        ora_utils::http::ProxyOrigin::Direct => ProxyRoute::Direct,
-        ora_utils::http::ProxyOrigin::Manual => ProxyRoute::Manual,
-        ora_utils::http::ProxyOrigin::System => ProxyRoute::System,
-        ora_utils::http::ProxyOrigin::Environment => ProxyRoute::Environment,
-    };
-    Ok(CheckProxySettingsResponse::Reachable {
-        status,
-        route: Some(route),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +129,7 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::path::Path;
+    use std::time::Duration;
 
     /// Runs a real Git network operation against a fully controlled local endpoint.
     fn ls_remote_stderr(remote: &str, env: GitEnv, global_config: &Path) -> String {
@@ -243,83 +191,6 @@ mod tests {
             request
         });
         (endpoint, task)
-    }
-
-    /// Follows a 301 from a manual proxy to a direct target and classifies the final response.
-    #[tokio::test]
-    async fn proxy_check_uses_final_status_and_route() {
-        for (status_line, expected) in [
-            (
-                "200 OK",
-                CheckProxySettingsResponse::Reachable {
-                    status: 200,
-                    route: Some(ora_contracts::ProxyRoute::Direct),
-                },
-            ),
-            (
-                "204 No Content",
-                CheckProxySettingsResponse::Reachable {
-                    status: 204,
-                    route: Some(ora_contracts::ProxyRoute::Direct),
-                },
-            ),
-            (
-                "403 Forbidden",
-                CheckProxySettingsResponse::HttpError { status: 403 },
-            ),
-            (
-                "404 Not Found",
-                CheckProxySettingsResponse::HttpError { status: 404 },
-            ),
-        ] {
-            let (destination, final_request) = serve_http_request(format!(
-                "HTTP/1.1 {status_line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            ));
-            let (proxy, initial_request) = serve_http_request(format!(
-                "HTTP/1.1 301 Moved Permanently\r\nLocation: {destination}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            ));
-            let port = Url::parse(&proxy).unwrap().port().unwrap();
-            let preferences = NetworkProxyPreferences {
-                mode: NetworkProxyMode::Manual,
-                manual: Some(NetworkProxySettings {
-                    host: "127.0.0.1".to_owned(),
-                    port,
-                    username: None,
-                    password: None,
-                }),
-            };
-            assert_eq!(
-                check_proxy(&preferences, "http://origin.example/first")
-                    .await
-                    .unwrap(),
-                expected
-            );
-            assert!(
-                initial_request
-                    .join()
-                    .unwrap()
-                    .starts_with("GET http://origin.example/first ")
-            );
-            assert!(final_request.join().unwrap().starts_with("GET /final "));
-        }
-    }
-
-    /// A redirect with no destination cannot be reported as a successful check.
-    #[tokio::test]
-    async fn proxy_check_rejects_a_bare_redirect() {
-        let (url, server) = serve_http_request(
-            "HTTP/1.1 301 Moved Permanently\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                .to_owned(),
-        );
-        let preferences = NetworkProxyPreferences {
-            mode: NetworkProxyMode::Direct,
-            manual: None,
-        };
-        assert_eq!(
-            check_proxy(&preferences, &url).await.unwrap(),
-            CheckProxySettingsResponse::HttpError { status: 301 }
-        );
-        server.join().unwrap();
     }
 
     /// Direct Git traffic ignores URL-scoped Git settings and an inherited environment proxy.

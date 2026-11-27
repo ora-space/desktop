@@ -60,7 +60,13 @@ export type GetProxySettingsResponse = {
 /**
  * Returns the authoritative saved target, or the default only when no preference exists.
  */
-export type ProxyCheckUrlResponse = { url: string };
+export type ProxyCheckUrlResponse = {
+  /**
+   * The configured release manifest URL, when the host supplies one.
+   */
+  updateUrl?: string;
+  url: string;
+};
 
 /**
  * Selects how Desktop chooses a network proxy.
@@ -77,7 +83,7 @@ export type ProxyRoute = "system" | "manual" | "environment" | "direct";
  */
 export type ProxySettings = {
   /**
-   * Proxy hostname or address without a scheme.
+   * Proxy hostname or address, optionally prefixed with its transport scheme.
    */
   host: string;
   /**

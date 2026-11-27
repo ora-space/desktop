@@ -20,6 +20,10 @@ pub struct SetProxyCheckUrlRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
 pub struct ProxyCheckUrlResponse {
+    /// The configured release manifest URL, when the host supplies one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub update_url: Option<String>,
     pub url: String,
 }
 
@@ -28,7 +32,7 @@ pub struct ProxyCheckUrlResponse {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
 pub struct ProxySettings {
-    /// Proxy hostname or address without a scheme.
+    /// Proxy hostname or address, optionally prefixed with its transport scheme.
     pub host: String,
     /// Proxy TCP port.
     pub port: u16,

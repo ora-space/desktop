@@ -497,6 +497,88 @@ it("reports an unreachable probe as connectivity without changing saved settings
   expect(dialog).toBeInTheDocument();
 });
 
+it("can test the advertised update URL while identifying an unsaved proxy draft", async () => {
+  const updateUrl = "https://updates.example/latest.json";
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  handlers.getProxyCheckUrl = () =>
+    Promise.resolve({ url: state.proxyCheckUrl, updateUrl });
+  handlers.checkProxySettings = () =>
+    Promise.resolve({ outcome: "reachable", status: 200, route: "manual" });
+  const client = createTestClient(handlers);
+  const check = vi.spyOn(client.proxy, "check");
+  const save = vi.spyOn(client.proxy, "set");
+  const user = userEvent.setup();
+  renderProxy(client);
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
+  await user.type(screen.getByLabelText(/主机|Host/), "https://proxy.example");
+  await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.click(
+    screen.getByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    within(dialog).getByText(/未保存的设置|uses unsaved settings/),
+  ).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", {
+      name: /填入更新服务器地址|Use update server URL/,
+    }),
+  );
+  expect(within(dialog).getByLabelText(/探测网址|URL to check/)).toHaveValue(
+    updateUrl,
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(check).toHaveBeenCalledWith({
+    url: updateUrl,
+    settings: {
+      host: "https://proxy.example",
+      port: 7890,
+      username: null,
+      password: null,
+    },
+  });
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("warns when an HTTP success bypasses the manual proxy", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "proxy.example",
+    port: 3128,
+    username: null,
+    password: null,
+  };
+  const handlers = createFixtureHandlers(state);
+  handlers.checkProxySettings = () =>
+    Promise.resolve({ outcome: "reachable", status: 200, route: "direct" });
+  const warning = vi.spyOn(toast, "warning");
+  const success = vi.spyOn(toast, "success");
+  const user = userEvent.setup();
+  renderProxy(createTestClient(handlers));
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() =>
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringMatching(/最终请求走了直连|connected directly/),
+      { description: expect.stringMatching(/HTTP.*200/) },
+    ),
+  );
+  expect(success).not.toHaveBeenCalled();
+  expect(dialog).toBeInTheDocument();
+});
+
 it("shows the destination HTTP status without reporting a successful check", async () => {
   const state = createFixtureState();
   const handlers = createFixtureHandlers(state);

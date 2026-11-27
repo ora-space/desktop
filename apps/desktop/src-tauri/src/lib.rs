@@ -5,6 +5,7 @@ mod diagnostic_logs;
 mod error;
 mod instance;
 mod marketplace_sync;
+mod network_proxy;
 mod open_external;
 mod open_location;
 mod state;
@@ -606,7 +607,7 @@ mod tests {
     }
 
     /// Builds a complete Backend path set rooted in one isolated Desktop data directory.
-    fn test_backend_paths(root: &std::path::Path) -> BackendPaths {
+    pub(super) fn test_backend_paths(root: &std::path::Path) -> BackendPaths {
         ora_logging::initialize_test_clock();
         BackendPaths {
             app_data_directory: root.to_path_buf(),

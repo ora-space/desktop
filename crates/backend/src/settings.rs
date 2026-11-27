@@ -157,7 +157,14 @@ impl Settings {
 
     /// Resolves the policy for a new Desktop network operation.
     pub async fn network_proxy_policy(&self) -> Result<ora_utils::http::HostProxy, BackendError> {
-        crate::proxy::host_proxy(&self.network_proxy_preferences().await?)
+        Self::network_proxy_policy_for(&self.network_proxy_preferences().await?)
+    }
+
+    /// Resolves an explicit set of settings, including form edits that have not been saved.
+    pub fn network_proxy_policy_for(
+        preferences: &ora_application::NetworkProxyPreferences,
+    ) -> Result<ora_utils::http::HostProxy, BackendError> {
+        crate::proxy::host_proxy(preferences)
     }
 
     /// Loads the optional proxy without blocking an async worker on SQLite.
@@ -192,31 +199,6 @@ impl Settings {
                 .map_err(BackendError::from)
         })
         .await
-    }
-
-    /// Probes `url` through the supplied proxy without persisting form edits.
-    pub async fn check_network_proxy_settings(
-        &self,
-        settings: NetworkProxySettings,
-        url: String,
-    ) -> Result<ora_contracts::CheckProxySettingsResponse, BackendError> {
-        self.probe_network_proxy(
-            ora_application::NetworkProxyPreferences {
-                mode: ora_application::NetworkProxyMode::Manual,
-                manual: Some(settings),
-            },
-            url,
-        )
-        .await
-    }
-
-    /// Tests an unsaved mode or manual endpoint through the host routing policy.
-    pub async fn probe_network_proxy(
-        &self,
-        preferences: ora_application::NetworkProxyPreferences,
-        url: String,
-    ) -> Result<ora_contracts::CheckProxySettingsResponse, BackendError> {
-        crate::proxy::check_proxy(&preferences, &url).await
     }
 
     /// Loads the Cloud server origin Desktop connects to, if one was saved.

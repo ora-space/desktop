@@ -62,6 +62,10 @@ These rules apply to Desktop updates and marketplace sources that opt in
 selected mode and resolves the route for each destination. A final HTTP 2xx response succeeds
 and shows the final route. Other HTTP responses show the status, and HTTP 407 reports a proxy
 authentication failure.
+Enter a bare hostname, `http://hostname`, or `https://hostname` for a manual proxy. The port
+field supplies the port, and `https://` uses TLS to the proxy itself. **Use update server URL**
+fills in the update manifest address. Checking uses the current form and Desktop updates use
+saved settings. In manual mode, a final direct response cannot confirm the proxy.
 
 ## Cloud connection
 

@@ -95,6 +95,7 @@ export function useProxySettings() {
     settings: query.data?.settings ?? null,
     mode: query.data?.mode ?? (query.data?.settings ? "manual" : "system"),
     checkUrl: urlQuery.data?.url ?? "",
+    updateUrl: urlQuery.data?.updateUrl,
     hasLoaded: query.data !== undefined,
     isLoading: query.isPending,
     loadError: query.error,

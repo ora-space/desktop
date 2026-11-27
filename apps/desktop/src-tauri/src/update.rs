@@ -19,6 +19,7 @@ mod tests;
 mod verifier;
 
 pub use release_notes::ReleaseNote;
+pub(crate) use service::probe_url;
 pub use service::{DesktopUpdateMode, UpdateService};
 
 use ora_scheduler::SchedulerError;

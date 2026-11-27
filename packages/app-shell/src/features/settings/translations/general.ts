@@ -91,7 +91,12 @@ export const settingsTranslations = {
       "探测网址未保存，未执行探测。请检查网址并重试。",
     "settings.proxy.checkConfirm": "验证",
     "settings.proxy.checking": "验证中",
-    "settings.proxy.checkSuccess": "代理验证成功。",
+    "settings.proxy.checkSuccess": "目标网址连接成功。",
+    "settings.proxy.checkDraft":
+      "正在验证未保存的设置。检查更新使用已保存的配置。",
+    "settings.proxy.checkBypassedManual":
+      "最终请求走了直连，无法确认手动代理。可改用更新服务器地址验证。",
+    "settings.proxy.useUpdateUrl": "填入更新服务器地址",
     "settings.proxy.checkSuccessDetail": "HTTP 状态码 {{status}}。",
     "settings.proxy.checkHttpError": "目标网址未返回成功状态。",
     "settings.proxy.checkFailed":
@@ -278,7 +283,12 @@ export const settingsTranslations = {
       "The URL was not saved and no check was run. Check the URL and retry.",
     "settings.proxy.checkConfirm": "Check",
     "settings.proxy.checking": "Checking",
-    "settings.proxy.checkSuccess": "Proxy check succeeded.",
+    "settings.proxy.checkSuccess": "The test URL was reached successfully.",
+    "settings.proxy.checkDraft":
+      "This check uses unsaved settings. Updates use saved settings.",
+    "settings.proxy.checkBypassedManual":
+      "The final request connected directly. Use the update server URL to verify the manual proxy.",
+    "settings.proxy.useUpdateUrl": "Use update server URL",
     "settings.proxy.checkSuccessDetail": "HTTP status {{status}}.",
     "settings.proxy.checkHttpError":
       "The test URL did not return a successful status.",
