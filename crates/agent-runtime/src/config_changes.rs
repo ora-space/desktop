@@ -19,7 +19,7 @@ use tokio::sync::oneshot::{self, error::TryRecvError};
 use tokio::time::timeout;
 
 /// What a caller waiting for a configuration change is told.
-pub(crate) type ConfigChangeOutcome = Result<Vec<SessionConfigOption>, RuntimeError>;
+pub(crate) type ConfigChangeOutcome = Result<(), RuntimeError>;
 
 /// Writes one request the actor did not wait for.
 pub(crate) type ConfigChangeWrite = Pin<Box<dyn Future<Output = Result<(), RuntimeError>> + Send>>;
@@ -56,9 +56,9 @@ impl ConfigChanges {
     ///
     /// For a provider session the host gave up: the agent was asked, and nothing suggests that it
     /// refused. A session lost to its agent must not come here.
-    pub(crate) fn accept(&mut self, options: &[SessionConfigOption]) {
+    pub(crate) fn accept(&mut self) {
         for change in self.unanswered.drain(..) {
-            change.tell(Ok(options.to_vec()));
+            change.tell(Ok(()));
         }
     }
 
@@ -133,7 +133,7 @@ pub(crate) async fn ask_during_setup(
     config_id: &SessionConfigId,
     value: &SessionConfigOptionValue,
     mut observe: impl FnMut(&mut SessionChannel, SessionNotification),
-) -> ConfigChangeOutcome {
+) -> Result<Vec<SessionConfigOption>, RuntimeError> {
     let (pending, write) = prepare(channel, agent_session_id, config_id, value);
     let read = timeout(SESSION_SETUP_TIMEOUT, async {
         write.await?;
@@ -243,18 +243,21 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let outcome = match pending.finish(response) {
             Ok(answer) => {
                 self.adopt_config_options(answer.config_options);
-                Ok(self.reported_config_options.clone())
+                Ok(())
             }
             Err(error) => Err(map_acp_error(error)),
         };
-        let untold = match caller {
-            Some(caller) => caller.send(outcome).err()?,
-            None => outcome,
-        };
-        let options = untold.ok()?;
-        Some(SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
-            options,
-        )))
+        let made = outcome.is_ok();
+        if let Some(caller) = caller {
+            let _ = caller.send(outcome);
+        }
+        // The caller learns only that the change was made; every view, the caller's included,
+        // learns what it left the session on from the streams this goes to.
+        made.then(|| {
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+                self.reported_config_options.clone(),
+            ))
+        })
     }
 
     /// Takes the options one answer carries, as if the agent had reported them.
@@ -288,7 +291,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 
     /// Reports the unanswered changes of a session the host gives up as made.
     pub(crate) fn accept_changes_on(&self, channel: &mut SessionChannel) {
-        channel.config_changes.accept(&self.reported_config_options);
+        channel.config_changes.accept();
     }
 }
 

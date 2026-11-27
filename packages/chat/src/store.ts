@@ -233,6 +233,12 @@ interface OptionsSync {
   readsStarted: number;
   /** Changes waiting to learn the options they left the session on. */
   waiting: OptionsWaiter[];
+  /** Changes asked for and not ended yet; overlapping ones share one baseline. */
+  changesInFlight: number;
+  /** The options before the earliest change still in flight. */
+  changeBaseline: acp.SessionConfigOption[] | null;
+  /** The mark the changes in flight left, which the next one to end replaces or withdraws. */
+  changeMarker: string | null;
 }
 
 /** A change waiting to learn the options it left the session on. */
@@ -272,6 +278,9 @@ export function createChatStore(
         streamOptionsAt: 0,
         readsStarted: 0,
         waiting: [],
+        changesInFlight: 0,
+        changeBaseline: null,
+        changeMarker: null,
       };
       optionsSync.set(oraSessionId, sync);
     }
@@ -410,12 +419,84 @@ export function createChatStore(
     fetchedFrom: number | undefined,
     take: (conversation: SessionConversation) => SessionConversation,
   ) => {
-    if (fetchedFrom !== undefined && syncOf(oraSessionId).generation !== fetchedFrom)
+    if (
+      fetchedFrom !== undefined &&
+      syncOf(oraSessionId).generation !== fetchedFrom
+    )
       return;
     updateConversation(store.setState, oraSessionId, (conversation) => ({
       ...take(conversation),
       providerLost: false,
     }));
+  };
+
+  /** Asks the agent for one change and waits until the options it left are known. */
+  const makeChange = async (
+    oraSessionId: string,
+    configId: string,
+    value: string,
+  ): Promise<SessionConfigOutcome> => {
+    const sync = syncOf(oraSessionId);
+    const askedAt = sync.generation;
+    try {
+      await client.setConfig({ sessionId: oraSessionId, configId, value });
+    } catch (error) {
+      // Losing the provider just before the change got there is no failure to report: the pick
+      // is what the next attach applies.
+      if (isSessionStoppedError(error)) {
+        updateConversation(store.setState, oraSessionId, (conversation) => ({
+          ...conversation,
+          providerLost: true,
+        }));
+        return "noProvider";
+      }
+      // A refused selection fails too; the options stay what they were. Reported like every
+      // other session action that could not reach the agent.
+      updateConversation(store.setState, oraSessionId, (conversation) => ({
+        ...conversation,
+        error: describeError(error),
+      }));
+      throw error;
+    }
+    // The answer says only that the agent made the change; what it left the session on comes
+    // the way all options do, and the change is in progress until then.
+    await learnOptionsAfterChange(oraSessionId, askedAt);
+    updateConversation(store.setState, oraSessionId, (conversation) => ({
+      ...conversation,
+      modelChanges: markChange(sync, conversation),
+      error: null,
+    }));
+    return "made";
+  };
+
+  /**
+   * Marks where a change, or overlapping ones, moved the model away from their baseline.
+   *
+   * Marked when a change ends rather than when options arrive: a model the agent changed on its
+   * own, with no change in flight, is not the user switching models. Each change that ends replaces
+   * the mark its overlapping changes left, or withdraws it once the session is back on the
+   * baseline's model.
+   */
+  const markChange = (
+    sync: OptionsSync,
+    conversation: SessionConversation,
+  ): ChatModelChange[] => {
+    const left = conversation.modelChanges.filter(
+      (change) => change.id !== sync.changeMarker,
+    );
+    const marked = recordModelChange(
+      {
+        ...conversation,
+        configOptions: sync.changeBaseline ?? conversation.configOptions,
+        modelChanges: left,
+      },
+      conversation.configOptions,
+      createId,
+      now(),
+      conversation.turns.length,
+    );
+    sync.changeMarker = marked === left ? null : (marked.at(-1)?.id ?? null);
+    return marked;
   };
 
   const store = createStore<ChatState>((set, get) => ({
@@ -445,8 +526,14 @@ export function createChatStore(
     },
 
     adoptSwitchedAgent: (oraSessionId, configOptions, fetchedFrom) => {
-      takeFetchedOptions(oraSessionId, fetchedFrom, (conversation) => ({
-        ...withConfigOptions(
+      // The move happened whatever options are newer: usage and diagnostics start over.
+      updateConversation(set, oraSessionId, (conversation) => ({
+        ...conversation,
+        usage: beginUsageAfterAgentSwitch(),
+        ...(conversation.diagnostics ? { diagnostics: undefined } : {}),
+      }));
+      takeFetchedOptions(oraSessionId, fetchedFrom, (conversation) =>
+        withConfigOptions(
           conversation,
           configOptions,
           createId,
@@ -456,51 +543,23 @@ export function createChatStore(
           // than after the exchange it introduced.
           Math.max(conversation.turns.length - 1, 0),
         ),
-        usage: beginUsageAfterAgentSwitch(),
-        ...(conversation.diagnostics ? { diagnostics: undefined } : {}),
-      }));
+      );
     },
 
     setSessionConfig: async (oraSessionId, configId, value) => {
-      const before = get().conversations[oraSessionId]?.configOptions ?? [];
-      const askedAt = syncOf(oraSessionId).generation;
-      try {
-        await client.setConfig({ sessionId: oraSessionId, configId, value });
-      } catch (error) {
-        // Losing the provider just before the change got there is no failure to report: the pick
-        // is what the next attach applies.
-        if (isSessionStoppedError(error)) {
-          updateConversation(set, oraSessionId, (conversation) => ({
-            ...conversation,
-            providerLost: true,
-          }));
-          return "noProvider";
-        }
-        // A refused selection fails too; the options stay what they were. Reported like every
-        // other session action that could not reach the agent.
-        updateConversation(set, oraSessionId, (conversation) => ({
-          ...conversation,
-          error: describeError(error),
-        }));
-        throw error;
+      const sync = syncOf(oraSessionId);
+      // Overlapping changes share one baseline: the options before the earliest still in flight.
+      if (sync.changesInFlight === 0) {
+        sync.changeBaseline =
+          get().conversations[oraSessionId]?.configOptions ?? [];
+        sync.changeMarker = null;
       }
-      // The answer says only that the agent made the change; what it left the session on comes
-      // the way all options do, and the change is in progress until then.
-      await learnOptionsAfterChange(oraSessionId, askedAt);
-      updateConversation(set, oraSessionId, (conversation) => ({
-        ...conversation,
-        // Marked here rather than when the options arrive: a model the agent changed on its own,
-        // with no change in flight, is not the user switching models.
-        modelChanges: recordModelChange(
-          { ...conversation, configOptions: before },
-          conversation.configOptions,
-          createId,
-          now(),
-          conversation.turns.length,
-        ),
-        error: null,
-      }));
-      return "made";
+      sync.changesInFlight += 1;
+      try {
+        return await makeChange(oraSessionId, configId, value);
+      } finally {
+        sync.changesInFlight -= 1;
+      }
     },
 
     loadSession: async (oraSessionId) => {
@@ -525,7 +584,8 @@ export function createChatStore(
         previous.configOptions;
       /** Whether the session is known to have no provider now; only options and reads change it. */
       const liveProviderLost = () =>
-        get().conversations[oraSessionId]?.providerLost ?? previous.providerLost;
+        get().conversations[oraSessionId]?.providerLost ??
+        previous.providerLost;
 
       /** Publishes the active replay turn without repainting once per provider text token. */
       const flushPendingPreview = () => {

@@ -64,9 +64,7 @@ function sessionStoppedError(): RemoteContractError {
  * A session the test drives: the agent answers changes with `answer`, reads wait for the test,
  * and loads stream what the test scripts. It starts on `fast`, after one turn.
  */
-async function session(
-  answer: () => Promise<object> = async () => ({}),
-) {
+async function session(answer: () => Promise<object> = async () => ({})) {
   const reads: ((configOptions: acp.SessionConfigOption[] | null) => void)[] =
     [];
   let load: () => AsyncIterable<LoadSessionEvent> = async function* () {
@@ -122,7 +120,9 @@ test("a change on an idle session is in progress until a read after it answers",
   for (const kept of ["smart", "fast"]) {
     const { store, reads, read, conversation } = await session();
 
-    const choosing = store.getState().setSessionConfig("ora-1", "model", "smart");
+    const choosing = store
+      .getState()
+      .setSessionConfig("ora-1", "model", "smart");
     await flushed();
     assert.equal(reads.length, 1, "read once the agent made the change");
     assert.equal(await settled(choosing), false);
@@ -151,13 +151,23 @@ test("a change during a stream ends on the options the stream brings, also uncha
     const loading = store.getState().loadSession("ora-1");
     await flushed();
 
-    const choosing = store.getState().setSessionConfig("ora-1", "model", "smart");
+    const choosing = store
+      .getState()
+      .setSessionConfig("ora-1", "model", "smart");
     await flushed();
-    assert.equal(await settled(choosing), false, `${brought}: before the stream says`);
+    assert.equal(
+      await settled(choosing),
+      false,
+      `${brought}: before the stream says`,
+    );
     answered.resolve();
 
     assert.equal(await choosing, "made", brought);
-    assert.equal(reads.length, 0, `${brought}: the stream told, nothing was read`);
+    assert.equal(
+      reads.length,
+      0,
+      `${brought}: the stream told, nothing was read`,
+    );
     assert.deepEqual(conversation().configOptions, onModel(brought));
     ending.resolve();
     await loading;
@@ -238,6 +248,11 @@ test("options a start or a switch answered with give way to newer ones a stream 
   store.getState().setConfigOptions("ora-1", onModel("fast"), fetchedFrom);
 
   assert.deepEqual(conversation().configOptions, onModel("smart"));
+  // The move still happened: usage starts over whatever options are newer.
+  assert.deepEqual(conversation().usage, {
+    context: { status: "awaiting_report" },
+    lastTurnTokens: { status: "awaiting_completion" },
+  });
   // With nothing newer meanwhile, the answer is taken.
   store
     .getState()

@@ -452,9 +452,10 @@ impl UnrunTurn {
     }
 }
 
-/// Names the model a change's caller was told about.
-async fn told(outcome: Outcome) -> Option<String> {
-    crate::model_config::current_model(&outcome.await.unwrap().unwrap())
+/// Waits for a change's caller to be told, and names the model the actor is on then.
+async fn told(outcome: Outcome, actor: &crate::RuntimeActor<TestHost>) -> Option<String> {
+    outcome.await.unwrap().unwrap();
+    crate::model_config::current_model(&actor.reported_config_options)
 }
 
 /// An answer already queued when a cancel is about to be written is read ahead of writing it, and
@@ -470,7 +471,7 @@ fn a_change_answered_before_the_cancel_is_written_is_taken() {
 
         turn.settle(&events).await;
 
-        assert_eq!(told(outcome).await, Some("a".to_string()));
+        assert_eq!(told(outcome, &turn.actor).await, Some("a".to_string()));
         assert_eq!(
             crate::model_config::current_model(&turn.actor.reported_config_options),
             Some("a".to_string())
@@ -500,7 +501,7 @@ fn a_change_answered_before_the_queue_is_drained_is_taken() {
         )
         .await;
 
-        assert_eq!(told(outcome).await, Some("a".to_string()));
+        assert_eq!(told(outcome, &turn.actor).await, Some("a".to_string()));
         drop(turn.actor);
         turn.fixture.shutdown().await;
     });

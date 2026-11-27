@@ -272,9 +272,11 @@ describe("ModelSelector for a session that has not attached", () => {
    * or shown — it lists what the agent can serve, not what this conversation is running.
    */
   it("configures the live session once it reports options of its own", async () => {
-    const { discover, setConfig, chatStore } = renderModelSelector(
-      selectPersistedSession,
-    );
+    const { discover, setConfig, chatStore } = renderModelSelector((state) => {
+      selectPersistedSession(state);
+      // Live: the read after the change finds its provider.
+      state.sessions[0]!.status = "running";
+    });
     act(() => {
       chatStore.getState().setConfigOptions("s1", [
         {

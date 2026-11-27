@@ -12,7 +12,11 @@ interface AppEventGateProps {
 }
 
 /** Prevents normal application work until the Desktop event stream is ready. */
-export function AppEventGate({ client, chatStore, children }: AppEventGateProps) {
+export function AppEventGate({
+  client,
+  chatStore,
+  children,
+}: AppEventGateProps) {
   return (
     <AppEventStreamGate client={client} chatStore={chatStore}>
       {children}
