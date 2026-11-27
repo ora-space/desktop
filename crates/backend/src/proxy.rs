@@ -312,4 +312,25 @@ mod tests {
             "{line}"
         );
     }
+
+    /// Git cannot re-resolve an opted-in proxied request after a redirect.
+    #[test]
+    fn proxied_git_refuses_redirects() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let config = temp.path().join("gitconfig");
+        let remote = "http://origin.example/marketplace.git";
+        let (endpoint, server) = serve_git_request(
+            "HTTP/1.1 302 Found\r\nLocation: http://other.example/marketplace.git/info/refs\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+        );
+        let policy = HostProxy::manual(Url::parse(&endpoint).expect("fixture URL"));
+        let env = git_proxy_env(remote, &policy).expect("proxy env");
+        let stderr = ls_remote_stderr(remote, env, &config);
+        assert!(stderr.contains("302"), "{stderr}");
+        assert!(
+            server
+                .join()
+                .unwrap()
+                .starts_with("GET http://origin.example/")
+        );
+    }
 }

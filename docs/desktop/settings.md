@@ -49,10 +49,12 @@ An existing manual configuration remains selected on upgrade. Changing mode reta
 endpoint, and an older Desktop version continues to use that endpoint after downgrade. Clear
 explicitly removes the saved endpoint and restores the default mode.
 
-On Windows, System reads the current user's WinHTTP configuration. On Linux it reads the
-GNOME static settings through GIO when available and otherwise honors `HTTP_PROXY`,
-`HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`. Automatic PAC/WPAD and Windows integrated proxy
-authentication are outside this version's support. Loopback and system bypass targets go directly.
+On Windows, System reads the current user's static WinHTTP configuration. When automatic
+detection is the only setting, Ora connects directly and skips WPAD. An explicit PAC URL without
+a static proxy produces an unsupported-configuration error. On Linux, System reads GNOME static
+settings through GIO when a persistent backend is available and otherwise honors `HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`. Windows integrated proxy authentication is outside
+this version's support. Loopback and system bypass targets go directly.
 Connection or proxy resolution failures are reported without retrying the request directly.
 
 These rules apply to Desktop updates and marketplace sources that opt in

@@ -394,6 +394,27 @@ mod reqwest_integration {
         );
     }
 
+    /// An HTTP proxy response is classified like an HTTPS CONNECT challenge.
+    #[tokio::test]
+    async fn host_proxy_probe_reports_http_auth_failure() {
+        let response = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let (policy, proxy) =
+            proxy_once("GET http://origin.example/probe ", response.to_owned()).await;
+        let error = ReqwestDownloader::for_host_proxy(policy)
+            .probe(
+                Url::parse("http://origin.example/probe").unwrap(),
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .unwrap_err();
+        proxy.await.unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("proxy authentication failed (HTTP 407)")
+        );
+    }
+
     /// Serves one HTTPS response from a certificate signed by a private test CA.
     async fn serve_https_once(
         body: &'static [u8],

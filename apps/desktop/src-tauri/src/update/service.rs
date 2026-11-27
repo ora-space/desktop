@@ -258,3 +258,97 @@ fn network_update_error(error: tauri_plugin_updater::Error) -> UpdateError {
     }
     UpdateError::Updater(error)
 }
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+
+    /// Captures a request at the configured proxy and returns a controlled HTTP response.
+    async fn proxy_exchange(listener: TcpListener, response: String) -> String {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut reader = BufReader::new(&mut socket);
+        let mut request = String::new();
+        reader.read_line(&mut request).await.unwrap();
+        loop {
+            let mut header = String::new();
+            if reader.read_line(&mut header).await.unwrap() == 0 || header == "\r\n" {
+                break;
+            }
+        }
+        socket.write_all(response.as_bytes()).await.unwrap();
+        request
+    }
+
+    /// The manifest hop reaches the proxy, then HTTPS to loopback starts TLS directly.
+    #[tokio::test]
+    async fn updater_client_reroutes_redirect_to_loopback() {
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let direct = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let policy = HostProxy::manual(
+            format!("http://{}", proxy.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        );
+        let target = direct.local_addr().unwrap();
+        let response = format!(
+            "HTTP/1.1 302 Found\r\nLocation: https://{target}/package\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        let client = configure_proxy_client(updater_http::Client::builder(), &policy)
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let accept_direct = async {
+            let (mut socket, _) = direct.accept().await.unwrap();
+            assert_eq!(socket.read_u8().await.unwrap(), 0x16, "TLS handshake");
+        };
+        let (request, _, client_result) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                proxy_exchange(proxy, response),
+                accept_direct,
+                client
+                    .get("http://manifest.example.test/update.json")
+                    .send()
+            )
+        })
+        .await
+        .unwrap();
+        assert!(request.starts_with("GET http://manifest.example.test/update.json "));
+        assert!(
+            client_result.is_err(),
+            "fixture closes the socket during TLS"
+        );
+    }
+
+    /// The same updater transport reports an actual CONNECT 407 as a proxy auth failure.
+    #[tokio::test]
+    async fn updater_client_classifies_connect_407() {
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let policy = HostProxy::manual(
+            format!("http://{}", proxy.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        );
+        let response = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\n\r\n";
+        let client = configure_proxy_client(updater_http::Client::builder(), &policy)
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let (request, result) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                proxy_exchange(proxy, response.to_owned()),
+                client
+                    .get("https://manifest.example.test/update.json")
+                    .send()
+            )
+        })
+        .await
+        .unwrap();
+        assert!(request.starts_with("CONNECT manifest.example.test:443 "));
+        assert!(matches!(
+            network_update_error(result.unwrap_err().into()),
+            UpdateError::Proxy(HostProxyError::Authentication)
+        ));
+    }
+}

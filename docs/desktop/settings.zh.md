@@ -31,10 +31,10 @@ Desktop 默认**跟随系统代理**。也可以选择**手动代理**（填写�
 凭据）或**直连**（忽略系统和环境变量代理）。已有手动配置升级后保持生效。切换模式保留已保存
 的手动地址，降级后旧版本仍使用它。主动清空会删除保存的手动配置，并恢复默认模式。
 
-Windows 只读取当前用户的 WinHTTP 静态设置。Linux 在可用时通过 GIO 读取 GNOME 静态设置，
-否则使用 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 和 `NO_PROXY`。首版不支持 PAC/WPAD
-自动代理或 Windows 集成代理认证。本机回环和命中系统绕过规则的目标直连。代理解析或连接失败会
-显示原因。
+Windows 读取当前用户的 WinHTTP 静态设置。仅开启自动检测时，Ora 直接连接并跳过 WPAD。
+仅配置 PAC 地址时，Ora 会提示不支持。Linux 在持久化 GIO 后端可用时读取 GNOME 静态设置，
+否则使用 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 和 `NO_PROXY`。首版不支持 Windows
+集成代理认证。本机回环和命中系统绕过规则的目标直连。代理解析或连接失败会显示原因。
 
 这些规则用于 Desktop 更新及开启「使用代理」的市场源（见 [Marketplace](../plugins/marketplace.zh.md)）。
 连接测试使用表单当前选择的模式，显示实际路线，并将 HTTP 407 报告为代理认证失败。

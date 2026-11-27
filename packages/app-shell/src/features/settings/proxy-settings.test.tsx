@@ -149,7 +149,7 @@ it("blocks editing on read failure and restores saved values after retry", async
   await screen.findByRole("alert");
   expect(screen.queryByLabelText(/主机|Host/)).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: /保存|Save/ }),
+    screen.queryByRole("button", { name: /^保存$|^Save$/ }),
   ).not.toBeInTheDocument();
   expect(state.proxySettings?.host).toBe("saved.example");
   failing = false;
