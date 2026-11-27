@@ -101,6 +101,7 @@ impl WorkflowRunRepository for SqliteWorkflowRunRepository {
                     |row| row.get::<_, String>(0),
                 )?;
                 Ok(Some(WorkflowRunDetail {
+                    root_scope_id: super::workflow_scope::current_root_scope(connection, run_id)?,
                     name: run.name.clone(),
                     workspace_id: run.workspace_id.clone(),
                     project_id: ProjectId::new(project_id),

@@ -302,6 +302,8 @@ pub struct WorkflowRunSummary {
 /// Full run detail including the run record, its workspace context, and node runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowRunDetail {
+    /// Active root execution generation, renewed when the run restarts.
+    pub root_scope_id: WorkflowScopeId,
     pub run: WorkflowRun,
     pub name: String,
     pub workspace_id: WorkspaceId,

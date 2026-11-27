@@ -4,6 +4,21 @@ use super::{Binding, Permission};
 
 pub(super) const BINDINGS: &[Binding] = &[
     Binding::Unary {
+        operation: "getWorkflowDebugContext",
+        handler: "commands::workflow_run::get_workflow_debug_context",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "previewWorkflowDebug",
+        handler: "commands::workflow_run::preview_workflow_debug",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "commitWorkflowDebug",
+        handler: "commands::workflow_run::commit_workflow_debug",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "getWorkflowDebugAttempt",
         handler: "commands::workflow_run::get_workflow_debug_attempt",
         permission: Permission::MainWebview,

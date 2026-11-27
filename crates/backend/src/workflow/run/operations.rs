@@ -79,6 +79,16 @@ pub struct WorkflowRuns {
 }
 
 impl WorkflowRuns {
+    /// Reads the active graph at a selected execution for the run editor.
+    pub fn debug_context(
+        &self,
+        request: GetWorkflowDebugContextRequest,
+    ) -> Result<GetWorkflowDebugContextResponse, BackendError> {
+        ora_db::workflow_debug::WorkflowDebugStore::new(self.pool.clone())
+            .edit_context(&request)
+            .map_err(BackendError::from_debug_store)
+    }
+
     /// Reads one physical attempt and its bound configuration.
     pub fn debug_attempt(
         &self,

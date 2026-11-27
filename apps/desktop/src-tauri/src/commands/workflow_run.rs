@@ -2,6 +2,27 @@
 
 use ora_contracts::*;
 backend_command!(
+    get_workflow_debug_context,
+    GetWorkflowDebugContextRequest,
+    GetWorkflowDebugContextResponse,
+    workflow_runs.debug_context,
+    "Reads current configuration for editing a selected execution."
+);
+backend_command!(
+    preview_workflow_debug,
+    PreviewWorkflowDebugRequest,
+    WorkflowDebugPreview,
+    workflow_runs.debug_preview,
+    "Plans changes from a selected execution position."
+);
+async_backend_command!(
+    commit_workflow_debug,
+    CommitWorkflowDebugRequest,
+    WorkflowDebugOperation,
+    workflow_runs.debug_commit,
+    "Confirms a preview and resumes the workflow from the selected position."
+);
+backend_command!(
     get_workflow_debug_attempt,
     GetWorkflowDebugAttemptRequest,
     GetWorkflowDebugAttemptResponse,

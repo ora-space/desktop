@@ -13,6 +13,7 @@ pub use rusqlite::Transaction;
 
 mod attempts;
 mod configuration;
+mod context;
 pub(crate) mod fence;
 mod normalize;
 mod operations;

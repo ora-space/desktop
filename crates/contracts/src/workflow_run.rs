@@ -185,6 +185,10 @@ pub struct GetWorkflowRunRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflow-run.ts")]
 pub struct GetWorkflowRunResponse {
+    /// Active root execution for selecting an undispatched position; absent on older hosts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub root_scope_id: Option<String>,
     pub run: WorkflowRun,
     pub name: String,
     pub workspace_id: String,
@@ -810,6 +814,7 @@ mod tests {
         );
         assert_serialized_json(
             &GetWorkflowRunResponse {
+                root_scope_id: Some("root:run-1".into()),
                 run: run.clone(),
                 name: "Workflow workflow-1 30".to_string(),
                 workspace_id: "workspace-1".to_string(),
@@ -847,6 +852,7 @@ mod tests {
                 },
                 "name": "Workflow workflow-1 30",
                 "workspaceId": "workspace-1",
+                "rootScopeId": "root:run-1",
                 "projectId": "project-1",
                 "nodes": [{
                     "id": "node-1",

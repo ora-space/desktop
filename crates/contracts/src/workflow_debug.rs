@@ -198,6 +198,26 @@ pub struct GetWorkflowDebugAttemptResponse {
     pub error: Option<String>,
 }
 
+/// Selects the physical attempt or scheduler position to edit under the active revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "workflow-run.ts")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GetWorkflowDebugContextRequest {
+    pub run_id: String,
+    #[serde(flatten)]
+    pub selection: WorkflowDebugSelection,
+}
+
+/// The position-specific graph used for both configuration and variable visibility.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "workflow-run.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct GetWorkflowDebugContextResponse {
+    pub base_revision: u32,
+    pub target: WorkflowDebugTarget,
+    pub graph: String,
+}
+
 /// Emits the shared workflow-run wire types from their Rust declarations.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkflowDebugPatch::export(config)?;
@@ -216,5 +236,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     GetWorkflowDebugHistoryResponse::export(config)?;
     GetWorkflowDebugAttemptRequest::export(config)?;
     GetWorkflowDebugAttemptResponse::export(config)?;
+    GetWorkflowDebugContextRequest::export(config)?;
+    GetWorkflowDebugContextResponse::export(config)?;
     Ok(())
 }

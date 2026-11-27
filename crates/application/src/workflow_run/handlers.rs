@@ -317,6 +317,7 @@ where
         let (variables, condition_decisions) =
             project_variable_pool(detail.run.payload.as_deref())?;
         Ok(GetWorkflowRunResponse {
+            root_scope_id: Some(detail.root_scope_id.to_string()),
             run: map_run_awaiting(detail.run, has_awaiting_node),
             name: detail.name,
             workspace_id: detail.workspace_id.to_string(),

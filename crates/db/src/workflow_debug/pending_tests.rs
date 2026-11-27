@@ -59,7 +59,16 @@ fn pending_edit_binds_first_dispatch_without_allocating_an_attempt() {
             .unwrap()
     };
     save(&payload);
+    let context = store
+        .edit_context(&GetWorkflowDebugContextRequest {
+            run_id: request.run_id.clone(),
+            selection: request.selection.clone(),
+        })
+        .unwrap();
+    assert_eq!(context.base_revision, 0);
+    assert!(context.target.node_run_id.is_none());
     let preview = store.preview(&request, impact).unwrap();
+    assert_eq!(context.target, preview.target);
     assert!(preview.target.node_run_id.is_none());
     let commit = |id: String| CommitWorkflowDebugRequest {
         run_id: "other".into(),
