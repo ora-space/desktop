@@ -1822,9 +1822,11 @@ it("reveals an invalid MCP from the report despite an existing manager search", 
   expect(within(report).getByText("Broken MCP")).toBeVisible();
   expect(
     within(report).getByText(
-      "1 个 MCP 已安装但当前不可用，请检查其状态或配置。",
+      "1 个 MCP 已安装但当前不可用。启动不受影响，但运行到使用它的节点时会失败，请检查其状态或配置。",
     ),
   ).toBeVisible();
+  expect(within(report).getByRole("status")).toHaveClass("bg-blue-500/10");
+  expect(within(report).getByText("不可用")).toHaveClass("bg-muted");
   expect(within(report).queryByText(/项启用依赖尚未就绪/)).toBeNull();
   await user.click(
     within(report).getByRole("button", { name: /去查看|Review/ }),
@@ -1875,6 +1877,8 @@ it("sends an unavailable Skill to the Skills settings page", async () => {
 
   const report = await openImportReport(user);
   expect(within(report).getByText("1 项启用依赖尚未就绪。")).toBeVisible();
+  expect(within(report).getByRole("status")).toHaveClass("bg-amber-500/10");
+  expect(within(report).getByText("不可用")).toHaveClass("bg-amber-500/10");
   expect(
     within(report).getByText(/启动前请补齐缺失依赖、修复不可用 Skill/),
   ).toBeVisible();

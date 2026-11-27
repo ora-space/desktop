@@ -3013,9 +3013,26 @@ describe("WorkflowEditor", () => {
       } else {
         expect(
           await within(dialog).findByText(
-            "1 个 MCP 已安装但当前不可用，请检查其状态或配置。",
+            "1 个 MCP 已安装但当前不可用。启动不受影响，但运行到使用它的节点时会失败，请检查其状态或配置。",
           ),
         ).toBeVisible();
+      }
+      expect(within(dialog).getByRole("status")).toHaveClass(
+        scenario === "unavailable-skill"
+          ? "bg-amber-500/10"
+          : scenario === "unavailable-mcp"
+            ? "bg-blue-500/10"
+            : "bg-emerald-500/10",
+      );
+      const readiness = within(dialog).getByRole("region", {
+        name: "插件依赖",
+      });
+      for (const pill of within(readiness).getAllByText("不可用")) {
+        expect(pill).toHaveClass(
+          pill.closest("li")!.textContent!.includes("official/unavailable-mcp")
+            ? "bg-muted"
+            : "bg-amber-500/10",
+        );
       }
       if (scenario !== "unavailable-skill")
         expect(within(dialog).queryByText(/项启用依赖尚未就绪/)).toBeNull();

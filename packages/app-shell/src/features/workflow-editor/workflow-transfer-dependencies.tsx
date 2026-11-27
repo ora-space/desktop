@@ -175,7 +175,14 @@ export function WorkflowTransferDependencies({
               </div>
               {variant === "import" ? (
                 <div className="grid justify-items-end gap-1">
-                  <WorkflowTransferPill tone={STATUS_TONES[dependency.status]}>
+                  <WorkflowTransferPill
+                    tone={
+                      dependency.kind === "mcp" &&
+                      dependency.status === "unavailable"
+                        ? "muted"
+                        : STATUS_TONES[dependency.status]
+                    }
+                  >
                     {t(
                       `settings.workflow.transfer.status.${dependency.status}`,
                     )}
