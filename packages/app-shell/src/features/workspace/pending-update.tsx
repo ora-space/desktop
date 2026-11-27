@@ -146,8 +146,8 @@ export function PendingUpdate() {
                 updates
                   .install(version)
                   .catch((error: unknown) => {
-                    // The host has already offered the release that replaced this one.
-                    if (isReleaseReplaced(error)) return;
+                    // The host has already published what replaced this confirmation.
+                    if (isStaleConfirmation(error)) return;
                     setFailedInstall(version);
                   })
                   .finally(() => setRequested(false));
@@ -162,10 +162,14 @@ export function PendingUpdate() {
   );
 }
 
-/** Recognizes the refusal of a confirmation whose release a newer one replaced. */
-function isReleaseReplaced(error: unknown): boolean {
+/**
+ * Recognizes the refusal of a confirmation that went stale: a newer release replaced it, or nothing
+ * was ready any more by the time the host took it.
+ */
+function isStaleConfirmation(error: unknown): boolean {
   return (
     error instanceof RemoteContractError &&
-    error.code === "desktop_update_release_replaced"
+    (error.code === "desktop_update_release_replaced" ||
+      error.code === "desktop_update_no_pending_update")
   );
 }

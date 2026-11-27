@@ -112,7 +112,8 @@ export interface DesktopUpdateCapability {
   getStatus(): Promise<DesktopUpdateStatus>;
   /**
    * Installs the confirmed version. When another release replaced it, the host rejects with the
-   * `desktop_update_release_replaced` contract error and has already published the replacement.
+   * `desktop_update_release_replaced` contract error; when nothing is ready any more, with
+   * `desktop_update_no_pending_update`. Either way it has already published the current status.
    */
   install(version: string): Promise<void>;
   /** Runs an update check on demand, outside the scheduled delayed and cron checks. */

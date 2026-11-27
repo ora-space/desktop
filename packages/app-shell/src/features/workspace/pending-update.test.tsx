@@ -360,6 +360,31 @@ describe("PendingUpdate", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("does not report a confirmation that nothing is ready for any more", async () => {
+    const user = userEvent.setup();
+    const { container, install, publish } = renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: NOTES,
+    });
+    const payload = {
+      code: "desktop_update_no_pending_update",
+      params: {},
+      requestId: "00000000-0000-4000-8000-000000000003",
+    } as const;
+    install.mockRejectedValueOnce(new RemoteContractError(payload, payload));
+    await user.click(await screen.findByRole("button", { name: "立即更新" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "立即更新" }));
+
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+    // The host's own status, not this refusal, says what happened to the release.
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    publish({ kind: "current" });
+    expect(container.textContent).toBe("");
+  });
+
   it("drops a rejected installation once another release replaces it", async () => {
     const user = userEvent.setup();
     const { install, publish } = renderPending({
