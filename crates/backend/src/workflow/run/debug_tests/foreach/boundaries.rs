@@ -214,7 +214,25 @@ fn confirm_a_waiting_member_uses_the_dispatch_bound_in_the_receipt() {
 fn unprovable_projection_rolls_back_the_revision_and_records_stop_failed() {
     run_test(async {
         let barrier = Arc::new(super::super::lifecycle::StopBarrier::default());
-        let f = batch(barrier.clone());
+        let f = batch_graph(barrier.clone(), true);
+        let repo = SqliteWorkflowRunEngineRepository::new(f.pool.clone());
+        let wait = ora_domain::WorkflowNodeRunId::new("independent-wait");
+        assert_eq!(
+            repo.schedule_node_retry(
+                &active(&f, "sibling").id,
+                &NodeFailure::new(NodeFailureKind::Session, "retry later"),
+                &NodeRetryToSchedule {
+                    node_run_id: wait.clone(),
+                    retry: 1,
+                    max_retries: 1,
+                    delay_ms: 60000,
+                    due_at: 60010
+                },
+                10
+            )
+            .unwrap(),
+            ora_application::ScheduleNodeRetryResult::Scheduled
+        );
         complete(&f, "member", "one");
         let row = active(&f, "member");
         bind(&f, &row);
@@ -255,6 +273,15 @@ fn unprovable_projection_rolls_back_the_revision_and_records_stop_failed() {
         assert!(unsettled_node_run_ids.is_empty());
         assert_eq!(failed.status, WorkflowRunStatus::Failed);
         assert_eq!(failed.error.as_ref(), Some(reason));
+        let abandoned = f.row("sibling");
+        assert_eq!(abandoned.id, wait);
+        assert_eq!(abandoned.status, WorkflowNodeStatus::Cancelled);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(abandoned.error.as_deref().unwrap()).unwrap()
+                ["reason"],
+            json!("retry_abandoned")
+        );
+        assert_eq!(dispatched(&f.executor, "sibling"), 1);
         assert!(failed.finished_at.is_some());
         assert_eq!(dispatched(&f.executor, "member"), 2);
         assert!(node_runs(&f.pool, &f.run_id).iter().any(|r| r.id == row.id));

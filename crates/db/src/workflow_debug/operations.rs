@@ -137,12 +137,15 @@ impl WorkflowDebugStore {
                          failure=?3,unsettled_attempts='[]' WHERE run_id=?1 AND request_id=?2",
                         params![run, request, reason],
                     )?;
-                    tx.execute(
+                    let failed = tx.execute(
                         "UPDATE workflow_runs SET run_status=?2,error=?3,finished_at=?4,updated_at=?4
                          WHERE id=?1 AND run_status=?5",
                         params![run, ora_domain::WorkflowRunStatus::Failed.database_value(), reason,
                                 now, ora_domain::WorkflowRunStatus::Running.database_value()],
                     )?;
+                    if failed == 1 {
+                        crate::SqliteWorkflowRunEngineRepository::abandon_retry_waits(&tx, run, now)?;
+                    }
                     tx.commit()?;
                     return Ok(WorkflowDebugOperation {
                         phase: WorkflowDebugPhase::StopFailed { reason, unsettled_node_run_ids: Vec::new() },
