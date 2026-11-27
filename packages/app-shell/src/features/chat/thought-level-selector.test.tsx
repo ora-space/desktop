@@ -392,6 +392,29 @@ describe("ThoughtLevelSelector visibility", () => {
     );
     await waitFor(() => expect(picker()).toBeNull());
   });
+
+  /** No effort is set on a session without a provider, and no intent carries one to its next attach. */
+  it("withdraws once the session is known to have no provider", async () => {
+    const { chatStore } = renderThoughtLevelSelector(selectPersistedSession);
+    act(() =>
+      chatStore
+        .getState()
+        .setConfigOptions("s1", [MODEL_OPTION, THOUGHT_LEVEL_OPTION]),
+    );
+    await screen.findByRole("button", {
+      name: /选择思考强度|Select thought level/,
+    });
+
+    act(() =>
+      chatStore.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          s1: { ...state.conversations.s1!, providerLost: true },
+        },
+      })),
+    );
+    await waitFor(() => expect(picker()).toBeNull());
+  });
 });
 
 describe("ThoughtLevelSelector scale", () => {

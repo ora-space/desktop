@@ -138,6 +138,15 @@ export interface ChatState {
     value: string,
   ): Promise<void>;
   loadSession(oraSessionId: string): Promise<void>;
+  /**
+   * Hears that a session's options may have changed, or that it has no provider now.
+   *
+   * Without a stream the options are read from the session; with one the stream's are taken, and
+   * the session is read once the stream ends. Sessions not on screen are left alone.
+   */
+  optionsChanged(oraSessionId: string): void;
+  /** Reads the options of every conversation on screen again, after announcements may have been lost. */
+  resyncOptions(): void;
   sendMessage(request: SendMessageRequest): Promise<void>;
   stopGeneration(oraSessionId: string): void;
   respondToPermission(
@@ -164,11 +173,12 @@ export interface ChatStoreOptions {
 export type ChatStore = StoreApi<ChatState>;
 export type ChatSessionClient = Pick<
   ContractsClient["session"],
-  "load" | "prompt" | "respondToPermission" | "setConfig"
+  "getOptions" | "load" | "prompt" | "respondToPermission" | "setConfig"
 >;
 
 const EMPTY_CONVERSATION: SessionConversation = {
   configOptions: [],
+  providerLost: false,
   modelChanges: [],
   historyNotices: [],
   turns: [],
@@ -195,6 +205,21 @@ interface BufferedTextChunk {
   timestamp: number;
 }
 
+/** How one session's options reach the store: its streams, and the read that asks for them. */
+interface OptionsSync {
+  /** Streams of this session open now. */
+  streams: number;
+  /** Whether the streams open now brought any options. */
+  streamOptions: boolean;
+  /** Whether the options were announced while a stream was open. */
+  announced: boolean;
+  reading: boolean;
+  /** Whether an announcement came while reading, so the session is read again. */
+  readAgain: boolean;
+  /** Advances whenever a stream starts, so a read from before it is dropped. */
+  generation: number;
+}
+
 type ConversationUpdate = Extract<
   acp.SessionUpdate,
   { sessionUpdate: "available_commands_update" | "session_info_update" }
@@ -209,6 +234,105 @@ export function createChatStore(
   const now = options.now ?? Date.now;
   const describeError = options.describeError ?? errorMessage;
   const operations = new Map<string, AbortController>();
+  const optionsSync = new Map<string, OptionsSync>();
+
+  /** What is known about how one session's options reach this store. */
+  const syncOf = (oraSessionId: string) => {
+    let sync = optionsSync.get(oraSessionId);
+    if (!sync) {
+      sync = {
+        streams: 0,
+        streamOptions: false,
+        announced: false,
+        reading: false,
+        readAgain: false,
+        generation: 0,
+      };
+      optionsSync.set(oraSessionId, sync);
+    }
+    return sync;
+  };
+
+  /**
+   * Reads the options the session is on, or that it has no provider.
+   *
+   * One read at a time: an announcement during it reads again after. A result is dropped when a
+   * stream started meanwhile, because the stream starts from the session's options and is newer.
+   */
+  const readOptions = (oraSessionId: string) => {
+    const sync = syncOf(oraSessionId);
+    if (sync.reading) {
+      sync.readAgain = true;
+      return;
+    }
+    sync.reading = true;
+    sync.readAgain = false;
+    const generation = sync.generation;
+    void client
+      .getOptions({ sessionId: oraSessionId })
+      .then(
+        ({ configOptions }) => {
+          if (sync.generation !== generation) return;
+          updateConversation(store.setState, oraSessionId, (conversation) =>
+            configOptions === null
+              ? { ...conversation, providerLost: true }
+              : { ...conversation, configOptions, providerLost: false },
+          );
+        },
+        // A lost read leaves the view where it was, like a lost announcement.
+        () => {},
+      )
+      .finally(() => {
+        sync.reading = false;
+        if (!sync.readAgain) return;
+        sync.readAgain = false;
+        if (sync.streams > 0) sync.announced = true;
+        else readOptions(oraSessionId);
+      });
+  };
+
+  /** Notes a stream of this session starting: anything read before it is older than it. */
+  const openOptionsStream = (oraSessionId: string) => {
+    const sync = syncOf(oraSessionId);
+    if (sync.streams === 0) {
+      sync.streamOptions = false;
+      sync.announced = false;
+    }
+    sync.streams += 1;
+    sync.generation += 1;
+  };
+
+  /**
+   * Takes the options a stream brought.
+   *
+   * No read is in flight to drop: one from before the stream was dropped when it started, and none
+   * starts while a stream is open.
+   */
+  const takeStreamOptions = (
+    oraSessionId: string,
+    configOptions: acp.SessionConfigOption[],
+  ) => {
+    const sync = syncOf(oraSessionId);
+    sync.streamOptions = true;
+    updateConversation(store.setState, oraSessionId, (conversation) => ({
+      ...conversation,
+      configOptions,
+      providerLost: false,
+    }));
+  };
+
+  /**
+   * Notes a stream of this session ending, and reads the options when it may have missed some.
+   *
+   * Announcements made during the stream were only noted, and one that brought no options at all
+   * comes from a session that may have no provider: either way the session is asked now.
+   */
+  const closeOptionsStream = (oraSessionId: string) => {
+    const sync = syncOf(oraSessionId);
+    sync.streams -= 1;
+    if (sync.streams > 0) return;
+    if (sync.announced || !sync.streamOptions) readOptions(oraSessionId);
+  };
 
   const store = createStore<ChatState>((set, get) => ({
     conversations: {},
@@ -333,6 +457,7 @@ export function createChatStore(
       };
 
       operations.set(oraSessionId, controller);
+      openOptionsStream(oraSessionId);
       updateConversation(set, oraSessionId, () => ({
         ...previous,
         turns: [],
@@ -354,10 +479,7 @@ export function createChatStore(
             // sees them; they describe the conversation, not any one turn.
             const configOptions = sessionScopedConfigOptions(event.update);
             if (configOptions) {
-              updateConversation(set, oraSessionId, (conversation) => ({
-                ...conversation,
-                configOptions,
-              }));
+              takeStreamOptions(oraSessionId, configOptions);
             } else {
               staged.applyUpdate(
                 event.update,
@@ -424,6 +546,20 @@ export function createChatStore(
           ...conversation,
           isLoading: false,
         }));
+        closeOptionsStream(oraSessionId);
+      }
+    },
+
+    optionsChanged: (oraSessionId) => {
+      if (!get().conversations[oraSessionId]) return;
+      const sync = syncOf(oraSessionId);
+      if (sync.streams > 0) sync.announced = true;
+      else readOptions(oraSessionId);
+    },
+
+    resyncOptions: () => {
+      for (const oraSessionId of Object.keys(get().conversations)) {
+        get().optionsChanged(oraSessionId);
       }
     },
 
@@ -688,6 +824,7 @@ export function createChatStore(
         usage: beginUsageTurn(conversation.usage),
       }));
 
+      openOptionsStream(key);
       try {
         for await (const event of promptWithReattach(
           client,
@@ -734,10 +871,7 @@ export function createChatStore(
             // the session, so it never reaches the turn accumulator.
             const configOptions = sessionScopedConfigOptions(update);
             if (configOptions) {
-              updateConversation(set, key, (conversation) => ({
-                ...conversation,
-                configOptions,
-              }));
+              takeStreamOptions(key, configOptions);
               continue;
             }
             if (isConversationUpdate(update)) {
@@ -886,6 +1020,7 @@ export function createChatStore(
       } finally {
         flushPendingTextChunk();
         operations.delete(key);
+        closeOptionsStream(key);
         updateConversation(set, key, (conversation) =>
           conversation.diagnostics?.provider
             ? {
@@ -958,10 +1093,14 @@ export function createChatStore(
       }
     },
 
-    clearAll: () => set({ conversations: {} }),
+    clearAll: () => {
+      optionsSync.clear();
+      set({ conversations: {} });
+    },
     dispose: () => {
       operations.forEach((controller) => controller.abort());
       operations.clear();
+      optionsSync.clear();
     },
   }));
 

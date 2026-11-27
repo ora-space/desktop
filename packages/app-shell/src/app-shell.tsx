@@ -68,7 +68,7 @@ export function AppShell({
   return (
     <QueryClientProvider client={queryClient}>
       <AppI18nProvider>
-        <AppEventGate client={client}>
+        <AppEventGate client={client} chatStore={chatStore}>
           <WorkflowRuntimeProvider runtime={workflowRuntime}>
             <AppShellContent
               client={client}

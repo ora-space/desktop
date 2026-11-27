@@ -195,6 +195,7 @@ const CHAT_TURNS: ChatTurn[] = [
 function loadedConversation(): SessionConversation {
   return {
     configOptions: [],
+    providerLost: false,
     modelChanges: [],
     historyNotices: [],
     turns: CHAT_TURNS,

@@ -150,6 +150,7 @@ function fixture(): GraphWorkflowRun {
 function conversation(text: string): SessionConversation {
   return {
     configOptions: [],
+    providerLost: false,
     modelChanges: [],
     historyNotices: [],
     availableCommands: [],
