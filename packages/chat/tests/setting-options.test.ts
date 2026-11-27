@@ -241,6 +241,13 @@ test("a model the agent changes on its own, with no change in flight, is not mar
 
 test("options a start or a switch answered with give way to newer ones a stream brought", async () => {
   const { store, conversation, streams } = await session();
+  const fetchedFrom = store.getState().optionsFetchedFrom("ora-1");
+  streams(async function* () {
+    yield optionsEvent(onModel("smart"));
+    yield { type: "completed" } as const;
+  });
+  await store.getState().loadSession("ora-1");
+  // Set after the stream, whose start clears them, so only the switch can.
   store.setState((state) => ({
     conversations: {
       ...state.conversations,
@@ -250,12 +257,6 @@ test("options a start or a switch answered with give way to newer ones a stream 
       },
     },
   }));
-  const fetchedFrom = store.getState().optionsFetchedFrom("ora-1");
-  streams(async function* () {
-    yield optionsEvent(onModel("smart"));
-    yield { type: "completed" } as const;
-  });
-  await store.getState().loadSession("ora-1");
 
   store.getState().adoptSwitchedAgent("ora-1", onModel("fast"), fetchedFrom);
   store.getState().setConfigOptions("ora-1", onModel("fast"), fetchedFrom);

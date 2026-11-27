@@ -19,6 +19,7 @@ function onModel(current: string): acp.SessionConfigOption[] {
       options: [
         { value: "fast", name: "Fast" },
         { value: "smart", name: "Smart" },
+        { value: "deep", name: "Deep" },
       ],
     },
   ];
@@ -245,4 +246,42 @@ test("a change that fails still ends its group, and the next group takes its own
   await back;
 
   assert.deepEqual(marks(conversation()), ["Fast"]);
+});
+
+test("a mark an agent switch left at the same point is not covered by one the group put back", async () => {
+  const { store, read, conversation } = harness(async function* () {
+    yield optionsEvent(onModel("fast"));
+    yield { type: "completed", stopReason: "end_turn" } as const;
+  });
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hi" });
+  const earlier = store.getState().setSessionConfig("ora-1", "model", "smart");
+  await flushed();
+  await read(onModel("smart"));
+  await earlier;
+
+  // Two overlapping changes; the first ends and replaces the earlier mark.
+  const first = store.getState().setSessionConfig("ora-1", "model", "fast");
+  const second = store.getState().setSessionConfig("ora-1", "model", "deep");
+  await flushed();
+  await read(onModel("fast"));
+  await first;
+  // A switch marks that same point, before the message that carries it.
+  await store.getState().sendMessage({
+    oraSessionId: "ora-1",
+    text: "moved",
+    prepare: async () => {
+      store.getState().adoptSwitchedAgent("ora-1", onModel("deep"));
+      return { availableCommands: [] };
+    },
+  });
+  await read(onModel("deep"));
+  await second;
+
+  const point = conversation().modelChanges.find(
+    (change) => change.modelName === "Deep",
+  )?.afterTurnCount;
+  const there = conversation()
+    .modelChanges.filter((change) => change.afterTurnCount === point)
+    .map((change) => change.modelName);
+  assert.deepEqual(there, ["Deep"], "the switch's mark stands alone");
 });

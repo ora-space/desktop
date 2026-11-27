@@ -488,9 +488,13 @@ export function createChatStore(
     const theirsOut = conversation.modelChanges.filter(
       (change) => change.id !== sync.changeMarker,
     );
+    // Put back only where nothing newer, such as an agent switch, has marked the same point.
     const unmarked =
       sync.replacedMarker === null ||
-      theirsOut.some((change) => change.id === sync.replacedMarker?.id)
+      theirsOut.some(
+        (change) =>
+          change.afterTurnCount === sync.replacedMarker?.afterTurnCount,
+      )
         ? theirsOut
         : [...theirsOut, sync.replacedMarker];
     const marked = recordModelChange(
