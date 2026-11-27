@@ -19,14 +19,23 @@ fn parked_fixture() -> Fixture {
     f
 }
 
-/// A parked interactive attempt needs no stop acknowledgement, but its old session cannot
-/// start another turn until a failed operation releases the fence.
+/// Even a plan that only invalidates a parked attempt must fence its session until release.
 #[test]
 fn parked_session_rejects_followup_until_the_fence_is_released() {
     run_test(async {
         let f = parked_fixture();
         let old = f.row("x");
-        let preview = f.preview(old.id.as_ref(), /*base_revision*/ 0);
+        let request = f.preview_request(old.id.as_ref(), /*base_revision*/ 0);
+        // Isolate the admission guard: the full affected set must protect a session
+        // even when the planner has requested no physical stops.
+        let preview = f
+            .store
+            .preview(&request, |input| {
+                let (mut impact, fence) = crate::workflow::run::debug::strategy::plan(input)?;
+                impact.stop.clear();
+                Ok((impact, fence))
+            })
+            .unwrap();
         assert!(preview.impact.stop.is_empty());
         assert!(preview.impact.invalidate.contains(&old.id.to_string()));
         f.store
@@ -67,7 +76,7 @@ fn retired_parked_session_is_not_admitted_after_apply() {
         let f = parked_fixture();
         let old = f.row("x");
         let preview = f.preview(old.id.as_ref(), /*base_revision*/ 0);
-        assert!(preview.impact.stop.is_empty());
+        assert_eq!(preview.impact.stop, [old.id.to_string()]);
         let receipt = f
             .coordinator
             .commit(f.commit_request(&preview, "edit"))
@@ -257,13 +266,11 @@ fn boot_dispatches_confirmed_scope_beside_a_parked_interactive_node() {
             "apply",
         );
         f.store.claim(&req).unwrap();
+        let now = 60;
         f.store
-            .apply_after_stop(
-                f.run_id.as_ref(),
-                "apply",
-                /*now*/ 60,
-                crate::workflow::run::debug::strategy::settle,
-            )
+            .apply_after_stop(f.run_id.as_ref(), "apply", now, |tx, preview| {
+                crate::workflow::run::debug::strategy::settle(tx, f.run_id.as_ref(), now, preview)
+            })
             .unwrap();
         assert!(f.store.has_dispatch(f.run_id.as_ref()).unwrap());
         boot_with_calls(&f._temp, "x");
