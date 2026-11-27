@@ -23,7 +23,7 @@ fn owner(input: &DebugPlanningInput) -> Result<&str, DebugRejection> {
         let values = &input.pool.values;
         if values
             .get(&format!("{owner}.index"))
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             != Some(index.into())
             || !values.contains_key(&format!("{owner}.item"))
         {
