@@ -215,16 +215,7 @@ describe("buildDisplayRun iteration projection", () => {
   };
 
   it("groups region states by (nodeId, iteration) and keeps the latest round as the node state", () => {
-    const display = buildDisplayRun(
-      {
-        ...detail,
-        nodes: detail.nodes.map((row) => ({
-          ...row,
-          id: `${row.nodeId}-${row.iteration ?? "root"}`,
-        })),
-      },
-      ITERATION_GRAPH,
-    );
+    const display = buildDisplayRun(detail, ITERATION_GRAPH);
     expect(display.nodeStates.fix).toMatchObject({
       status: "failed",
       iteration: 1,
