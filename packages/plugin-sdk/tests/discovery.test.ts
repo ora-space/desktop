@@ -1,6 +1,7 @@
 import {
   AGENT_DISCOVERY_CLEANUP_RESERVE_MS,
   type AgentCommandsWait,
+  skillSessionSetup,
   waitForAgentCommands,
 } from "../src/mod.ts";
 import {
@@ -81,6 +82,23 @@ Deno.test("keeps an empty report, and treats a failed one as unknown", async () 
     await waitForAgentCommands(FAR, Promise.reject(new Error("closed"))),
     undefined,
   );
+});
+
+Deno.test("sets a probe session up with the Skills a session would be given", () => {
+  const skills = {
+    readRoots: ["/data/skills", "/home/plugins"],
+    directories: ["/data/skills/review"],
+    revision: "7",
+  };
+  const meta = { _meta: { "ora/skillDirectories": ["/data/skills/review"] } };
+  assertEquals(skillSessionSetup(skills, true), {
+    additionalDirectories: ["/data/skills", "/home/plugins"],
+    ...meta,
+  });
+  assertEquals(skillSessionSetup(skills, false), meta);
+  assertEquals(skillSessionSetup({ ...skills, directories: [] }, false), {});
+  assertEquals(skillSessionSetup({ ...skills, readRoots: [] }, true), meta);
+  assertEquals(skillSessionSetup(undefined, true), {});
 });
 
 /** Compares JSON values by their encoded form. */

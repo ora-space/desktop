@@ -1,12 +1,14 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { RemoteContractError } from "@ora/contracts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PlatformProvider,
   type DesktopUpdateCapability,
   type DesktopUpdateStatus,
 } from "../../platform";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { appI18n } from "../../i18n/i18n-instance";
 import type { ReleaseNote } from "../../lib/release-note";
 import { createStubPlatform } from "../../test/stub-platform";
 import { PendingUpdate } from "./pending-update";
@@ -48,10 +50,44 @@ function renderPending(status: DesktopUpdateStatus) {
     getStatus,
     install,
     publish: (next: DesktopUpdateStatus) => act(() => publish(next)),
+    /** Delivers several statuses in one update, as React may render them. */
+    publishTogether: (...next: DesktopUpdateStatus[]) =>
+      act(() => next.forEach((status) => publish(status))),
   };
 }
 
+beforeEach(async () => {
+  await appI18n.changeLanguage("zh-CN");
+});
+
 describe("PendingUpdate", () => {
+  it("shows the offered notes in the interface language", async () => {
+    await appI18n.changeLanguage("en-US");
+    renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: [
+        {
+          version: "0.3.0",
+          date: "2026-12-10",
+          entries: [
+            {
+              category: "fix",
+              "zh-CN": "修复了登录",
+              "en-US": "Fixed signing in",
+            },
+          ],
+        },
+      ],
+    });
+
+    const region = await screen.findByRole("region", {
+      name: "Ora 0.3.0 is available",
+    });
+    expect(within(region).getByText("Fixed signing in")).not.toBeNull();
+    expect(within(region).queryByText("修复了登录")).toBeNull();
+  });
+
   it("shows the notes as plain text before the user installs", async () => {
     const user = userEvent.setup();
     const { container, install } = renderPending({
@@ -184,7 +220,12 @@ describe("PendingUpdate", () => {
       notes: NOTES,
     });
     install.mockImplementationOnce(() => {
-      publish({ kind: "failed", message: "signature is invalid" });
+      publish({
+        kind: "failed",
+        operation: "install",
+        version: "0.3.0",
+        message: "signature is invalid",
+      });
       return Promise.reject(new Error("rejected"));
     });
     await user.click(await screen.findByRole("button", { name: "立即更新" }));
@@ -200,7 +241,13 @@ describe("PendingUpdate", () => {
     await user.click(within(region).getByRole("button", { name: "重试" }));
     expect(check).toHaveBeenCalledTimes(1);
     // The retry is a check, so a further failure is no longer the installation's.
-    await screen.findByRole("region", { name: "检查更新失败" });
+    publish({ kind: "checking" });
+    publish({
+      kind: "failed",
+      operation: "check",
+      message: "connection refused",
+    });
+    expect(screen.getByRole("region", { name: "检查更新失败" })).not.toBeNull();
   });
 
   it("does not blame a later check from elsewhere on the installation", async () => {
@@ -211,7 +258,12 @@ describe("PendingUpdate", () => {
       notes: NOTES,
     });
     install.mockImplementationOnce(() => {
-      publish({ kind: "failed", message: "signature is invalid" });
+      publish({
+        kind: "failed",
+        operation: "install",
+        version: "0.3.0",
+        message: "signature is invalid",
+      });
       return Promise.reject(new Error("rejected"));
     });
     await user.click(await screen.findByRole("button", { name: "立即更新" }));
@@ -220,9 +272,59 @@ describe("PendingUpdate", () => {
     await screen.findByRole("region", { name: "安装 Ora 0.3.0 失败" });
 
     publish({ kind: "checking" });
-    publish({ kind: "failed", message: "connection refused" });
+    publish({
+      kind: "failed",
+      operation: "check",
+      message: "connection refused",
+    });
     const region = screen.getByRole("region", { name: "检查更新失败" });
     expect(within(region).getByText("原因：connection refused")).not.toBeNull();
+  });
+
+  it("names a failure by the operation the host reports, even with no checking in between", async () => {
+    const { publishTogether } = renderPending({
+      kind: "failed",
+      operation: "install",
+      version: "0.3.0",
+      message: "signature is invalid",
+    });
+    // Mounted after the failure: nothing local remembers an installation.
+    await screen.findByRole("region", { name: "安装 Ora 0.3.0 失败" });
+
+    // React may render a `checking` and the failure after it once; the title follows the latter.
+    publishTogether(
+      { kind: "checking" },
+      { kind: "failed", operation: "check", message: "connection refused" },
+    );
+    expect(screen.getByRole("region", { name: "检查更新失败" })).not.toBeNull();
+  });
+
+  it("does not report a confirmation that a newer release replaced", async () => {
+    const user = userEvent.setup();
+    const { install, publish } = renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: NOTES,
+    });
+    const payload = {
+      code: "desktop_update_release_replaced",
+      params: {},
+      requestId: "00000000-0000-4000-8000-000000000001",
+    } as const;
+    install.mockRejectedValueOnce(new RemoteContractError(payload, payload));
+    await user.click(await screen.findByRole("button", { name: "立即更新" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "立即更新" }));
+
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+    // Even before the replacement's own status arrives, nothing blames the installation.
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    publish({ kind: "ready", version: "0.4.0", notes: NOTES });
+    expect(
+      screen.getByRole("region", { name: "可更新到 Ora 0.4.0" }),
+    ).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("drops a rejected installation once another release replaces it", async () => {
@@ -249,6 +351,7 @@ describe("PendingUpdate", () => {
     const user = userEvent.setup();
     const { check } = renderPending({
       kind: "failed",
+      operation: "check",
       message: "update operation failed: connection refused",
     });
 

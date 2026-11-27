@@ -4,16 +4,16 @@
 
 插件是扩展 Ora 的方式：Agent、Skill、MCP server、UI surface、Hook、工作流文档，以及由其他插件组成的扩展包，都以已安装的 `.orax` 包的形式到来。本文介绍包模型、进程生命周期、宿主服务和配置。包从哪里来见 [Marketplace](marketplace.zh.md)；UI surface 见 [Surface](surfaces.zh.md)；插件日志见[插件日志](plugin-logging.zh.md)。
 
-| Crate | 负责 |
-|---|---|
-| `ora-plugin-manifest` | 解析和校验 `orax.toml` |
-| `ora-plugin-manager` | 发现已安装的包、宿主侧的包校验、安装、更新、本地导入 |
-| `ora-plugin-lifecycle` | 插件进程的唯一所有者；宿主请求服务；运行时状态 |
-| `ora-plugin-runtime` | 启动 Deno、stdio 协议、注册、调用和通知 |
-| `ora-plugin-protocol` | 与 `packages/plugin-sdk` 共享的线上契约 |
-| `ora-plugin-config` | 设置声明、MCP 和 Hook 配置形状、已存的值 |
-| `ora-plugin-registry` | marketplace 源同步和可用插件索引 |
-| `ora-backend`（`src/plugin`） | 组装：操作、扩展包、Hook 生命周期、marketplace 同步 |
+| Crate                         | 负责                                                 |
+| ----------------------------- | ---------------------------------------------------- |
+| `ora-plugin-manifest`         | 解析和校验 `orax.toml`                               |
+| `ora-plugin-manager`          | 发现已安装的包、宿主侧的包校验、安装、更新、本地导入 |
+| `ora-plugin-lifecycle`        | 插件进程的唯一所有者；宿主请求服务；运行时状态       |
+| `ora-plugin-runtime`          | 启动 Deno、stdio 协议、注册、调用和通知              |
+| `ora-plugin-protocol`         | 与 `packages/plugin-sdk` 共享的线上契约              |
+| `ora-plugin-config`           | 设置声明、MCP 和 Hook 配置形状、已存的值             |
+| `ora-plugin-registry`         | marketplace 源同步和可用插件索引                     |
+| `ora-backend`（`src/plugin`） | 组装：操作、扩展包、Hook 生命周期、marketplace 同步  |
 
 ## 身份与目录布局
 
@@ -33,16 +33,16 @@
 
 ## 种类
 
-| 种类 | 贡献 | 进程 |
-|---|---|---|
-| `agent` | 恰好一个 Agent，以包的插件 id 标识，见 [Agent 运行时](../agents/agent-runtime.zh.md) | Deno `main.js`，权限较宽，可以启动宿主管理的子进程 |
-| `workbench` | 随包附带、作为 surface 显示的页面 | Deno `main.js`，没有任何 `--allow-*` 权限，由页面的第一次桥接调用启动 |
-| `webview` | 作为 surface 显示的外部 HTTPS 站点 | 无 |
-| `skill` | `assets/<name>/SKILL.md` 下的一个或多个 Skill | 无 |
-| `mcp` | 来自 `assets/config.json` 的一个 MCP server，见 [Session MCP](../agents/session-mcp.zh.md) | 无（server 由 Agent 运行） |
-| `hook` | 带 `init`/`deinit` 生命周期命令的原生可执行文件 | 无（宿主只在获得授权时运行命令） |
-| `workflow` | 导入工作流库的工作流文档，见[工作流包](workflow-packages.zh.md) | 无 |
-| `pack` | 同一来源中其他插件的列表，见 [Marketplace](marketplace.zh.md#扩展包) | 无 |
+| 种类        | 贡献                                                                                       | 进程                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `agent`     | 恰好一个 Agent，以包的插件 id 标识，见 [Agent 运行时](../agents/agent-runtime.zh.md)       | Deno `main.js`，权限较宽，可以启动宿主管理的子进程                    |
+| `workbench` | 随包附带、作为 surface 显示的页面                                                          | Deno `main.js`，没有任何 `--allow-*` 权限，由页面的第一次桥接调用启动 |
+| `webview`   | 作为 surface 显示的外部 HTTPS 站点                                                         | 无                                                                    |
+| `skill`     | `assets/<name>/SKILL.md` 下的一个或多个 Skill                                              | 无                                                                    |
+| `mcp`       | 来自 `assets/config.json` 的一个 MCP server，见 [Session MCP](../agents/session-mcp.zh.md) | 无（server 由 Agent 运行）                                            |
+| `hook`      | 带 `init`/`deinit` 生命周期命令的原生可执行文件                                            | 无（宿主只在获得授权时运行命令）                                      |
+| `workflow`  | 导入工作流库的工作流文档，见[工作流包](workflow-packages.zh.md)                            | 无                                                                    |
+| `pack`      | 同一来源中其他插件的列表，见 [Marketplace](marketplace.zh.md#扩展包)                       | 无                                                                    |
 
 manifest crate 检查形状（字段类型、identifier 语法、`[webview]` 恰好出现在 webview 插件上、`[workbench]` 只出现在 workbench 插件上），并忽略未知字段，这样增量的 schema 变化不会让旧客户端丢掉列表条目；破坏性变化由 `resolver` 把关。manager 补充依赖磁盘上的包的检查：`main.js` 恰好存在于 agent 和 workbench 包中；workbench 附带 `assets/index.html`；webview 的 `start_url` 被 `allowed_origins` 覆盖；MCP 的 stdio 命令解析为包内的普通文件；Hook 可执行文件解析为 `assets/` 下非符号链接的普通文件。
 
@@ -63,9 +63,9 @@ manifest crate 检查形状（字段类型、identifier 语法、`[webview]` 恰
 
 ## 协议与 SDK
 
-`crates/plugin-protocol` 拥有 Rust 宿主、测试插件和 `packages/plugin-sdk` 共享的线上契约：分帧、JSON-RPC 方法常量、注册，以及 Agent 控制、Effect、存储、子进程和 workbench 调用的 DTO。`task export-contracts` 把生成的绑定写入 `packages/plugin-sdk/src/protocol`（`constants.ts` 和 DTO 模块）；`index.ts`、`json.ts` 和 `transport.ts` 保持手写。不要在 SDK 里重复线上名称：加到 `ora-plugin-protocol` 后重新生成。
+`crates/plugin-protocol` 拥有 Rust 宿主、测试插件和 `packages/plugin-sdk` 共享的线上契约：分帧、JSON-RPC 方法常量、注册，以及 Agent 控制、存储、子进程和 workbench 调用的 DTO。`task export-contracts` 把生成的绑定写入 `packages/plugin-sdk/src/protocol`（`constants.ts` 和 DTO 模块）；`index.ts`、`json.ts` 和 `transport.ts` 保持手写。不要在 SDK 里重复线上名称：加到 `ora-plugin-protocol` 后重新生成。
 
-stdout 只承载协议帧：四字节大端长度（含类型字节）、一字节帧类型和 UTF-8 JSON 载荷，最大 16 MiB。协议故障会让进程作废。多词的路径片段用 snake_case（`agent/list_models`、`effect/verify_ready`、`ora/childprocess/close_stdin`）。stderr 承载诊断信息，见[插件日志](plugin-logging.zh.md)。
+stdout 只承载协议帧：四字节大端长度（含类型字节）、一字节帧类型和 UTF-8 JSON 载荷，最大 16 MiB。协议故障会让进程作废。多词的路径片段用 snake_case（`agent/list_models`、`ora/childprocess/close_stdin`）。stderr 承载诊断信息，见[插件日志](plugin-logging.zh.md)。
 
 插件在 `ora/register` 中一次性声明两个方向的流量：
 
@@ -73,20 +73,15 @@ stdout 只承载协议帧：四字节大端长度（含类型字节）、一字�
 {
   "method": "ora/register",
   "params": {
-    "methods": ["agent/start", "effect/coordinate", "effect/reactivate", "effect/verify_ready"],
+    "methods": ["agent/start", "agent/stop", "agent/list_models"],
     "emits": ["agent/acp"],
-    "effectResources": [{
-      "workspaceRelativePath": ".agents/skills",
-      "materializationFormat": "ora/skill-directory.v1",
-      "coordination": "quiesce_before_mutation"
-    }]
-  }
+  },
 }
 ```
 
-宿主只能调用列出的 `methods`；`emits` 之外的通知会让连接作废。`effectResources` 声明 Agent 消费的 Workspace Resource，见 [Effect](../agents/effects.zh.md)。插件发给宿主的请求不需要声明。
+宿主只能调用列出的 `methods`；`emits` 之外的通知会让连接作废。插件发给宿主的请求不需要声明。仍在 `ora/register` 中附带 `effectResources` 的旧版 Agent 插件仍可连接成功：宿主忽略该遗留字段，且从不调用 `effect/*`。
 
-`agent/discover` 接收 `AgentDiscoverParams { cwd, includeCommands, deadline }`：这次发现针对的 Workspace，调用方是否需要 Agent 的命令，以及宿主等到哪一刻（Unix 毫秒）。宿主的超时是同一时刻，排队写出的时间也算在内；等待和清理都以它为准。它返回模型，知道时还返回命令；命令列表缺省表示不知道，空列表表示 Agent 没有命令。格式错误的命令逐条丢弃。宿主按需调用它，预算比普通控制调用更长。
+`agent/discover` 接收 `AgentDiscoverParams { cwd, includeCommands, deadline, skills? }`：这次发现针对的 Workspace，调用方是否需要 Agent 的命令，以及宿主等到哪一刻（Unix 毫秒）。宿主的超时是同一时刻，排队写出的时间也算在内；等待和清理都以它为准。`skills` 只在需要命令时带，内容是此刻建立的会话会得到的值：`readRoots`（会话的 `additionalDirectories`）、`directories`（会话的 `_meta["ora/skillDirectories"]`）和不透明的 `revision`，每次 Skill 变化后都不同。`agent/discover` 返回模型，知道时还返回命令；命令列表缺省表示不知道，空列表表示 Agent 没有命令。格式错误的命令逐条丢弃。宿主按需调用它，预算比普通控制调用更长。
 
 `agent/list_models` 是只返回模型的旧名。Agent 插件至少要注册两者之一；注册了 `agent/discover` 时宿主只调用它，不会两个都调，失败也不退回。SDK 两个都注册，所以旧宿主仍能列出模型。
 
@@ -99,15 +94,15 @@ stdout 只承载协议帧：四字节大端长度（含类型字节）、一字�
 
 ## 操作
 
-| 操作 | 用途 |
-|---|---|
-| `listInstalledPlugins`、`scanPlugins` | 已安装快照；显式重新扫描 |
-| `installPlugin`、`updatePlugin`、`importPlugin` | 从 marketplace 安装或更新；把本地 `.orax` 导入 `local` 命名空间 |
-| `activatePlugin`、`stopPlugin`、`uninstallPlugin` | 进程控制和卸载（可选择删除数据） |
-| `getPluginConfiguration`、`savePluginConfiguration`、`resetPluginConfiguration` | 插件设置，见下文 |
-| `listHookLifecycleReports`、`initializeHook` | Hook 生命周期结果；用户请求的 `init` |
-| `getPluginLogLevel`、`setPluginLogLevel` | 见[插件日志](plugin-logging.zh.md) |
-| `listMcpHealth`、`probeMcpHealth` | 见 [Session MCP](../agents/session-mcp.zh.md#宿主-mcp-健康) |
+| 操作                                                                            | 用途                                                            |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `listInstalledPlugins`、`scanPlugins`                                           | 已安装快照；显式重新扫描                                        |
+| `installPlugin`、`updatePlugin`、`importPlugin`                                 | 从 marketplace 安装或更新；把本地 `.orax` 导入 `local` 命名空间 |
+| `activatePlugin`、`stopPlugin`、`uninstallPlugin`                               | 进程控制和卸载（可选择删除数据）                                |
+| `getPluginConfiguration`、`savePluginConfiguration`、`resetPluginConfiguration` | 插件设置，见下文                                                |
+| `listHookLifecycleReports`、`initializeHook`                                    | Hook 生命周期结果；用户请求的 `init`                            |
+| `getPluginLogLevel`、`setPluginLogLevel`                                        | 见[插件日志](plugin-logging.zh.md)                              |
+| `listMcpHealth`、`probeMcpHealth`                                               | 见 [Session MCP](../agents/session-mcp.zh.md#宿主-mcp-健康)     |
 
 安装时下载 `.orax`（边下载边校验 SHA-256），安全地解压到暂存目录，再用一次重命名提交到 `installed/<namespace>/<name>/<version>`。校验依据的是归档内的 manifest，所以已安装的包天然可以被发现；它的 `identifier`、`version` 和 `kind` 必须与列表条目一致，描述性元数据可以不同，以包为准。更新在下载之前拒绝 no-op 和降级，然后退役其他所有版本。安装、更新和卸载会重新协调 Agent 集合，并发出 `PluginStatusChanged`。
 

@@ -15,7 +15,7 @@
 
 目录只是生成用的元数据，不包含传输路由、查询或序列化细节；前端类型从不来自领域实体或适配层自己的结构体。
 
-当前的命名空间：`project`、`task`、`workspace`、`session`、`appEvents`、`agentRuntime`、`agent`、`agentImport`、`skill`、`skillImport`、`fileSystem`、`gitIdentity`、`workflow`、`workflowRun`、`scheduledTask`、`plugin`、`effect`、`developerMode`、`runtimeLogLevel` 和 `proxy`。
+当前的命名空间：`project`、`task`、`workspace`、`session`、`appEvents`、`agentRuntime`、`agent`、`agentImport`、`skill`、`skillImport`、`fileSystem`、`gitIdentity`、`workflow`、`workflowRun`、`scheduledTask`、`plugin`、`developerMode`、`runtimeLogLevel` 和 `proxy`。
 
 ## 生成
 
@@ -49,7 +49,7 @@ Desktop 传输层（`apps/desktop/web` 中的 `createTauriTransport`）把操作
 
 不属于 SDK 流的原生事件有自己的路由。例如 marketplace 自动刷新状态由插件契约中的 `MarketplaceAutoSyncEvent` 声明，由 `apps/desktop/src-tauri/bindings/marketplace_sync.rs` 路由，并通过生成的监听代码和 serde 样例纳入 `check:contracts`。
 
-`watchAppEvents` 是失效广播，不是可回放的日志。Web App Shell 在挂载查询或打开这条流之前，平台适配层会先获取同源的 `ora:app-window` Web Lock，因此第二个浏览器标签页会等到第一个关闭。Desktop 适配层直接授予所有权，因为原生宿主只有一个主窗口。
+`watchAppEvents` 是失效广播，不是可回放的日志。每个客户端有一个有上限的队列，存放它还没取走的事件；队列里已经有某个 Agent 的 `AgentModelsInvalidated` 时，同一 Agent 的新事件并入它，所以批量导入 Skill 这类按每个 Agent 各发一次的突发不会塞满队列。客户端落后超过队列容量时流仍会结束，客户端重连并重新查询。Web App Shell 在挂载查询或打开这条流之前，平台适配层会先获取同源的 `ora:app-window` Web Lock，因此第二个浏览器标签页会等到第一个关闭。Desktop 适配层直接授予所有权，因为原生宿主只有一个主窗口。
 
 ## 错误与本地化
 

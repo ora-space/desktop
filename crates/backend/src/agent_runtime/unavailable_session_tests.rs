@@ -51,7 +51,7 @@ fn test_sessions(root: &Path) -> Arc<Sessions> {
 fn seed_session(root: &Path, pool: &RepositoryPool) {
     let workspace_path = root.join("project");
     std::fs::create_dir_all(&workspace_path).expect("create project directory");
-    SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock)
+    SqliteProjectRepository::new(pool.clone())
         .create_project(
             Project::new(
                 ProjectId::new("project-1"),

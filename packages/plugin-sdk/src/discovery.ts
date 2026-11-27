@@ -1,5 +1,10 @@
 import type { AgentDiscoveryContext } from "./agent.ts";
-import { AGENT_COMMANDS_WAIT_CAP_MS } from "./protocol/index.ts";
+import {
+  AGENT_COMMANDS_WAIT_CAP_MS,
+  type AgentDiscoverSkills,
+  type JsonValue,
+  SKILL_DIRECTORIES_META_KEY,
+} from "./protocol/index.ts";
 
 /** How much of a discovery's time {@link waitForAgentCommands} leaves for cleanup by default. */
 export const AGENT_DISCOVERY_CLEANUP_RESERVE_MS = 5_000;
@@ -44,4 +49,33 @@ export async function waitForAgentCommands<Report>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The part of an ACP session setup that hands an agent its Skills. */
+export interface SkillSessionSetup {
+  additionalDirectories?: string[];
+  _meta?: Record<string, JsonValue>;
+}
+
+/**
+ * Builds the Skill part of a probe session's `session/new`, as Ora builds it for a session.
+ *
+ * Spread it into the params. `supportsAdditionalDirectories` is whether the agent's `initialize`
+ * answer declared `sessionCapabilities.additionalDirectories`; without it, or without Skills, the
+ * fields an agent does not expect stay out.
+ */
+export function skillSessionSetup(
+  skills: AgentDiscoverSkills | undefined,
+  supportsAdditionalDirectories: boolean,
+): SkillSessionSetup {
+  if (skills === undefined) return {};
+  const { readRoots, directories } = skills;
+  return {
+    ...(supportsAdditionalDirectories && readRoots.length > 0
+      ? { additionalDirectories: [...readRoots] }
+      : {}),
+    ...(directories.length > 0
+      ? { _meta: { [SKILL_DIRECTORIES_META_KEY]: [...directories] } }
+      : {}),
+  };
 }

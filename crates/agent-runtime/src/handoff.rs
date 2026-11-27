@@ -38,6 +38,8 @@ pub(super) struct AgentPrompt {
     /// before it was ever prompted has nothing to hand over and is current the
     /// moment its first prompt lands.
     pub(super) settles_handoff: bool,
+    /// Number of leading handoff blocks inserted ahead of the user content.
+    pub(super) prefix_len: usize,
 }
 
 /// Builds the prompt a freshly rebuilt provider session needs to inherit the conversation.
@@ -51,15 +53,21 @@ pub(super) fn rebuild_prompt<H: AgentRuntimeHost>(
     actor: &RuntimeActor<H>,
     prompt: &[ContentBlock],
     cutoff: u64,
-) -> Option<Vec<ContentBlock>> {
+) -> Option<AgentPrompt> {
     let history =
         read_session_history_up_to(&actor.sessions_root, actor.session.id.as_ref(), cutoff).ok()?;
     let mut blocks = Vec::with_capacity(prompt.len() + 1);
+    let mut prefix_len = 0;
     if let Some(transcript) = render_handoff(&history) {
         blocks.push(ContentBlock::Text(TextContent::new(transcript)));
+        prefix_len = 1;
     }
     blocks.extend_from_slice(prompt);
-    Some(blocks)
+    Some(AgentPrompt {
+        blocks,
+        settles_handoff: true,
+        prefix_len,
+    })
 }
 
 /// Builds the provider prompt, injecting the recorded transcript only when one is owed.
@@ -71,6 +79,7 @@ pub(super) fn prompt_for_agent<H: AgentRuntimeHost>(
         return AgentPrompt {
             blocks: prompt.to_vec(),
             settles_handoff: false,
+            prefix_len: 0,
         };
     }
     let history = match read_session_history(&actor.sessions_root, actor.session.id.as_ref()) {
@@ -86,6 +95,7 @@ pub(super) fn prompt_for_agent<H: AgentRuntimeHost>(
             return AgentPrompt {
                 blocks: prompt.to_vec(),
                 settles_handoff: false,
+                prefix_len: 0,
             };
         }
     };
@@ -94,6 +104,7 @@ pub(super) fn prompt_for_agent<H: AgentRuntimeHost>(
         return AgentPrompt {
             blocks: prompt.to_vec(),
             settles_handoff: true,
+            prefix_len: 0,
         };
     };
     ora_debug!(
@@ -107,5 +118,6 @@ pub(super) fn prompt_for_agent<H: AgentRuntimeHost>(
     AgentPrompt {
         blocks,
         settles_handoff: true,
+        prefix_len: 1,
     }
 }

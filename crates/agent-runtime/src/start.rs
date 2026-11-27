@@ -8,8 +8,12 @@ use super::support::{contract_session, domain_agent_ref};
 use super::{ActorSetup, HandoffDebt, SessionVisibility, TitleAcquisition};
 use super::{AgentRuntimeManager, SESSION_SETUP_TIMEOUT, session_setup_window};
 use crate::AgentRuntimeHost;
+use crate::config_changes::ask_during_setup;
+use crate::events::settle_idle_event;
 use crate::host::SessionSetup;
 use crate::host::SessionStore;
+use crate::host::SkillCatalogEntry;
+use crate::host::SkillCatalogSource;
 use crate::host::WorkspaceDirectory;
 use crate::model_config::model_config_id;
 use crate::session_setup::{
@@ -19,11 +23,10 @@ use crate::{ErrorClassification, RuntimeError};
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AvailableCommand, CloseSessionRequest, CloseSessionResponse,
     DeleteSessionRequest, DeleteSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
-    RequestPermissionOutcome, RequestPermissionResponse, SessionConfigId, SessionConfigOption,
-    SessionConfigOptionValue, SessionUpdate, SetSessionConfigOptionRequest,
-    SetSessionConfigOptionResponse,
+    SessionConfigId, SessionConfigOption, SessionConfigOptionValue, SessionNotification,
+    SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
 };
-use ora_acp::{AcpClient, AcpTransport};
+use ora_acp::{AcpClient, AcpTransport, ReadOrder};
 use ora_contracts::{EmptyErrorParams, PublicError, StartSessionRequest, StartSessionResponse};
 use ora_domain::{AgentRef, SessionId};
 use ora_domain::{AuditFields, Session, SessionStatus, WorkspaceId};
@@ -163,6 +166,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         } = self
             .create_provider_session(
                 &session_id,
+                &workspace_id,
                 &agent_ref,
                 &cwd,
                 request.model.as_deref(),
@@ -256,6 +260,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     pub(super) async fn create_provider_session(
         &self,
         ora_session_id: &SessionId,
+        workspace_id: &WorkspaceId,
         agent_ref: &AgentRef,
         cwd: &Path,
         model: Option<&str>,
@@ -264,7 +269,9 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         create_provider_session(
             &self.inner.connections,
             session_mcp,
+            &self.inner.skill_catalog,
             ora_session_id,
+            workspace_id,
             agent_ref,
             cwd,
             model,
@@ -274,10 +281,13 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
 }
 
 /// Performs one authoritative provider handshake and applies a pre-session model intent.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     connections: &ConnectionSupervisors<H>,
     session_mcp: &H::Setup,
+    skill_catalog: &H::Skills,
     ora_session_id: &SessionId,
+    workspace_id: &WorkspaceId,
     agent_ref: &AgentRef,
     cwd: &Path,
     model: Option<&str>,
@@ -333,10 +343,30 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     let setup_registration = supervisor.begin_session_setup();
     let mut servers = mcp.into_servers();
     servers.extend(session_mcp.host_mcp_servers());
-    let response = await_session_new(
+    let skill_entries = match skill_catalog.skill_catalog(workspace_id) {
+        Ok(snapshot) => snapshot.entries,
+        Err(error) => {
+            ora_warn!(
+                session_id = %ora_session_id,
+                workspace_id = %workspace_id,
+                error = %error,
+                "failed to read skill catalog for session/new; omitting skill directory metadata",
+            );
+            Vec::new()
+        }
+    };
+    let extra_read_roots = if connection.additional_directories_supported {
+        skill_catalog.extra_read_roots()
+    } else {
+        Vec::new()
+    };
+    let (response, answered) = await_session_new(
         &connection.client,
         cwd,
         servers,
+        connection.additional_directories_supported,
+        extra_read_roots,
+        &skill_entries,
         setup_registration.activity(),
         setup_window,
     )
@@ -355,28 +385,39 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
         agent_session_id: agent_session_id.clone(),
         committed: false,
     };
-    let mut channel =
-        supervisor.open_session_channel(&agent_session_id, ora_session_id.as_ref())?;
+    // An answer without options leaves those the agent pushed before it; an empty list does not.
+    let options_answered = response.config_options.is_some().then_some(answered);
+    let mut channel = supervisor.open_answered_session_channel(
+        &agent_session_id,
+        ora_session_id.as_ref(),
+        options_answered,
+    )?;
     // Collected on the channel the actor inherits, so the non-command setup updates the agent sent
     // alongside them stay queued on it instead of being discarded with a throwaway registration.
-    let available_commands = collect_setup_commands(&mut channel).await;
-    crate::discovery::warn_when_commands_exceed_limit(agent_ref, available_commands.len());
     let mut config_options = response.config_options.unwrap_or_default();
-    if let Some(model) = model
-        && let Some(applied) = apply_model_intent(
-            connections,
+    collect_setup_commands(&mut channel, &mut config_options).await;
+    if let Some(model) = model {
+        // Every frame up to the answer is taken in the order it was read, so a snapshot pushed
+        // before the agent applied the model is replaced by the answer that applied it.
+        let offered = config_options.clone();
+        let observe = |channel: &mut SessionChannel, notification| {
+            keep_setup_update(channel, notification, &mut config_options);
+        };
+        if let Some(applied) = apply_model_intent(
+            &mut channel,
             agent_ref,
             &agent_session_id,
             model,
-            &config_options,
+            &offered,
+            observe,
         )
         .await
-    {
-        // This answer is the whole configuration after the change. A snapshot collected before the
-        // request is older, and delivering it with the first prompt would show the model undone.
-        channel.discard_pending_options();
-        config_options = applied;
+        {
+            config_options = applied;
+        }
     }
+    let available_commands = channel.available_commands.clone();
+    crate::discovery::warn_when_commands_exceed_limit(agent_ref, available_commands.len());
     Ok(PendingProviderSession {
         release,
         list_session_supported: connection.list_session_supported,
@@ -396,15 +437,25 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
 /// alive and rearm the window, while an agent that stays silent past the window fails with
 /// `agent_timed_out` instead of holding the create forever. A request that delivers servers gets
 /// a wider window, because connecting them is exactly the slow part of a conforming setup.
+#[allow(clippy::too_many_arguments)]
 async fn await_session_new<T: AcpTransport>(
     client: &AcpClient<T>,
     cwd: &Path,
     servers: Vec<McpServer>,
+    additional_directories_supported: bool,
+    extra_read_roots: Vec<PathBuf>,
+    skill_entries: &[SkillCatalogEntry],
     activity: &SetupActivity,
     window: Duration,
-) -> Result<NewSessionResponse, RuntimeError> {
-    let params = NewSessionRequest::new(cwd).mcp_servers(servers);
-    let request = client.request::<_, NewSessionResponse>(AGENT_METHOD_NAMES.session_new, &params);
+) -> Result<(NewSessionResponse, ReadOrder), RuntimeError> {
+    let params = crate::skill_catalog::apply_skill_setup(
+        NewSessionRequest::new(cwd).mcp_servers(servers),
+        additional_directories_supported,
+        extra_read_roots,
+        skill_entries,
+    );
+    let request = client
+        .request_read_in_order::<_, NewSessionResponse>(AGENT_METHOD_NAMES.session_new, &params);
     tokio::pin!(request);
     let inactivity = tokio::time::sleep_until(tokio::time::Instant::now() + window);
     tokio::pin!(inactivity);
@@ -506,21 +557,23 @@ pub fn record_session_mcp_boundary(
 
 /// Applies a model only when the session authoritatively offers that value.
 ///
-/// Returns the configuration the provider answered with, or nothing when none was applied.
-pub(super) async fn apply_model_intent<H: AgentRuntimeHost>(
-    connections: &ConnectionSupervisors<H>,
+/// Returns the configuration the provider answered with, or nothing when none was applied. Updates
+/// that come before the answer are given to `observe`.
+pub(super) async fn apply_model_intent(
+    channel: &mut SessionChannel,
     agent_ref: &AgentRef,
     agent_session_id: &str,
     model: &str,
     config_options: &[SessionConfigOption],
+    observe: impl FnMut(&mut SessionChannel, SessionNotification),
 ) -> Option<Vec<SessionConfigOption>> {
     let config_id = model_config_id(config_options, model)?;
-    match request_config_option(
-        connections,
-        agent_ref,
+    match ask_during_setup(
+        channel,
         agent_session_id,
         &config_id,
         &SessionConfigOptionValue::value_id(model.to_string()),
+        observe,
     )
     .await
     {
@@ -602,11 +655,15 @@ async fn release_provider_session<H: AgentRuntimeHost>(
     }
 }
 
-/// Extracts the latest setup command catalog while preserving other updates for the first prompt.
+/// Extracts the latest setup command catalog and options while preserving other updates for the
+/// first prompt.
 ///
 /// An Agent may report its commands only after answering setup, later than this short window. Such
 /// a report is kept by the idle drain and reaches the client with the next prompt instead.
-pub(super) async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<AvailableCommand> {
+async fn collect_setup_commands(
+    channel: &mut SessionChannel,
+    config_options: &mut Vec<SessionConfigOption>,
+) {
     loop {
         // ACP sends setup updates before the response, but the shared router runs
         // independently and may need one short scheduling window to deliver them.
@@ -617,29 +674,30 @@ pub(super) async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<
         };
         match event {
             SessionEvent::Update(notification, _) => {
-                if matches!(
-                    notification.update,
-                    SessionUpdate::AvailableCommandsUpdate(_)
-                ) {
-                    channel.observe_commands(&notification.update);
-                } else {
-                    channel.pending_updates.push_back(notification);
-                }
+                keep_setup_update(channel, notification, config_options);
             }
-            SessionEvent::Permission(permission) => {
-                let _ = channel
-                    .connection
-                    .client
-                    .respond(
-                        &permission.request_id,
-                        &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
-                    )
-                    .await;
+            event => {
+                let client = channel.connection.client.clone();
+                settle_idle_event(&client, event).await;
             }
-            SessionEvent::Response(_) => {}
         }
     }
-    channel.available_commands.clone()
+}
+
+/// Keeps one update a session sent while it was being set up.
+///
+/// The session's commands and options are part of what setup reports; the rest waits for the first
+/// prompt.
+fn keep_setup_update(
+    channel: &mut SessionChannel,
+    notification: SessionNotification,
+    config_options: &mut Vec<SessionConfigOption>,
+) {
+    match notification.update {
+        SessionUpdate::AvailableCommandsUpdate(_) => channel.observe_commands(&notification.update),
+        SessionUpdate::ConfigOptionUpdate(update) => *config_options = update.config_options,
+        _ => channel.pending_updates.push_back(notification),
+    }
 }
 
 #[cfg(test)]
@@ -714,6 +772,9 @@ mod tests {
             &client,
             Path::new("C:\\work"),
             Vec::new(),
+            /*additional_directories_supported*/ false,
+            Vec::new(),
+            &[],
             registration.activity(),
             Duration::from_millis(200),
         );
@@ -752,6 +813,9 @@ mod tests {
             &client,
             Path::new("C:\\work"),
             Vec::new(),
+            /*additional_directories_supported*/ false,
+            Vec::new(),
+            &[],
             registration.activity(),
             Duration::from_millis(200),
         );
@@ -786,7 +850,7 @@ mod tests {
             })))
             .expect("answer session/new");
 
-        let response = (&mut create)
+        let (response, _) = (&mut create)
             .await
             .expect("create survives past its first window");
         assert_eq!(response.session_id.to_string(), "provider-1");

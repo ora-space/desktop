@@ -15,7 +15,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@ora/ui";
-import type { WorkflowVariableCatalogEntry } from "@ora/workflow-mock";
+import {
+  validReferences,
+  type WorkflowVariableCatalogEntry,
+} from "@ora/workflow-mock";
 import {
   ComposerEditor,
   type ComposerEditorHandle,
@@ -30,6 +33,7 @@ import { WorkflowVariableRowContent } from "./workflow-variable-list";
 import { WorkflowPromptVariableToken } from "./workflow-prompt-token-extension";
 
 interface WorkflowPromptEditorProps {
+  showValidation?: boolean;
   value: string;
   variableCatalog: WorkflowVariableCatalogEntry[];
   ariaLabel: string;
@@ -47,6 +51,7 @@ interface VariableMenuPosition {
 
 /** Edits an Agent prompt with caret-anchored variable insertion and compact text tools. */
 export function WorkflowPromptEditor({
+  showValidation,
   value,
   variableCatalog,
   ariaLabel,
@@ -212,6 +217,10 @@ export function WorkflowPromptEditor({
   const panel = (
     <div
       ref={panelRef}
+      role={showValidation ? "group" : undefined}
+      aria-invalid={
+        showValidation ? !validReferences(value, variableCatalog) : undefined
+      }
       className={
         compact
           ? "relative"

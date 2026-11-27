@@ -1,9 +1,10 @@
 //! Tauri command seam for the Desktop updater.
 
-use super::DesktopUpdateStatus;
+use super::{DesktopUpdateStatus, UpdateError};
 use crate::error::CommandError;
 use crate::state::DesktopState;
-use ora_backend::BackendError;
+use ora_backend::{BackendError, ErrorClassification};
+use ora_contracts::{EmptyErrorParams, PublicError};
 
 /// Exposes the current status so a freshly mounted webview does not have to wait for an event.
 #[tauri::command]
@@ -23,12 +24,25 @@ pub async fn install_desktop_update(
     // `commands::run_async_backend`.
     Box::pin(state.update.install(&version))
         .await
-        .map_err(|error| {
-            CommandError::from_backend(BackendError::internal(
-                "failed to install Desktop update",
-                error,
-            ))
-        })
+        .map_err(install_command_error)
+}
+
+/// Completes a refused installation request and projects it for the webview.
+///
+/// A release replaced between the confirmation and the installation is an expected race: the host
+/// has already published the replacement as ready, so it is a conflict the webview can ignore and
+/// the request log records at WARN, not a fault of Ora's own.
+pub(super) fn install_command_error(error: UpdateError) -> CommandError {
+    let error = match error {
+        UpdateError::ReleaseReplaced => BackendError::with_source(
+            ErrorClassification::Conflict,
+            PublicError::DesktopUpdateReleaseReplaced(EmptyErrorParams {}),
+            "the confirmed Desktop update was replaced",
+            error,
+        ),
+        error => BackendError::internal("failed to install Desktop update", error),
+    };
+    CommandError::from_backend(error)
 }
 
 /// Runs an update check on demand, outside the scheduled delayed and cron checks.

@@ -115,12 +115,25 @@ fn fixture() -> (Connection, MigrationCatalog, MigrationCatalog) {
     (connection, latest, previous)
 }
 
+fn pre_0025_catalog(latest: &MigrationCatalog) -> MigrationCatalog {
+    MigrationCatalog::new(
+        latest
+            .target_versions()
+            .iter()
+            .filter(|version| **version < "0025")
+            .map(|version| latest.migration(version).unwrap().clone())
+            .collect(),
+    )
+    .unwrap()
+}
+
 /// Flat data survives both migration directions and gains default root identity for future nodes.
 #[test]
 fn backfills_flat_nodes_and_preserves_old_rows() {
     with_trace_logging(|| {
         let (mut connection, latest, previous) = fixture();
-        reconcile_database_versions(&mut connection, &latest, &TestClock::new(3)).unwrap();
+        let target = pre_0025_catalog(&latest);
+        reconcile_database_versions(&mut connection, &target, &TestClock::new(3)).unwrap();
         let row: (String, String, i64, String) = connection.query_row(
             "SELECT scope_id, node_id, status, output FROM workflow_node_runs WHERE id = 'start'", [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -148,7 +161,7 @@ fn backfills_flat_nodes_and_preserves_old_rows() {
                 .unwrap(),
             1
         );
-        reconcile_database_versions(&mut connection, &latest, &TestClock::new(5)).unwrap();
+        reconcile_database_versions(&mut connection, &target, &TestClock::new(5)).unwrap();
         assert_eq!(
             connection
                 .query_row(
@@ -218,7 +231,8 @@ fn enforces_scope_identity_and_round_uniqueness() {
 fn downgrade_archives_loop_history_and_reupgrade_is_safe() {
     with_trace_logging(|| {
         let (mut connection, latest, previous) = fixture();
-        reconcile_database_versions(&mut connection, &latest, &TestClock::new(3)).unwrap();
+        let target = pre_0025_catalog(&latest);
+        reconcile_database_versions(&mut connection, &target, &TestClock::new(3)).unwrap();
         connection.execute("INSERT INTO workflow_node_runs (id, run_id, node_id, node_type, status, created_at, updated_at) VALUES ('loop', 'run', 'loop', 'loop', 1, 3, 3)", []).unwrap();
         connection.execute("INSERT INTO workflow_execution_scopes (id, run_id, parent_loop_node_run_id, round_index, status, state, created_at, updated_at) VALUES ('round', 'run', 'loop', 1, 1, '{\"carried\":{\"draft\":\"text\"}}', 3, 3)", []).unwrap();
         connection.execute("INSERT INTO workflow_node_runs (id, run_id, scope_id, node_id, node_type, session_id, status, input, output, created_at, updated_at) VALUES ('writer-1', 'run', 'round', 'writer', 'agent', 'session', 1, 'draft', 'partial', 3, 3)", []).unwrap();
@@ -261,7 +275,7 @@ fn downgrade_archives_loop_history_and_reupgrade_is_safe() {
             (4, 1)
         );
         for _ in 0..2 {
-            reconcile_database_versions(&mut connection, &latest, &TestClock::new(5)).unwrap();
+            reconcile_database_versions(&mut connection, &target, &TestClock::new(5)).unwrap();
             reconcile_database_versions(&mut connection, &previous, &TestClock::new(6)).unwrap();
             assert_eq!(
                 connection

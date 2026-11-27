@@ -860,3 +860,59 @@ describe("WorkflowInspector empty iteration selectors", () => {
     expect(screen.getAllByText("暂无可用变量")).toHaveLength(2);
   });
 });
+
+it("offers structured-output arrays in the definition editor and keeps incomplete fields free of run errors", async () => {
+  await appI18n.changeLanguage("en-US");
+  const node = createIterationNode();
+  const entry: WorkflowVariableCatalogEntry = {
+    selector: ["rev", "structured_output", "items"],
+    sourceNodeId: "rev",
+    variableName: "items",
+    valueType: "array",
+  };
+  render(
+    <StatefulInspectorHarness
+      node={node}
+      capabilities={createMockWorkflowCapabilities("en-US")}
+      variableCatalog={[entry]}
+    />,
+  );
+  expect(screen.getByLabelText("Collect target")).not.toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByLabelText("Iterator source"));
+  await user.click(
+    await screen.findByRole("option", { name: "rev.structured_output.items" }),
+  );
+  expect(screen.getByLabelText("Iterator source")).toHaveTextContent("items");
+});
+
+it.each([createAgentNode, createConditionNode])(
+  "leaves definition inputs without run validation messages",
+  async (makeNode) => {
+    await appI18n.changeLanguage("en-US");
+    const node = makeNode();
+    if (node.data.agentConfig)
+      node.data.agentConfig.prompt = "{{#missing.value#}}";
+    const { container } = render(
+      <StatefulInspectorHarness
+        node={node}
+        capabilities={createMockWorkflowCapabilities("en-US")}
+        variableCatalog={[]}
+      />,
+    );
+    if (node.data.agentConfig) {
+      await waitFor(() =>
+        expect(
+          container.querySelector('[data-prompt-token="variable"]'),
+        ).toBeInTheDocument(),
+      );
+    }
+    expect(container.querySelector('[aria-invalid="true"]')).toBeNull();
+    expect(
+      screen.queryByText(/Check the value and variable scope/),
+    ).not.toBeInTheDocument();
+  },
+);

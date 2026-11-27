@@ -16,7 +16,6 @@ use skill_environment::SkillEnvironment;
 
 use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
-use crate::effect_worker::EffectWorkerHandle;
 use crate::error::{BackendError, ErrorClassification};
 use crate::marketplace_sources::{
     ConfiguredMarketplaceSource, MarketplaceSourceStore, map_marketplace_source_error,
@@ -24,6 +23,7 @@ use crate::marketplace_sources::{
 use crate::proxy;
 use crate::session_setup::McpHealthStore;
 use crate::settings::Settings;
+use crate::skill_revision::{CountedSkillRepository, SkillRevision};
 use ora_application::{Clock, WorkflowDocument};
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest,
@@ -36,12 +36,11 @@ use ora_contracts::{
     UpdateMarketplaceSourceResponse,
 };
 use ora_db::{
-    PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
-    SqlitePackInstallationRepository, SqlitePluginMarketplaceSourceRepository,
-    SqlitePluginSourceNamespaceRepository, SqliteSkillRepository, SqliteWorkspaceRepository,
+    PluginSkillProjection, RepositoryPool, SqlitePackInstallationRepository,
+    SqlitePluginMarketplaceSourceRepository, SqlitePluginSourceNamespaceRepository,
+    SqliteSkillRepository,
 };
 use ora_domain::PluginId;
-use ora_effect::{ConsumerDeclaration, ConsumerIdentity, ConsumerKind, Digest};
 use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_config::ConfigurationService;
 use ora_plugin_lifecycle::{
@@ -52,9 +51,12 @@ use ora_plugin_lifecycle::{
 use ora_plugin_manager::{Installer, PluginContribution, PluginManager};
 use ora_plugin_registry::RegistryIndex;
 use ora_utils::http::{ProxyConfig, ReqwestDownloader, S3Config};
+#[cfg(test)]
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+#[cfg(test)]
+use std::sync::PoisonError;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
@@ -146,23 +148,15 @@ pub(crate) struct PluginApi {
     installer: Installer<ReqwestDownloader>,
     notifications: BroadcastNotificationSink,
     pub(crate) configuration: ConfigurationService,
-    skill_repository: SqliteSkillRepository,
-    effect_repository: SqliteEffectRepository,
-    workspace_repository: SqliteWorkspaceRepository,
+    skill_repository: CountedSkillRepository,
     /// Durable pack → member relationships recorded by pack installations (D3-A).
     pack_installations: SqlitePackInstallationRepository,
-    agent_effect_declarations: Mutex<BTreeMap<PluginId, ConsumerDeclaration>>,
     /// Admits at most one marketplace index rebuild at a time.
     ///
     /// A rebuild drives the Git CLI over shared source checkouts and then replaces one cache
     /// file, so two of them must never overlap. It guards no value of its own: holding it *is*
     /// the rebuild slot.
     rebuilding: Mutex<()>,
-    /// Set once the Effect worker exists, which is after this API the worker itself borrows.
-    ///
-    /// Its absence only costs latency: a declaration change is already durable before the wake
-    /// would fire, so the worker's periodic scan still converges the surface.
-    effect_reconcile: OnceLock<EffectWorkerHandle>,
     /// Secret-free wakeup that asks live Sessions to re-read Desired MCP.
     mcp_wakeup: OnceLock<Arc<dyn Fn() + Send + Sync>>,
     /// Runs the lifecycle commands Hook packages declare, and holds this session's results.
@@ -229,6 +223,7 @@ impl PluginApi {
         clock: SystemClock,
         publisher: AppEventPublisher,
         settings: Arc<Settings>,
+        skill_revision: SkillRevision,
     ) -> Result<Self, BackendError> {
         let plugins_directory = home_directory.join("plugins");
         let marketplace_sources = MarketplaceSourceStore::open(
@@ -278,13 +273,12 @@ impl PluginApi {
             installer,
             notifications,
             configuration,
-            skill_repository: SqliteSkillRepository::new(pool.clone()),
-            effect_repository: SqliteEffectRepository::new(pool.clone()),
-            workspace_repository: SqliteWorkspaceRepository::new(pool.clone()),
+            skill_repository: CountedSkillRepository::new(
+                SqliteSkillRepository::new(pool.clone()),
+                skill_revision,
+            ),
             pack_installations: SqlitePackInstallationRepository::new(pool),
-            agent_effect_declarations: Mutex::new(BTreeMap::new()),
             rebuilding: Mutex::new(()),
-            effect_reconcile: OnceLock::new(),
             mcp_wakeup: OnceLock::new(),
             hook_lifecycle,
             mcp_health,
@@ -314,21 +308,6 @@ impl PluginApi {
             .unwrap_or_else(PoisonError::into_inner)
             .get(&plugin_id.canonical())
             .cloned()
-    }
-
-    /// Connects the Effect worker's wake handle once it exists.
-    ///
-    /// The worker borrows this API, so it cannot be built before it; wiring the wake afterwards
-    /// keeps that one-way dependency instead of making the two constructors mutually recursive.
-    pub(crate) fn set_effect_reconcile(&self, handle: EffectWorkerHandle) {
-        let _ = self.effect_reconcile.set(handle);
-    }
-
-    /// Wakes the shared worker after an already-durable source or declaration transition.
-    pub(crate) fn notify_effect_reconcile(&self) {
-        if let Some(reconcile) = self.effect_reconcile.get() {
-            reconcile.notify();
-        }
     }
 
     /// Connects the Session runtime wakeup once the agent runtime exists.
@@ -585,77 +564,6 @@ impl PluginApi {
         })
     }
 
-    /// Replaces one Agent plugin's complete Consumer declaration across existing Workspaces.
-    pub(crate) fn replace_agent_effect_declaration(
-        &self,
-        plugin_id: PluginId,
-        declaration: Option<ConsumerDeclaration>,
-    ) -> Result<(), BackendError> {
-        {
-            let mut registered = self
-                .agent_effect_declarations
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if let Some(declaration) = &declaration {
-                registered.insert(plugin_id.clone(), declaration.clone());
-            } else {
-                registered.remove(&plugin_id);
-            }
-        }
-        if let Some(declaration) = declaration {
-            let workspaces = self
-                .workspace_repository
-                .list_all_workspaces()
-                .map_err(|error| {
-                    BackendError::internal("failed to list Effect Workspaces", error)
-                })?;
-            self.effect_repository
-                .declare_consumer(&declaration, &workspaces)
-                .map_err(|error| {
-                    BackendError::internal("failed to persist Agent Effect declaration", error)
-                })?;
-        } else {
-            let consumer =
-                ConsumerIdentity::new(ConsumerKind::agent_plugin(), plugin_id.canonical())
-                    .map_err(|error| {
-                        BackendError::internal("invalid Agent Effect identity", error)
-                    })?;
-            self.effect_repository
-                .retire_consumer(&consumer)
-                .map_err(|error| {
-                    BackendError::internal("failed to retire Agent Effect Consumer", error)
-                })?;
-        }
-        // Waking after the commit, never before it: the request the worker will read is already
-        // durable, so a wake lost to a crash costs a scan interval rather than a reconcile.
-        if let Some(reconcile) = self.effect_reconcile.get() {
-            reconcile.notify();
-        }
-        Ok(())
-    }
-
-    /// Returns the complete declarations used to pair newly created Workspaces with Consumers.
-    pub(crate) fn agent_effect_declarations(&self) -> Vec<ConsumerDeclaration> {
-        self.agent_effect_declarations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .values()
-            .cloned()
-            .collect()
-    }
-
-    /// Returns the Effect Consumer declaration one agent plugin registered, if any.
-    pub(crate) fn agent_effect_declaration_for(
-        &self,
-        plugin_id: &ora_domain::PluginId,
-    ) -> Option<ConsumerDeclaration> {
-        self.agent_effect_declarations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(plugin_id)
-            .cloned()
-    }
-
     /// Stops one plugin process while leaving the installed plugin available.
     pub(crate) async fn stop(
         &self,
@@ -676,7 +584,6 @@ impl PluginApi {
         self.skill_repository
             .remove_plugin_skills(&plugin_id, self.clock.now_timestamp_millis())
             .map_err(|error| BackendError::internal("failed to remove plugin Skills", error))?;
-        self.replace_agent_effect_declaration(plugin_id, None)?;
         self.notify_mcp_desired_changed();
         Ok(response)
     }
@@ -786,35 +693,15 @@ impl PluginApi {
                 })?;
             return Ok(());
         };
-        let mut projections = Vec::with_capacity(descriptor.skills.len());
-        for skill in &descriptor.skills {
-            let manifest_path = skill.package_root.join("SKILL.md");
-            let manifest = std::fs::read(&manifest_path).map_err(|error| {
-                BackendError::internal(
-                    "failed to read validated plugin Skill manifest",
-                    std::io::Error::new(
-                        error.kind(),
-                        format!("{}: {error}", manifest_path.display()),
-                    ),
-                )
-            })?;
-            projections.push(PluginSkillProjection {
+        let projections = descriptor
+            .skills
+            .iter()
+            .map(|skill| PluginSkillProjection {
                 name: skill.name.clone(),
                 description: skill.description.clone(),
                 package_root: skill.package_root.clone(),
-                skill_md_digest: Digest::sha256(&manifest),
-                package_fingerprint: ora_effect::Fingerprint::from(
-                    ora_utils::directory::fingerprint_directory(&skill.package_root, &[]).map_err(
-                        |error| {
-                            BackendError::internal(
-                                "failed to fingerprint validated plugin Skill package",
-                                error,
-                            )
-                        },
-                    )?,
-                ),
-            });
-        }
+            })
+            .collect::<Vec<_>>();
         self.skill_repository
             .replace_plugin_skills(
                 &plugin.id,

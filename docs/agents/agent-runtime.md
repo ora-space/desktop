@@ -123,7 +123,7 @@ turn locally until `startSession` returns.
   reports its commands only after answering setup, so a command catalog that arrives while no prompt
   runs is kept, newest only, and delivered at the start of the next prompt. Draining an idle session
   discards its other updates, so they do not cross into that prompt; updates that arrive while a
-  title poll borrows the session are queued for it instead, again with only the newest catalog.
+  title poll borrows the session are queued for it instead, again with only the newest catalog, and options as they are by then.
   Admission waits for the attach and the MCP check, so a send that cannot reach an agent fails as a send.
 - **Rebuild.** An agent that cannot load the session, or fails to restore it, gets a replacement
   provider session from `session/new` with the same snapshot, and the next prompt carries the
@@ -139,10 +139,19 @@ turn locally until `startSession` returns.
   had reported are withdrawn until the replacement reports its own, and so are its options when the
   replacement offers none.
 - **Configure.** A session that holds a provider reports its own options and is configured through
-  `setSessionConfig`. The actor takes the agent's answer before the caller gets it, so a view opened
-  later sees the options after the change; an answer for a provider session that was replaced
-  meanwhile is ignored, and the caller gets the replacement's options. A model chosen while a session
-  held no provider is an intent applied at the next attach. Reasoning effort is read only from the
+  `setSessionConfig`. The actor asks the agent itself and is the only holder of the session's options:
+  answers and the agent's own `config_option_update`s are taken in the order their frames were read
+  from the connection, whether a turn, a title poll, an MCP refresh or session setup reads them, or
+  none of these. It takes the answer before the caller gets it, so a view opened later sees the
+  options after the change. A caller stops waiting after 30 seconds; a later answer is still taken
+  while the provider session lasts, and shown by the turn that is running. An agent that does not read
+  holds up the caller, not the actor. Changes in flight do not wait for each other. A change whose
+  provider session goes before answering is settled then: it succeeds when the host gave the session
+  up (`Stop`, which is also how a switch or a deletion reaches the actor, a turn whose owner stopped
+  reading, or a rebuild, which leaves the caller on the replacement's options) and fails when the
+  agent was lost. A session that holds no provider is asked directly, and attaching waits for that.
+  A model chosen while a session held no provider is an intent applied at the next
+  attach. Reasoning effort is read only from the
   `thought_level` option a live session reports; there is no pre-session effort catalog.
 - **Stop and delete.** Explicit stop calls `session/close` when advertised, unloads the route and
   keeps provider history. Deletion is described in [Session history](session-history.md#deletion).
@@ -163,6 +172,15 @@ at most two seconds after `session/new` answered and never into the time it keep
 answers without commands when none arrived. Callers that only need models (the workflow editor, a
 workflow node's model picker, scheduled-task validation) do not ask, so they never wait. They have
 their own frontend cache entry: an answer without commands must not hide them from the chat composer.
+
+Commands may come from Skills, so a discovery that wants them carries the Skill roots and directories a
+session set up now would be given, and a revision. The Desktop host advances the revision with every
+committed Skill catalog change (installing, removing, renaming, upgrading or editing in place), once
+when an edit, rename or removal that already swapped or moved its package on disk is rolled back because
+its row could not be written, and when it notices another set of available Skills, whether reading a
+session's catalog or listing them for the settings, and publishes
+`AgentModelsInvalidated` for every agent at the same time. It only grows and lives in memory. Agents are not restarted, nothing is discovered that
+no surface shows, and answers given for models alone stand.
 
 The composer shows the commands the session reported; before any report, and while a move onto another
 agent is pending, it shows the discovered commands of the agent the next message goes to. Only a
@@ -201,7 +219,10 @@ overflow stops only that Session.
 
 - While `session/new` has not revealed its provider id, notifications are held in a shared buffer
   of at most 256 entries; registration drains the matching ones and the rest are dropped when the
-  last concurrent setup ends.
+  last concurrent setup ends. The `session/new` answer skips that buffer, so every frame carries
+  the order it was read in: when the answer carries options, an options update read before it,
+  whether still buffered or routed after registration, is dropped, because the answer already
+  replaced it. An answer without options replaces nothing, so such updates are kept.
 - Routes are bound to a connection generation; updates from an old connection or an unloaded
   Session are discarded as stale.
 - Unknown agent-originated requests get a `-32601` response without ending the connection;
@@ -296,16 +317,24 @@ settlement. Notifications are capped at ten per second, and a turn boundary send
 replacement. The callback is best effort, produces no acknowledgement and does not change the
 `record_settled` durability order. Hosts that do not opt in incur no pending-snapshot copy.
 
-A host composes the runtime through `AgentRuntimeHost`, whose associated types supply five
+A host composes the runtime through `AgentRuntimeHost`, whose associated types supply six
 interfaces; they are generic parameters, so each host gets its own monomorphized runtime.
 
-| Interface | Runtime needs | Desktop | Node |
-|---|---|---|---|
-| `SessionStore` | Create, read, list and update session rows; soft delete | `SqliteSessionRepository` | `MemorySessionStore` |
-| `AgentAttach` | List agent plugins, attach to a process and its tap, stop it, record its Effect consumer | `PluginApi` | The execution's own one-plugin lifecycle |
-| `SessionSetup` | The Session MCP view, revisions and health observation | Session MCP resolver and MCP health | `NoSessionMcp` |
-| `RuntimeEvents` | Title and model-catalog notifications; every history line written | `AppEventPublisher` | Each line becomes a Thread event |
-| `WorkspaceDirectory` | A Workspace's `cwd` | Workspace repository plus the path base | The execution's checkout |
+| Interface            | Runtime needs                                                      | Desktop                                 | Node                                     |
+| -------------------- | ------------------------------------------------------------------ | --------------------------------------- | ---------------------------------------- |
+| `SessionStore`       | Create, read, list and update session rows; soft delete            | `SqliteSessionRepository`               | `MemorySessionStore`                     |
+| `AgentAttach`        | List agent plugins, attach to a process and its tap, stop it       | `PluginApi`                             | The execution's own one-plugin lifecycle |
+| `SessionSetup`       | The Session MCP view, revisions and health observation             | Session MCP resolver and MCP health     | `NoSessionMcp`                           |
+| `Skills`             | Current Available Skill catalog entries and readable storage roots | `DesktopSkillCatalog`                   | `NoSkillCatalog`                         |
+| `RuntimeEvents`      | Title and model-catalog notifications; every history line written  | `AppEventPublisher`                     | Each line becomes a Thread event         |
+| `WorkspaceDirectory` | A Workspace's `cwd`                                                | Workspace repository plus the path base | The execution's checkout                 |
+
+On Desktop, `ora-agent-runtime` injects `<available_skills>` (full catalog on a live session's first
+prompt, cold `session/load`, reopened stopped session, or post-compaction reset) and
+`<available_skills_update>` (path-keyed deltas on mid-session catalog changes) into outgoing prompts—after any
+leading `/command` text block—and forwards the two readable Skill storage roots in ACP
+`additionalDirectories` (when advertised) plus `_meta["ora/skillDirectories"]` during `session/new`
+and `session/load`. `NoSkillCatalog` leaves Node sessions completely unchanged.
 
 Failures leave the crate as `RuntimeError` (classification, typed public error, context, source
 chain); Desktop converts it to `BackendError` and back without loss. The crate must not depend on

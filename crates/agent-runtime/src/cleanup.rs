@@ -44,12 +44,22 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 
     /// Closes only this live ACP registration and preserves provider-owned history.
     pub(super) async fn unload(&mut self) {
+        self.forget_announced_skills();
         if let Some(channel) = self.channel.take() {
             self.close_provider_session(&channel).await;
             self.persist_session_status(SessionStatus::Stopped);
         } else {
             self.persist_session_status(SessionStatus::Stopped);
         }
+    }
+
+    /// Unloads on request, which is no failure of the changes still on their way to the provider.
+    pub(super) async fn stop_unload(&mut self) {
+        if let Some(mut channel) = self.channel.take() {
+            self.accept_changes_on(&mut channel);
+            self.channel = Some(channel);
+        }
+        self.unload().await;
     }
 
     /// Detaches from the provider without recording any lifecycle change.

@@ -1,7 +1,7 @@
 use super::failure::NodeFailure;
 use super::iteration::RoundOutcome;
 use super::retry::WorkflowRetryRepository;
-use super::skill_delivery::SkillMaterializationReceipt;
+use super::skill_delivery::WorkflowSkillReceipt;
 use crate::RepositoryError;
 use crate::workflow_run::engine::graph::WorkflowGraph;
 use ora_domain::{
@@ -157,6 +157,13 @@ pub enum StartPrerequisitesError {
         node_title: String,
         skill_id: String,
     },
+    #[error("workflow skill reference for node {node_id} is ambiguous: {skill_ref}")]
+    WorkflowSkillAmbiguous {
+        node_id: String,
+        node_title: String,
+        skill_ref: String,
+        candidates: Vec<String>,
+    },
     #[error("workflow MCP not installed for node {node_id}: {mcp_id}")]
     WorkflowMcpNotFound {
         node_id: String,
@@ -165,28 +172,26 @@ pub enum StartPrerequisitesError {
     },
     #[error("workflow role not found: {role_id}")]
     WorkflowRoleNotFound { role_id: String },
-    #[error("skill materialization failed: {message}")]
-    SkillMaterializationError { message: String },
-    #[error("agent {agent_ref} does not support workflow-managed skills")]
-    AgentSkillDeliveryUnsupported { agent_ref: String },
-    #[error("failed to resolve skill delivery for agent {agent_ref}: {message}")]
-    AgentSkillDeliveryError { agent_ref: String, message: String },
+    #[error("skill dependency failed: {message}")]
+    SkillDependencyError { message: String },
     #[error("repository operation failed")]
     Repository(#[from] RepositoryError),
 }
 
-/// Validates a run workspace's roles and Effect-owned skill placements at deploy time.
+/// Validates a run's roles and Skill catalog bindings at deploy time.
 ///
 /// Skills and roles are deploy dependencies: every agent's role must resolve in the agents catalog
-/// and every enabled skill must resolve in the catalog. Physical skill materialization is owned by
-/// the Effect subsystem; this port freezes the paths that the workflow prompt will reference.
+/// and every enabled skill must resolve unambiguously in Ora's live Skill catalog with a usable
+/// package in formal storage. No skill directories are materialized into the workspace; this port
+/// freezes the catalog IDs and invocation names used to resolve formal-storage `SKILL.md` paths at
+/// dispatch time.
 pub trait WorkflowRunWorkspaceInitializer: Send + Sync {
-    /// Resolves every declared role and skill and freezes each enabled skill's discovery paths.
+    /// Resolves every declared role and skill and freezes each enabled skill's catalog binding.
     fn initialize_workspace(
         &self,
         graph: &WorkflowGraph,
         workspace_root: &Path,
-    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError>;
+    ) -> Result<WorkflowSkillReceipt, StartPrerequisitesError>;
 }
 
 /// Outcome of starting a run.
@@ -322,6 +327,15 @@ pub const INVALID_START_OPTION_DETAIL: &str = "value is not one of the configure
 ///
 /// Automatic retries persist through the [`WorkflowRetryRepository`] supertrait.
 pub trait WorkflowRunEngineRepository: WorkflowRetryRepository {
+    /// Returns the graph overlay bound to this physical attempt when debug revisions are active.
+    fn revised_graph(
+        &self,
+        _run_id: &WorkflowRunId,
+        _attempt: &WorkflowNodeRunId,
+    ) -> Result<Option<WorkflowGraph>, RepositoryError> {
+        Ok(None)
+    }
+
     /// Loads the run, its workspace, and the frozen snapshot graph in one read.
     fn find_execution_context(
         &self,

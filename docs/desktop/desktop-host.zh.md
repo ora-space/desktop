@@ -59,6 +59,7 @@
 | 数据                                 | 位置                                         |
 | ------------------------------------ | -------------------------------------------- |
 | SQLite 数据库（包括 `user_config`）  | `<数据根目录>/ora.sqlite3`                   |
+| `0025` 迁移前 SQLite 升级备份        | `<数据根目录>/ora.sqlite3.pre-0025.bak`      |
 | 日志                                 | `<数据根目录>/logs/ora.log`                  |
 | 会话历史                             | `<数据根目录>/sessions/`                     |
 | 定时运行产物                         | `<数据根目录>/scheduled-artifacts/<run id>/` |
@@ -78,7 +79,7 @@ worktree 根目录是非敏感配置，在 设置 → 数据与隐私 中选择�
 
 发布构建在启动一分钟后检查一次已签名的静态清单 `https://github.com/ora-space/desktop/releases/latest/download/latest.json`，之后通过 `ora-scheduler` 任务每六小时检查一次（`0 0 */6 * * *`），并使用用户配置的代理。Tauri 更新器选择当前操作系统和架构并校验签名；Desktop 服务把通过校验的包存入按身份寻址的缓存，所以早先进程下载过的包可以复用（会先用配置的公钥重新校验），无需再次下载。开发构建保留这些命令供测试使用，但不注册任何网络任务。
 
-- 已下载的包在后续检查失败时仍可安装；只有在没有任何可安装的包时才报告 `Failed`，安装失败会恢复到 `Ready`。设置侧栏和更新日志页显示检查失败，更新日志页还显示原因、安装失败的提示，并可以重试。
+- 已下载的包在后续检查失败时仍可安装；只有在没有任何可安装的包时才报告 `Failed`，安装失败会恢复到 `Ready`。`Failed` 写明失败的是检查还是安装（安装时带版本），外壳据此写标题。设置侧栏和更新日志页显示失败，更新日志页还显示原因、安装失败的提示，并可以重试。
 - Linux 发布的是 AppImage，所以 `deb`/`rpm` 安装或裸可执行文件会在下载之前就报告 `ManualUpdate` 及原因，外壳会指向发布页而不是提供安装按钮。
 - `Ready` 和 `ManualUpdate` 带有清单里的更新日志，见[更新日志](../development/release-notes.zh.md#更新之前)。
 - 更新器公钥在 `apps/desktop/src-tauri/tauri.conf.json` 中；发布构建需要 GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY` 中对应的私钥。

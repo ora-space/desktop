@@ -1,9 +1,4 @@
-import {
-  createPlugin,
-  type EffectResourceDeclaration,
-  type Plugin,
-  PluginMethodError,
-} from "./plugin.ts";
+import { createPlugin, type Plugin, PluginMethodError } from "./plugin.ts";
 import {
   AGENT_DISCOVERY_BUDGET_MS,
   AGENT_METHODS,
@@ -12,27 +7,20 @@ import {
   type AgentCommand,
   type AgentDiscoverParams,
   type AgentDiscoverResult,
-  type AgentEffectCoordinationContext,
-  type AgentEffectReadinessContext,
+  type AgentDiscoverSkills,
   type AgentListModelsParams,
   type AgentListModelsResult,
   type AgentModel as WireAgentModel,
   type AgentModelApplied,
   type AgentStartContext,
   type AgentStartResult,
-  EFFECT_METHODS,
   INVALID_PARAMS,
   type JsonValue,
   SUPPORTED_ACP_VERSION,
 } from "./protocol/index.ts";
 import { parseModelContext, verifyModelApplied } from "./model_context.ts";
 
-export type {
-  AgentCommand,
-  AgentEffectCoordinationContext,
-  AgentEffectReadinessContext,
-  AgentStartContext,
-};
+export type { AgentCommand, AgentDiscoverSkills, AgentStartContext };
 
 /**
  * The error code that tells Ora the agent CLI is absent from this machine.
@@ -69,6 +57,13 @@ export interface AgentDiscoveryContext {
    * Cleanup has to fit before it too; {@link waitForAgentCommands} leaves room for that.
    */
   deadline: number;
+  /**
+   * The Skills a session set up now would be given, when the caller wants commands.
+   *
+   * Set the probe session up with {@link skillSessionSetup}, or it lacks the commands that come from
+   * Skills. `revision` differs after every change to them, so it belongs in a cache key as well.
+   */
+  skills?: AgentDiscoverSkills;
 }
 
 /** What the agent offers before any session exists. */
@@ -83,20 +78,6 @@ export interface AgentDiscovery {
 
 /** Sends one ACP frame from the agent back to the host. */
 export type AcpSender = (frame: JsonValue) => Promise<void>;
-
-/** Defines Agent-consumed Resources and its coordination/readiness adapter methods. */
-export interface AgentEffectDefinition {
-  resources: readonly EffectResourceDeclaration[];
-  coordinate(
-    context: AgentEffectCoordinationContext,
-  ): JsonValue | Promise<JsonValue>;
-  reactivate(
-    context: AgentEffectCoordinationContext,
-  ): JsonValue | Promise<JsonValue>;
-  verifyReady(
-    context: AgentEffectReadinessContext,
-  ): JsonValue | Promise<JsonValue>;
-}
 
 /** Implements the agent contract Ora requires of every `kind: "agent"` plugin. */
 export interface AgentDefinition {
@@ -119,8 +100,6 @@ export interface AgentDefinition {
   ): AgentDiscovery | Promise<AgentDiscovery>;
   /** Receives one ACP frame the host is forwarding to the agent. */
   onAcp(frame: JsonValue): void | Promise<void>;
-  /** Declares Resources this Agent consumes and the adapter proving safe convergence. */
-  effects?: AgentEffectDefinition;
 }
 
 /**
@@ -154,12 +133,14 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     return {};
   });
   plugin.registerMethod(AGENT_METHODS.discover, async (params) => {
-    const { cwd, includeCommands, deadline } = params as AgentDiscoverParams;
+    const { cwd, includeCommands, deadline, skills } =
+      params as AgentDiscoverParams;
     const { models, commands } = await definition.discover({
       cwd,
       includeCommands,
       // One already past leaves no time, rather than a negative amount of it.
       deadline: Math.max(deadline, Date.now()),
+      ...(includeCommands && skills !== undefined ? { skills } : {}),
     });
     return {
       models: models.map(wireModel),
@@ -180,24 +161,6 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     AGENT_METHODS.acp,
     (params) => definition.onAcp(params),
   );
-  const effects = definition.effects;
-  if (effects !== undefined) {
-    for (const resource of effects.resources) {
-      plugin.declareEffectResource(resource);
-    }
-    plugin.registerMethod(
-      EFFECT_METHODS.coordinate,
-      (input) => effects.coordinate(parseCoordinationContext(input)),
-    );
-    plugin.registerMethod(
-      EFFECT_METHODS.reactivate,
-      (input) => effects.reactivate(parseCoordinationContext(input)),
-    );
-    plugin.registerMethod(
-      EFFECT_METHODS.verifyReady,
-      (input) => effects.verifyReady(parseReadinessContext(input)),
-    );
-  }
 
   return plugin;
 }
@@ -208,50 +171,6 @@ function wireModel(model: AgentModel): WireAgentModel {
     id: model.id,
     displayName: model.displayName,
     default: model.default ?? false,
-  };
-}
-
-/** Validates the exact generic identities used by Consumer coordination. */
-function parseCoordinationContext(
-  input: JsonValue,
-): AgentEffectCoordinationContext {
-  if (
-    typeof input !== "object" || input === null || Array.isArray(input) ||
-    typeof input.targetId !== "string" ||
-    !Array.isArray(input.resourceIds) ||
-    !input.resourceIds.every((resource) => typeof resource === "string")
-  ) {
-    throw new PluginMethodError(
-      INVALID_PARAMS,
-      "Effect coordination requires targetId and resourceIds",
-    );
-  }
-  return {
-    targetId: input.targetId,
-    resourceIds: input.resourceIds as string[],
-  };
-}
-
-/** Validates exact Consumer Revision and projection identity before readiness logic runs. */
-function parseReadinessContext(input: JsonValue): AgentEffectReadinessContext {
-  if (
-    typeof input !== "object" || input === null || Array.isArray(input) ||
-    typeof input.targetId !== "string" ||
-    typeof input.generation !== "number" ||
-    !Number.isSafeInteger(input.generation) || input.generation < 0 ||
-    typeof input.consumerRevisionId !== "string" ||
-    typeof input.projectionDigest !== "string"
-  ) {
-    throw new PluginMethodError(
-      INVALID_PARAMS,
-      `${EFFECT_METHODS.verifyReady} requires exact Target projection identity`,
-    );
-  }
-  return {
-    targetId: input.targetId,
-    generation: input.generation,
-    consumerRevisionId: input.consumerRevisionId,
-    projectionDigest: input.projectionDigest,
   };
 }
 

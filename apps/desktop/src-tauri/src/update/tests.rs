@@ -5,7 +5,7 @@ use crate::update::artifact_store::{
 };
 use crate::update::release_notes::{ReleaseNote, ReleaseNoteCategory, ReleaseNoteEntry};
 use crate::update::state::{OfferedRelease, ReadyUpdate, RuntimeUpdateState};
-use crate::update::{DesktopUpdateStatus, ManualUpdateReason, UpdateError};
+use crate::update::{DesktopUpdateStatus, FailedOperation, ManualUpdateReason, UpdateError};
 use ora_logging::with_trace_logging;
 use ora_utils::hash::sha256_reader;
 use pretty_assertions::assert_eq;
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use url::Url;
 
-struct TestVerifier;
+pub(super) struct TestVerifier;
 
 impl ArtifactVerifier for TestVerifier {
     /// Returns the stable fake trust root shared by every test descriptor.
@@ -31,12 +31,12 @@ impl ArtifactVerifier for TestVerifier {
 }
 
 /// Computes the deterministic test signature accepted by `TestVerifier`.
-fn digest(bytes: &[u8]) -> String {
+pub(super) fn digest(bytes: &[u8]) -> String {
     sha256_reader(Cursor::new(bytes)).expect("in-memory hashing succeeds")
 }
 
 /// Returns the root of the versioned Desktop update store below the Ora home.
-fn store_root(home_directory: &Path) -> PathBuf {
+pub(super) fn store_root(home_directory: &Path) -> PathBuf {
     home_directory
         .join("cache")
         .join("desktop-updates")
@@ -44,7 +44,7 @@ fn store_root(home_directory: &Path) -> PathBuf {
 }
 
 /// Opens a store as a build older than every release used by these tests.
-fn open_store(home: &Path) -> UpdateArtifactStore {
+pub(super) fn open_store(home: &Path) -> UpdateArtifactStore {
     UpdateArtifactStore::open(home, &Version::parse("0.1.0").expect("current version"))
         .expect("store opens")
 }
@@ -62,7 +62,7 @@ fn descriptor(version: &str, bytes: &[u8]) -> ArtifactDescriptor {
 }
 
 /// Returns the sole committed entry path after a test stores one artifact.
-fn only_entry(home: &Path) -> PathBuf {
+pub(super) fn only_entry(home: &Path) -> PathBuf {
     let entries = store_root(home).join("entries");
     let paths = std::fs::read_dir(entries)
         .expect("entries are readable")
@@ -87,12 +87,12 @@ async fn commit_release(
 }
 
 /// The version that a running build of these tests claims to be.
-fn running() -> Version {
+pub(super) fn running() -> Version {
     Version::new(0, 2, 0)
 }
 
 /// Builds a manifest with the offered notes between ones that are not part of the update.
-fn manifest() -> Value {
+pub(super) fn manifest() -> Value {
     let note = |version: &str| {
         let mut note = serde_json::to_value(release_note()).expect("note serializes");
         note["version"] = json!(version);
@@ -107,7 +107,7 @@ fn manifest() -> Value {
 }
 
 /// Builds notes as the update service attaches them to an offered release.
-fn release_note() -> ReleaseNote {
+pub(super) fn release_note() -> ReleaseNote {
     ReleaseNote {
         version: "0.3.0".to_owned(),
         date: "2026-12-10".to_owned(),
@@ -403,7 +403,7 @@ fn broken_notes_never_withhold_an_offer() {
     });
 }
 
-/// A failed check keeps an installable release with its notes, and reports anything else.
+/// A failed check keeps a verified release with its notes, and otherwise reports the check failed.
 #[tokio::test]
 async fn a_failed_check_keeps_the_ready_release_and_its_notes() {
     let home = TempDir::new().expect("temp home");
@@ -417,20 +417,21 @@ async fn a_failed_check_keeps_the_ready_release_and_its_notes() {
     let error = UpdateError::CacheWrite(std::io::Error::other("disk is full"));
 
     assert_eq!(
-        RuntimeUpdateState::after_failed_check(Some(retained.clone()), true, &error).status(),
-        DesktopUpdateStatus::Ready {
-            version: "0.3.0".to_owned(),
-            notes: vec![release_note()],
-        }
-    );
-    for (retained, valid) in [(Some(retained), false), (None, true)] {
-        assert_eq!(
-            RuntimeUpdateState::after_failed_check(retained, valid, &error).status(),
+        (
+            RuntimeUpdateState::after_failed_check(Some(retained), &error).status(),
+            RuntimeUpdateState::<&str>::after_failed_check(None, &error).status(),
+        ),
+        (
+            DesktopUpdateStatus::Ready {
+                version: "0.3.0".to_owned(),
+                notes: vec![release_note()],
+            },
             DesktopUpdateStatus::Failed {
+                operation: FailedOperation::Check,
                 message: "failed to write update cache: disk is full".to_owned(),
-            }
-        );
-    }
+            },
+        )
+    );
 }
 
 /// The webview switches on `kind` and reads payload fields directly, making this serialized shape
@@ -458,7 +459,14 @@ fn status_serializes_to_the_shape_the_webview_consumes() {
             version: "0.3.0".to_owned(),
         },
         DesktopUpdateStatus::Failed {
+            operation: FailedOperation::Check,
             message: "endpoint unreachable".to_owned(),
+        },
+        DesktopUpdateStatus::Failed {
+            operation: FailedOperation::Install {
+                version: "0.3.0".to_owned(),
+            },
+            message: "cached update digest changed".to_owned(),
         },
     ];
 
@@ -484,7 +492,13 @@ fn status_serializes_to_the_shape_the_webview_consumes() {
                 "notes": [],
             },
             { "kind": "installing", "version": "0.3.0" },
-            { "kind": "failed", "message": "endpoint unreachable" },
+            { "kind": "failed", "operation": "check", "message": "endpoint unreachable" },
+            {
+                "kind": "failed",
+                "operation": "install",
+                "version": "0.3.0",
+                "message": "cached update digest changed",
+            },
         ]) as Value
     );
 }
@@ -500,4 +514,86 @@ fn manual_update_reasons_serialize_as_the_webview_discriminants() {
         .expect("reasons serialize"),
         json!(["system_package", "unpackaged_binary"]) as Value
     );
+}
+
+/// A replaced release is refused with its own code at WARN; other refusals stay internal faults.
+#[test]
+fn a_replaced_release_is_refused_as_a_conflict() {
+    use crate::update::commands::install_command_error;
+
+    let recorder = CompletionRecorder::default();
+    let (replaced, missing) = ora_logging::with_recorded_trace_logging(recorder.clone(), || {
+        (
+            install_command_error(UpdateError::ReleaseReplaced),
+            install_command_error(UpdateError::NoPendingUpdate),
+        )
+    });
+    let code = |error| {
+        serde_json::to_value(error).expect("command error serializes")["code"]
+            .as_str()
+            .expect("command error has a code")
+            .to_owned()
+    };
+
+    assert_eq!(
+        (code(replaced), code(missing), recorder.completions()),
+        (
+            "desktop_update_release_replaced".to_owned(),
+            "internal_error".to_owned(),
+            vec![
+                (
+                    tracing::Level::WARN,
+                    "desktop_update_release_replaced".to_owned()
+                ),
+                (tracing::Level::ERROR, "internal_error".to_owned()),
+            ],
+        )
+    );
+}
+
+/// Records the level and error code of every request completion event.
+#[derive(Clone, Default)]
+struct CompletionRecorder(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+
+impl CompletionRecorder {
+    /// Returns the recorded completions in emission order.
+    fn completions(&self) -> Vec<(tracing::Level, String)> {
+        self.0.lock().expect("recorded completions").clone()
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CompletionRecorder {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        /// Collects the event's message and `error.code` fields.
+        #[derive(Default)]
+        struct Fields {
+            message: String,
+            code: Option<String>,
+        }
+        impl tracing::field::Visit for Fields {
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                if field.name() == "error.code" {
+                    self.code = Some(value.to_owned());
+                }
+            }
+
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.message = format!("{value:?}");
+                }
+            }
+        }
+        let mut fields = Fields::default();
+        event.record(&mut fields);
+        if let (true, Some(code)) = (fields.message == "request completed", fields.code) {
+            self.0
+                .lock()
+                .expect("recorded completions")
+                .push((*event.metadata().level(), code));
+        }
+    }
 }

@@ -14,7 +14,7 @@ pub enum AppEvent {
     SessionTitleUpdated { session_id: String },
     /// Tells clients that the cached plugin lifecycle snapshot should be queried again.
     PluginStatusChanged { plugin_id: String },
-    /// Tells clients that a replaced agent process may expose a different model catalog.
+    /// Tells clients that commands discovered from this agent were discovered with other Skills.
     AgentModelsInvalidated { agent_ref: String },
     /// Tells clients that one plugin's Host MCP health may have changed.
     ///

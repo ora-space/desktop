@@ -9,10 +9,10 @@ use crate::host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, WorkspaceDirectory,
 };
 use crate::{
-    AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp, RuntimeError,
+    AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp, NoSkillCatalog,
+    RuntimeError,
 };
 use ora_domain::{AgentRef, PluginId, SessionId, WorkspaceId};
-use ora_effect::ConsumerDeclaration;
 use ora_history::HistoryLine;
 use ora_plugin_lifecycle::ConnectionError;
 use ora_scheduler::Scheduler;
@@ -27,6 +27,7 @@ impl AgentRuntimeHost for TestHost {
     type Store = MemorySessionStore;
     type Attach = InstalledAgents;
     type Setup = NoSessionMcp;
+    type Skills = NoSkillCatalog;
     type Events = RecordedEvents;
     type Directory = FixedDirectory;
 }
@@ -90,42 +91,15 @@ impl AgentAttach for InstalledAgents {
     async fn stop_plugin(&self, _plugin_id: &PluginId) -> Result<(), NeverFails> {
         Ok(())
     }
-
-    fn replace_agent_effect_declaration(
-        &self,
-        _plugin_id: PluginId,
-        _declaration: Option<ConsumerDeclaration>,
-    ) -> Result<(), RuntimeError> {
-        Ok(())
-    }
 }
 
-/// One lifecycle notification the runtime published.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RecordedEvent {
-    SessionTitleUpdated(SessionId),
-    AgentModelsInvalidated(AgentRef),
-}
-
-/// Keeps every published notification in order for assertions.
-///
-/// Settled history lines are kept apart from lifecycle notifications, so a test about one never
-/// has to account for the other.
+/// Keeps every settled history line in order for assertions.
 #[derive(Clone, Default)]
 pub(crate) struct RecordedEvents {
-    events: Arc<Mutex<Vec<RecordedEvent>>>,
     settled: Arc<Mutex<Vec<(SessionId, HistoryLine)>>>,
 }
 
 impl RecordedEvents {
-    /// Returns everything published so far.
-    pub(crate) fn published(&self) -> Vec<RecordedEvent> {
-        self.events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-    }
-
     /// Returns every settled history line in the order the runtime reported it.
     pub(crate) fn settled(&self) -> Vec<(SessionId, HistoryLine)> {
         self.settled
@@ -136,19 +110,9 @@ impl RecordedEvents {
 }
 
 impl RuntimeEvents for RecordedEvents {
-    fn session_title_updated(&self, session_id: &SessionId) {
-        self.events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(RecordedEvent::SessionTitleUpdated(session_id.clone()));
-    }
+    fn session_title_updated(&self, _session_id: &SessionId) {}
 
-    fn agent_models_invalidated(&self, agent_ref: &AgentRef) {
-        self.events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(RecordedEvent::AgentModelsInvalidated(agent_ref.clone()));
-    }
+    fn agent_models_invalidated(&self, _agent_ref: &AgentRef) {}
 
     fn record_settled(&self, session_id: &SessionId, line: &HistoryLine) {
         self.settled
@@ -172,7 +136,6 @@ impl WorkspaceDirectory for FixedDirectory {
 /// Everything one test manager was built over, kept so the test can inspect it afterwards.
 pub(crate) struct TestRuntime {
     pub manager: AgentRuntimeManager<TestHost>,
-    pub events: RecordedEvents,
 }
 
 /// Builds a manager rooted at `root` with `installed` agent plugins over `store`.
@@ -182,7 +145,6 @@ pub(crate) fn test_runtime(
     store: MemorySessionStore,
     scheduler: Scheduler,
 ) -> TestRuntime {
-    let events = RecordedEvents::default();
     let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<TestHost> {
         attach: Arc::new(InstalledAgents::new(installed)),
         store,
@@ -190,11 +152,12 @@ pub(crate) fn test_runtime(
             root: root.to_path_buf(),
         },
         session_setup: NoSessionMcp::default(),
-        events: events.clone(),
+        skill_catalog: NoSkillCatalog,
+        events: RecordedEvents::default(),
         home_directory: root.to_path_buf(),
         sessions_root: root.join("sessions"),
         scheduler,
     })
     .expect("build agent runtime manager");
-    TestRuntime { manager, events }
+    TestRuntime { manager }
 }

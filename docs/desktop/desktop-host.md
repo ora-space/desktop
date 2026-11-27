@@ -95,6 +95,7 @@ operation:
 | Data                                               | Location                                    |
 | -------------------------------------------------- | ------------------------------------------- |
 | SQLite database (including `user_config`)          | `<data root>/ora.sqlite3`                   |
+| Pre-`0025` SQLite upgrade backup                   | `<data root>/ora.sqlite3.pre-0025.bak`      |
 | Logs                                               | `<data root>/logs/ora.log`                  |
 | Session history                                    | `<data root>/sessions/`                     |
 | Scheduled run artifacts                            | `<data root>/scheduled-artifacts/<run id>/` |
@@ -128,9 +129,10 @@ process is reused (after re-verifying it against the configured public key) inst
 again. Development builds keep the commands for tests but register no network work.
 
 - A package already downloaded stays installable when a later check fails; `Failed` is reported only
-  when nothing was installable, and a failed installation restores `Ready`. The settings sidebar and
-  the release notes page show a failed check; the page also shows its reason and a failed
-  installation, and lets the user retry.
+  when nothing was installable, and a failed installation restores `Ready`. `Failed` names whether
+  the check or the installation failed (with the version for an installation), and the shell titles
+  it from that. The settings sidebar and the release notes page show the failure; the page also
+  shows its reason and a failed installation, and lets the user retry.
 - Linux releases ship an AppImage, so a `deb`/`rpm` installation or a bare executable reports
   `ManualUpdate` with a reason before any download, and the shell points the user to the release
   instead of offering an install.

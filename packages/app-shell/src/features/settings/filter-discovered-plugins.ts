@@ -19,8 +19,11 @@ export function filterDiscoveredPlugins(
   const needle = query.trim().toLowerCase();
   if (!needle) return plugins;
   return plugins.filter((plugin) =>
-    [plugin.displayName, plugin.id, plugin.description, ...pluginSearchFields(plugin)].some(
-      (value) => value.toLowerCase().includes(needle),
-    ),
+    [
+      plugin.displayName,
+      plugin.id,
+      plugin.description,
+      ...pluginSearchFields(plugin),
+    ].some((value) => value.toLowerCase().includes(needle)),
   );
 }

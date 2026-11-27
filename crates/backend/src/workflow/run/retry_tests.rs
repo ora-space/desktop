@@ -527,7 +527,7 @@ const KIND_RETRIES: [(NodeFailureKind, bool); 17] = [
     (NodeFailureKind::MissingAgentConfig, false),
     (NodeFailureKind::InvalidRunPayload, false),
     (NodeFailureKind::PromptTemplate, false),
-    (NodeFailureKind::MissingSkillMaterialization, false),
+    (NodeFailureKind::MissingRequiredSkill, false),
     (NodeFailureKind::BaselinePersist, false),
     (NodeFailureKind::Repository, false),
     (NodeFailureKind::InterruptedByRestart, false),

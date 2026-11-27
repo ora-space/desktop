@@ -19,7 +19,7 @@ ora-backend ─ 组合 ───────────────────
   ├─ ora-application  用例 ── ora-db  SQLite（ora.sqlite3）          │
   ├─ ora-agent-runtime  ACP 会话 ──▶ Agent 插件 ──▶ Agent CLI        │
   ├─ 插件生命周期  Deno 插件进程、市场、pack、Hook                   │
-  ├─ 工作流运行引擎、Effect、Git 清理 worker、调度器                 │
+  ├─ 工作流运行引擎、Git 清理 worker、调度器                         │
   └─ gitlancer  带类型的 Git CLI ──▶ 项目 checkout 和任务 worktree ◀─┘
 ora-reaper sidecar ── 在退出或崩溃时结束每个登记过的进程树
 ```
@@ -31,8 +31,8 @@ ora-reaper sidecar ── 在退出或崩溃时结束每个登记过的进程树
   Workspace 中执行，见[任务与 worktree](workspaces/tasks-and-worktrees.zh.md)。
 - 每个 Agent 都来自一个已安装的插件，由它通过 ACP 驱动 Agent CLI；Ora 自己记录每段对话，所以对话可以比服务商活得更久，也可以切换
   服务商，见 [Agent 运行时](agents/agent-runtime.zh.md)和[会话历史](agents/session-history.zh.md)。
-- Skill 以 Effect 系统落地到 Workspace 中的文件的形式到达 Agent；MCP 服务器以会话输入的形式到达 Agent，见
-  [Effect](agents/effects.zh.md) 和 [Session MCP](agents/session-mcp.zh.md)。
+- Skill 以按存储路径构建的会话清单注入 prompt（支持时经 ACP 传递可读存储根）到达 Agent，不在 Workspace 中写入文件；MCP 服务器以会话输入的形式到达 Agent，见
+  [Agent 定义与 Skill](agents/agents-and-skills.zh.md#skill-如何到达-agent) 和 [Session MCP](agents/session-mcp.zh.md)。
 - 工作流在冻结的图上编排 Agent 节点，见[工作流](workflows/workflows.zh.md)。
 
 ## Cloud 运行时
@@ -59,15 +59,15 @@ Ora Cloud ◀── mTLS gRPC，主动拨出 ── ora-controller ── Substr
 
 ## 仓库布局
 
-| 路径 | 内容 |
-|---|---|
-| `apps/` | 可执行文件：`desktop/src-tauri`、`ora-controller`、`ora-node`、`ora-reaper` |
-| `crates/` | 共享的 Rust crate，都以 `ora-` 为前缀（domain、contracts、application、db、backend、agent-runtime、plugin-*、node-*、process、gitlancer、utils 等） |
-| `packages/` | TypeScript 包：`app-shell`、`contracts`、`chat`、`editor`、`ui`、`plugin-sdk`、`workflow-runtime`、`workflow-mock` |
-| `xtask/` | 契约导出、迁移协调和 Rust 大小检查 |
-| `e2e/` | 使用假 ACP Agent 的 Desktop 端到端测试 |
-| `docker/` | Node 和 Controller 镜像 |
-| `third_party/cloud` | 固定版本的 Cloud 契约 submodule |
-| `specs/` | `ora-space/specs` 的独立 checkout（ADR 和核心测试用例），被本仓库忽略 |
+| 路径                | 内容                                                                                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/`             | 可执行文件：`desktop/src-tauri`、`ora-controller`、`ora-node`、`ora-reaper`                                                                         |
+| `crates/`           | 共享的 Rust crate，都以 `ora-` 为前缀（domain、contracts、application、db、backend、agent-runtime、plugin-_、node-_、process、gitlancer、utils 等） |
+| `packages/`         | TypeScript 包：`app-shell`、`contracts`、`chat`、`editor`、`ui`、`plugin-sdk`、`workflow-runtime`、`workflow-mock`                                  |
+| `xtask/`            | 契约导出、迁移协调和 Rust 大小检查                                                                                                                  |
+| `e2e/`              | 使用假 ACP Agent 的 Desktop 端到端测试                                                                                                              |
+| `docker/`           | Node 和 Controller 镜像                                                                                                                             |
+| `third_party/cloud` | 固定版本的 Cloud 契约 submodule                                                                                                                     |
+| `specs/`            | `ora-space/specs` 的独立 checkout（ADR 和核心测试用例），被本仓库忽略                                                                               |
 
 每个 crate 和包把内部细节写在自己的 `README.md` 中；这些文档覆盖跨模块边界的内容。

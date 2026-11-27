@@ -3688,7 +3688,6 @@ dependencies = [
  "ora-acp",
  "ora-contracts",
  "ora-domain",
- "ora-effect",
  "ora-history",
  "ora-logging",
  "ora-plugin-config",
@@ -3720,7 +3719,6 @@ dependencies = [
  "gray_matter",
  "ora-contracts",
  "ora-domain",
- "ora-effect",
  "ora-logging",
  "ora-skill-package",
  "ora-test-support",
@@ -3757,8 +3755,6 @@ dependencies = [
  "ora-contracts",
  "ora-db",
  "ora-domain",
- "ora-effect",
- "ora-effect-skill",
  "ora-fs",
  "ora-history",
  "ora-logging",
@@ -3858,8 +3854,6 @@ dependencies = [
  "ora-application",
  "ora-contracts",
  "ora-domain",
- "ora-effect",
- "ora-effect-skill",
  "ora-logging",
  "ora-skill-package",
  "ora-user-config",
@@ -3869,6 +3863,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
@@ -3968,38 +3963,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ora-effect"
-version = "0.0.0"
-dependencies = [
- "ora-domain",
- "ora-utils",
- "pretty_assertions",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
- "uuid",
-]
-
-[[package]]
-name = "ora-effect-skill"
-version = "0.0.0"
-dependencies = [
- "ora-domain",
- "ora-effect",
- "ora-logging",
- "ora-skill-package",
- "ora-utils",
- "pretty_assertions",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "ora-fs"
 version = "0.0.0"
 dependencies = [
@@ -4071,7 +4034,6 @@ dependencies = [
  "ora-contracts",
  "ora-controller",
  "ora-domain",
- "ora-effect",
  "ora-git",
  "ora-history",
  "ora-logging",
@@ -8505,6 +8467,7 @@ dependencies = [
  "ora-plugin-protocol",
  "ora-utils",
  "pretty_assertions",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

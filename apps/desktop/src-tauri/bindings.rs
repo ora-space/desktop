@@ -15,8 +15,6 @@ mod app_events;
 mod cloud_connection;
 #[path = "bindings/developer_mode.rs"]
 mod developer_mode;
-#[path = "bindings/effect.rs"]
-mod effect;
 #[path = "bindings/file_system.rs"]
 mod file_system;
 #[path = "bindings/git_identity.rs"]
@@ -59,7 +57,6 @@ pub(crate) fn bindings() -> Vec<Binding> {
         session::BINDINGS,
         agent_runtime::BINDINGS,
         app_events::BINDINGS,
-        effect::BINDINGS,
         skill::BINDINGS,
         skill_import::BINDINGS,
         agent::BINDINGS,

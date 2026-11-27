@@ -37,6 +37,7 @@ mod variable_template;
 mod variable_value;
 
 pub use agent_config::AgentMcp;
+pub use branch_projection::{BranchProjection, ProjectedNodeState};
 pub use engine::WorkflowRunEngine;
 pub use execution_document::{AuthoringParticipation, UnrecognizedAuthoringNode};
 pub use failure::{NodeFailure, NodeFailureDetail, NodeFailureKind};
@@ -75,9 +76,7 @@ pub use retry::{
     WorkflowRetryRepository, WorkflowRetryTimer, retry_chain_from_payload,
 };
 pub use skill_delivery::{
-    AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,
-    MaterializedSkillBinding, SkillDiscoveryRoots, SkillMaterializationReceipt, WorkflowRunPayload,
-    WorkflowRunPayloadError,
+    FrozenSkillBinding, WorkflowRunPayload, WorkflowRunPayloadError, WorkflowSkillReceipt,
 };
 pub use snapshot_switch::{SnapshotIncompatibility, SnapshotSwitchPlan, plan_snapshot_switch};
 pub use structured_output::{StructuredOutputError, extract_json_object, validate_against_schema};

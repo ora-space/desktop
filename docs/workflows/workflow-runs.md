@@ -50,33 +50,37 @@ the run name, the instruction and typed values for declared Start inputs. Ora's 
 frozen into the run, so every generated handoff uses the same language even if the interface
 language changes later.
 
-For each Skill-using node, run creation asks an `AgentSkillDeliveryProvider` for its validated,
-Workspace-relative discovery roots and freezes a per-node receipt with the Skill id, slash-command
-name and actual package paths. Local Skills resolve through their catalog directory and plugin Skills
-through the immutable package recorded in their row. The provider uses the discovery roots declared by the selected Agent plugin and falls back to
-`.agents/skills` when it declares none. Execution uses only the frozen receipt, so a later catalog change cannot
-silently rewrite the packages an existing run addresses.
+For each Skill-using node, run creation freezes a per-node receipt carrying only `{ node_id,
+skill_id, invocation_name }`—never content, plugin version, or paths. At dispatch time, each node
+resolves its live formal storage `SKILL.md` path by `skill_id` (local Skills under `<data
+root>/atoms/skills/<name>/SKILL.md` and plugin Skills under the row's validated `package_root`),
+ignoring any legacy Workspace-relative `packagePaths` frozen by pre-upgrade runs. If a bound Skill
+is upgraded mid-run, subsequent nodes read the new version's `SKILL.md`; if uninstalled mid-run, the
+dispatched node fails with `workflow_skill_not_found` instead of falling back to another
+same-named Skill or stale path.
 
 Before start, restart, or resume dispatches a node, Desktop checks the entire graph it will run
-against the current role and Skill catalogs and installed MCP packages. Creation checks roles and
-Skills; an enabled MCP binding first needs a valid MCP package at dispatch. A missing Skill or
-unavailable MCP fails with `workflow_skill_not_found` or `workflow_mcp_not_found`, naming the node
-and dependency. Repairing the dependency allows the same run to proceed. A repeated start of a
-running run returns that run; restart of a running run returns `workflow_run_not_restartable`.
-Whether an Agent is installed is not part of this precheck: the runtime resolves the frozen Agent
-identity when it opens the node's session and fails with `agent_not_installed` if it is missing.
+against the current role and Skill catalogs (confirming each `skill_id` resolves to an Available
+Skill whose formal storage `SKILL.md` is present and readable) and installed MCP packages. Creation
+checks roles and Skills; an enabled MCP binding first needs a valid MCP package at dispatch. A
+missing Skill or unavailable MCP fails with `workflow_skill_not_found` or `workflow_mcp_not_found`,
+naming the node and dependency. Repairing the dependency allows the same run to proceed. A repeated
+start of a running run returns that run; restart of a running run returns
+`workflow_run_not_restartable`. Whether an Agent is installed is not part of this precheck: the
+runtime resolves the frozen Agent identity when it opens the node's session and fails with
+`agent_not_installed` if it is missing.
 
 A resume onto a new snapshot checks the target graph before restoring a checkpoint or changing
-the worktree. It freezes the validated Skill paths from the Agent plugin's declaration when it
-switches snapshots. Keeping the current snapshot preserves its existing frozen Skill receipt.
-After dispatch, session setup handles an MCP removed or misconfigured before a node session opens,
-as well as missing Agent capabilities; it does not deliver a partial selection.
+the worktree. It freezes `{ node_id, skill_id, invocation_name }` for the target snapshot's Skills
+when it switches snapshots. Keeping the current snapshot preserves its existing frozen Skill
+receipts. After dispatch, session setup handles an MCP removed or misconfigured before a node
+session opens, as well as missing Agent capabilities; it does not deliver a partial selection.
 
-The boundary for a dependency removed while a run is already executing is the next scheduling
-operation: an in-flight run is not re-checked, because its nodes already hold the receipt they
-started with, and the next start, restart, or resume of that run is what refuses to continue.
-Whether an uninstall should instead be blocked while a workflow references the plugin is a product
-question tracked separately, in the install/uninstall dependency warnings.
+Any Agent can run Skill-bound workflow nodes without declaring Skill delivery capabilities; only
+two distinct Skills resolving to the same invocation name within one run are still rejected at
+start. For MCP dependencies, an in-flight run's frozen receipt is checked at the next scheduling
+operation (`start`, `restart`, or `resume`); for Skills, both pre-start validation and each node
+dispatch resolve live storage paths dynamically.
 
 ### Events
 
@@ -104,8 +108,8 @@ constraints, every node in deterministic topological order with its status, and 
 request kept separate. Predecessor outputs are never appended implicitly; a node receives one only
 when its prompt references the variable, such as `{{#agent-1.output#}}`. Enabled Skill slash commands
 stay at the start of the first text block (agent CLIs parse them positionally), followed by the
-actual Skill package paths in the Workspace, which the agent is told to use. A node's Skill bindings
-are required invocations, not an allowlist.
+live formal storage `SKILL.md` paths resolved at dispatch, which the agent is told to read and
+follow. A node's Skill bindings are required invocations, not an allowlist.
 
 When structured output is enabled, the JSON Schema contract is appended after the workflow context
 and constrains only the final assistant response to one bare JSON object, so the agent can still use
@@ -311,6 +315,18 @@ its payload. Resume offers three rollback modes; before rolling back, the Worksp
 A node replaced by automatic retries rolls back as one unit with every attempt of its retry chain
 (`payload.retry_chain`). On-demand AI diagnosis writes `payload.ai_diagnosis`, labelled as a guess and
 never read by scheduling, resume, rollback or snapshot switching.
+
+## Querying run-local debug history
+
+A waiting automatic retry can preview the nearest recorded dispatch in its retry chain at the same node, scope, container attempt, iteration, snapshot and revision. The preview names that attempt in `inputSourceNodeRunId`. If that nearest dispatch differs in any coordinate, preview is refused even when an older dispatch matches. Missing dispatch evidence also prevents preview.
+
+`workflowRun.debugHistory({ runId })` returns confirmations in acceptance order with the request key, preview, patch and phase. An applied edit identifies its parent and resulting revisions. A failed stop retains its reason and the attempts that could not be proven stopped (`unsettledNodeRunIds`). Each entry also records the status and error the run had when it was accepted (`priorRunStatus`, `priorError`): a failed, cancelled or succeeded run keeps them while the stop is in flight and returns to `running` in the commit that applies the revision. After reconnecting, the request key identifies the same operation. While a stop is in progress or failed without a released fence, new previews, new confirmations, failure recovery, a whole-run restart and a snapshot switch are refused with `workflow_debug_operation_active`. Refusals reach the page as typed public errors: `workflow_debug_stale_preview`, `workflow_debug_operation_active`, `workflow_debug_request_conflict`, `workflow_debug_patch_invalid` with the field path and reason, and `workflow_debug_target_rejected` with the missing fact or position.
+
+`workflowRun.debugAttempt({ runId, nodeRunId })` also reads superseded attempts. It returns the round or item, configuration revision, outcome and availability of recorded input. The third foreach item has `index=2`, and the third while round has `round=3`. Pre-upgrade attempts without a recorded association return null configuration and revision.
+
+A debug preview selects an existing attempt by `nodeRunId` or an undispatched position by `pendingTarget: { rootScopeId, scopeId, nodeId }`. A pending foreach member also requires `containerNodeRunId` and its zero-based `index`. Preview checks the scheduler’s ready projection. If normal dispatch wins before confirmation, refresh the view and select the recorded attempt. After the revision applies, the history entry names the attempt the scheduler first admitted for that position in `firstNodeRunId`; it stays null until then. An independent sibling can advance while the target and its dependencies stay valid. Container previews include the member configurations that will apply at the new entrance. The Iteration source accepts only a variable that is declared as an array at the root; a path into a nested array is rejected on `iteratorSelector`.
+
+Failure recovery and a whole-run restart take the run’s current revision as their configuration baseline. A restart builds a new root and top-level edits stay in effect; a container that either entry rebuilds starts from its entrance configuration, and overrides bound to the previous container execution remain history only. Only a successful snapshot switch starts a new baseline: it commits the new snapshot together with a new run revision, earlier patches and attempts stay readable as history and are not replayed, also when the run returns to a snapshot it used before, and previews taken before the switch go stale. A refused switch keeps the snapshot and the revisions.
 
 ## Recovery after restart
 

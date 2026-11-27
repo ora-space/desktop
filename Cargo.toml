@@ -13,8 +13,6 @@ members = [
     "crates/contracts",
     "crates/db",
     "crates/domain",
-    "crates/effect",
-    "crates/effect-skill",
     "crates/fs",
     "crates/gitlancer",
     "crates/history",
@@ -55,8 +53,6 @@ default-members = [
     "crates/contracts",
     "crates/db",
     "crates/domain",
-    "crates/effect",
-    "crates/effect-skill",
     "crates/fs",
     "crates/gitlancer",
     "crates/history",
@@ -105,8 +101,6 @@ ora-backend = { path = "crates/backend" }
 ora-contracts = { path = "crates/contracts" }
 ora-db = { path = "crates/db" }
 ora-domain = { path = "crates/domain" }
-ora-effect = { path = "crates/effect" }
-ora-effect-skill = { path = "crates/effect-skill" }
 ora-fs = { path = "crates/fs" }
 gitlancer = { path = "crates/gitlancer" }
 ora-history = { path = "crates/history" }
@@ -236,3 +230,6 @@ unnecessary_lazy_evaluations = "deny"
 unnecessary_sort_by = "deny"
 unnecessary_to_owned = "deny"
 unwrap_used = "deny"
+
+[profile.dev.package.sha2]
+opt-level = 3

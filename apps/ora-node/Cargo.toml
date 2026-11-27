@@ -34,7 +34,6 @@ reqwest = { workspace = true, features = ["json"] }
 ora-agent-runtime.workspace = true
 ora-contracts.workspace = true
 ora-domain.workspace = true
-ora-effect.workspace = true
 ora-history.workspace = true
 ora-plugin-config.workspace = true
 ora-plugin-lifecycle.workspace = true

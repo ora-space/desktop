@@ -215,7 +215,7 @@ function transportError(
 }
 
 /** Normalizes serialized Rust command errors and opaque Tauri invocation failures. */
-function normalizeInvokeError(error: unknown): Error {
+export function normalizeInvokeError(error: unknown): Error {
   const decoded = decodeRemoteError(error);
   if (
     !(decoded instanceof LocalTransportError) ||

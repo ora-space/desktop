@@ -385,7 +385,7 @@ mod tests {
     fn seed_project(pool: &RepositoryPool, temp_root: &std::path::Path) {
         let workspace_root = temp_root.join("project");
         std::fs::create_dir_all(&workspace_root).expect("create project workspace");
-        SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(1))
+        SqliteProjectRepository::new(pool.clone())
             .create_project(
                 Project::new(
                     ProjectId::new("project-1"),
