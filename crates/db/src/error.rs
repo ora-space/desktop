@@ -23,6 +23,8 @@ impl fmt::Display for MigrationDirection {
 /// Describes failures that can occur while validating or reconciling database migrations.
 #[derive(Debug, Error)]
 pub enum DatabaseError {
+    #[error("cannot apply the confirmed foreach projection: {0}")]
+    ForeachProjection(#[source] Box<DatabaseError>),
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("connection pool error: {0}")]

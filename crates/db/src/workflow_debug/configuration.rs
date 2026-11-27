@@ -2,9 +2,12 @@ use super::*;
 use ora_application::render_variable_template;
 
 /// Joins the row to its immutable snapshot and rejects superseded attempts and prior root executions.
+/// Apply uses the source already verified by preview and claim: quiescence has cancelled the retry
+/// wait by then. The snapshot, revision, container and coordinates must still match its predecessor.
 pub(super) fn prepare(
     db: &Connection,
     request: &PreviewWorkflowDebugRequest,
+    confirmed_retry_source: Option<&str>,
 ) -> Result<DebugPlanningInput, DatabaseError> {
     if let WorkflowDebugSelection::NodeRunId(id) = &request.selection {
         // An attempt recorded before the current snapshot baseline keeps its inputs as history
@@ -41,12 +44,12 @@ pub(super) fn prepare(
           LEFT JOIN workflow_debug_restored_documents condition ON condition.node_run_id=n.id AND condition.kind='condition'
           LEFT JOIN workflow_debug_attempts e ON e.node_run_id=n.id
           LEFT JOIN workflow_debug_entries entry ON entry.node_run_id=n.id
-          LEFT JOIN workflow_debug_attempts prior ON prior.node_run_id=(
+          LEFT JOIN workflow_debug_attempts prior ON prior.node_run_id=COALESCE(?3, (
             SELECT candidate.id FROM json_each(CASE WHEN json_valid(n.payload) THEN n.payload END,'$.retry_chain') chain
             JOIN workflow_node_runs candidate ON candidate.id=chain.value
             JOIN workflow_debug_attempts evidence ON evidence.node_run_id=candidate.id
             WHERE n.status=1 AND n.started_at IS NULL AND json_extract(CASE WHEN json_valid(n.payload) THEN n.payload END,'$.retry_wait.previous_node_run_id') IS NOT NULL
-              AND evidence.dispatch_input IS NOT NULL ORDER BY chain.key DESC LIMIT 1)
+              AND evidence.dispatch_input IS NOT NULL ORDER BY chain.key DESC LIMIT 1))
             AND prior.snapshot_id=e.snapshot_id AND prior.revision=e.revision AND prior.container_attempt IS e.container_attempt
             AND EXISTS (SELECT 1 FROM workflow_node_runs candidate WHERE candidate.id=prior.node_run_id
                 AND candidate.is_deleted=1 AND candidate.status=3 AND candidate.run_id=n.run_id
@@ -56,7 +59,7 @@ pub(super) fn prepare(
          WHERE n.run_id=?1 AND n.id=?2 AND n.is_deleted=0
            AND (n.scope_id=root.scope_id OR (parent.scope_id=root.scope_id AND parent.is_deleted=0))
            AND (e.snapshot_id IS NULL OR e.snapshot_id=r.snapshot_id)",
-        params![request.run_id, id],
+        params![request.run_id, id, confirmed_retry_source],
         |row| Ok((
             super::attempts::read_target(row)?,
             row.get::<_, Option<String>>("snapshot_id")?,

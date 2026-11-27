@@ -1,4 +1,6 @@
 use super::*;
+
+mod boundaries;
 use ora_application::WorkflowRunPayload;
 use pretty_assertions::assert_eq;
 
@@ -45,8 +47,21 @@ fn foreach_debug_preserves_a_run_that_failed_while_the_member_was_stopping() {
             SystemClock,
         );
         engine.start(&run).unwrap();
+        let first = node_runs(&pool, &run)
+            .into_iter()
+            .find(|row| row.node_id == "member")
+            .unwrap();
+        engine
+            .complete_node(&run, &first.id, Some("first".into()), None, None, vec![])
+            .unwrap();
         let rows = node_runs(&pool, &run);
-        let id = |name| &rows.iter().find(|r| r.node_id == name).unwrap().id;
+        let id = |name| {
+            &rows
+                .iter()
+                .find(|r| r.node_id == name && r.status == WorkflowNodeStatus::Running)
+                .unwrap()
+                .id
+        };
         repo.bind_node_run_session(id("member"), &SessionId::new("session-1"), 50)
             .unwrap();
         let preview=coordinator.preview(serde_json::from_value(json!({"runId":run.as_ref(),"nodeRunId":id("iter").as_ref(),"baseRevision":0,"patch":[{"op":"replace","path":"/iterationConfig/errorStrategy","value":"fail"}]})).unwrap()).unwrap();
@@ -80,11 +95,24 @@ fn foreach_debug_preserves_a_run_that_failed_while_the_member_was_stopping() {
         let after = load();
         assert_eq!(after.status, WorkflowRunStatus::Failed);
         assert_eq!(
-            (after.error, after.finished_at, after.payload),
-            (failure.error, failure.finished_at, failure.payload)
+            (after.error, after.finished_at),
+            (failure.error, failure.finished_at)
         );
-        assert_eq!(node_runs(&pool, &run).len(), rows.len());
-        assert_eq!(dispatched(&exec, "member"), 1);
+        let prior: WorkflowRunPayload =
+            serde_json::from_str(failure.payload.as_deref().unwrap()).unwrap();
+        let result: WorkflowRunPayload =
+            serde_json::from_str(after.payload.as_deref().unwrap()).unwrap();
+        assert!(prior.iteration_ledger.contains_key("iter"));
+        assert!(!result.iteration_ledger.contains_key("iter"));
+        assert_eq!(result.variable_pool, prior.variable_pool);
+        let current = node_runs(&pool, &run);
+        assert!(
+            current
+                .iter()
+                .all(|r| r.node_id != "member" && r.node_id != "iter")
+        );
+        assert!(current.iter().any(|r| r.id == *id("sibling")));
+        assert_eq!(dispatched(&exec, "member"), 2);
     });
 }
 

@@ -120,6 +120,7 @@ impl WorkflowDebugStore {
                 base_revision: preview.base_revision,
                 patch: serde_json::from_str(&patch)?,
             },
+            preview.input_source_node_run_id.as_deref(),
         )?;
         Ok((run_id, input))
     }
@@ -146,7 +147,7 @@ impl WorkflowDebugStore {
             if revision != request.base_revision {
                 return Err(DebugRejection::StalePreview.into());
             }
-            let input = configuration::prepare(&tx, request)?;
+            let input = configuration::prepare(&tx, request, /*confirmed_retry_source*/ None)?;
             let (impact, fence_nodes) = plan(&input)?;
             let nodes = serde_json::to_string(&input.read_nodes)?;
             let facts = read_set::facts(&tx, &request.run_id, &nodes)?;
