@@ -317,7 +317,7 @@ it("checks the current form proxy against a URL", async () => {
     "https://google.com",
   );
   await user.click(
-    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+    within(dialog).getByRole("button", { name: /验证并保存|Check and save/ }),
   );
 
   await waitFor(() =>
@@ -497,12 +497,16 @@ it("reports an unreachable probe as connectivity without changing saved settings
   expect(dialog).toBeInTheDocument();
 });
 
-it("tests an edited URL using an unsaved proxy draft", async () => {
+it("saves the tested proxy draft only after the edited URL passes", async () => {
   const testUrl = "https://example.com/probe";
   const state = createFixtureState();
   const handlers = createFixtureHandlers(state);
+  let finishCheck: (() => void) | undefined;
   handlers.checkProxySettings = () =>
-    Promise.resolve({ outcome: "reachable", status: 200, route: "manual" });
+    new Promise((resolve) => {
+      finishCheck = () =>
+        resolve({ outcome: "reachable", status: 200, route: "manual" });
+    });
   const client = createTestClient(handlers);
   const check = vi.spyOn(client.proxy, "check");
   const save = vi.spyOn(client.proxy, "set");
@@ -525,8 +529,11 @@ it("tests an edited URL using an unsaved proxy draft", async () => {
   await user.clear(urlInput);
   await user.type(urlInput, testUrl);
   await user.click(
-    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+    within(dialog).getByRole("button", { name: /验证并保存|Check and save/ }),
   );
+  await waitFor(() => expect(finishCheck).toBeDefined());
+  expect(save).not.toHaveBeenCalled();
+  await act(async () => finishCheck?.());
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(check).toHaveBeenCalledWith({
     url: testUrl,
@@ -537,7 +544,13 @@ it("tests an edited URL using an unsaved proxy draft", async () => {
       password: null,
     },
   });
-  expect(save).not.toHaveBeenCalled();
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(state.proxySettings).toEqual({
+    host: "https://proxy.example",
+    port: 7890,
+    username: null,
+    password: null,
+  });
 });
 
 it("warns when an HTTP success bypasses the manual proxy", async () => {
@@ -554,13 +567,18 @@ it("warns when an HTTP success bypasses the manual proxy", async () => {
   const warning = vi.spyOn(toast, "warning");
   const success = vi.spyOn(toast, "success");
   const user = userEvent.setup();
-  renderProxy(createTestClient(handlers));
+  const client = createTestClient(handlers);
+  const save = vi.spyOn(client.proxy, "set");
+  renderProxy(client);
+  const host = await screen.findByLabelText(/主机|Host/);
+  await user.clear(host);
+  await user.type(host, "draft.example");
   await user.click(
     await screen.findByRole("button", { name: /验证代理|Check connection/ }),
   );
   const dialog = await screen.findByRole("dialog");
   await user.click(
-    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+    within(dialog).getByRole("button", { name: /验证并保存|Check and save/ }),
   );
   await waitFor(() =>
     expect(warning).toHaveBeenCalledWith(
@@ -569,7 +587,50 @@ it("warns when an HTTP success bypasses the manual proxy", async () => {
     ),
   );
   expect(success).not.toHaveBeenCalled();
+  expect(save).not.toHaveBeenCalled();
+  expect(state.proxySettings?.host).toBe("proxy.example");
   expect(dialog).toBeInTheDocument();
+});
+
+it("keeps a verified draft available when saving fails", async () => {
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  const save = handlers.setProxySettings!;
+  let failSave = true;
+  handlers.setProxySettings = (request) =>
+    failSave ? Promise.reject(new Error("write failed")) : save(request);
+  const error = vi.spyOn(toast, "error");
+  const success = vi.spyOn(toast, "success");
+  const user = userEvent.setup();
+  renderProxy(createTestClient(handlers));
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "direct",
+  );
+  await user.click(
+    screen.getByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  const confirm = () =>
+    within(dialog).getByRole("button", { name: /验证并保存|Check and save/ });
+  await user.click(confirm());
+  await waitFor(() =>
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /保存失败|Saving the verified proxy settings failed/,
+      ),
+      expect.anything(),
+    ),
+  );
+  expect(success).not.toHaveBeenCalled();
+  expect(dialog).toBeInTheDocument();
+  expect(state.proxyMode).not.toBe("direct");
+  failSave = false;
+  await user.click(confirm());
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(state.proxyMode).toBe("direct");
+  expect(success).toHaveBeenCalledTimes(1);
+  success.mockRestore();
 });
 
 it("shows the destination HTTP status without reporting a successful check", async () => {
@@ -580,14 +641,20 @@ it("shows the destination HTTP status without reporting a successful check", asy
   const report = vi.spyOn(toast, "error");
   const success = vi.spyOn(toast, "success");
   const user = userEvent.setup();
-  renderProxy(createTestClient(handlers));
+  const client = createTestClient(handlers);
+  const save = vi.spyOn(client.proxy, "set");
+  renderProxy(client);
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "direct",
+  );
 
   await user.click(
     await screen.findByRole("button", { name: /验证代理|Check connection/ }),
   );
   const dialog = await screen.findByRole("dialog");
   await user.click(
-    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+    within(dialog).getByRole("button", { name: /验证并保存|Check and save/ }),
   );
   await waitFor(() =>
     expect(report).toHaveBeenCalledWith(
@@ -598,7 +665,24 @@ it("shows the destination HTTP status without reporting a successful check", asy
     ),
   );
   expect(success).not.toHaveBeenCalled();
+  expect(save).not.toHaveBeenCalled();
   expect(dialog).toBeInTheDocument();
+});
+
+it("does not write proxy settings when checking the saved configuration", async () => {
+  const client = createTestClient(createFixtureHandlers(createFixtureState()));
+  const save = vi.spyOn(client.proxy, "set");
+  const user = userEvent.setup();
+  renderProxy(client);
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(save).not.toHaveBeenCalled();
 });
 
 it("resets a cancelled empty probe URL before opening a new check", async () => {

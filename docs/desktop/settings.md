@@ -104,5 +104,7 @@ blocking checks until recovery.
 Confirming a check saves its HTTP(S) URL separately in `user_config` before probing, even if the
 target is unreachable. Cancelling discards the current draft and reopening restores the saved URL;
 restarts and upgrades retain it. Only a missing preference uses the Google default. Read failures
-remain errors, and a failed URL save keeps the draft and skips the probe. Confirming a URL does not
-save or clear proxy credentials.
+remain errors, and a failed URL save keeps the draft and skips the probe. **Check and save**
+appears for unsaved proxy settings and saves the tested settings after a successful check.
+If the check fails, bypasses a manual proxy, or the settings cannot be saved, the draft stays
+available. **Check** tests settings that are already saved.

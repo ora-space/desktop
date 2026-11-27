@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
@@ -351,8 +351,9 @@ function ProxySettingsEditor({
       {checkOpen && !invalid && (
         <CheckProxyDialog
           mode={mode}
-          usingDraft={usingDraft}
-          checking={controller.isChecking}
+          onSaveProxy={
+            usingDraft ? () => controller.submit(mode, parsed) : undefined
+          }
           blocked={checkBlocked}
           readError={
             controller.loadError !== null
@@ -378,8 +379,7 @@ function ProxySettingsEditor({
 
 interface CheckProxyDialogProps {
   mode: ProxyMode;
-  usingDraft: boolean;
-  checking: boolean;
+  onSaveProxy: (() => Promise<void>) | undefined;
   blocked: boolean;
   readError: string | null;
   onRetry: () => void;
@@ -393,8 +393,7 @@ interface CheckProxyDialogProps {
 /** Prompts for a URL and reports whether the current form proxy can reach it. */
 function CheckProxyDialog({
   mode,
-  usingDraft,
-  checking,
+  onSaveProxy,
   blocked,
   readError,
   onRetry,
@@ -405,14 +404,27 @@ function CheckProxyDialog({
   onSaveUrl,
 }: CheckProxyDialogProps) {
   const { t } = useTranslation();
+  const verificationPending = useRef(false);
+  const [checking, setChecking] = useState(false);
 
   const verify = async () => {
-    if (blocked || checking) return;
+    if (blocked || verificationPending.current) return;
     const nextUrl = url.trim();
     if (nextUrl === "") {
       toast.error(t("settings.proxy.checkUrlRequired"));
       return;
     }
+    verificationPending.current = true;
+    setChecking(true);
+    try {
+      await checkConnection(nextUrl);
+    } finally {
+      verificationPending.current = false;
+      setChecking(false);
+    }
+  };
+
+  const checkConnection = async (nextUrl: string) => {
     try {
       await onSaveUrl(nextUrl);
     } catch (cause) {
@@ -432,6 +444,16 @@ function CheckProxyDialog({
           });
           return;
         }
+        if (onSaveProxy) {
+          try {
+            await onSaveProxy();
+          } catch (cause) {
+            toast.error(t("settings.proxy.checkSaveError"), {
+              description: localizeContractError(cause, t),
+            });
+            return;
+          }
+        }
         const routeDetail =
           result.route === undefined
             ? t("settings.proxy.checkSuccessDetail", { status: result.status })
@@ -446,11 +468,14 @@ function CheckProxyDialog({
                   }[result.route],
                 ),
               });
-        toast.success(t("settings.proxy.checkSuccess"), {
-          description: usingDraft
-            ? routeDetail + " " + t("settings.proxy.checkDraft")
-            : routeDetail,
-        });
+        toast.success(
+          t(
+            onSaveProxy
+              ? "settings.proxy.checkSaved"
+              : "settings.proxy.checkSuccess",
+          ),
+          { description: routeDetail },
+        );
         onOpenChange(false);
         return;
       }
@@ -473,7 +498,12 @@ function CheckProxyDialog({
   };
 
   return (
-    <Dialog open onOpenChange={onOpenChange}>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!verificationPending.current) onOpenChange(open);
+      }}
+    >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t("settings.proxy.checkTitle")}</DialogTitle>
@@ -499,7 +529,7 @@ function CheckProxyDialog({
             }}
           />
         </label>
-        {usingDraft && (
+        {onSaveProxy && (
           <p className="text-sm text-muted-foreground">
             {t("settings.proxy.checkDraft")}
           </p>
@@ -526,7 +556,11 @@ function CheckProxyDialog({
           >
             {checking
               ? t("settings.proxy.checking")
-              : t("settings.proxy.checkConfirm")}
+              : t(
+                  onSaveProxy
+                    ? "settings.proxy.checkAndSave"
+                    : "settings.proxy.checkConfirm",
+                )}
           </Button>
         </DialogFooter>
       </DialogContent>

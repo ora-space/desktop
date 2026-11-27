@@ -101,7 +101,6 @@ export function useProxySettings() {
     isCheckUrlLoading: urlQuery.isPending,
     checkUrlError: urlQuery.error,
     isSaving: mutation.isPending || clearMutation.isPending,
-    isChecking: checkMutation.isPending || urlMutation.isPending,
     saveCheckUrl: urlMutation.mutateAsync,
     updateError: mutation.error ?? clearMutation.error,
     submit,
