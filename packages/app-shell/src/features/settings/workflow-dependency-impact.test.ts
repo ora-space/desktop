@@ -626,3 +626,35 @@ it("keeps Agent dependencies when unused non-Agent nodes retain malformed Skill 
     unreadable: 0,
   });
 });
+
+it("does not add uninstall impact when a bare Skill remains ambiguous after removal", () => {
+  const pluginId = "official/review";
+  const removed = {
+    ...skillOwnedBy("review", pluginId),
+    id: "plugin:official/review:review",
+  };
+  const local = {
+    ...removed,
+    id: "local-review",
+    source: { kind: "local" as const },
+  };
+  const remaining = {
+    ...removed,
+    id: "plugin:other/review:review",
+    source: { kind: "plugin" as const, pluginId: "other/review" },
+  };
+  expect(
+    findWorkflowDependents({
+      workflows: [
+        {
+          workflowId: "review",
+          name: "Review",
+          draftGraph: graph({ skills: ["review"] }),
+        },
+      ],
+      plugins: [],
+      skills: [removed, local, remaining],
+      targets: [{ kind: "skill", id: removed.id }],
+    }),
+  ).toEqual({ dependents: [], unreadable: 0 });
+});
