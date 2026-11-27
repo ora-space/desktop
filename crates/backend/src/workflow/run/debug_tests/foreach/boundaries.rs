@@ -21,6 +21,7 @@ fn batch_graph(stopper: Arc<dyn DebugSessionStopper>, sibling: bool) -> Fixture 
         "edges":[{"source":"start","target":"iter"},{"source":"iter","target":"member"},
             {"source":"iter","target":"next"},{"source":"next","target":"consumer"}]});
     if sibling {
+        graph["nodes"][1]["data"]["iterationConfig"]["errorStrategy"] = json!("continue");
         let mut independent = agent("sibling", "");
         independent.as_object_mut().unwrap().remove("parentId");
         graph["nodes"].as_array_mut().unwrap().push(independent);
@@ -238,14 +239,20 @@ fn unprovable_projection_rolls_back_the_revision_and_records_stop_failed() {
         bind(&f, &row);
         evidence(&f, &row, &payload(&f).variable_pool);
         let p = f.preview(row.id.as_ref(), 0);
-        let (op, ()) = tokio::join!(
+        let (op, notices_before_release) = tokio::join!(
             f.coordinator.commit(f.commit_request(&p, "broken")),
             async {
                 barrier.entered.notified().await;
                 rusqlite::Connection::open(f._temp.path().join("repository.sqlite3")).unwrap().execute(
                 "DELETE FROM workflow_debug_documents WHERE node_run_id=?1 AND kind='dispatch'",[row.id.as_ref()]).unwrap();
+                let notices = f.invalidations.0.lock().unwrap().len();
                 barrier.release.notify_one();
+                notices
             }
+        );
+        assert!(
+            f.invalidations.0.lock().unwrap()[notices_before_release..]
+                .contains(&f.run_id.to_string())
         );
         let op = op.unwrap();
         assert!(
@@ -370,93 +377,4 @@ fn failed_batch_recovers_then_rebuilds_with_an_object_source_and_empty_downstrea
     });
 }
 
-/// A completed owner must reopen on an explicit recovery after the run failed during quiescence.
-#[test]
-fn ordinary_resume_replays_a_parked_member_before_dispatching_its_consumer() {
-    run_test(async {
-        let barrier = Arc::new(super::super::lifecycle::StopBarrier::default());
-        let f = batch_graph(barrier.clone(), true);
-        let owner = active(&f, "iter").id;
-        complete(&f, "member", "one");
-        complete(&f, "member", "two");
-        let third = active(&f, "member");
-        evidence(&f, &third, &payload(&f).variable_pool);
-        for value in ["old3", "old4", "old5"] {
-            complete(&f, "member", value);
-        }
-        let consumer = active(&f, "consumer");
-        bind(&f, &consumer);
-        let preview = f.preview(third.id.as_ref(), 0);
-        let (op, ()) = tokio::join!(
-            f.coordinator.commit(f.commit_request(&preview, "park")),
-            async {
-                barrier.entered.notified().await;
-                f.engine
-                    .fail_node(
-                        &f.run_id,
-                        &active(&f, "sibling").id,
-                        NodeFailure::new(NodeFailureKind::Session, "independent"),
-                    )
-                    .unwrap();
-                barrier.release.notify_one();
-            }
-        );
-        assert_eq!(
-            op.unwrap().phase,
-            WorkflowDebugPhase::Applied { revision: 1 }
-        );
-        assert_eq!(f.run_status(), WorkflowRunStatus::Failed);
-        assert_eq!(f.row("iter").status, WorkflowNodeStatus::Succeeded);
-        assert_eq!(
-            payload(&f).variable_pool.values["iter.output"],
-            json!(["one", "two", "old3", "old4", "old5"])
-        );
-        assert_eq!(dispatched(&f.executor, "member"), 5);
-        assert_eq!(
-            f.engine.resume_from_failure(&f.run_id).unwrap(),
-            ora_application::ResumeWorkflowRunResult::Resumed
-        );
-        assert_eq!(active(&f, "iter").id, owner);
-        for (index, item, value) in [(2, "c", "new3"), (3, "d", "new4"), (4, "e", "new5")] {
-            let row = active(&f, "member");
-            assert_eq!(row.iteration, Some(index));
-            assert_eq!(payload(&f).variable_pool.values["iter.item"], json!(item));
-            assert!(!payload(&f).variable_pool.values.contains_key("iter.output"));
-            assert_eq!(dispatched(&f.executor, "consumer"), 1);
-            let graph = f
-                .store
-                .revised_graph(f.run_id.as_ref(), row.id.as_ref())
-                .unwrap()
-                .unwrap();
-            assert_eq!(
-                graph
-                    .node("member")
-                    .unwrap()
-                    .agent_config
-                    .as_ref()
-                    .unwrap()
-                    .prompt,
-                "new"
-            );
-            complete(&f, "member", value);
-        }
-        assert_eq!(dispatched(&f.executor, "member"), 8);
-        let records = f.executor.records();
-        let dispatch = records
-            .iter()
-            .rev()
-            .find(|r| r.node_id == "consumer")
-            .unwrap();
-        let input: WorkflowRunPayload =
-            serde_json::from_str(dispatch.payload.as_deref().unwrap()).unwrap();
-        assert_eq!(
-            input.variable_pool.values["iter.output"],
-            json!(["one", "two", "new3", "new4", "new5"])
-        );
-        complete(&f, "sibling", "recovered");
-        for _ in 0..5 {
-            complete(&f, "consumer", "ok");
-        }
-        assert_eq!(f.run_status(), WorkflowRunStatus::Succeeded);
-    });
-}
+mod recovery;

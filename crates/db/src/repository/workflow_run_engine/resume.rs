@@ -118,7 +118,7 @@ pub(super) fn resume_from_failure(
             )?;
         }
 
-        crate::workflow_debug::resume_foreach_replays(&transaction, run_id.as_ref())?;
+        crate::workflow_debug::resume_foreach_replays(&transaction, run_id.as_ref(), &[])?;
         let state = current_nodes_to_state(&[])?;
         transaction.execute(
             "UPDATE workflow_runs SET run_status = ?2, error = NULL, finished_at = NULL, state = ?3, updated_at = ?4

@@ -48,13 +48,46 @@ impl ForeachReplay {
     }
 }
 
+/// A terminal edit also reactivates previously confirmed member replays. Show that work in
+/// its schedule and validate it at claim, without changing which attempts this edit stops.
+pub(super) fn include_parked_schedule(
+    tx: &Transaction<'_>,
+    run: &str,
+    impact: &mut WorkflowDebugImpact,
+    reads: &mut BTreeSet<String>,
+) -> Result<(), DatabaseError> {
+    let mut stmt = tx.prepare(
+        "SELECT DISTINCT node.value FROM workflow_node_runs n
+        JOIN json_each(n.payload,'$.debugForeachReplay.affected') node
+        WHERE n.run_id=?1 AND n.node_type='iteration' AND n.is_deleted=0
+          AND n.id NOT IN (SELECT value FROM json_each(?2)) ORDER BY node.value",
+    )?;
+    let nodes = stmt.query_map(
+        params![run, serde_json::to_string(&impact.invalidate)?],
+        |r| r.get::<_, String>(0),
+    )?;
+    for node in nodes {
+        let node = node?;
+        reads.insert(node.clone());
+        if !impact.schedule.contains(&node) {
+            impact.schedule.push(node);
+        }
+    }
+    Ok(())
+}
+
 /// Activate surviving owners before the scheduler sees the run as running. Owners cleared by a
 /// wider recovery have already been retired and their replacement starts from its own entrance.
-pub(crate) fn resume_foreach_replays(tx: &Transaction<'_>, run: &str) -> Result<(), DatabaseError> {
+pub(crate) fn resume_foreach_replays(
+    tx: &Transaction<'_>,
+    run: &str,
+    retiring: &[String],
+) -> Result<(), DatabaseError> {
     let mut stmt = tx.prepare("SELECT id,json_extract(payload,'$.debugForeachReplay') FROM workflow_node_runs
-        WHERE run_id=?1 AND node_type='iteration' AND is_deleted=0 AND json_type(payload,'$.debugForeachReplay')='object'")?;
+        WHERE run_id=?1 AND node_type='iteration' AND is_deleted=0 AND json_type(payload,'$.debugForeachReplay')='object'
+          AND id NOT IN (SELECT value FROM json_each(?2))")?;
     let owners = stmt
-        .query_map([run], |row| {
+        .query_map(params![run, serde_json::to_string(retiring)?], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;

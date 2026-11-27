@@ -120,7 +120,7 @@ impl WorkflowDebugStore {
                 ],
             )?;
             if reopened == 1 {
-                resume_foreach_replays(&tx, run)?;
+                resume_foreach_replays(&tx, run, &entry.preview.impact.invalidate)?;
             }
             let live_before: String = tx.query_row(
                 "SELECT json_group_array(id) FROM workflow_node_runs WHERE run_id=?1 AND is_deleted=0",

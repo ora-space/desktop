@@ -3,10 +3,11 @@
 //! These judgments live outside `engine.rs` so the scheduling core stays free of extra
 //! region-bookkeeping bulk; they still answer from persisted rows and graph topology only.
 
+use super::skill_delivery::WorkflowRunPayload;
 use crate::workflow_run::engine::graph::WorkflowGraph;
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::FailurePropagation;
-use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus};
+use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus, WorkflowScopeId};
 use std::collections::BTreeSet;
 
 /// Whether a `Running` row of this wire node type stands for work in flight outside the
@@ -91,8 +92,39 @@ pub fn resume_unit_member_ids(graph: &WorkflowGraph, owner: &str) -> Vec<String>
 /// row the failed run left `Running` (its round held a wait the run abandoned) is cleared the
 /// same way; the repository closes its round scopes with it.
 pub fn resume_clear_node_ids(graph: &WorkflowGraph, node_runs: &[WorkflowNodeRun]) -> Vec<String> {
+    clear_resume_triggers(graph, node_runs.iter())
+}
+
+/// A failed member already absorbed into the foreach ledger is history. A failed owner,
+/// an unsettled item, and an independent failure remain normal recovery triggers.
+pub(super) fn resume_from_ledger(
+    graph: &WorkflowGraph,
+    rows: &[WorkflowNodeRun],
+    payload: &WorkflowRunPayload,
+    root_scope: &WorkflowScopeId,
+) -> Vec<String> {
+    // Settlement commits both the ledger entry and the owner's continuation atomically.
+    // Under "fail" the owner itself is a trigger. Under "continue" its settled member is not.
+    let triggers = rows.iter().filter(|row| {
+        if &row.scope_id != root_scope {
+            return true;
+        }
+        let Some((index, owner)) = row.iteration.zip(graph.region_owner(&row.node_id)) else {
+            return true;
+        };
+        !payload
+            .iteration_ledger(owner)
+            .is_some_and(|ledger| ledger.contains_key(&index))
+    });
+    clear_resume_triggers(graph, triggers)
+}
+
+fn clear_resume_triggers<'a>(
+    graph: &WorkflowGraph,
+    rows: impl Iterator<Item = &'a WorkflowNodeRun>,
+) -> Vec<String> {
     let mut failed = BTreeSet::new();
-    for node_run in node_runs {
+    for node_run in rows {
         if matches!(
             node_run.status,
             WorkflowNodeStatus::Failed | WorkflowNodeStatus::Cancelled

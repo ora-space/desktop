@@ -192,8 +192,9 @@ where
         }
         let graph = WorkflowGraph::parse(&context.graph_json)?;
         let node_runs = self.repository.list_node_runs(run_id)?;
+        let payload = execution_payload_from(context.run.payload.as_deref());
         let to_clear =
-            crate::workflow_run::engine::region::resume_clear_node_ids(&graph, &node_runs);
+            super::region::resume_from_ledger(&graph, &node_runs, &payload, &context.root_scope_id);
         if to_clear.is_empty() {
             return Ok(ResumeWorkflowRunResult::NotResumable);
         }
