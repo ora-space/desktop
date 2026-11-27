@@ -34,10 +34,8 @@ fn editing_a_finished_worker_dispatches_the_new_prompt_once() -> Result<(), Test
         let effective: Value = serde_json::from_str(&context.graph)?;
         let node = effective["nodes"]
             .as_array()
-            .unwrap()
-            .iter()
-            .find(|n| n["id"] == "worker")
-            .unwrap();
+            .and_then(|nodes| nodes.iter().find(|n| n["id"] == "worker"))
+            .ok_or("selected worker missing from the effective graph")?;
         assert_eq!(node["data"]["agentConfig"]["prompt"], "first debug prompt");
         let preview = published.runs.debug_preview(PreviewWorkflowDebugRequest {
             run_id: run.clone(),
