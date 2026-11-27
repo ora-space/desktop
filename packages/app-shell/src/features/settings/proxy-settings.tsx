@@ -125,6 +125,9 @@ function ProxySettingsEditor({
   );
   const [username, setUsername] = useState(initialSettings?.username ?? "");
   const [password, setPassword] = useState(initialSettings?.password ?? "");
+  const [manualLoaded, setManualLoaded] = useState(initialSettings !== null);
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualLoadError, setManualLoadError] = useState(false);
   const [checkOpen, setCheckOpen] = useState(false);
   const [checkUrl, setCheckUrl] = useState(controller.checkUrl);
 
@@ -140,26 +143,34 @@ function ProxySettingsEditor({
         parsed.port !== initialSettings.port ||
         parsed.username !== initialSettings.username ||
         parsed.password !== initialSettings.password));
-  const hasFormValues =
-    host.trim() !== "" ||
-    port.trim() !== "" ||
-    username.trim() !== "" ||
-    password !== "";
-  const canClear =
-    replacingUnreadable ||
-    hasFormValues ||
-    controller.settings !== null ||
-    controller.mode !== "system" ||
-    mode !== "system";
   const busy =
     controller.isLoading ||
     controller.isSaving ||
+    manualLoading ||
     (controller.loadError !== null && !replacingUnreadable);
   const checkBlocked =
     busy ||
     replacingUnreadable ||
     controller.isCheckUrlLoading ||
     controller.checkUrlError !== null;
+
+  const selectMode = async (next: ProxyMode) => {
+    setMode(next);
+    if (next !== "manual" || manualLoaded) return;
+    setManualLoading(true);
+    try {
+      const saved = await controller.loadManual();
+      setHost(saved?.host ?? "");
+      setPort(saved ? String(saved.port) : "");
+      setUsername(saved?.username ?? "");
+      setPassword(saved?.password ?? "");
+    } catch {
+      setManualLoadError(true);
+    } finally {
+      setManualLoaded(true);
+      setManualLoading(false);
+    }
+  };
 
   const save = async () => {
     if (invalid) {
@@ -184,6 +195,7 @@ function ProxySettingsEditor({
       setPort("");
       setUsername("");
       setPassword("");
+      setManualLoadError(false);
       toast.success(t("settings.proxy.cleared"));
     } catch (cause) {
       toast.error(t("settings.proxy.clearError"), {
@@ -212,7 +224,7 @@ function ProxySettingsEditor({
                   value === "manual" ||
                   value === "direct"
                 )
-                  setMode(value);
+                  void selectMode(value);
               }}
             >
               <option value="system">{t("settings.proxy.modeSystem")}</option>
@@ -227,6 +239,11 @@ function ProxySettingsEditor({
           )}
           {mode === "manual" && (
             <fieldset disabled={busy} className="min-w-0 space-y-4">
+              {manualLoadError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {t("settings.proxy.manualLoadError")}
+                </p>
+              )}
               <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
                 <label className="space-y-1.5">
                   <span className="text-sm font-medium">
@@ -294,7 +311,7 @@ function ProxySettingsEditor({
             </Button>
             <Button
               variant="outline"
-              disabled={busy || !canClear}
+              disabled={busy}
               onClick={() => void clear()}
             >
               {t("settings.proxy.clear")}

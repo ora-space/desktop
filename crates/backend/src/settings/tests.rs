@@ -1,6 +1,8 @@
 use super::Settings;
 use crate::BackendError;
-use ora_application::{DeveloperMode, NetworkProxySettings};
+use ora_application::{
+    DeveloperMode, NetworkProxyMode, NetworkProxyPreferences, NetworkProxySettings,
+};
 use ora_contracts::{ContractError, EmptyErrorParams, PublicError, RequestId};
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use ora_logging::{LogLevel, with_trace_logging};
@@ -329,6 +331,57 @@ fn failed_reads_are_not_reported_as_default_preferences() {
                 .await
                 .expect_err("proxy read fails"),
         );
+    });
+}
+
+/// A new supported mode can overwrite unreadable preferences without touching the endpoint.
+#[test]
+fn saving_non_manual_proxy_recovers_from_unreadable_preferences() {
+    run_test(async {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("ora.sqlite3");
+        let (_pool, settings) = open_settings(&path);
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "INSERT INTO user_config (key, value) VALUES ('network_proxy_settings', 'broken-json')",
+                [],
+            )
+            .unwrap();
+        for (previous, mode) in [
+            ("future-mode", NetworkProxyMode::System),
+            ("manual", NetworkProxyMode::Direct),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO user_config (key, value) VALUES ('network_proxy_mode', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    [previous],
+                )
+                .unwrap();
+            assert!(settings.network_proxy_preferences().await.is_err());
+            let expected = NetworkProxyPreferences { mode, manual: None };
+            assert_eq!(
+                settings
+                    .set_network_proxy_preferences(expected.clone())
+                    .await
+                    .unwrap(),
+                expected,
+            );
+            assert_eq!(
+                settings.network_proxy_preferences().await.unwrap(),
+                expected,
+            );
+            assert!(settings.network_proxy_settings().await.is_err());
+            let raw: String = connection
+                .query_row(
+                    "SELECT value FROM user_config WHERE key = 'network_proxy_settings'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(raw, "broken-json");
+        }
     });
 }
 

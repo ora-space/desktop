@@ -106,6 +106,8 @@ export function useProxySettings() {
     submit,
     clear,
     check,
+    loadManual: async () =>
+      (await client.proxy.get({ loadManual: true })).settings,
     retry: () => Promise.all([query.refetch(), urlQuery.refetch()]),
   };
 }

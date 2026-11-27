@@ -60,11 +60,15 @@ pub enum ProxyRoute {
     Direct,
 }
 
-/// Requests the configured network proxy without additional parameters.
+/// Requests the effective proxy or the retained endpoint for a manual draft.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
-pub struct GetProxySettingsRequest {}
+pub struct GetProxySettingsRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub load_manual: Option<bool>,
+}
 
 /// Returns the configured network proxy.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
@@ -195,7 +199,7 @@ mod tests {
             password: None,
         };
         assert_eq!(
-            serde_json::to_value(GetProxySettingsRequest {}).unwrap(),
+            serde_json::to_value(GetProxySettingsRequest::default()).unwrap(),
             json!({})
         );
         assert_eq!(

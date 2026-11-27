@@ -69,6 +69,8 @@ export const settingsTranslations = {
     "settings.proxy.modeSystem": "跟随系统代理（默认）",
     "settings.proxy.systemHint":
       "在 Windows 上使用系统的静态代理。仅开启自动检测时将直连，不运行 WPAD。",
+    "settings.proxy.manualLoadError":
+      "无法读取保留的手动代理配置。可以输入新地址并保存以替换它。",
     "settings.proxy.replaceUnreadable": "替换已保存的代理配置",
     "settings.proxy.modeManual": "手动代理",
     "settings.proxy.modeDirect": "直连",
@@ -263,6 +265,8 @@ export const settingsTranslations = {
     "settings.proxy.modeSystem": "Follow system proxy (default)",
     "settings.proxy.systemHint":
       "On Windows, Ora uses the static system proxy. With only automatic detection enabled, it connects directly without running WPAD.",
+    "settings.proxy.manualLoadError":
+      "Could not read the saved manual proxy. Enter and save a new address to replace it.",
     "settings.proxy.replaceUnreadable": "Replace saved proxy settings",
     "settings.proxy.modeManual": "Manual proxy",
     "settings.proxy.modeDirect": "Direct connection",

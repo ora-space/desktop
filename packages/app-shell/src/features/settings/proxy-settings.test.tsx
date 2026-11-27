@@ -57,6 +57,46 @@ function renderProxy(
   );
 }
 
+it("shows the Windows WPAD limitation only while System is selected", async () => {
+  const state = createFixtureState();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  const mode = await screen.findByLabelText(/代理模式|Proxy mode/);
+  expect(
+    screen.getByText(
+      /自动检测时将直连.*WPAD|automatic detection enabled.*directly.*WPAD/,
+    ),
+  ).toBeVisible();
+  await user.selectOptions(mode, "direct");
+  expect(screen.queryByText(/WPAD/)).not.toBeInTheDocument();
+});
+
+it("loads a retained manual endpoint only when selecting Manual and can replace a corrupt one", async () => {
+  const state = createFixtureState();
+  state.proxyMode = "system";
+  const handlers = createFixtureHandlers(state);
+  const get = vi.fn<NonNullable<typeof handlers.getProxySettings>>(
+    async ({ loadManual }) => {
+      if (loadManual) throw new Error("invalid stored endpoint");
+      return { mode: "system", settings: null };
+    },
+  );
+  renderProxy(createTestClient({ ...handlers, getProxySettings: get }));
+  const user = userEvent.setup();
+  const mode = await screen.findByLabelText(/代理模式|Proxy mode/);
+  expect(get.mock.calls.map(([request]) => request)).toEqual([{}]);
+  await user.selectOptions(mode, "manual");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /无法读取保留的手动代理配置|Could not read the saved manual proxy/,
+  );
+  expect(get.mock.calls.at(-1)?.[0]).toEqual({ loadManual: true });
+  await user.type(screen.getByLabelText(/主机|Host/), "proxy.example");
+  await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.click(screen.getByRole("button", { name: /^保存$|^Save$/ }));
+  await waitFor(() => expect(state.proxySettings?.host).toBe("proxy.example"));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("defaults to system and keeps the saved endpoint when switching modes", async () => {
   const state = createFixtureState();
   const client = createTestClient(createFixtureHandlers(state));

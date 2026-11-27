@@ -39,8 +39,11 @@ export function settingsHandlers(state: SettingsMemoryState) {
       state.proxyCheckUrl = url.trim();
       return { url: state.proxyCheckUrl };
     },
-    getProxySettings: async () => ({
-      settings: state.proxySettings,
+    getProxySettings: async ({ loadManual }) => ({
+      settings:
+        loadManual || !state.proxyMode || state.proxyMode === "manual"
+          ? state.proxySettings
+          : null,
       ...(state.proxyMode ? { mode: state.proxyMode } : {}),
     }),
     setProxySettings: async (req) => {
@@ -48,7 +51,10 @@ export function settingsHandlers(state: SettingsMemoryState) {
       if (state.proxyMode === "manual") {
         state.proxySettings = structuredClone(req.settings);
       }
-      return { settings: state.proxySettings, mode: state.proxyMode };
+      return {
+        settings: state.proxyMode === "manual" ? state.proxySettings : null,
+        mode: state.proxyMode,
+      };
     },
     clearProxySettings: async () => {
       state.proxySettings = null;

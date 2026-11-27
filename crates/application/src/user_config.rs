@@ -187,6 +187,9 @@ where
             .map(|value| value.parse::<NetworkProxyMode>())
             .transpose()
             .map_err(|error| corrupt_value(ConfigKey::NetworkProxyMode, error))?;
+        if let Some(mode @ (NetworkProxyMode::System | NetworkProxyMode::Direct)) = mode {
+            return Ok(NetworkProxyPreferences { mode, manual: None });
+        }
         let manual = manual
             .map(|value| value.parse_json::<NetworkProxySettings>())
             .transpose()

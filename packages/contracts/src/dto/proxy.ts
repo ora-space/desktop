@@ -45,9 +45,9 @@ export type ClearProxySettingsResponse = {
 export type GetProxyCheckUrlRequest = Record<symbol, never>;
 
 /**
- * Requests the configured network proxy without additional parameters.
+ * Requests the effective proxy or the retained endpoint for a manual draft.
  */
-export type GetProxySettingsRequest = Record<symbol, never>;
+export type GetProxySettingsRequest = { loadManual?: boolean };
 
 /**
  * Returns the configured network proxy.

@@ -124,7 +124,7 @@ impl Settings {
         })
         .await
     }
-    /// Reads the effective preference and retained manual endpoint.
+    /// Reads the effective preference, including the endpoint only in Manual mode.
     pub async fn network_proxy_preferences(
         &self,
     ) -> Result<ora_application::NetworkProxyPreferences, BackendError> {

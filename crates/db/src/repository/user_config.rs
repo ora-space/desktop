@@ -207,10 +207,7 @@ mod tests {
             let reopened = UserConfigService::new(repository.clone());
             assert_eq!(
                 reopened.network_proxy_preferences().unwrap(),
-                NetworkProxyPreferences {
-                    mode,
-                    manual: Some(manual.clone()),
-                }
+                NetworkProxyPreferences { mode, manual: None }
             );
             assert_eq!(
                 reopened.network_proxy_settings().unwrap(),

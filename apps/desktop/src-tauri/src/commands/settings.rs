@@ -170,11 +170,23 @@ pub async fn get_proxy_settings(
     state: State<'_, DesktopState>,
     request: GetProxySettingsRequest,
 ) -> Result<GetProxySettingsResponse, CommandError> {
-    let _ = request;
     let settings_handle = state.backend.settings().clone();
     run_async_backend(
         "get_proxy_settings",
         Box::pin(async move {
+            if request.load_manual == Some(true) {
+                let preferences = ora_application::NetworkProxyPreferences {
+                    mode: ora_application::NetworkProxyMode::Manual,
+                    manual: settings_handle.network_proxy_settings().await?,
+                };
+                if preferences.manual.is_some() {
+                    ora_backend::Settings::network_proxy_policy_for(&preferences)?;
+                }
+                return Ok(GetProxySettingsResponse {
+                    mode: None,
+                    settings: preferences.manual.map(proxy_settings_contract),
+                });
+            }
             settings_handle
                 .network_proxy_preferences()
                 .await
