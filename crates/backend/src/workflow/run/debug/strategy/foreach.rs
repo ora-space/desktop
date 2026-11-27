@@ -1,7 +1,7 @@
 //! Item-scoped planning and transactional repair of the active foreach projection.
 use ora_contracts::{WorkflowDebugImpact, WorkflowDebugPreview};
 use ora_db::workflow_debug::{DebugPlanningInput, DebugRejection, Transaction, WorkflowDebugStore};
-use ora_domain::WorkflowNodeStatus;
+use ora_domain::{WorkflowNodeStatus, WorkflowRunStatus};
 use std::collections::BTreeSet;
 
 /// The owner instance stays live on a member edit, keeping its frozen inputs and the
@@ -41,7 +41,9 @@ fn owner(input: &DebugPlanningInput) -> Result<&str, DebugRejection> {
 
 /// Only the selected member's descendants are replayed within the target item. All members
 /// of later items and all consumers of the batch projection become invalid.
-pub(super) fn plan(input: &DebugPlanningInput) -> Result<WorkflowDebugImpact, DebugRejection> {
+pub(super) fn plan(
+    input: &DebugPlanningInput,
+) -> Result<(WorkflowDebugImpact, Vec<String>), DebugRejection> {
     let owner = owner(input)?;
     let graph = &input.candidate;
     let first = input.target.index;
@@ -91,13 +93,20 @@ pub(super) fn plan(input: &DebugPlanningInput) -> Result<WorkflowDebugImpact, De
             .filter(|n| n.id != *target && after.contains(&n.id))
             .map(|n| n.id.clone()),
     );
-    Ok(WorkflowDebugImpact {
-        keep,
-        invalidate,
-        stop,
-        schedule,
-        predicted_branch: input.predicted_branch.clone(),
-    })
+    let mut fence: BTreeSet<_> = schedule.iter().cloned().collect();
+    if let Some(region) = graph.region(owner) {
+        fence.extend(region.member_ids.iter().cloned());
+    }
+    Ok((
+        WorkflowDebugImpact {
+            keep,
+            invalidate,
+            stop,
+            schedule,
+            predicted_branch: input.predicted_branch.clone(),
+        },
+        fence.into_iter().collect(),
+    ))
 }
 
 /// Restore only writers in the replayed region; a parallel branch may have completed
@@ -123,6 +132,31 @@ pub(super) fn restore(
     let member_tail: BTreeSet<_> = super::downstream_closure(graph, &input.target.node_id)
         .into_iter()
         .collect();
+    // A terminal run keeps its visible variables and outcome. Its invalidated ledger
+    // suffix still retires with the attempts and cannot contribute on later recovery.
+    payload
+        .iteration_ledger
+        .retain(|node, _| node == owner || !affected.contains(node));
+    let running: bool = tx.query_row(
+        "SELECT run_status=?2 FROM workflow_runs WHERE id=?1",
+        (&run, WorkflowRunStatus::Running.database_value()),
+        |row| row.get(0),
+    )?;
+    if !running {
+        tx.execute(
+            "UPDATE workflow_runs SET payload=?2 WHERE id=?1",
+            [&run, &serde_json::to_string(&payload)?],
+        )?;
+        return Ok(());
+    }
+    if first.is_none() {
+        let declarations = ora_application::WorkflowVariablePool::from_graph(graph).catalog;
+        payload.variable_pool.catalog.extend(
+            declarations
+                .into_iter()
+                .filter(|(_, decl)| affected.contains(&decl.writer)),
+        );
+    }
     for (key, decl) in &payload.variable_pool.catalog {
         if !affected.contains(&decl.writer) {
             continue;
@@ -157,16 +191,12 @@ pub(super) fn restore(
             !affected.contains(node)
         }
     });
-    // Downstream foreach containers also need an empty effective ledger on re-entry.
-    payload
-        .iteration_ledger
-        .retain(|node, _| node == owner || !affected.contains(node));
     tx.execute(
         "UPDATE workflow_runs SET payload=?2 WHERE id=?1",
         [&run, &serde_json::to_string(&payload)?],
     )?;
     if let Some(id) = &input.target.container_node_run_id {
-        tx.execute("UPDATE workflow_node_runs SET status=1,output=NULL,error=NULL,finished_at=NULL WHERE id=?1 AND is_deleted=0", [id])?;
+        tx.execute("UPDATE workflow_node_runs SET status=?2,output=NULL,error=NULL,finished_at=NULL WHERE id=?1 AND is_deleted=0", (id, WorkflowNodeStatus::Running.database_value()))?;
     }
     Ok(())
 }

@@ -3,6 +3,9 @@
 //! happy path; the others pin idempotent confirmation, stale previews and failed quiescence.
 
 use super::debug::{DebugSessionStopper, WorkflowDebugCoordinator};
+
+mod reroute;
+mod retirement;
 use super::test_fixture::{RecordingExecutor, bootstrap, run_test, seeded_pending_run};
 use super::transitions::WorkflowRunTransitions;
 use crate::clock::SystemClock;
@@ -136,10 +139,24 @@ impl Fixture {
         Self::with_graph(stopper, GRAPH)
     }
 
-    /// Starts the supplied graph with the same dispatch recorder and debug coordinator.
+    /// Starts a real graph so branch decisions and attempt evidence are recorded by dispatch.
     fn with_graph(stopper: Arc<dyn DebugSessionStopper>, graph: &str) -> Self {
+        Self::with_inputs(stopper, graph, Default::default())
+    }
+
+    /// Commits named Start inputs before the first scheduling wave.
+    fn with_inputs(
+        stopper: Arc<dyn DebugSessionStopper>,
+        graph: &str,
+        inputs: std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Self {
         let (temp, pool) = bootstrap();
         let run_id = seeded_pending_run(&temp, &pool, graph);
+        if !inputs.is_empty() {
+            SqliteWorkflowRunEngineRepository::new(pool.clone())
+                .update_run_input(&run_id, Some("kickoff".into()), inputs, 35)
+                .unwrap();
+        }
         let executor = RecordingExecutor::default();
         let run_locks = KeyedResourceLocks::new();
         let invalidations = Arc::new(Invalidations::default());
@@ -344,6 +361,95 @@ fn confirmed_edit_stops_only_the_target_and_redispatches_under_the_new_revision(
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].status, WorkflowNodeStatus::Succeeded);
     });
+}
+
+/// A second edit reverses the first one: neither old branch output can win the join.
+#[test]
+fn rerouting_twice_retracts_old_values_before_the_join() {
+    run_test(async {
+        let graph = r#"{"nodes":[
+            {"id":"start","data":{"kind":"start","inputVariables":[{"name":"flag","valueType":"boolean"}]}},
+            {"id":"c","data":{"kind":"condition","cases":[{"id":"yes","logic":"and","conditions":[{"variableSelector":["start","flag"],"operator":"is","value":true}]}]}},
+            {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
+            {"id":"b","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"b"}}},
+            {"id":"s","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"s"}}},
+            {"id":"j","data":{"kind":"aggregator","aggregatorConfig":{"variables":[["a","output"],["b","output"]]}}}
+        ],"edges":[{"source":"start","target":"c"},{"source":"start","target":"s"},{"source":"c","sourceHandle":"yes","target":"a"},{"source":"c","sourceHandle":"else","target":"b"},{"source":"a","target":"j"},{"source":"b","target":"j"}]}"#;
+        let f = Fixture::with_inputs(
+            Arc::new(NoSessions),
+            graph,
+            [("flag".into(), json!(true))].into(),
+        );
+        let start = f.row("start").id;
+        for (revision, old, selected, value) in [(0, "a", "b", false), (1, "b", "a", true)] {
+            let row = f.row(old);
+            f.engine
+                .complete_node(&f.run_id, &row.id, Some(old.into()), None, None, Vec::new())
+                .unwrap();
+            assert_eq!(f.row("j").status, WorkflowNodeStatus::Succeeded);
+            let run = SqliteWorkflowRunRepository::new(f.pool.clone())
+                .find_run(&f.run_id)
+                .unwrap()
+                .unwrap();
+            let payload: ora_application::WorkflowRunPayload =
+                serde_json::from_str(run.payload.as_deref().unwrap()).unwrap();
+            assert_eq!(
+                payload.variable_pool.values.get("j.output"),
+                Some(&json!(old))
+            );
+            let preview = f.coordinator.preview(serde_json::from_value(json!({"runId":f.run_id.as_ref(),"nodeRunId":f.row("c").id.to_string(),"baseRevision":revision,"patch":[{"op":"replace","path":"/cases/0/conditions/0/value","value":value}]})).unwrap()).unwrap();
+            assert!(preview.impact.invalidate.contains(&row.id.to_string()));
+            assert_eq!(preview.impact.schedule, vec!["c", selected, "j"]);
+            f.coordinator
+                .commit(f.commit_request(&preview, selected))
+                .await
+                .unwrap();
+            assert_eq!(f.row(selected).status, WorkflowNodeStatus::Running);
+            assert!(
+                !node_runs(&f.pool, &f.run_id)
+                    .iter()
+                    .any(|r| r.node_id == "j")
+            );
+            let history = f
+                .store
+                .attempt(&ora_contracts::GetWorkflowDebugAttemptRequest {
+                    run_id: f.run_id.to_string(),
+                    node_run_id: row.id.to_string(),
+                })
+                .unwrap();
+            assert!(history.superseded);
+        }
+        assert_eq!(start, f.row("start").id);
+        assert_eq!(
+            (
+                dispatched(&f.executor, "a"),
+                dispatched(&f.executor, "b"),
+                dispatched(&f.executor, "s")
+            ),
+            (2, 1, 1)
+        );
+    });
+}
+
+/// A logical position is not an escape hatch around the ordinary predecessor gate.
+#[test]
+fn pending_agent_behind_running_predecessor_has_no_preview() {
+    let graph = GRAPH.replace(
+        r#"{"source":"start","target":"s"}"#,
+        r#"{"source":"x","target":"s"}"#,
+    );
+    let f = Fixture::with_graph(Arc::new(NoSessions), &graph);
+    let root = f.row("start").scope_id.to_string();
+    let request = serde_json::from_value(json!({
+        "runId": f.run_id.as_ref(), "baseRevision":0,
+        "pendingTarget":{"rootScopeId":root,"scopeId":root,"nodeId":"s"},
+        "patch":[{"op":"replace","path":"/agentConfig/prompt","value":"edited"}]
+    }))
+    .unwrap();
+    let error = f.coordinator.preview(request).unwrap_err();
+    assert!(error_chain(&error).contains("prerequisites"), "{error}");
+    assert!(f.store.history(f.run_id.as_ref()).unwrap().is_empty());
+    assert_eq!(dispatched(&f.executor, "s"), 0);
 }
 
 #[test]

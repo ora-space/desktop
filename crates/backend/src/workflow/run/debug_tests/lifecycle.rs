@@ -41,6 +41,162 @@ fn terminal(f: &Fixture, status: WorkflowRunStatus) {
     rusqlite::Connection::open(f._temp.path().join("repository.sqlite3")).unwrap().execute("UPDATE workflow_runs SET run_status=?1,error='original',output='original output',finished_at=321 WHERE id=?2",rusqlite::params![status.database_value(),f.run_id.as_ref()]).unwrap();
 }
 
+/// A completed graph must dispatch a real replacement, not just record an applied receipt.
+#[test]
+fn successful_terminal_run_dispatches_the_revised_agent() {
+    run_test(async {
+        let f = Fixture::new(Arc::new(NoSessions));
+        let x = f.row("x").id;
+        for id in [&x, &f.row("s").id] {
+            f.engine
+                .complete_node(&f.run_id, id, Some("done".into()), None, None, vec![])
+                .unwrap();
+        }
+        assert_eq!(f.run_status(), WorkflowRunStatus::Succeeded);
+        let req = f.commit_request(&f.preview(x.as_ref(), 0), "again");
+        assert_eq!(
+            f.coordinator.commit(req).await.unwrap().phase,
+            WorkflowDebugPhase::Applied { revision: 1 }
+        );
+        assert_eq!(f.run_status(), WorkflowRunStatus::Running);
+        assert_ne!(f.row("x").id, x);
+        assert_eq!(
+            (dispatched(&f.executor, "x"), dispatched(&f.executor, "s")),
+            (2, 1)
+        );
+    });
+}
+
+/// An independent input keeps D live when the edited condition drops its edge to D.
+fn reroute_fixture(stopper: Arc<dyn DebugSessionStopper>) -> Fixture {
+    let agent = |id| {
+        json!({"id": id, "data": {"kind": "agent", "agentConfig": {
+            "executor": {"agentCli": "c", "modelId": "m"}, "prompt": "work"
+        }}})
+    };
+    let graph = json!({
+        "nodes": [
+            {"id": "start", "data": {"kind": "start", "inputVariables": [{"name": "flag", "valueType": "boolean"}]}},
+            {"id": "c", "data": {"kind": "condition", "cases": [{"id": "yes", "logic": "and", "conditions": [
+                {"variableSelector": ["start", "flag"], "operator": "is", "value": true}
+            ]}]}},
+            agent("x"), agent("s"), agent("d"), agent("b")
+        ],
+        "edges": [
+            {"source": "start", "target": "c"}, {"source": "start", "target": "s"},
+            {"source": "c", "sourceHandle": "yes", "target": "x"},
+            {"source": "c", "sourceHandle": "yes", "target": "d"},
+            {"source": "s", "target": "d"},
+            {"source": "c", "sourceHandle": "else", "target": "b"}
+        ]
+    });
+    Fixture::with_inputs(
+        stopper,
+        &graph.to_string(),
+        [("flag".into(), json!(true))].into(),
+    )
+}
+
+/// Switches C from YES to ELSE using its recorded execution inputs.
+fn switch_to_else(f: &Fixture) -> WorkflowDebugPreview {
+    f.coordinator
+        .preview(
+            serde_json::from_value(json!({
+                "runId": f.run_id.as_ref(), "nodeRunId": f.row("c").id, "baseRevision": 0,
+                "patch": [{"op":"replace","path":"/cases/0/conditions/0/value","value":false}]
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+/// A terminal run must replace the invalidated join exactly once, even though its
+/// remaining active edge is from the preserved sibling, outside the edited subtree.
+#[test]
+fn terminal_reroute_still_dispatches_ready_join() {
+    run_test(async {
+        let f = reroute_fixture(Arc::new(NoSessions));
+        let complete = |id: &str, value: &str| {
+            f.engine
+                .complete_node(
+                    &f.run_id,
+                    &f.row(id).id,
+                    Some(value.into()),
+                    None,
+                    None,
+                    vec![],
+                )
+                .unwrap();
+        };
+        for id in ["s", "x", "d"] {
+            complete(id, "old");
+        }
+        assert_eq!(f.run_status(), WorkflowRunStatus::Succeeded);
+        let old_join = f.row("d").id;
+        let p = switch_to_else(&f);
+        assert!(p.impact.invalidate.contains(&old_join.to_string()));
+        assert_eq!(p.impact.schedule, ["c", "b", "d"]);
+        let operation = f
+            .coordinator
+            .commit(f.commit_request(&p, "reroute"))
+            .await
+            .unwrap();
+        assert_eq!(operation.phase, WorkflowDebugPhase::Applied { revision: 1 });
+        complete("b", "new branch");
+        assert_eq!(f.run_status(), WorkflowRunStatus::Running);
+        assert_ne!(f.row("d").id, old_join);
+        complete("d", "new join");
+        assert_eq!(f.run_status(), WorkflowRunStatus::Succeeded);
+        assert_eq!(f.row("d").output.as_deref(), Some("new join"));
+        assert_eq!(
+            (
+                dispatched(&f.executor, "d"),
+                dispatched(&f.executor, "s"),
+                dispatched(&f.executor, "x")
+            ),
+            (2, 1, 1)
+        );
+    });
+}
+
+/// D is gated on the old IF port and independent S. It has no physical attempt to retire.
+#[test]
+fn sibling_completion_during_stop_cannot_dispatch_an_unstarted_old_branch() {
+    run_test(async {
+        let barrier = Arc::new(StopBarrier::default());
+        let f = reroute_fixture(barrier.clone());
+        let p = switch_to_else(&f);
+        assert_eq!(p.impact.schedule, ["c", "b", "d"]);
+        let result = tokio::join!(
+            f.coordinator.commit(f.commit_request(&p, "reroute")),
+            async {
+                barrier.entered.notified().await;
+                let fence = f.store.dispatch_fence(f.run_id.as_ref()).unwrap().unwrap();
+                assert!(fence.blocked_nodes.contains(&"x".into()));
+                f.engine
+                    .complete_node(
+                        &f.run_id,
+                        &f.row("s").id,
+                        Some("done".into()),
+                        None,
+                        None,
+                        vec![],
+                    )
+                    .unwrap();
+                assert_eq!(dispatched(&f.executor, "d"), 0);
+                barrier.release.notify_one();
+            }
+        )
+        .0
+        .unwrap();
+        assert_eq!(result.phase, WorkflowDebugPhase::Applied { revision: 1 });
+        assert_eq!(
+            (dispatched(&f.executor, "b"), dispatched(&f.executor, "d")),
+            (1, 1)
+        );
+    });
+}
+
 /// A revision applied after an independent failure cannot authorize x in the next terminal edit.
 #[test]
 fn self_failed_stop_then_terminal_edit_uses_fresh_baseline() {
@@ -87,6 +243,11 @@ fn self_failed_stop_then_terminal_edit_uses_fresh_baseline() {
         );
         assert_eq!(f.run_status(), WorkflowRunStatus::Failed);
         assert_eq!(dispatched(&f.executor, "x"), 1);
+
+        assert_eq!(
+            repository.find_run(&f.run_id).unwrap().unwrap().payload,
+            failed.payload
+        );
 
         let second = f.preview(original_s.id.as_ref(), 1);
         assert_eq!(second.impact.schedule, ["s"]);
@@ -355,12 +516,9 @@ fn restart_dispatches_unclaimed_once_but_never_reclaims_an_interrupted_attempt()
             f.store.claim(&req).unwrap();
             let applied = f
                 .store
-                .apply_after_stop(
-                    f.run_id.as_ref(),
-                    "apply",
-                    60,
-                    super::super::debug::strategy::settle,
-                )
+                .apply_after_stop(f.run_id.as_ref(), "apply", 60, |tx, preview| {
+                    super::super::debug::strategy::settle(tx, f.run_id.as_ref(), 60, preview)
+                })
                 .unwrap();
             if cancel {
                 f.engine.cancel(&f.run_id).unwrap();
@@ -427,13 +585,16 @@ fn restart_preserves_the_old_container_until_isolation_is_proven() {
             let request=serde_json::from_value(json!({"runId":id.as_ref(),"nodeRunId":selected.id.as_ref(),"baseRevision":0,"patch":[{"op":"replace","path":"/agentConfig/prompt","value":"revised"}]})).unwrap();
             let p = store
                 .preview(&request, |_| {
-                    Ok(ora_contracts::WorkflowDebugImpact {
-                        keep: vec![],
-                        invalidate: vec![selected.id.to_string()],
-                        stop: vec![selected.id.to_string()],
-                        schedule: vec![member.into()],
-                        predicted_branch: None,
-                    })
+                    Ok((
+                        ora_contracts::WorkflowDebugImpact {
+                            keep: vec![],
+                            invalidate: vec![selected.id.to_string()],
+                            stop: vec![selected.id.to_string()],
+                            schedule: vec![member.into()],
+                            predicted_branch: None,
+                        },
+                        vec![member.into()],
+                    ))
                 })
                 .unwrap();
             let req = CommitWorkflowDebugRequest {

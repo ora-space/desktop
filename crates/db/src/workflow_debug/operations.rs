@@ -197,20 +197,8 @@ impl WorkflowDebugStore {
                 .optional()?;
             let Some(plan) = plan else { return Ok(None) };
             let plan: Value = serde_json::from_str(&plan)?;
-            let strings = |key: &str| -> Vec<String> {
-                plan.get(key)
-                    .and_then(Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_string)
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            };
             Ok(Some(ora_application::DebugDispatchFence {
-                blocked_nodes: strings("schedule"),
+                blocked_nodes: serde_json::from_value(plan["fenceNodes"].clone())?,
                 affected_attempts: db.prepare("SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1")?.query_map([run], |r|Ok(ora_domain::WorkflowNodeRunId::new(r.get::<_,String>(0)?)))?.collect::<Result<_,_>>()?,
             }))
         })
@@ -237,6 +225,12 @@ fn decoded<T: serde::de::DeserializeOwned>(row: &Row<'_>, index: usize) -> rusql
             Box::new(error),
         )
     })
+}
+
+/// Checked inside the retry write transaction: a fence accepted after the scheduler's
+/// optimistic read must still prevent replacing or waking this exact physical attempt.
+pub(crate) fn attempt_fenced(db: &Connection, attempt: &str) -> rusqlite::Result<bool> {
+    db.query_row("SELECT EXISTS(SELECT 1 FROM workflow_node_runs n JOIN workflow_debug_operations o ON o.run_id=n.run_id JOIN workflow_debug_previews p ON p.id=o.preview_id JOIN json_each(p.plan,'$.stop') stop ON stop.value=n.id WHERE n.id=?1 AND (o.state='stopping' OR (o.state='stop_failed' AND o.released=0)))", [attempt], |row|row.get(0))
 }
 
 /// Maps the persisted operation to the same receipt used for confirmation and history.

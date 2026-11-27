@@ -19,8 +19,7 @@ fn parked_fixture() -> Fixture {
     f
 }
 
-/// A parked interactive attempt needs no stop acknowledgement, but its old session cannot
-/// start another turn until a failed operation releases the fence.
+/// Even a plan that only invalidates a parked attempt must fence its session until release.
 #[test]
 fn parked_session_rejects_followup_until_the_fence_is_released() {
     run_test(async {
@@ -108,6 +107,46 @@ fn retired_parked_session_is_not_admitted_after_apply() {
             .await
             .unwrap();
         assert_eq!(f.row("x").status, WorkflowNodeStatus::Running);
+    });
+}
+
+/// A restart after claim can settle an edit with only a parked, fenced session.
+#[test]
+fn restart_applies_parked_only_edit_and_dispatches_replacement() {
+    run_test(async {
+        let f = parked_fixture();
+        f.engine
+            .complete_node(
+                &f.run_id,
+                &f.row("s").id,
+                Some("done".into()),
+                None,
+                None,
+                vec![],
+            )
+            .unwrap();
+        let old = f.row("x");
+        assert_eq!(old.status, WorkflowNodeStatus::Pending);
+        assert_eq!(
+            old.session_id.as_ref().map(|id| id.as_ref()),
+            Some("session-1")
+        );
+        let preview = f.preview(old.id.as_ref(), /*base_revision*/ 0);
+        assert_eq!(preview.impact.invalidate, [old.id.to_string()]);
+        let request = f.commit_request(&preview, "parked-boot");
+        f.store.claim(&request).unwrap();
+        assert!(f.coordinator.ensure_no_fence(f.run_id.as_ref()).is_err());
+        boot_with_calls(&f._temp, "x");
+        assert_eq!(
+            f.store.history(f.run_id.as_ref()).unwrap()[0]
+                .operation
+                .phase,
+            WorkflowDebugPhase::Applied { revision: 1 }
+        );
+        f.coordinator.ensure_no_fence(f.run_id.as_ref()).unwrap();
+        let replacement = f.row("x");
+        assert_ne!(replacement.id, old.id);
+        assert_eq!(replacement.status, WorkflowNodeStatus::Running);
     });
 }
 
@@ -257,13 +296,11 @@ fn boot_dispatches_confirmed_scope_beside_a_parked_interactive_node() {
             "apply",
         );
         f.store.claim(&req).unwrap();
+        let now = 60;
         f.store
-            .apply_after_stop(
-                f.run_id.as_ref(),
-                "apply",
-                /*now*/ 60,
-                crate::workflow::run::debug::strategy::settle,
-            )
+            .apply_after_stop(f.run_id.as_ref(), "apply", now, |tx, preview| {
+                crate::workflow::run::debug::strategy::settle(tx, f.run_id.as_ref(), now, preview)
+            })
             .unwrap();
         assert!(f.store.has_dispatch(f.run_id.as_ref()).unwrap());
         boot_with_calls(&f._temp, "x");

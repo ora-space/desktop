@@ -49,7 +49,9 @@ pub(crate) fn run_workflow_run_boot_sweep(
         let store = ora_db::workflow_debug::WorkflowDebugStore::new(pool.clone());
         let now = clock.now_timestamp_millis();
         let protected = match store
-            .recover_stopping(run_id.as_ref(), now, super::debug::strategy::settle)
+            .recover_stopping(run_id.as_ref(), now, |tx, preview| {
+                super::debug::strategy::settle(tx, run_id.as_ref(), now, preview)
+            })
             .and_then(|()| store.protected_attempts(run_id.as_ref()))
         {
             Ok(ids) => ids,

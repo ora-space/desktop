@@ -34,6 +34,15 @@ pub struct WorkflowGraphEdge {
     pub source_handle: Option<String>,
 }
 
+impl WorkflowGraphEdge {
+    /// Older Condition edges without an explicit source port route to ELSE.
+    pub fn condition_branch(&self) -> &str {
+        self.source_handle
+            .as_deref()
+            .unwrap_or(super::condition::ELSE_BRANCH_ID)
+    }
+}
+
 /// A parsed workflow execution graph.
 ///
 /// Deserializes a frozen React Flow document (the snapshot graph) into a validated DAG. The
