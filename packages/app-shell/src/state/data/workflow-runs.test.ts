@@ -191,6 +191,7 @@ describe("buildDisplayRun iteration projection", () => {
       },
       {
         nodeId: "fix",
+        id: "fix-attempt-0",
         status: "succeeded",
         startedAt: 3n,
         finishedAt: 4n,
@@ -201,6 +202,7 @@ describe("buildDisplayRun iteration projection", () => {
       },
       {
         nodeId: "fix",
+        id: "fix-attempt-1",
         status: "failed",
         startedAt: 4n,
         finishedAt: 5n,
@@ -221,11 +223,13 @@ describe("buildDisplayRun iteration projection", () => {
     });
     expect(display.roundStates?.fix).toHaveLength(2);
     expect(display.roundStates?.fix[0]).toMatchObject({
+      nodeRunId: "fix-attempt-0",
       status: "succeeded",
       iteration: 0,
       output: { summary: "fixed round 0" },
     });
     expect(display.roundStates?.fix[1]).toMatchObject({
+      nodeRunId: "fix-attempt-1",
       status: "failed",
       iteration: 1,
     });
@@ -326,9 +330,9 @@ describe("buildDisplayRun", () => {
       graph,
     );
     expect(display.rounds?.map((round) => round.nodeStates.decision)).toEqual([
-      { status: "succeeded", selectedBranchId: "else" },
-      { status: "succeeded", selectedBranchId: "pass" },
-      { status: "succeeded" },
+      { nodeRunId: "node-0", status: "succeeded", selectedBranchId: "else" },
+      { nodeRunId: "node-1", status: "succeeded", selectedBranchId: "pass" },
+      { nodeRunId: "node-2", status: "succeeded" },
     ]);
   });
 
@@ -882,10 +886,11 @@ describe("buildDisplayRun", () => {
 
       expect(display.status).toBe("succeeded");
       expect(display.nodeStates).toEqual({
-        start: { status: "succeeded" },
+        start: { nodeRunId: "node-run-start", status: "succeeded" },
         explore: { status: "idle" },
-        output: { status: "succeeded" },
+        output: { nodeRunId: "node-run-output", status: "succeeded" },
         "loop-1": {
+          nodeRunId: "node-run-loop",
           status: "succeeded",
           startedAt: new Date(1).toISOString(),
           finishedAt: new Date(50).toISOString(),

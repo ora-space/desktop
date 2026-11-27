@@ -543,6 +543,10 @@ pub struct ConfirmAgentCompletion {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflow-run.ts")]
 pub struct CompleteWorkflowNodeRequest {
+    /// Attempt displayed when the user confirmed. Legacy callers may omit it for an unreplaced, unique attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub node_run_id: Option<String>,
     pub run_id: String,
     pub node_id: String,
     /// Explicitly completes despite blockers; the node payload records the forced audit.
@@ -1017,6 +1021,7 @@ mod tests {
         );
         assert_serialized_json(
             &CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "node-1".to_string(),
                 force: false,
@@ -1028,6 +1033,7 @@ mod tests {
         );
         assert_serialized_json(
             &CompleteWorkflowNodeRequest {
+                node_run_id: Some("attempt-1".into()),
                 run_id: "run-1".to_string(),
                 node_id: "node-1".to_string(),
                 force: false,
@@ -1041,11 +1047,13 @@ mod tests {
                 "runId": "run-1",
                 "nodeId": "node-1",
                 "force": false,
+                "nodeRunId": "attempt-1",
                 "confirmAgentCompletion": { "signalId": "signal-1" },
             }),
         );
         assert_serialized_json(
             &CompleteWorkflowNodeRequest {
+                node_run_id: None,
                 run_id: "run-1".to_string(),
                 node_id: "node-1".to_string(),
                 force: false,

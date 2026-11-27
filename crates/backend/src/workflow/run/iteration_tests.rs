@@ -27,7 +27,7 @@ use std::path::PathBuf;
 ///
 /// The region is entered at `entry` (an agent named `fix` or a condition named `gate`) and
 /// collects `fix.output` per round; the node exits to a terminal output node.
-fn iteration_graph(body: &str, error_strategy: &str, max_iterations: u32) -> String {
+pub(super) fn iteration_graph(body: &str, error_strategy: &str, max_iterations: u32) -> String {
     let (nodes, edges) = match body {
         "condition" => (
             r#"[{"id":"gate","parentId":"iter","data":{"kind":"condition","cases":[
@@ -79,7 +79,7 @@ fn iteration_graph(body: &str, error_strategy: &str, max_iterations: u32) -> Str
 }
 
 /// Seeds a pending run whose Start variable `prs` holds `items`, then returns the run id.
-fn seeded_iteration_run(
+pub(super) fn seeded_iteration_run(
     temp: &tempfile::TempDir,
     pool: &ora_db::RepositoryPool,
     graph: &str,

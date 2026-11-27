@@ -97,6 +97,7 @@ describe("DesktopUpdateControl", () => {
     const user = userEvent.setup();
     const { updates } = createUpdates({
       kind: "failed",
+      operation: "check",
       message: "endpoint unreachable",
     });
     const onReview = vi.fn();
@@ -109,6 +110,23 @@ describe("DesktopUpdateControl", () => {
     expect(screen.queryByTestId("desktop-update-badge")).toBeNull();
     await user.click(trigger);
     expect(onReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call a failed installation a failed check", async () => {
+    const { updates } = createUpdates({
+      kind: "failed",
+      operation: "install",
+      version: "0.3.0",
+      message: "cached update digest changed",
+    });
+    renderControl(updates);
+
+    const trigger = await screen.findByRole("button", {
+      name: "安装 Ora 0.3.0 失败：cached update digest changed",
+    });
+    expect(screen.getByRole("status").textContent).toBe("安装 Ora 0.3.0 失败");
+    expect(trigger.getAttribute("disabled")).toBeNull();
+    expect(screen.queryByTestId("desktop-update-badge")).toBeNull();
   });
 
   it("triggers a manual check when the refresh button is clicked", async () => {

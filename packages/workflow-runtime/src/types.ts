@@ -609,6 +609,8 @@ export interface WorkflowNodeAttemptFailure {
 }
 
 export interface GraphWorkflowNodeState {
+  /** Persisted attempt represented by this state, when backed by a real run. */
+  nodeRunId?: string;
   /** The branch committed for this exact node execution, not a global latest decision. */
   selectedBranchId?: string;
   status: GraphWorkflowNodeStatus;

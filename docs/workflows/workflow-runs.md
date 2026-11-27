@@ -131,6 +131,10 @@ See [Agent runtime](../agents/agent-runtime.md#prompt-inactivity-and-retries).
 
 ### Interactive nodes
 
+Human completion, including force and signal confirmation, uses the attempt ID shown on the run page (`nodeRunId`). If the attempt changes, refresh the run before confirming. Older clients can omit the ID only while the node has one unreplaced attempt in the run.
+
+While a debug edit is stopping, or a failed stop still holds its fence, affected interactive attempts reject follow-up prompts and completion. A completion claimed before the edit checks the attempt again before committing. A rejected completion returns `workflow_node_not_awaiting_input`.
+
 An interactive Agent node parks as awaiting input after its first turn. Follow-up messages run as
 human turns on the same session, and `completeWorkflowNode` completes the node manually; a completion
 claim prevents a follow-up racing against manual completion. Region members of an Iteration default
@@ -329,6 +333,12 @@ A debug preview selects an existing attempt by `nodeRunId` or an undispatched po
 Failure recovery and a whole-run restart take the run’s current revision as their configuration baseline. A restart builds a new root and top-level edits stay in effect; a container that either entry rebuilds starts from its entrance configuration, and overrides bound to the previous container execution remain history only. Only a successful snapshot switch starts a new baseline: it commits the new snapshot together with a new run revision, earlier patches and attempts stay readable as history and are not replayed, also when the run returns to a snapshot it used before, and previews taken before the switch go stale. A refused switch keeps the snapshot and the revisions.
 
 ## Recovery after restart
+
+If you cancel while a confirmed debug edit is stopping old work, its receipt records `stop_failed` with reason `run_cancelled`. A running workflow is cancelled; a previously finished workflow keeps its original outcome. If the edit applied first, its revision stays in history, but cancellation prevents the remaining dispatches.
+
+Once the edit applies, a session bound only to a retired attempt rejects follow-up prompts with `workflow_node_not_awaiting_input`. Open the replacement attempt to continue the conversation.
+
+On startup Desktop checks unfinished debug operations before ordinary interruption cleanup. If isolation of an external writer cannot be proved, history lists the unresolved attempt IDs and their scope remains blocked. If the revision was already applied, the scheduler can dispatch a ready, unclaimed position. An attempt already started under that revision follows ordinary interruption recovery; it is not dispatched a second time.
 
 Desktop runs the boot sweep only after it holds the application instance lock (see
 [Desktop host](../desktop/desktop-host.md#startup)), so a live second process can never mark running

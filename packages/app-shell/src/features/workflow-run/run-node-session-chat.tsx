@@ -62,6 +62,7 @@ const UNKNOWN_COMPLETION: WorkflowNodeCompletion = {
 
 /** Everything the step card needs from the owning workflow act. */
 interface RunNodeSessionInteraction {
+  nodeRunId: string;
   runId: string;
   nodeId: string;
   /** Persisted completion preview of the parked turn; absent on older node runs. */
@@ -192,7 +193,7 @@ export function RunNodeSessionChat({
 
   // A new turn or another node makes the previous rejection stale; keep it while the same turn
   // is polled again so a ready snapshot still explains why the last click was refused.
-  const completionTurnIdentity = `${interaction?.nodeId ?? ""}:${completion.turnKey?.userSeq ?? ""}:${completion.turnKey?.endedSeq ?? ""}`;
+  const completionTurnIdentity = `${interaction?.nodeRunId ?? ""}:${completion.turnKey?.userSeq ?? ""}:${completion.turnKey?.endedSeq ?? ""}`;
   const rejectionBlockers =
     rejection.identity === completionTurnIdentity ? rejection.blockers : [];
 
@@ -331,6 +332,7 @@ export function RunNodeSessionChat({
       {
         runId: interaction.runId,
         nodeId: interaction.nodeId,
+        nodeRunId: interaction.nodeRunId,
         force,
         ...(confirmInitialTurn ? { confirmInitialTurn: true } : {}),
       },
@@ -382,6 +384,7 @@ export function RunNodeSessionChat({
       {
         runId: interaction.runId,
         nodeId: interaction.nodeId,
+        nodeRunId: interaction.nodeRunId,
         force: false,
         ...(openingTurnUnconfirmed ? { confirmInitialTurn: true } : {}),
         confirmAgentCompletion: { signalId },

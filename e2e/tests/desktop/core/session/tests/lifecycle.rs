@@ -353,6 +353,7 @@ fn confirmed_and_dropped_workflow_follow_ups_restore_awaiting_status() -> TestRe
             // explicit force completes a turn that did not end normally.
             let completed = runs
                 .complete_node(CompleteWorkflowNodeRequest {
+                    node_run_id: None,
                     run_id: run.id,
                     node_id: "agent".to_string(),
                     force: true,

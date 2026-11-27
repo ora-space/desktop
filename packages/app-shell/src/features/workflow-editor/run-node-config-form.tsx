@@ -53,8 +53,6 @@ type PatchPath =
   | "/iterationConfig/collectSelector"
   | "/iterationConfig/errorStrategy";
 
-export type RunNodeConfigEdit = PreviewWorkflowDebugRequest;
-
 // Preserve both arms of the generated preview request when removing the form-owned fields.
 type PreviewTarget<Request = PreviewWorkflowDebugRequest> =
   Request extends unknown ? Omit<Request, "baseRevision" | "patch"> : never;
@@ -71,7 +69,7 @@ export interface RunNodeConfigFormProps {
     WorkflowCapabilities,
     "agentModels" | "conditionOperators"
   >;
-  onSubmit: (edit: RunNodeConfigEdit) => void;
+  onSubmit: (edit: PreviewWorkflowDebugRequest) => void;
   onCancel: () => void;
 }
 
@@ -327,8 +325,8 @@ function Draft({
 function configPatch(
   base: RunNodeConfig,
   draft: RunNodeConfig,
-): RunNodeConfigEdit["patch"] {
-  const patch: RunNodeConfigEdit["patch"] = [];
+): PreviewWorkflowDebugRequest["patch"] {
+  const patch: PreviewWorkflowDebugRequest["patch"] = [];
   function replace(path: PatchPath, previous: unknown, next: unknown) {
     if (JSON.stringify(previous) !== JSON.stringify(next))
       patch.push({ op: "replace", path, value: next });

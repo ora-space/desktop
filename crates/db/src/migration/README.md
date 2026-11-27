@@ -86,10 +86,16 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
     `effect_*` tables still exist refreshes that backup (so a zero-byte leftover or an earlier
     downgrade-and-reupgrade cycle never leaves a stale copy), while fresh and already-migrated
     databases skip backup creation.
-  - **Downgrade recovery**: upgrading past `0025` cannot be downgraded in place. To return to an
-    older Desktop release, quit Ora Desktop, remove `ora.sqlite3`, `ora.sqlite3-wal`, and
-    `ora.sqlite3-shm` from the data directory, copy `ora.sqlite3.pre-0025.bak` to `ora.sqlite3`,
-    and launch the older build.
+  - **Downgrade recovery**: upgrading past `0025` cannot be downgraded in place, and
+    `ora.sqlite3.pre-0025.bak` holds only the pre-upgrade state: everything written after the
+    upgrade exists only in the current `ora.sqlite3`. To return to an older Desktop release,
+    quit Ora Desktop and verify that `ora.sqlite3.pre-0025.bak` exists and is non-empty. Check
+    it with `sqlite3 -readonly ora.sqlite3.pre-0025.bak "PRAGMA integrity_check;"`, which fails
+    instead of creating the file when the backup is missing; stop here without moving the
+    current database unless it prints only `ok` (a zero-byte file also prints `ok`, hence the
+    size check). Otherwise move `ora.sqlite3` and any existing `ora.sqlite3-wal` and
+    `ora.sqlite3-shm` out of the data directory to a kept location instead of deleting them,
+    copy `ora.sqlite3.pre-0025.bak` to `ora.sqlite3`, and launch the older build.
   - **Frozen SQL text**: `0025`'s `up_sql` and `down_sql` are frozen once merged (see below).
 
 ## Application bootstrap
@@ -139,5 +145,18 @@ The prototype catalog describes only the current schema. It does not carry migra
 Rolling back `0006` removes only Generic Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, and Git lifecycle schemas intact.
 
 Migration `0026` records evidence for new workflow attempts and run-local debug operations. Downgrading removes these records; upgrading does not infer historical inputs. Connections that insert node runs or write debug evidence must register the `ora_debug_hash` SQL function as the application does. A stock `sqlite3` connection cannot perform those writes.
+
+Migration `0027` adds three objects for workflow debug recovery.
+
+- The `workflow_debug_boot_protected` view identifies attempts to invalidate or stop and their enclosing
+  container attempts. Startup cleanup preserves them while a stop is in progress or a failed stop
+  still holds its fence.
+- The `workflow_debug_dispatch` table points each run to the applied operation whose schedule
+  governs re-dispatch, including after a restart.
+- The `workflow_debug_end_dispatch` trigger removes the pointer when the run leaves Running.
+  An ordinary resume can then schedule work independently of the prior debug operation.
+
+Downgrading to `0026` drops the trigger, pointer table and view. The debug operation history stays
+in the `0026` tables.
 
 See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/core/persistence.md).

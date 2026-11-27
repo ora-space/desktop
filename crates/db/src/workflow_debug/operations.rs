@@ -121,6 +121,14 @@ impl WorkflowDebugStore {
                 [run], |row| row.get(0),
             )?;
             settle(&tx, &entry.preview)?;
+            // Keep the first applied operation as the baseline until the run ends. A later
+            // confirmation records its own acceptance state, but extends this dispatch scope.
+            tx.execute(
+                "INSERT INTO workflow_debug_dispatch(run_id,operation_id)
+                 SELECT id,?2 FROM workflow_runs WHERE id=?1 AND run_status=?3
+                 ON CONFLICT(run_id) DO NOTHING",
+                params![run, entry.operation.operation_id, ora_domain::WorkflowRunStatus::Running.database_value()],
+            )?;
             // An invalidated fact can represent zero or several physical attempts. Record the
             // rows the strategy actually retired, including successful siblings on an old path.
             tx.execute(
@@ -166,6 +174,45 @@ impl WorkflowDebugStore {
             WHERE run_id=?1 AND request_id=?2 AND state='stop_failed' AND released=0",
                 params![run, request],
             )? == 1)
+        })
+    }
+
+    /// Reads the active dispatch fence: the newest stopping or unreleased failed operation's
+    /// affected attempts and schedule scope. The scheduler holds these positions until the operation
+    /// applies (or the failed fence is released); independent branches are not listed.
+    pub fn dispatch_fence(
+        &self,
+        run: &str,
+    ) -> Result<Option<ora_application::DebugDispatchFence>, DatabaseError> {
+        self.pool.with_connection(|db| {
+            let plan: Option<String> = db
+                .query_row(
+                    "SELECT p.plan FROM workflow_debug_operations o
+                     JOIN workflow_debug_previews p ON p.id=o.preview_id
+                     WHERE o.run_id=?1 AND (o.state='stopping' OR (o.state='stop_failed' AND o.released=0))
+                     ORDER BY o.id DESC LIMIT 1",
+                    [run],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(plan) = plan else { return Ok(None) };
+            let plan: Value = serde_json::from_str(&plan)?;
+            let strings = |key: &str| -> Vec<String> {
+                plan.get(key)
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            Ok(Some(ora_application::DebugDispatchFence {
+                blocked_nodes: strings("schedule"),
+                affected_attempts: db.prepare("SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1")?.query_map([run], |r|Ok(ora_domain::WorkflowNodeRunId::new(r.get::<_,String>(0)?)))?.collect::<Result<_,_>>()?,
+            }))
         })
     }
 
