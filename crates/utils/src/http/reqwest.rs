@@ -250,7 +250,12 @@ impl ReqwestDownloader {
     }
 
     /// Follows redirects within one time budget and returns the final status and URL without reading the body.
-    pub async fn probe(&self, url: Url, timeout: Duration) -> Result<(u16, Url), DownloadError> {
+    #[cfg(test)]
+    pub(super) async fn probe(
+        &self,
+        url: Url,
+        timeout: Duration,
+    ) -> Result<(u16, Url), DownloadError> {
         let options = DownloadOptions {
             connect_timeout: Some(timeout),
             per_attempt_timeout: Some(timeout),

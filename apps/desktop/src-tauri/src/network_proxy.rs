@@ -1,7 +1,6 @@
 //! Shares Desktop HTTP proxy routing between the settings check and the signed updater.
 
-use ora_application::NetworkProxyPreferences;
-use ora_backend::Settings;
+use ora_backend::BackendError;
 use ora_contracts::{CheckProxySettingsResponse, ProxyRoute};
 use ora_utils::http::{HostProxy, HostProxyError, ProxyOrigin, is_proxy_auth_failure};
 use std::time::Duration;
@@ -49,8 +48,9 @@ pub(crate) fn configure_client(builder: ClientBuilder, policy: &HostProxy) -> Cl
 
 /// Probes a URL with the same transport as the updater, without saving the supplied preferences.
 pub(crate) async fn check(
-    preferences: &NetworkProxyPreferences,
+    builder: ClientBuilder,
     input: &str,
+    resolve_policy: impl FnOnce() -> Result<HostProxy, BackendError>,
 ) -> CheckProxySettingsResponse {
     let unreachable = |message: String| CheckProxySettingsResponse::Unreachable { message };
     let Ok(url) = Url::parse(input) else {
@@ -59,11 +59,11 @@ pub(crate) async fn check(
     if !is_probe_url(&url) {
         return unreachable("URL must use HTTP(S) without credentials".to_owned());
     }
-    let policy = match Settings::network_proxy_policy_for(preferences) {
+    let policy = match resolve_policy() {
         Ok(policy) => policy,
         Err(error) => return unreachable(error.to_string()),
     };
-    match probe(updater_http::Client::builder(), &policy, url).await {
+    match probe(builder, &policy, url).await {
         Ok(result) => result,
         Err(message) => unreachable(message),
     }

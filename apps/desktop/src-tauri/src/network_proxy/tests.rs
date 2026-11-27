@@ -1,5 +1,6 @@
 use super::*;
-use ora_application::{NetworkProxyMode, NetworkProxySettings};
+use ora_application::{NetworkProxyMode, NetworkProxyPreferences, NetworkProxySettings};
+use ora_backend::Settings;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -98,7 +99,6 @@ async fn manual_address_formats_work_for_the_probe_and_updater_transport() {
                 password: None,
             }),
         };
-        let policy = Settings::network_proxy_policy_for(&preferences).unwrap();
         let server_tls = tls.clone();
         let server = tokio::spawn(async move {
             for _ in 0..2 {
@@ -118,13 +118,12 @@ async fn manual_address_formats_work_for_the_probe_and_updater_transport() {
         });
 
         assert_eq!(
-            probe(
+            check(
                 updater_http::Client::builder().tls_certs_only([ca.clone()]),
-                &policy,
-                manifest.clone(),
+                manifest.as_str(),
+                || Settings::network_proxy_policy_for(&preferences),
             )
-            .await
-            .unwrap(),
+            .await,
             CheckProxySettingsResponse::Reachable {
                 status: 200,
                 route: Some(ProxyRoute::Manual),
@@ -199,7 +198,12 @@ async fn reports_the_final_status_and_route_after_a_redirect() {
             }),
         };
         assert_eq!(
-            check(&preferences, "http://origin.example/first").await,
+            check(
+                updater_http::Client::builder(),
+                "http://origin.example/first",
+                || { Settings::network_proxy_policy_for(&preferences) }
+            )
+            .await,
             expected
         );
         assert!(
@@ -225,8 +229,89 @@ async fn reports_a_redirect_without_location_as_an_http_error() {
         manual: None,
     };
     assert_eq!(
-        check(&preferences, url.as_str()).await,
+        check(updater_http::Client::builder(), url.as_str(), || {
+            Settings::network_proxy_policy_for(&preferences)
+        })
+        .await,
         CheckProxySettingsResponse::HttpError { status: 301 }
     );
     server.await.unwrap();
+}
+
+/// The settings command reports both plain proxy and CONNECT challenges as authentication errors.
+#[tokio::test]
+async fn check_reports_proxy_authentication_failures() {
+    for (version, url, request) in [
+        (
+            "HTTP/1.1",
+            "http://origin.example/probe",
+            "GET http://origin.example/probe ",
+        ),
+        (
+            "HTTP/1.0",
+            "https://origin.example/probe",
+            "CONNECT origin.example:443 ",
+        ),
+        (
+            "HTTP/1.1",
+            "https://origin.example/probe",
+            "CONNECT origin.example:443 ",
+        ),
+    ] {
+        let (proxy, server) = serve_http(format!(
+            "{version} 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )).await;
+        let preferences = NetworkProxyPreferences {
+            mode: NetworkProxyMode::Manual,
+            manual: Some(NetworkProxySettings {
+                host: "127.0.0.1".to_owned(),
+                port: proxy.port().unwrap(),
+                username: None,
+                password: None,
+            }),
+        };
+        assert_eq!(
+            check(updater_http::Client::builder(), url, || {
+                Settings::network_proxy_policy_for(&preferences)
+            })
+            .await,
+            CheckProxySettingsResponse::Unreachable {
+                message: HostProxyError::Authentication.to_string()
+            },
+        );
+        assert!(server.await.unwrap().starts_with(request));
+    }
+}
+
+/// A settings check stops before sending to an origin whose route cannot be determined.
+#[tokio::test]
+async fn check_blocks_initial_and_redirected_targets_when_system_read_fails() {
+    let direct = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = direct.local_addr().unwrap();
+    let host = "origin.example.test";
+    let target = format!("http://{host}:{}/probe", address.port());
+    let (initial, server) = serve_http(format!(
+        "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    ))
+    .await;
+    for url in [target.as_str(), initial.as_str()] {
+        let result = check(
+            updater_http::Client::builder().resolve(host, address),
+            url,
+            || Ok(HostProxy::unavailable_system(HostProxyError::SystemRead)),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            CheckProxySettingsResponse::Unreachable { message }
+                if message.contains("could not read the system proxy settings")
+        ));
+    }
+    assert!(server.await.unwrap().starts_with("GET / "));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), direct.accept())
+            .await
+            .is_err(),
+        "the origin must not receive a direct connection",
+    );
 }

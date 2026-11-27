@@ -245,7 +245,12 @@ pub async fn check_proxy_settings(
         "check_proxy_settings",
         Box::pin(async move {
             let preferences = internal_network_proxy_preferences(request.mode, request.settings);
-            Ok(crate::network_proxy::check(&preferences, &request.url).await)
+            Ok(
+                crate::network_proxy::check(updater_http::Client::builder(), &request.url, || {
+                    ora_backend::Settings::network_proxy_policy_for(&preferences)
+                })
+                .await,
+            )
         }),
     )
     .await
