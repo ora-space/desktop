@@ -208,14 +208,19 @@ fn fixture() -> (tempfile::TempDir, DatabaseLocation, WorkflowDebugStore) {
 }
 
 /// A fixture strategy echoes the physical target; actual stop/DAG/region strategies own planning.
-fn impact(input: &DebugPlanningInput) -> Result<WorkflowDebugImpact, DebugRejection> {
-    Ok(WorkflowDebugImpact {
-        keep: vec![],
-        invalidate: input.target.node_run_id.clone().into_iter().collect(),
-        stop: vec![],
-        schedule: vec![input.target.node_id.clone()],
-        predicted_branch: None,
-    })
+fn impact(
+    input: &DebugPlanningInput,
+) -> Result<(WorkflowDebugImpact, Vec<String>), DebugRejection> {
+    Ok((
+        WorkflowDebugImpact {
+            keep: vec![],
+            invalidate: input.target.node_run_id.clone().into_iter().collect(),
+            stop: vec![],
+            schedule: vec![input.target.node_id.clone()],
+            predicted_branch: None,
+        },
+        vec![input.target.node_id.clone()],
+    ))
 }
 
 /// Edits a prompt using the actual wire contract.
@@ -521,13 +526,16 @@ fn item_three_uses_its_own_input_and_revision_suffix() {
                 ora_application::render_variable_template(prompt, &input.pool).unwrap(),
                 "new-c"
             );
-            Ok(WorkflowDebugImpact {
-                keep: vec!["f0".into(), "f1".into()],
-                invalidate: vec!["f2".into(), "f3".into(), "f4".into()],
-                stop: vec![],
-                schedule: vec!["it1[2..4]".into()],
-                predicted_branch: None,
-            })
+            Ok((
+                WorkflowDebugImpact {
+                    keep: vec!["f0".into(), "f1".into()],
+                    invalidate: vec!["f2".into(), "f3".into(), "f4".into()],
+                    stop: vec![],
+                    schedule: vec!["it1[2..4]".into()],
+                    predicted_branch: None,
+                },
+                vec!["fix".into()],
+            ))
         })
         .unwrap();
     let commit = CommitWorkflowDebugRequest {
@@ -995,9 +1003,9 @@ fn condition_preview_uses_the_observed_input_and_preserves_the_old_decision() {
         .unwrap();
     let preview = store
         .preview(&request, |input| {
-            let mut result = impact(input)?;
+            let (mut result, fence) = impact(input)?;
             result.predicted_branch = input.predicted_branch.clone();
-            Ok(result)
+            Ok((result, fence))
         })
         .unwrap();
     assert_eq!(preview.impact.predicted_branch.as_deref(), Some("else"));

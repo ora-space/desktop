@@ -20,6 +20,7 @@ mod pending;
 mod read_set;
 mod recovery;
 pub use operations::DebugClaim;
+pub(crate) use operations::attempt_fenced;
 #[cfg(test)]
 mod tests;
 
@@ -93,10 +94,13 @@ impl WorkflowDebugStore {
 
     /// Creates a receipt only for a target and patch accepted by the server-side planning strategy.
     /// The callback performs pure planning with facts from the same read transaction.
+    /// The strategy supplies both the authorized schedule and the transient dispatch fence.
     pub fn preview(
         &self,
         request: &PreviewWorkflowDebugRequest,
-        plan: impl FnOnce(&DebugPlanningInput) -> Result<WorkflowDebugImpact, DebugRejection>,
+        plan: impl FnOnce(
+            &DebugPlanningInput,
+        ) -> Result<(WorkflowDebugImpact, Vec<String>), DebugRejection>,
     ) -> Result<WorkflowDebugPreview, DatabaseError> {
         self.pool.with_connection_mut(|connection| {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -106,7 +110,7 @@ impl WorkflowDebugStore {
                 return Err(DebugRejection::StalePreview.into());
             }
             let input = configuration::prepare(&tx, request)?;
-            let impact = plan(&input)?;
+            let (impact, fence_nodes) = plan(&input)?;
             let nodes = serde_json::to_string(&input.read_nodes)?;
             let facts = read_set::facts(&tx, &request.run_id, &nodes)?;
             let kind = input.candidate.execution_node(&input.target.node_id).ok_or(DebugRejection::InvalidTarget)?.node_type.as_str();
@@ -120,12 +124,14 @@ impl WorkflowDebugStore {
                 workspace: WorkflowDebugWorkspace::Keep,
                 external_actions_may_repeat: true,
             };
+            let mut stored = serde_json::to_value(&preview)?;
+            stored["fenceNodes"] = serde_json::to_value(fence_nodes)?;
             tx.execute(
                 "INSERT INTO workflow_debug_previews(id,run_id,base_revision,patch,plan,snapshot_id,root_scope,node_type,read_nodes,read_facts)
                  SELECT ?1,r.id,?3,?4,?5,r.snapshot_id,root.scope_id,?6,?7,?8 FROM workflow_runs r
                  JOIN workflow_run_root_scopes root ON root.run_id=r.id WHERE r.id=?2",
                 params![preview.preview_id,request.run_id,revision,
-                    serde_json::to_string(&request.patch)?,serde_json::to_string(&preview)?,kind,nodes,serde_json::to_string(&facts)?],
+                    serde_json::to_string(&request.patch)?,serde_json::to_string(&stored)?,kind,nodes,serde_json::to_string(&facts)?],
             )?;
             tx.commit()?;
             Ok(preview)

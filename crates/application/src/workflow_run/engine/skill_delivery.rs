@@ -84,6 +84,28 @@ impl Default for WorkflowRunPayload {
 }
 
 impl WorkflowRunPayload {
+    /// Withdraws committed projections together, so resuming and debugging a container
+    /// cannot leave behind an old round decision or a settled item ledger.
+    pub fn withdraw_writers(&mut self, writers: &std::collections::BTreeSet<String>) {
+        let pool = &mut self.variable_pool;
+        pool.values.retain(|key, _| {
+            !pool
+                .catalog
+                .get(key)
+                .is_some_and(|d| writers.contains(&d.writer))
+                && !key
+                    .strip_suffix(".selected_branch_id")
+                    .is_some_and(|id| writers.contains(id))
+        });
+        pool.revision = pool.revision.saturating_add(1);
+        self.condition_decisions
+            .retain(|id, _| !writers.contains(id));
+        self.iteration_ledger.retain(|id, _| !writers.contains(id));
+        self.iteration_condition_decisions.retain(|key, _| {
+            !writers.contains(key.rsplit_once('#').map_or(key.as_str(), |(id, _)| id))
+        });
+    }
+
     /// Creates the immutable execution metadata captured while the run is initialized.
     pub fn new(locale: WorkflowRunLocale, skill_receipt: WorkflowSkillReceipt) -> Self {
         Self {

@@ -9,7 +9,7 @@ use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
-use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
+use ora_application::{ApplicationError, Clock, NodeType, WorkflowRunEngineRepository};
 use ora_contracts::{
     CommitWorkflowDebugRequest, PreviewWorkflowDebugRequest, StopSessionRequest,
     WorkflowDebugOperation, WorkflowDebugPreview,
@@ -163,6 +163,15 @@ impl WorkflowDebugCoordinator {
                     .stop(session_id.to_string())
                     .await
                     .map_err(|e| e.to_string()),
+                // Engine-owned containers have a separate stop entry for each external member.
+                Some(node)
+                    if matches!(
+                        node.node_type.parse(),
+                        Ok(NodeType::Iteration | NodeType::Loop)
+                    ) =>
+                {
+                    Ok(())
+                }
                 Some(node)
                     if node.started_at.is_none()
                         && node
@@ -198,13 +207,11 @@ impl WorkflowDebugCoordinator {
         // Apply the revision and the projection in one commit under the gate, then notify and
         // re-dispatch. The fence lifts with the applied operation, so the wave reads the new scope.
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        let now = self.clock.now_timestamp_millis();
         let applied = store
-            .apply_after_stop(
-                &request.run_id,
-                &request.request_id,
-                self.clock.now_timestamp_millis(),
-                strategy::settle,
-            )
+            .apply_after_stop(&request.run_id, &request.request_id, now, |tx, preview| {
+                strategy::settle(tx, &request.run_id, now, preview)
+            })
             .map_err(store_error)?;
         if matches!(
             applied.phase,
