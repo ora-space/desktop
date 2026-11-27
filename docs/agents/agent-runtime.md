@@ -114,16 +114,19 @@ turn locally until `startSession` returns.
 - **Load.** Loading reads Ora's own record and touches no agent: it creates no provider session and
   changes no lifecycle state, so a conversation opens even if its agent is gone. If an actor exists
   it answers its own load (replaying the record and then following a prompt in flight) without
-  taking ownership of that prompt. While it is attached, the options and the command catalog its
-  provider last reported precede the replay; neither is recorded and both end with the attachment.
+  taking ownership of that prompt. While it is attached, its current options, an empty list
+  included, and the command catalog its provider last reported precede the replay; neither is
+  recorded and both end with the attachment.
 - **Attach.** A prompt is what acquires a provider session. A session holding no channel registers a
   route on the current connection and calls `session/load` with its private provider id and the
-  current MCP snapshot, discards whatever the agent recites, and marks the row `Running`. Options
-  and commands from that handshake reach the client as updates ahead of the turn. An agent usually
+  current MCP snapshot, discards whatever the agent recites, and marks the row `Running`. The turn
+  starts with the options the session is on once the MCP check is done, and with the commands that
+  handshake reported. An agent usually
   reports its commands only after answering setup, so a command catalog that arrives while no prompt
   runs is kept, newest only, and delivered at the start of the next prompt. Draining an idle session
   discards its other updates, so they do not cross into that prompt; updates that arrive while a
-  title poll borrows the session are queued for it instead, again with only the newest catalog, and options as they are by then.
+  title poll borrows the session are queued for it instead, again with only the newest catalog;
+  options are taken then and not queued, since every prompt starts from the current ones.
   Admission waits for the attach and the MCP check, so a send that cannot reach an agent fails as a send.
 - **Rebuild.** An agent that cannot load the session, or fails to restore it, gets a replacement
   provider session from `session/new` with the same snapshot, and the next prompt carries the

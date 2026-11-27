@@ -19,8 +19,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         let value = SessionConfigOptionValue::value_id(request.value);
         let session = self.find_session(&request.session_id)?;
         // The live actor asks, so that the answer takes its turn among the session's other frames,
-        // and addresses the session it rebuilt rather than the one still in the row. A session with
-        // no actor holds no rebuilt binding, so its row is authoritative.
+        // and addresses the session it rebuilt rather than the one still in the row.
         let Some(handle) = self.lookup_actor(&session.id)? else {
             // No actor holds a provider for it, so there are no options to change.
             return Err(session_stopped());

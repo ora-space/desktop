@@ -551,10 +551,14 @@ fn a_session_stops_while_its_agent_reads_nothing() {
 fn a_change_asked_without_a_provider_fails_and_asks_nothing() {
     run_case(async {
         let mut driven = Driven::new().await;
-        driven.fixture.add_session(SESSION);
+        // No actor serves it yet.
+        driven
+            .fixture
+            .seed_session_on(SESSION, "official/test.agent");
         let stopped = || PublicError::SessionStopped(EmptyErrorParams {});
         let refused = driven.fixture.manager.set_session_config(change()).await;
         assert_eq!(refused.unwrap_err().public_error(), &stopped());
+        assert_eq!(read_options(&driven).await, None);
         assert!(driven.fixture.frames.try_recv().is_err());
 
         let (mut turn, running) = driven.restored(model("b")).await;
@@ -1156,6 +1160,68 @@ fn reading_the_options_changes_nothing() {
         assert_eq!(std::fs::read(&history).unwrap(), recorded);
         assert_eq!(driven.fixture.manager.find_session(SESSION).unwrap(), row);
         assert_eq!(announced(&driven), before);
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// An idle session whose queue overflows loses its provider, which is announced and read as none.
+#[test]
+fn a_session_that_overflows_while_idle_reads_as_none() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        settled().await;
+        let before = announced(&driven);
+
+        // Routed without a pause, so the idle actor cannot read any of it first.
+        let routes = driven.fixture.supervisor.routes.clone();
+        for _ in 0..=crate::CONTRACT_QUEUE_CAPACITY {
+            let _ = routes.route_event(chunk());
+        }
+        settled().await;
+
+        assert_eq!(announced(&driven), before + 1);
+        assert_eq!(read_options(&driven).await, None);
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// A title poll and an MCP refresh borrow the provider, so the options are read at once while
+/// either is waiting for the agent.
+#[test]
+fn the_options_are_read_at_once_during_a_title_poll_and_an_mcp_refresh() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session_with_title_acquisition(
+            SESSION,
+            crate::TitleAcquisition::awaiting_first_prompt(/*list_supported*/ true),
+        );
+        let (mut turn, running) = driven.restored(model("b")).await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
+        // Left unanswered, so the poll is still waiting.
+        driven.asked("session/list").await;
+        assert_eq!(read_options(&driven).await, Some(on("b")));
+        drop(turn);
+        driven.fixture.shutdown().await;
+    });
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session_owing_mcp_refresh(SESSION);
+        let admitted = driven.prompt();
+        // Left unanswered, so the refresh is still waiting.
+        let refresh = driven.asked("session/load").await;
+        assert_eq!(read_options(&driven).await, Some(vec![State::NoOptions]));
+        driven.answer(&refresh, json!({}));
+        let mut turn = admitted.await.unwrap();
+        let running = driven.asked("session/prompt").await;
+        driven.end_turn(&running);
+        assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
         drop(turn);
         driven.fixture.shutdown().await;
     });

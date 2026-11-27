@@ -138,6 +138,7 @@ beforeEach(() => {
 function renderThoughtLevelSelector(
   seed: (state: FixtureState) => void = () => {},
   handlers: Partial<TestHandlers> = {},
+  props: { disabled?: boolean; sessionId?: string } = {},
 ) {
   const state = createFixtureState();
   state.tasks = [
@@ -166,7 +167,7 @@ function renderThoughtLevelSelector(
       <AppI18nProvider>
         <PlatformProvider adapter={createStubPlatform()}>
           <TooltipProvider>
-            <ThoughtLevelSelector />
+            <ThoughtLevelSelector {...props} />
           </TooltipProvider>
         </PlatformProvider>
       </AppI18nProvider>
@@ -391,6 +392,31 @@ describe("ThoughtLevelSelector visibility", () => {
       usePendingAgentStore.getState().setPendingSwitch("s1", AGENT_REF.claude),
     );
     await waitFor(() => expect(picker()).toBeNull());
+  });
+
+  /** A read-only control has nothing to set, so it keeps naming the level the session was on. */
+  it("keeps showing a read-only level once the session is known to have no provider", async () => {
+    const { chatStore } = renderThoughtLevelSelector(
+      selectPersistedSession,
+      {},
+      { disabled: true, sessionId: "s1" },
+    );
+    act(() => {
+      chatStore
+        .getState()
+        .setConfigOptions("s1", [MODEL_OPTION, THOUGHT_LEVEL_OPTION]);
+      chatStore.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          s1: { ...state.conversations.s1!, providerLost: true },
+        },
+      }));
+    });
+
+    const trigger = await screen.findByRole("button", {
+      name: /选择思考强度|Select thought level/,
+    });
+    expect(within(trigger).getByText("High")).toBeInTheDocument();
   });
 
   /** No effort is set on a session without a provider, and no intent carries one to its next attach. */

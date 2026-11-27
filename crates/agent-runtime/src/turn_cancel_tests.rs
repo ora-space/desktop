@@ -324,6 +324,8 @@ struct UnrunTurn {
     channel: Option<SessionChannel>,
     client: crate::connection::AgentAcpClient,
     pending: Option<ora_acp::PendingSessionRequest<PromptResponse>>,
+    /// The prompt as the agent received it.
+    prompt: Value,
 }
 
 impl UnrunTurn {
@@ -344,7 +346,8 @@ impl UnrunTurn {
             )
             .await
             .unwrap();
-        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        let prompt = fixture.next_frame().await;
+        assert_eq!(prompt["method"], "session/prompt");
         let (actor, commands) = unrun_actor(&fixture, session);
         Self {
             fixture,
@@ -353,6 +356,7 @@ impl UnrunTurn {
             channel: Some(channel),
             client,
             pending: Some(pending),
+            prompt,
         }
     }
 
@@ -403,11 +407,27 @@ impl UnrunTurn {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
+    /// Has the agent refuse the prompt with an error it could recover from, and lets it queue up.
+    async fn refused(&self) {
+        let refusal = json!({"jsonrpc":"2.0", "id":self.prompt["id"],
+            "error":{"code":-32000, "message":"refused"}});
+        self.fixture
+            .agent
+            .send(AgentInput::RawFrame(refusal))
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
     /// Settles the turn as a cancel past its grace, telling `events` how it ended.
     async fn settle(&mut self, events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>) {
         self.actor
             .turn_cancel
             .request(Instant::now() + Duration::from_secs(15));
+        self.stop(events).await;
+    }
+
+    /// Settles the turn as one stopped without a cancel deadline, telling `events` how it ended.
+    async fn stop(&mut self, events: &mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>) {
         let channel = self.channel.take().unwrap();
         let pending = self.pending.take().unwrap();
         let end_report = crate::PromptEndReport::new();
@@ -437,10 +457,10 @@ async fn told(outcome: Outcome) -> Option<String> {
     crate::model_config::current_model(&outcome.await.unwrap().unwrap())
 }
 
-/// An answer already queued when the cancel settles is taken in its turn, not dropped with the
-/// turn's other traffic.
+/// An answer already queued when a cancel is about to be written is read ahead of writing it, and
+/// taken in its turn rather than dropped with the turn's other traffic.
 #[test]
-fn a_change_answered_before_a_cancel_settles_is_taken() {
+fn a_change_answered_before_the_cancel_is_written_is_taken() {
     run_case(async {
         let mut turn = UnrunTurn::start().await;
         let (outcome, request) = turn.change().await;
@@ -460,9 +480,9 @@ fn a_change_answered_before_a_cancel_settles_is_taken() {
     });
 }
 
-/// So is one read ahead of writing the cancel, among the frames already queued.
+/// So is one still queued when the cancel's grace has run out and the queue is drained.
 #[test]
-fn a_change_answered_before_the_cancel_is_written_is_taken() {
+fn a_change_answered_before_the_queue_is_drained_is_taken() {
     run_case(async {
         let mut turn = UnrunTurn::start().await;
         let (outcome, request) = turn.change().await;
@@ -504,4 +524,38 @@ fn a_change_in_flight_is_made_when_a_cancelled_turn_has_nobody_to_tell() {
         drop(turn.actor);
         turn.fixture.shutdown().await;
     });
+}
+
+/// How a stopped turn ends once its owner has gone.
+#[derive(Clone, Copy, Debug)]
+enum StoppedTurn {
+    /// The agent confirms the cancel.
+    Cancelled,
+    /// The agent refuses the prompt with an error it could recover from.
+    Refused,
+}
+
+/// A turn stopped while nobody reads it any more takes the provider with it, but a change still in
+/// flight is made rather than failed: the agent was not lost.
+#[test]
+fn a_change_in_flight_is_made_when_a_stopped_turn_has_nobody_to_tell() {
+    for end in [StoppedTurn::Cancelled, StoppedTurn::Refused] {
+        run_case(async move {
+            let mut turn = UnrunTurn::start().await;
+            let (outcome, _request) = turn.change().await;
+            match end {
+                StoppedTurn::Cancelled => turn.cancelled().await,
+                StoppedTurn::Refused => turn.refused().await,
+            }
+            let (events, owner) = mpsc::channel(/*buffer*/ 8);
+            drop(owner);
+
+            turn.stop(&events).await;
+
+            assert!(outcome.await.unwrap().is_ok(), "{end:?}");
+            assert!(turn.actor.channel.is_none());
+            drop(turn.actor);
+            turn.fixture.shutdown().await;
+        });
+    }
 }
