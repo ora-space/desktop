@@ -11,10 +11,22 @@ use tokio::time::timeout;
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     /// Applies one configuration option to a persisted session.
+    ///
+    /// Says only whether the agent made the change: its options reach every view through the
+    /// session's streams and `getSessionOptions`, the one source of them.
     pub async fn set_session_config(
         &self,
         request: SetSessionConfigRequest,
     ) -> Result<SetSessionConfigResponse, RuntimeError> {
+        self.change_session_config(request).await?;
+        Ok(SetSessionConfigResponse {})
+    }
+
+    /// Applies one configuration option and returns the options the session is on after it.
+    pub(crate) async fn change_session_config(
+        &self,
+        request: SetSessionConfigRequest,
+    ) -> Result<Vec<agent_client_protocol_schema::v1::SessionConfigOption>, RuntimeError> {
         let config_id = SessionConfigId::new(request.config_id);
         let value = SessionConfigOptionValue::value_id(request.value);
         let session = self.find_session(&request.session_id)?;
@@ -48,7 +60,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                     .map_err(|_elapsed| agent_timed_out("agent configuration timed out"))??
             }
         };
-        Ok(SetSessionConfigResponse { config_options })
+        Ok(config_options)
     }
 }
 

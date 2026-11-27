@@ -4,8 +4,7 @@
 use super::follower_setup_tests::{State, model, options, state};
 use super::*;
 use ora_contracts::{
-    LoadSessionEvent, LoadSessionRequest, SetSessionConfigRequest, SetSessionConfigResponse,
-    StopSessionRequest,
+    LoadSessionEvent, LoadSessionRequest, SetSessionConfigRequest, StopSessionRequest,
 };
 use pretty_assertions::assert_eq;
 
@@ -115,7 +114,7 @@ impl Driven {
     /// Chooses model `a`, and returns the choice in flight and the request that carries it.
     async fn choose(&mut self) -> (Choice, Value) {
         let manager = self.fixture.manager.clone();
-        let choice = tokio::spawn(async move { manager.set_session_config(change()).await });
+        let choice = tokio::spawn(async move { manager.change_session_config(change()).await });
         let request = self.asked("session/set_config_option").await;
         (choice, request)
     }
@@ -132,7 +131,7 @@ impl Driven {
                     value: "a".repeat(if index < 4 { 65536 } else { 1 }),
                     ..change()
                 };
-                tokio::spawn(async move { manager.set_session_config(change).await })
+                tokio::spawn(async move { manager.change_session_config(change).await })
             })
             .collect();
         settle().await;
@@ -168,11 +167,13 @@ impl Driven {
 }
 
 /// A choice in flight.
-type Choice = tokio::task::JoinHandle<Result<SetSessionConfigResponse, crate::RuntimeError>>;
+type Choice = tokio::task::JoinHandle<
+    Result<Vec<agent_client_protocol_schema::v1::SessionConfigOption>, crate::RuntimeError>,
+>;
 
 /// Waits for a choice and names the model its caller is told.
 async fn chosen(choice: Choice) -> Option<String> {
-    crate::model_config::current_model(&choice.await.unwrap().unwrap().config_options)
+    crate::model_config::current_model(&choice.await.unwrap().unwrap())
 }
 
 /// Reads the session state a load delivers, up to its end.
@@ -556,7 +557,7 @@ fn a_change_asked_without_a_provider_fails_and_asks_nothing() {
             .fixture
             .seed_session_on(SESSION, "official/test.agent");
         let stopped = || PublicError::SessionStopped(EmptyErrorParams {});
-        let refused = driven.fixture.manager.set_session_config(change()).await;
+        let refused = driven.fixture.manager.change_session_config(change()).await;
         assert_eq!(refused.unwrap_err().public_error(), &stopped());
         assert_eq!(read_options(&driven).await, None);
         assert!(driven.fixture.frames.try_recv().is_err());
@@ -565,7 +566,7 @@ fn a_change_asked_without_a_provider_fails_and_asks_nothing() {
         driven.end_turn(&running);
         assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
         driven.fixture.manager.stop_session(stop()).await.unwrap();
-        let refused = driven.fixture.manager.set_session_config(change()).await;
+        let refused = driven.fixture.manager.change_session_config(change()).await;
         assert_eq!(refused.unwrap_err().public_error(), &stopped());
         assert!(driven.fixture.frames.try_recv().is_err());
         drop(turn);
@@ -582,7 +583,7 @@ fn a_change_given_up_before_it_was_asked_is_not_asked() {
         let admitted = driven.prompt();
         let restore = driven.asked("session/load").await;
         let manager = driven.fixture.manager.clone();
-        let choice = tokio::spawn(async move { manager.set_session_config(change()).await });
+        let choice = tokio::spawn(async move { manager.change_session_config(change()).await });
         tokio::task::yield_now().await;
         choice.abort();
         assert!(choice.await.unwrap_err().is_cancelled());
