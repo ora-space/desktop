@@ -450,6 +450,8 @@ fn options_an_mcp_refresh_answers_with_are_taken() {
         driven.push("a");
         driven.answer(&refresh, json!({"configOptions":model("b")}));
         let mut turn = admitted.await.unwrap();
+        // The turn starts from what the refresh answered, not what the session was on before it.
+        assert_eq!(first_update(&mut turn).await, on("b"));
         let running = driven.asked("session/prompt").await;
         driven.end_turn(&running);
         assert_eq!(completion(&mut turn).await, StopReason::EndTurn);

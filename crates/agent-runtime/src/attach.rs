@@ -72,10 +72,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         model: Option<&str>,
     ) -> Result<Vec<SessionUpdate>, RuntimeError> {
         let attaching = self.channel.is_none();
-        let setup = match self.channel {
-            Some(_) => vec![SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
-                self.reported_config_options.clone(),
-            ))],
+        let mut setup = match self.channel {
+            Some(_) => Vec::new(),
             None => self.attach_provider_session(model).await?,
         };
         // Node's final host commit checks freshness atomically. Do not turn a just-completed
@@ -83,6 +81,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         if !attaching || !self.session_mcp.preserve_provider_identity() {
             self.ensure_current_mcp().await?;
         }
+        // Taken last: the MCP check may have reloaded the session and adopted other options.
+        setup.retain(|update| !matches!(update, SessionUpdate::ConfigOptionUpdate(_)));
+        setup.insert(
+            0,
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+                self.reported_config_options.clone(),
+            )),
+        );
         Ok(setup)
     }
 

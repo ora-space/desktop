@@ -425,6 +425,9 @@ export function createChatStore(
       const liveConfigOptions = () =>
         get().conversations[oraSessionId]?.configOptions ??
         previous.configOptions;
+      /** Whether the session is known to have no provider now; only options and reads change it. */
+      const liveProviderLost = () =>
+        get().conversations[oraSessionId]?.providerLost ?? previous.providerLost;
 
       /** Publishes the active replay turn without repainting once per provider text token. */
       const flushPendingPreview = () => {
@@ -434,7 +437,10 @@ export function createChatStore(
         }
         const preview = staged.preview(liveConfigOptions());
         if (preview.isResponding) {
-          updateConversation(set, oraSessionId, () => preview);
+          updateConversation(set, oraSessionId, () => ({
+            ...preview,
+            providerLost: liveProviderLost(),
+          }));
           return;
         }
         // Historical turns look open between their first chunk and turn_ended.
@@ -522,6 +528,7 @@ export function createChatStore(
           // An agent that reports nothing on load leaves whatever session
           // creation already established, rather than blanking the picker.
           configOptions: liveConfigOptions(),
+          providerLost: liveProviderLost(),
           // Replay rebuilds the transcript from the provider, which knows
           // nothing about Ora's markers, so any earlier ones cannot be placed
           // against the new turns and are dropped rather than misplaced.
@@ -531,6 +538,7 @@ export function createChatStore(
         updateConversation(set, oraSessionId, () => ({
           ...previous,
           configOptions: liveConfigOptions(),
+          providerLost: liveProviderLost(),
           usage: reloadedUsage,
           ...(previous.diagnostics ? { diagnostics: undefined } : {}),
           error: isAbortError(error) ? previous.error : describeError(error),

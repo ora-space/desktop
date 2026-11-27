@@ -60,13 +60,16 @@ function session() {
   let load: () => AsyncIterable<LoadSessionEvent> = async function* () {
     yield { type: "completed" } as const;
   };
+  let prompt: () => AsyncIterable<PromptSessionEvent> = async function* () {
+    yield { type: "completed", stopReason: "end_turn" } as const;
+  };
   const client: ChatSessionClient = {
     getOptions: () =>
       new Promise<GetSessionOptionsResponse>((resolve) => {
         reads.push((configOptions) => resolve({ configOptions }));
       }),
     load: () => load(),
-    prompt: async function* (): AsyncIterable<PromptSessionEvent> {},
+    prompt: () => prompt(),
     respondToPermission: async () => ({}),
     setConfig: async () => ({ configOptions: [] }),
   };
@@ -87,6 +90,14 @@ function session() {
     conversation,
     streams: (script: () => AsyncIterable<LoadSessionEvent>) => {
       load = script;
+    },
+    prompts: (script: () => AsyncIterable<PromptSessionEvent>) => {
+      prompt = script;
+    },
+    /** Has the session be known to have no provider. */
+    loseProvider: async () => {
+      store.getState().optionsChanged("ora-1");
+      await answer(null);
     },
   };
 }
@@ -205,4 +216,75 @@ test("reads every conversation on screen again after announcements may have been
   store.getState().resyncOptions();
 
   assert.equal(reads.length, 2);
+});
+
+test("counts a prompt stream as open: an announcement during it is read once it ends", async () => {
+  const { store, reads, answer, conversation, prompts } = session();
+  const ending = gate();
+  prompts(async function* () {
+    yield {
+      type: "session_update",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: onModel("fast"),
+      },
+    } as const;
+    await ending.promise;
+    yield { type: "completed", stopReason: "end_turn" } as const;
+  });
+
+  const sending = store
+    .getState()
+    .sendMessage({ oraSessionId: "ora-1", text: "hello" });
+  await flushed();
+  store.getState().optionsChanged("ora-1");
+  assert.equal(reads.length, 0, "the stream's options stand while it runs");
+  ending.resolve();
+  await sending;
+
+  assert.equal(reads.length, 1);
+  await answer(onModel("smart"));
+  assert.deepEqual(conversation()?.configOptions, onModel("smart"));
+});
+
+test("options a stream brings say the session has a provider again, even if the load then fails", async () => {
+  for (const fails of [false, true]) {
+    const { store, conversation, streams, loseProvider } = session();
+    await loseProvider();
+    streams(async function* () {
+      yield optionsEvent(onModel("fast"));
+      if (fails) throw new Error("load failed");
+      yield { type: "completed" } as const;
+    });
+
+    await store
+      .getState()
+      .loadSession("ora-1")
+      .catch(() => {});
+
+    assert.equal(conversation()?.providerLost, false, `fails ${fails}`);
+    assert.deepEqual(conversation()?.configOptions, onModel("fast"));
+  }
+});
+
+test("a load that brings no options keeps a lost provider lost, whether it completes or fails", async () => {
+  for (const fails of [false, true]) {
+    const { store, conversation, streams, loseProvider } = session();
+    await loseProvider();
+    const ending = gate();
+    streams(async function* () {
+      await ending.promise;
+      if (fails) throw new Error("load failed");
+      yield { type: "completed" } as const;
+    });
+
+    const loading = store.getState().loadSession("ora-1");
+    await flushed();
+    assert.equal(conversation()?.providerLost, true, "while loading");
+    ending.resolve();
+    await loading.catch(() => {});
+
+    // The read after it has not answered yet, so nothing has said otherwise.
+    assert.equal(conversation()?.providerLost, true, `after, fails ${fails}`);
+  }
 });
