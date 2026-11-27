@@ -95,16 +95,30 @@ pub fn resume_clear_node_ids(graph: &WorkflowGraph, node_runs: &[WorkflowNodeRun
     clear_resume_triggers(graph, node_runs.iter())
 }
 
-/// A failed member already absorbed into the foreach ledger is history. A failed owner,
-/// an unsettled item, and an independent failure remain normal recovery triggers.
-pub(super) fn resume_from_ledger(
+/// Preserve settled items only for foreach owners carrying a pending debug replay.
+/// All other containers retain the ordinary whole-container recovery boundary.
+pub(super) fn resume_with_parked_foreach(
     graph: &WorkflowGraph,
     rows: &[WorkflowNodeRun],
     payload: &WorkflowRunPayload,
     root_scope: &WorkflowScopeId,
 ) -> Vec<String> {
-    // Settlement commits both the ledger entry and the owner's continuation atomically.
-    // Under "fail" the owner itself is a trigger. Under "continue" its settled member is not.
+    let parked: BTreeSet<&str> = rows
+        .iter()
+        .filter(|row| &row.scope_id == root_scope && row.node_type == NodeType::Iteration.as_str())
+        .filter(|row| {
+            row.payload
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .is_some_and(|doc| doc["debugForeachReplay"].is_object())
+        })
+        .map(|row| row.node_id.as_str())
+        .collect();
+    if parked.is_empty() {
+        return resume_clear_node_ids(graph, rows);
+    }
+    // A replay's retained ledger prefix is history. The owner itself and any
+    // unsettled member can still trigger a full restart.
     let triggers = rows.iter().filter(|row| {
         if &row.scope_id != root_scope {
             return true;
@@ -112,9 +126,10 @@ pub(super) fn resume_from_ledger(
         let Some((index, owner)) = row.iteration.zip(graph.region_owner(&row.node_id)) else {
             return true;
         };
-        !payload
-            .iteration_ledger(owner)
-            .is_some_and(|ledger| ledger.contains_key(&index))
+        !(parked.contains(owner)
+            && payload
+                .iteration_ledger(owner)
+                .is_some_and(|ledger| ledger.contains_key(&index)))
     });
     clear_resume_triggers(graph, triggers)
 }

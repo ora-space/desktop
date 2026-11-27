@@ -1,6 +1,52 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+/// Without a parked edit, downstream failure restarts the entire failed member's container.
+#[test]
+fn ordinary_resume_retries_an_absorbed_failure_without_a_debug_edit() {
+    run_test(async {
+        let f = batch_graph(Arc::new(NoSessions), true);
+        let owner = active(&f, "iter").id;
+        complete(&f, "sibling", "ok");
+        let fail = |node: &str| {
+            f.engine
+                .fail_node(
+                    &f.run_id,
+                    &active(&f, node).id,
+                    NodeFailure::new(NodeFailureKind::Session, "failed"),
+                )
+                .unwrap();
+        };
+        fail("member");
+        for value in ["two", "three", "four", "five"] {
+            complete(&f, "member", value);
+        }
+        assert_eq!(
+            payload(&f).variable_pool.values["iter.failed_count"],
+            json!(1)
+        );
+        fail("consumer");
+        assert_eq!(
+            f.engine.resume_from_failure(&f.run_id).unwrap(),
+            ora_application::ResumeWorkflowRunResult::Resumed
+        );
+        assert_eq!(dispatched(&f.executor, "member"), 6);
+        assert_ne!(active(&f, "iter").id, owner);
+        assert_eq!(active(&f, "member").iteration, Some(0));
+        let expected = ["one", "two", "three", "four", "five"];
+        for value in expected {
+            complete(&f, "member", value);
+        }
+        let values = payload(&f).variable_pool.values;
+        assert_eq!(values["iter.failed_count"], json!(0));
+        assert_eq!(values["iter.output"], json!(expected));
+        for value in expected {
+            complete(&f, "consumer", value);
+        }
+        assert_eq!(f.run_status(), WorkflowRunStatus::Succeeded);
+    });
+}
+
 /// A completed owner must reopen on an explicit recovery after the run failed during quiescence.
 #[test]
 fn ordinary_resume_replays_a_parked_member_before_dispatching_its_consumer() {
