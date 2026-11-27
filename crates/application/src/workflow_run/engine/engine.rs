@@ -634,7 +634,7 @@ fn validate_executable_graph(graph: &WorkflowGraph) -> Result<(), WorkflowValida
                         }
                     }
                     for edge in graph.outgoing_edges(&node.id) {
-                        let handle = edge.source_handle.as_deref().unwrap_or(ELSE_BRANCH_ID);
+                        let handle = edge.condition_branch();
                         let valid = handle == ELSE_BRANCH_ID
                             || config.cases.iter().any(|case| case.id == handle);
                         if !valid {

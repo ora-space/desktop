@@ -1,48 +1,113 @@
-//! Minimal top-level debug planning for the execution coordinator (#1429).
-//!
-//! Editing a root-scope node re-runs that node and its transitive downstream, stops the affected
-//! in-flight attempts, and keeps independent branches. This is the smallest scope that proves the
-//! stop → apply → re-dispatch path; #1430 refines Condition re-routing and join settlement, and
-//! #1431/#1432 own the while/foreach container scopes.
+//! Root DAG impact planning and settlement. A condition can retire a previously selected path
+//! without authorizing it to run again. The scheduler derives skips from the new decision.
 
-use ora_application::WorkflowGraph;
+use ora_application::{BranchProjection, ProjectedNodeState, WorkflowGraph, WorkflowRunPayload};
 use ora_contracts::{WorkflowDebugImpact, WorkflowDebugPreview};
 use ora_db::workflow_debug::{DebugPlanningInput, DebugRejection, Transaction};
-use ora_domain::WorkflowNodeStatus;
+use ora_domain::{WorkflowNodeStatus, WorkflowScopeStatus};
+use std::collections::BTreeSet;
 
 /// Plans a top-level edit: the target plus its transitive successors are the recompute scope.
 pub(in crate::workflow::run) fn plan(
     input: &DebugPlanningInput,
-) -> Result<WorkflowDebugImpact, DebugRejection> {
+) -> Result<(WorkflowDebugImpact, Vec<String>), DebugRejection> {
     // Container members are scoped by their round/item, not the root DAG; the container strategies
     // (#1431/#1432) own them. Refuse here rather than mis-scope a member as a top-level node.
     if input.target.container_node_run_id.is_some() {
         return Err(DebugRejection::InvalidTarget);
     }
-    let affected = downstream_closure(&input.candidate, &input.target.node_id);
+    let target = &input.target.node_id;
+    let affected = downstream_closure(&input.candidate, target);
+    let schedule = reroute_schedule(input, &affected);
     let is_affected = |node_id: &str| affected.iter().any(|node| node == node_id);
 
     let mut stop = Vec::new();
     let mut invalidate = Vec::new();
     let mut keep = Vec::new();
+    // A while member belongs to its owner's actual execution, not just its definition.
+    let round_scopes: BTreeSet<_> = input
+        .current_scopes
+        .iter()
+        .filter(|scope| {
+            input.current_attempts.iter().any(|owner| {
+                owner.id == scope.parent_loop_node_run_id
+                    && owner.scope_id.as_ref() == input.target.scope_id
+                    && is_affected(&owner.node_id)
+            })
+        })
+        .map(|scope| &scope.id)
+        .collect();
     for attempt in &input.current_attempts {
-        if is_affected(&attempt.node_id) {
+        let in_round = round_scopes.contains(&attempt.scope_id);
+        if attempt.scope_id.as_ref() != input.target.scope_id && !in_round {
+            continue;
+        }
+        if in_round
+            || is_affected(&attempt.node_id)
+            || input
+                .candidate
+                .region_owner(&attempt.node_id)
+                .is_some_and(is_affected)
+        {
             invalidate.push(attempt.id.to_string());
             // Only an in-flight attempt needs quiescing; a settled one is retired by the settle.
-            if attempt.status == WorkflowNodeStatus::Running {
+            if attempt.status == WorkflowNodeStatus::Running
+                || (attempt.status == WorkflowNodeStatus::Pending && attempt.session_id.is_some())
+            {
                 stop.push(attempt.id.to_string());
             }
         } else {
             keep.push(attempt.id.to_string());
         }
     }
-    Ok(WorkflowDebugImpact {
-        keep,
-        invalidate,
-        stop,
-        schedule: affected,
-        predicted_branch: input.predicted_branch.clone(),
-    })
+    Ok((
+        WorkflowDebugImpact {
+            keep,
+            invalidate,
+            stop,
+            schedule,
+            predicted_branch: input.predicted_branch.clone(),
+        },
+        affected,
+    ))
+}
+
+/// Re-projects the DAG after withdrawing affected attempts. A join on the discarded
+/// branch can still receive an active edge from an independent predecessor.
+fn reroute_schedule(input: &DebugPlanningInput, affected: &[String]) -> Vec<String> {
+    let Some(branch) = &input.predicted_branch else {
+        return affected.to_vec();
+    };
+    let graph = &input.candidate;
+    let target = &input.target.node_id;
+    let mut decisions = input
+        .current_payload
+        .as_ref()
+        .map(|payload| payload.condition_decisions.clone())
+        .unwrap_or_default();
+    decisions.insert(target.clone(), branch.clone());
+    let kept = input
+        .current_attempts
+        .iter()
+        .filter(|row| {
+            row.scope_id.as_ref() == input.target.scope_id
+                && row.iteration.is_none()
+                && !affected.contains(&row.node_id)
+        })
+        .map(|row| (row.node_id.as_str(), row.status));
+    let statuses = kept.chain(std::iter::once((
+        target.as_str(),
+        WorkflowNodeStatus::Succeeded,
+    )));
+    let projection = BranchProjection::from_outer_statuses(graph, statuses, &decisions);
+    // Unresolved downstream Conditions can still select either branch at execution.
+    affected
+        .iter()
+        .filter(|id| {
+            projection.state(graph.region_owner(id).unwrap_or(id)) != ProjectedNodeState::Inactive
+        })
+        .cloned()
+        .collect()
 }
 
 /// The target node and every node reachable from it along control edges, in stable order.
@@ -51,9 +116,9 @@ fn downstream_closure(graph: &WorkflowGraph, target: &str) -> Vec<String> {
     let mut index = 0;
     while index < affected.len() {
         let node_id = affected[index].clone();
-        for successor in graph.successors(&node_id) {
-            if !affected.iter().any(|node| node == &successor.id) {
-                affected.push(successor.id.clone());
+        for edge in graph.outgoing_edges(&node_id) {
+            if !affected.contains(&edge.target) {
+                affected.push(edge.target);
             }
         }
         index += 1;
@@ -67,12 +132,33 @@ fn downstream_closure(graph: &WorkflowGraph, target: &str) -> Vec<String> {
 /// to the revision applied in the same transaction); the settle never pre-assigns attempt rows.
 pub(in crate::workflow::run) fn settle(
     transaction: &Transaction<'_>,
+    run_id: &str,
+    now: i64,
     preview: &WorkflowDebugPreview,
 ) -> Result<(), ora_db::DatabaseError> {
-    for id in &preview.impact.invalidate {
+    let mut retired = BTreeSet::new();
+    let ids = serde_json::to_string(&preview.impact.invalidate)?;
+    let mut writers = transaction.prepare("SELECT DISTINCT node_id FROM workflow_node_runs WHERE run_id=?1 AND id IN (SELECT value FROM json_each(?2))")?;
+    for writer in writers.query_map([run_id, &ids], |r| r.get::<_, String>(0))? {
+        retired.insert(writer?);
+    }
+    transaction.execute("UPDATE workflow_node_runs SET is_deleted=1,updated_at=?3 WHERE run_id=?1 AND is_deleted=0 AND id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now))?;
+    transaction.execute("UPDATE workflow_execution_scopes SET status=?4,updated_at=?3 WHERE run_id=?1 AND status IN (?5,?6) AND parent_loop_node_run_id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now,WorkflowScopeStatus::Cancelled.database_value(),WorkflowScopeStatus::Pending.database_value(),WorkflowScopeStatus::Running.database_value()))?;
+    if retired.is_empty() {
+        return Ok(());
+    }
+    // Read at settlement so a sibling that completed after preview keeps its new values.
+    let raw: Option<String> = transaction.query_row(
+        "SELECT payload FROM workflow_runs WHERE id=?1",
+        [run_id],
+        |row| row.get(0),
+    )?;
+    if let Some(raw) = raw {
+        let mut payload: WorkflowRunPayload = serde_json::from_str(&raw)?;
+        payload.withdraw_writers(&retired);
         transaction.execute(
-            "UPDATE workflow_node_runs SET is_deleted=1 WHERE id=?1 AND is_deleted=0",
-            [id],
+            "UPDATE workflow_runs SET payload=?1 WHERE id=?2",
+            [serde_json::to_string(&payload)?.as_str(), run_id],
         )?;
     }
     Ok(())
