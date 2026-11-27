@@ -172,18 +172,22 @@ fn foreach_debug_preserves_a_run_that_failed_while_the_member_was_stopping() {
     });
 }
 
+fn route_graph() -> String {
+    json!({"nodes":[{"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
+            {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["fix","output"],"errorStrategy":"continue"}}},
+            {"id":"gate","parentId":"iter","data":{"kind":"condition","cases":[{"id":"match","logic":"and","conditions":[{"variableSelector":["iter","item"],"operator":"equals","value":"a"}]}]}},
+            {"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{"prompt":"fix","executor":{"agentCli":"c","modelId":"m"}}}},
+            {"id":"sibling","data":{"kind":"agent","agentConfig":{"prompt":"hold","executor":{"agentCli":"c","modelId":"m"},"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0}}}}],
+            "edges":[{"source":"start","target":"sibling"},{"source":"start","target":"iter"},{"source":"iter","target":"gate"},{"source":"gate","sourceHandle":"match","target":"fix"}]}).to_string()
+}
+
 /// Re-evaluate a previously skipped branch from its selected item: the old Condition row
 /// remains historical while the new per-item decisions determine the collected outputs.
 #[test]
 fn foreach_debug_condition_uses_the_selected_item_and_preserves_the_previous_route() {
     run_test(async {
         let (temp, pool) = bootstrap();
-        let graph=json!({"nodes":[{"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
-            {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["fix","output"],"errorStrategy":"continue"}}},
-            {"id":"gate","parentId":"iter","data":{"kind":"condition","cases":[{"id":"match","logic":"and","conditions":[{"variableSelector":["iter","item"],"operator":"equals","value":"a"}]}]}},
-            {"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{"prompt":"fix","executor":{"agentCli":"c","modelId":"m"}}}},
-            {"id":"sibling","data":{"kind":"agent","agentConfig":{"prompt":"hold","executor":{"agentCli":"c","modelId":"m"}}}}],
-            "edges":[{"source":"start","target":"sibling"},{"source":"start","target":"iter"},{"source":"iter","target":"gate"},{"source":"gate","sourceHandle":"match","target":"fix"}]}).to_string();
+        let graph = route_graph();
         let run = seeded_pending_run(&temp, &pool, &graph);
         let repo = SqliteWorkflowRunEngineRepository::new(pool.clone());
         repo.update_run_input(

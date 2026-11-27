@@ -151,3 +151,97 @@ async fn park_and_recover(failed_prefix: bool, debug_sibling: bool) {
     }
     assert_eq!(f.run_status(), WorkflowRunStatus::Succeeded);
 }
+
+/// A projection failure after real quiescence cannot replace an independently committed outcome.
+#[test]
+fn projection_failure_preserves_the_independent_error_and_finish_time() {
+    run_test(async {
+        let barrier = Arc::new(super::super::lifecycle::StopBarrier::default());
+        let f = batch_graph(barrier.clone(), true);
+        let target = active(&f, "member");
+        bind(&f, &target);
+        evidence(&f, &target, &payload(&f).variable_pool);
+        let preview = f.preview(target.id.as_ref(), 0);
+        let load = || {
+            SqliteWorkflowRunRepository::new(f.pool.clone())
+                .find_run(&f.run_id)
+                .unwrap()
+                .unwrap()
+        };
+        let (receipt, prior) = tokio::join!(
+            f.coordinator
+                .commit(f.commit_request(&preview, "lost-evidence")),
+            async {
+                barrier.entered.notified().await;
+                f.engine
+                    .fail_node(
+                        &f.run_id,
+                        &active(&f, "sibling").id,
+                        NodeFailure::new(NodeFailureKind::Session, "independent"),
+                    )
+                    .unwrap();
+                rusqlite::Connection::open(f._temp.path().join("repository.sqlite3")).unwrap().execute(
+                "DELETE FROM workflow_debug_documents WHERE node_run_id=?1 AND kind='dispatch'",[target.id.as_ref()]).unwrap();
+                let prior = load();
+                barrier.release.notify_one();
+                prior
+            }
+        );
+        assert!(
+            matches!(receipt.unwrap().phase,WorkflowDebugPhase::StopFailed{ reason,.. } if reason.contains("missing_input_evidence"))
+        );
+        let after = load();
+        assert_eq!(after.status, WorkflowRunStatus::Failed);
+        assert_eq!(
+            (after.error, after.finished_at),
+            (prior.error, prior.finished_at)
+        );
+        assert_eq!(dispatched(&f.executor, "member"), 1);
+    });
+}
+
+/// A parked Condition edit retires its own item's route but preserves the settled prefix.
+#[test]
+fn terminal_condition_replay_keeps_only_prior_item_routes() {
+    run_test(async {
+        let barrier = Arc::new(super::super::lifecycle::StopBarrier::default());
+        let f = Fixture::with_inputs(
+            barrier.clone(),
+            &route_graph(),
+            [("items".into(), json!(["a", "a"]))].into(),
+        );
+        complete(&f, "fix", "first");
+        let fix = active(&f, "fix");
+        bind(&f, &fix);
+        let gate = node_runs(&f.pool, &f.run_id)
+            .into_iter()
+            .find(|r| r.node_id == "gate" && r.iteration == Some(1))
+            .unwrap();
+        let preview = f.coordinator.preview(serde_json::from_value(json!({"runId":f.run_id.as_ref(),"nodeRunId":gate.id.as_ref(),"baseRevision":0,"patch":[{"op":"replace","path":"/cases/0/conditions/0/value","value":"b"}]})).unwrap()).unwrap();
+        let before = payload(&f).iteration_condition_decisions;
+        assert_eq!(before["gate#1"], "match");
+        let (op, ()) = tokio::join!(
+            f.coordinator
+                .commit(f.commit_request(&preview, "retire-route")),
+            async {
+                barrier.entered.notified().await;
+                f.engine
+                    .fail_node(
+                        &f.run_id,
+                        &active(&f, "sibling").id,
+                        NodeFailure::new(NodeFailureKind::Session, "independent"),
+                    )
+                    .unwrap();
+                barrier.release.notify_one();
+            }
+        );
+        assert_eq!(
+            op.unwrap().phase,
+            WorkflowDebugPhase::Applied { revision: 1 }
+        );
+        assert_eq!(f.run_status(), WorkflowRunStatus::Failed);
+        let routes = payload(&f).iteration_condition_decisions;
+        assert_eq!(routes["gate#0"], before["gate#0"]);
+        assert!(!routes.contains_key("gate#1"));
+    });
+}
