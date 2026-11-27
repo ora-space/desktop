@@ -79,15 +79,15 @@ reported instead of changed.
 
 ## Node kinds
 
-| Kind               | Role                                                                                             |
-| ------------------ | ------------------------------------------------------------------------------------------------ |
-| `start`            | The entry; declares typed Start inputs and the default run instruction                           |
-| `agent`            | Prompts an agent session, see [Workflow runs](workflow-runs.md#agent-nodes)                      |
-| `condition`        | IF / ELSE IF / ELSE branching on typed comparisons                                               |
-| `aggregator`       | Passes the first assigned of several branch outputs through as one variable                      |
-| `output`           | Builds the run's result object                                                                   |
+| Kind | Role |
+|---|---|
+| `start` | The entry; declares typed Start inputs and the default run instruction |
+| `agent` | Prompts an agent session, see [Workflow runs](workflow-runs.md#agent-nodes) |
+| `condition` | IF / ELSE IF / ELSE branching on typed comparisons |
+| `aggregator` | Passes the first assigned of several branch outputs through as one variable |
+| `output` | Builds the run's result object |
 | `loop`, `loopExit` | Feedback containers and their explicit exit, see [Loops and iterations](loops-and-iterations.md) |
-| `iteration`        | Foreach container over an array                                                                  |
+| `iteration` | Foreach container over an array |
 
 The editor catalog also contains `tool`, `junction`, `human` and `subflow`. The run engine does not
 execute them: a reachable one fails publish or run start.
@@ -136,6 +136,7 @@ structured output, interactivity, retry and prompt inactivity. The runtime meani
   (including unavailable packages) are ambiguous. A plugin ID `namespace/identifier` resolves only
   when that plugin supplies exactly one Skill. Dependency reports and uninstall checks follow the
   same resolution rules as launch preflight; only enabled references count toward launch warnings.
+  Unavailable Skills block launch; unavailable MCPs remain informational.
   Reports check Ora's global library, so import project-local Skills on the Skills page first.
 - **MCP bindings**: `mcps: [{ mcpId, enabled }]`, where `mcpId` is the installed plugin id. Only
   enabled ids form the node Session's allowlist; no selection (including graphs without `mcps`) means
