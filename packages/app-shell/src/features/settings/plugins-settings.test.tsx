@@ -4113,6 +4113,77 @@ it("opens the member conflict report after installing a Pack from its detail pag
 });
 
 /**
+ * A report jump names one canonical id, so the manager must not also reveal an installed sibling
+ * whose id merely extends it as a prefix; clearing the box is the one action back to the full list.
+ */
+it("reveals only the target member's installed card when a sibling id extends it as a prefix", async () => {
+  const user = userEvent.setup();
+  const { state, client } = packClientWithWorkflowPackage();
+  const TARGET_MEMBER_ID = "official/ora-space.review";
+  const SIBLING_MEMBER_ID = `${TARGET_MEMBER_ID}.v2`;
+  state.pluginReadmes.set(PACK_ID, "# Python Extension Pack");
+  state.packMemberPlugins.set(PACK_ID, [
+    { ...packMember(TARGET_MEMBER_ID), kind: "workflow" },
+    packMember(SIBLING_MEMBER_ID),
+  ]);
+  state.installedWorkflows = [
+    {
+      state: "skipped_conflict",
+      pluginId: TARGET_MEMBER_ID,
+      sourceFile: "assets/workflows/1.0.0.json",
+      name: "发布流程",
+      knownConflict: false,
+    },
+  ];
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Python Extension Pack"));
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  const report = await screen.findByRole("dialog");
+  await user.click(
+    within(report).getByRole("button", {
+      name: `查看 ${TARGET_MEMBER_ID} 的已安装卡片`,
+    }),
+  );
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  const search = await screen.findByRole("textbox", { name: "搜索插件" });
+  expect(search).toHaveValue(TARGET_MEMBER_ID);
+  expect(await screen.findByText(TARGET_MEMBER_ID)).toBeVisible();
+  expect(screen.queryByText(SIBLING_MEMBER_ID)).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "重试导入未导入的文档" }),
+  ).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "清除搜索" }));
+  expect(search).toHaveValue("");
+  expect(await screen.findByText(SIBLING_MEMBER_ID)).toBeVisible();
+  expect(screen.getByText(TARGET_MEMBER_ID)).toBeVisible();
+});
+
+/** Typing the same prefix by hand keeps the fuzzy multi-field search, so both siblings stay listed. */
+it("keeps fuzzy search when the prefix is typed into the installed-plugin search box", async () => {
+  const user = userEvent.setup();
+  const { state, client } = packClientWithWorkflowPackage();
+  const PREFIX_MEMBER_ID = "official/ora-space.review";
+  state.installedPlugins = [
+    packMember(PREFIX_MEMBER_ID),
+    packMember(`${PREFIX_MEMBER_ID}.v2`),
+  ];
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  await user.type(
+    await screen.findByRole("textbox", { name: "搜索插件" }),
+    PREFIX_MEMBER_ID,
+  );
+
+  expect(await screen.findByText(PREFIX_MEMBER_ID)).toBeVisible();
+  expect(screen.getByText(`${PREFIX_MEMBER_ID}.v2`)).toBeVisible();
+});
+
+/**
  * When an upgrade opens the report for a first conflict, sibling known conflicts are listed as
  * still unresolved while deleted copies stay out of the "not imported" section and its count.
  */
