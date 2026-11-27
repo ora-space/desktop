@@ -54,6 +54,7 @@ import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-syn
 import { useMarketplaceSyncStore } from "../../state/stores/marketplace-sync-store";
 import { PluginLogo } from "./plugin-logo";
 import { PluginSourcesManager } from "./plugin-sources-manager";
+import type { InstalledPluginFilter } from "./filter-discovered-plugins";
 import { PluginManager } from "./plugin-manager";
 import { PluginReadmeView } from "./plugin-readme-view";
 import { PluginConfigurationEditor } from "./plugin-configuration-editor";
@@ -103,6 +104,12 @@ const MARKETPLACE_KIND_LABELS: Record<string, string> = {
   hook: "Hook",
 };
 
+/** The manager opens on the complete installed list; navigation replaces this with a target. */
+const EMPTY_MANAGER_FILTER: InstalledPluginFilter = {
+  kind: "search",
+  text: "",
+};
+
 /**
  * The plugin marketplace pane backed by the registry contract: the browse grid reads the
  * cached registry index, installs and lifecycle changes go through the backend commands,
@@ -139,7 +146,8 @@ export function PluginsSettings({
     initialRequest?.kind === "manage" || initialRequest?.kind === "configure",
   );
   const [managingSources, setManagingSources] = useState(false);
-  const [managerQuery, setManagerQuery] = useState("");
+  const [managerFilter, setManagerFilter] =
+    useState<InstalledPluginFilter>(EMPTY_MANAGER_FILTER);
   const [configurationPlugin, setConfigurationPlugin] = useState<{
     id: string;
     displayName: string;
@@ -301,7 +309,7 @@ export function PluginsSettings({
         return;
       case "manageMcp":
         setConfigurationPlugin(null);
-        setManagerQuery(dependency.id);
+        setManagerFilter({ kind: "locate", pluginId: dependency.id });
         setManaging(true);
         return;
       case "reviewSkill":
@@ -314,7 +322,7 @@ export function PluginsSettings({
   const openInstalledPlugin = (pluginId: string) => {
     setImportReport(null);
     setConfigurationPlugin(null);
-    setManagerQuery(pluginId);
+    setManagerFilter({ kind: "locate", pluginId });
     setManaging(true);
   };
 
@@ -409,7 +417,7 @@ export function PluginsSettings({
             displayName={configurationPlugin.displayName}
             onBack={() => {
               setConfigurationPlugin(null);
-              setManagerQuery("");
+              setManagerFilter(EMPTY_MANAGER_FILTER);
             }}
             onNavigationGuardChange={onNavigationGuardChange}
           />
@@ -420,8 +428,8 @@ export function PluginsSettings({
       <PluginsScroll>
         <PluginManager
           plugins={installed.data ?? []}
-          query={managerQuery}
-          onQueryChange={setManagerQuery}
+          filter={managerFilter}
+          onFilterChange={setManagerFilter}
           onBack={() => setManaging(false)}
           availableById={availableById}
           onImport={() => void handleImport()}
@@ -464,7 +472,7 @@ export function PluginsSettings({
             <DropdownMenuContent align="start" className="w-44">
               <DropdownMenuItem
                 onClick={() => {
-                  setManagerQuery("");
+                  setManagerFilter(EMPTY_MANAGER_FILTER);
                   setManaging(true);
                 }}
               >

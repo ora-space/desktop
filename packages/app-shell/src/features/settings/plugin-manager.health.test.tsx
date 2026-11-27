@@ -76,8 +76,8 @@ function renderManager(plugins: InstalledPlugin[], entries: McpHealthEntry[]) {
     <Wrapper>
       <PluginManager
         plugins={plugins}
-        query=""
-        onQueryChange={() => undefined}
+        filter={{ kind: "search", text: "" }}
+        onFilterChange={() => undefined}
         onBack={() => undefined}
         onConfigure={() => undefined}
         onImport={() => undefined}

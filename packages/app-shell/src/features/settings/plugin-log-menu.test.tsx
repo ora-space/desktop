@@ -50,8 +50,8 @@ function renderManager(
           <AppI18nProvider>
             <PluginManager
               plugins={plugins}
-              query=""
-              onQueryChange={() => undefined}
+              filter={{ kind: "search", text: "" }}
+              onFilterChange={() => undefined}
               onBack={() => undefined}
               onConfigure={() => undefined}
               onImport={() => undefined}
