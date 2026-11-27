@@ -270,9 +270,9 @@ export const pluginTranslations = {
     "settings.plugins.importReportMissingTitle":
       "{{count}} 项启用依赖尚未就绪。",
     "settings.plugins.importReportMissing":
-      "工作流已经导入。启动前请补齐缺失依赖、修复不可用项，或在编辑器中为歧义 Skill 指定来源。",
+      "工作流已经导入。启动前请补齐缺失依赖、修复不可用 Skill，或在编辑器中为歧义 Skill 指定来源。",
     "settings.plugins.importReportUnavailable":
-      "{{count}} 个插件已安装但当前不可用，运行前需要检查插件状态或配置。",
+      "{{count}} 个 MCP 已安装但当前不可用，请检查其状态或配置。",
     "settings.plugins.importReportReady":
       "所引用的 {{count}} 个插件都已安装，导入的工作流可以直接运行。",
     "settings.plugins.importReportNoReferences":
@@ -750,9 +750,9 @@ export const pluginTranslations = {
     "settings.plugins.importReportMissingTitle":
       "{{count}} enabled dependencies are not ready.",
     "settings.plugins.importReportMissing":
-      "The workflows are imported. Before starting, install missing dependencies, fix unavailable entries, or select a source for ambiguous Skills in the editor.",
+      "The workflows are imported. Before starting, install missing dependencies, fix unavailable Skills, or select a source for ambiguous Skills in the editor.",
     "settings.plugins.importReportUnavailable":
-      "{{count}} referenced plugin(s) are installed but unavailable. Check their status or configuration before running.",
+      "{{count}} MCP plugins are installed but unavailable. Check their status or configuration.",
     "settings.plugins.importReportReady":
       "Every referenced plugin ({{count}}) is installed, so the imported workflows can run right away.",
     "settings.plugins.importReportNoReferences":

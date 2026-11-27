@@ -472,7 +472,17 @@ function PreviewStage({
   const [version, setVersion] = useState(state.suggestedVersion ?? "");
   const [publish, setPublish] = useState(true);
   const blocked = dependencies.filter(
-    (dependency) => dependency.enabled && dependency.status !== "installed",
+    (dependency) =>
+      dependency.enabled &&
+      (dependency.status === "missing" ||
+        dependency.status === "ambiguous" ||
+        (dependency.kind === "skill" && dependency.status === "unavailable")),
+  ).length;
+  const unavailableMcps = dependencies.filter(
+    (dependency) =>
+      dependency.enabled &&
+      dependency.kind === "mcp" &&
+      dependency.status === "unavailable",
   ).length;
   const summary = summarizeWorkflowTransfer(workflow);
   const trimmedVersion = version.trim();
@@ -570,6 +580,12 @@ function PreviewStage({
               })}
             </b>
             {t("settings.workflow.transfer.missingWarning")}
+          </Banner>
+        ) : unavailableMcps > 0 ? (
+          <Banner tone="info" role="status">
+            {t("settings.workflow.transfer.unavailableWarning", {
+              total: unavailableMcps,
+            })}
           </Banner>
         ) : dependencies.some((dependency) => dependency.enabled) ? (
           <Banner tone="ok" role="status">

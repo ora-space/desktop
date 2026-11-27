@@ -369,8 +369,27 @@ function WorkflowImportDependencies({
 function ReportBanner({ report }: { report: WorkflowImportReport }) {
   const { t } = useTranslation();
   const { missing, unavailable, ambiguous, installed } = report.counts;
-  const blocked = missing + unavailable + ambiguous;
-  const total = blocked + installed;
+  const unavailableMcps = new Set(
+    report.workflows.flatMap((workflow) =>
+      (workflow.dependencies ?? [])
+        .filter(
+          (dependency) =>
+            dependency.enabled &&
+            dependency.kind === "mcp" &&
+            dependency.status === "unavailable",
+        )
+        .map((dependency) => dependency.id),
+    ),
+  ).size;
+  const blocked = missing + unavailable - unavailableMcps + ambiguous;
+  const total = blocked + unavailableMcps + installed;
+  const unavailableNotice = unavailableMcps > 0 && (
+    <Banner tone="info">
+      {t("settings.plugins.importReportUnavailable", {
+        count: unavailableMcps,
+      })}
+    </Banner>
+  );
   const unchecked = report.workflows.filter(
     (workflow) => workflow.dependencies === null,
   ).length;
@@ -389,6 +408,15 @@ function ReportBanner({ report }: { report: WorkflowImportReport }) {
           </b>
           {t("settings.plugins.importReportMissing")}
         </Banner>
+        {unavailableNotice}
+        {uncheckedNotice}
+      </>
+    );
+  }
+  if (unavailableMcps > 0) {
+    return (
+      <>
+        {unavailableNotice}
         {uncheckedNotice}
       </>
     );

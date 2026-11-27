@@ -1820,6 +1820,12 @@ it("reveals an invalid MCP from the report despite an existing manager search", 
   );
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("Broken MCP")).toBeVisible();
+  expect(
+    within(report).getByText(
+      "1 个 MCP 已安装但当前不可用，请检查其状态或配置。",
+    ),
+  ).toBeVisible();
+  expect(within(report).queryByText(/项启用依赖尚未就绪/)).toBeNull();
   await user.click(
     within(report).getByRole("button", { name: /去查看|Review/ }),
   );
@@ -1868,6 +1874,11 @@ it("sends an unavailable Skill to the Skills settings page", async () => {
   renderSettings(client, platformPickingWorkflowPackage());
 
   const report = await openImportReport(user);
+  expect(within(report).getByText("1 项启用依赖尚未就绪。")).toBeVisible();
+  expect(
+    within(report).getByText(/启动前请补齐缺失依赖、修复不可用 Skill/),
+  ).toBeVisible();
+  expect(within(report).queryByText(/个 MCP 已安装但当前不可用/)).toBeNull();
   expect(within(report).getAllByText("release-notes").length).toBeGreaterThan(
     0,
   );

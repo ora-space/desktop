@@ -2865,6 +2865,83 @@ describe("WorkflowEditor", () => {
       assertConverted();
     });
   });
+
+  it.each(["disabled", "unavailable-skill", "unavailable-mcp"] as const)(
+    "counts only launch blockers in the import preview (%s)",
+    async (scenario) => {
+      const user = userEvent.setup();
+      const state = createFixtureState();
+      state.installedPlugins.push({
+        id: "official/unavailable-mcp",
+        namespace: "official",
+        name: "unavailable-mcp",
+        displayName: "Unavailable MCP",
+        version: "1.0.0",
+        description: "",
+        homepage: null,
+        license: null,
+        kind: "mcp",
+        logo: null,
+        installationValidity: {
+          validity: "invalid_declaration",
+          errorCode: "invalid_manifest",
+        },
+        configuration: { state: "not_declared" },
+        runtime: "stopped",
+      });
+      renderEditor(undefined, state);
+      await screen.findByLabelText("工作流画布");
+      const imported = createMockWorkflow("zh-CN");
+      for (const node of imported.nodes)
+        if (node.data.agentConfig) {
+          node.data.agentConfig.skills = [];
+          node.data.agentConfig.mcps = [];
+        }
+      const agent = imported.nodes.find((node) => node.data.kind === "agent")!;
+      agent.data.agentConfig!.skills = [
+        { skillId: "openspec-explore", enabled: true },
+        { skillId: "missing-skill", enabled: scenario === "unavailable-skill" },
+        { skillId: "not-installed", enabled: false },
+      ];
+      agent.data.agentConfig!.mcps = [
+        {
+          mcpId: "official/unavailable-mcp",
+          enabled: scenario === "unavailable-mcp",
+        },
+      ];
+      fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+      await user.click(
+        await screen.findByRole("menuitem", { name: "导入工作流…" }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      await user.upload(
+        within(dialog).getByLabelText("拖入文件，或点击选择"),
+        new File([JSON.stringify(imported)], "readiness.json", {
+          type: "application/json",
+        }),
+      );
+      if (scenario === "disabled") {
+        expect(
+          await within(dialog).findByText(
+            "所有引用的插件都已安装，导入后可以直接运行。",
+          ),
+        ).toBeVisible();
+        expect(within(dialog).getAllByText("未安装").length).toBeGreaterThan(0);
+      } else if (scenario === "unavailable-skill") {
+        expect(
+          await within(dialog).findByText("1 项启用依赖尚未就绪。"),
+        ).toBeVisible();
+      } else {
+        expect(
+          await within(dialog).findByText(
+            "1 个 MCP 已安装但当前不可用，请检查其状态或配置。",
+          ),
+        ).toBeVisible();
+      }
+      if (scenario !== "unavailable-skill")
+        expect(within(dialog).queryByText(/项启用依赖尚未就绪/)).toBeNull();
+    },
+  );
 });
 
 describe("useCreateWorkflow", () => {
