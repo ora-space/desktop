@@ -1842,6 +1842,65 @@ it("reveals an invalid MCP from the report despite an existing manager search", 
   ).toHaveValue("official/mcp-broken");
 });
 
+/**
+ * The dependency jump names one MCP by id, so an installed package whose id merely extends it
+ * stays out of the list, exactly like a member link from the report.
+ */
+it("locates an invalid MCP by id from the report while another installed id extends it as a prefix", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  const BROKEN_MCP_ID = "official/mcp-broken";
+  state.importTarget = weatherInstalled();
+  state.installedPlugins.push(
+    {
+      ...weatherInstalled(),
+      id: BROKEN_MCP_ID,
+      name: "mcp-broken",
+      displayName: "Broken MCP",
+      kind: "mcp",
+      installationValidity: {
+        validity: "invalid_declaration",
+        errorCode: "invalid_manifest",
+      },
+    },
+    {
+      ...weatherInstalled(),
+      id: `${BROKEN_MCP_ID}-v2`,
+      name: "mcp-broken-v2",
+      displayName: "Broken MCP v2",
+      kind: "mcp",
+    },
+  );
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ mcps: [BROKEN_MCP_ID] }),
+  );
+  renderSettings(client, platformPickingWorkflowPackage());
+
+  const report = await openImportReport(user);
+  await user.click(
+    within(report).getByRole("button", { name: /去查看|Review/ }),
+  );
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(
+    screen.getByRole("textbox", { name: /搜索插件|Search plugins/ }),
+  ).toHaveValue(BROKEN_MCP_ID);
+  expect(screen.getByText(BROKEN_MCP_ID)).toBeVisible();
+  expect(screen.queryByText(`${BROKEN_MCP_ID}-v2`)).not.toBeInTheDocument();
+});
+
 /** An unusable Skill is reviewed on the Skills page, which this pane opens through Settings. */
 it("sends an unavailable Skill to the Skills settings page", async () => {
   const user = userEvent.setup();
@@ -4113,23 +4172,25 @@ it("opens the member conflict report after installing a Pack from its detail pag
 });
 
 /**
- * A report jump names one canonical id, so the manager must not also reveal an installed sibling
- * whose id merely extends it as a prefix; clearing the box is the one action back to the full list.
+ * Installs the Pack from its detail page and follows the report's link for `targetMemberId` into
+ * the installed manager. Every other id is a Pack member too, so the list behind the jump holds
+ * them all. Returns the manager's search box.
  */
-it("reveals only the target member's installed card when a sibling id extends it as a prefix", async () => {
-  const user = userEvent.setup();
+async function jumpFromPackReport(
+  user: ReturnType<typeof userEvent.setup>,
+  targetMemberId: string,
+  ...otherMemberIds: string[]
+) {
   const { state, client } = packClientWithWorkflowPackage();
-  const TARGET_MEMBER_ID = "official/ora-space.review";
-  const SIBLING_MEMBER_ID = `${TARGET_MEMBER_ID}-v2`;
   state.pluginReadmes.set(PACK_ID, "# Python Extension Pack");
   state.packMemberPlugins.set(PACK_ID, [
-    { ...packMember(TARGET_MEMBER_ID), kind: "workflow" },
-    packMember(SIBLING_MEMBER_ID),
+    { ...packMember(targetMemberId), kind: "workflow" },
+    ...otherMemberIds.map((id) => packMember(id)),
   ]);
   state.installedWorkflows = [
     {
       state: "skipped_conflict",
-      pluginId: TARGET_MEMBER_ID,
+      pluginId: targetMemberId,
       sourceFile: "assets/workflows/1.0.0.json",
       name: "发布流程",
       knownConflict: false,
@@ -4143,14 +4204,31 @@ it("reveals only the target member's installed card when a sibling id extends it
   const report = await screen.findByRole("dialog");
   await user.click(
     within(report).getByRole("button", {
-      name: `查看 ${TARGET_MEMBER_ID} 的已安装卡片`,
+      name: `查看 ${targetMemberId} 的已安装卡片`,
     }),
   );
-
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  const search = await screen.findByRole("textbox", { name: "搜索插件" });
-  expect(search).toHaveValue(TARGET_MEMBER_ID);
-  expect(await screen.findByText(TARGET_MEMBER_ID)).toBeVisible();
+  return screen.getByRole("textbox", { name: "搜索插件" });
+}
+
+/** The sibling fixture: one installed member whose id extends the target as a prefix. */
+const PREFIX_MEMBER_ID = "official/ora-space.review";
+const SIBLING_MEMBER_ID = `${PREFIX_MEMBER_ID}-v2`;
+
+/**
+ * A report jump names one canonical id, so the manager must not also reveal an installed sibling
+ * whose id merely extends it as a prefix; clearing the box is the one action back to the full list.
+ */
+it("reveals only the target member's installed card when a sibling id extends it as a prefix", async () => {
+  const user = userEvent.setup();
+  const search = await jumpFromPackReport(
+    user,
+    PREFIX_MEMBER_ID,
+    SIBLING_MEMBER_ID,
+  );
+
+  expect(search).toHaveValue(PREFIX_MEMBER_ID);
+  expect(await screen.findByText(PREFIX_MEMBER_ID)).toBeVisible();
   expect(screen.queryByText(SIBLING_MEMBER_ID)).toBeNull();
   expect(
     screen.getByRole("button", { name: "重试导入未导入的文档" }),
@@ -4159,28 +4237,59 @@ it("reveals only the target member's installed card when a sibling id extends it
   await user.click(screen.getByRole("button", { name: "清除搜索" }));
   expect(search).toHaveValue("");
   expect(await screen.findByText(SIBLING_MEMBER_ID)).toBeVisible();
-  expect(screen.getByText(TARGET_MEMBER_ID)).toBeVisible();
+  expect(screen.getByText(PREFIX_MEMBER_ID)).toBeVisible();
 });
 
-/** Typing the same prefix by hand keeps the fuzzy multi-field search, so both siblings stay listed. */
+/**
+ * Editing the box after a jump abandons the exact locate for an ordinary search: retyping the
+ * shared prefix lists both siblings again, and only them, because the list follows the typed text.
+ */
+it("returns to fuzzy search once the box is edited after a report jump", async () => {
+  const user = userEvent.setup();
+  const UNRELATED_MEMBER_ID = "official/ora-space.unrelated";
+  const search = await jumpFromPackReport(
+    user,
+    PREFIX_MEMBER_ID,
+    SIBLING_MEMBER_ID,
+    UNRELATED_MEMBER_ID,
+  );
+  expect(screen.queryByText(SIBLING_MEMBER_ID)).toBeNull();
+
+  await user.clear(search);
+  expect(await screen.findByText(UNRELATED_MEMBER_ID)).toBeVisible();
+  await user.type(search, PREFIX_MEMBER_ID);
+
+  expect(search).toHaveValue(PREFIX_MEMBER_ID);
+  expect(screen.getByText(PREFIX_MEMBER_ID)).toBeVisible();
+  expect(screen.getByText(SIBLING_MEMBER_ID)).toBeVisible();
+  expect(screen.queryByText(UNRELATED_MEMBER_ID)).not.toBeInTheDocument();
+});
+
+/**
+ * Typing the prefix by hand keeps the fuzzy multi-field search: both siblings stay listed while a
+ * member that does not match the text leaves the list.
+ */
 it("keeps fuzzy search when the prefix is typed into the installed-plugin search box", async () => {
   const user = userEvent.setup();
+  const UNRELATED_MEMBER_ID = "official/ora-space.unrelated";
   const { state, client } = packClientWithWorkflowPackage();
-  const PREFIX_MEMBER_ID = "official/ora-space.review";
   state.installedPlugins = [
     packMember(PREFIX_MEMBER_ID),
-    packMember(`${PREFIX_MEMBER_ID}-v2`),
+    packMember(SIBLING_MEMBER_ID),
+    packMember(UNRELATED_MEMBER_ID),
   ];
   renderSettings(client);
 
   await openManagePlugins(user);
+  expect(await screen.findByText(UNRELATED_MEMBER_ID)).toBeVisible();
   await user.type(
-    await screen.findByRole("textbox", { name: "搜索插件" }),
+    screen.getByRole("textbox", { name: "搜索插件" }),
     PREFIX_MEMBER_ID,
   );
 
-  expect(await screen.findByText(PREFIX_MEMBER_ID)).toBeVisible();
-  expect(screen.getByText(`${PREFIX_MEMBER_ID}-v2`)).toBeVisible();
+  expect(screen.getByText(PREFIX_MEMBER_ID)).toBeVisible();
+  expect(screen.getByText(SIBLING_MEMBER_ID)).toBeVisible();
+  expect(screen.queryByText(UNRELATED_MEMBER_ID)).not.toBeInTheDocument();
 });
 
 /**
