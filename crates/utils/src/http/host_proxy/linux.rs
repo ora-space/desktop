@@ -123,6 +123,43 @@ mod tests {
         );
     }
 
+    /// Real GNOME automatic mode remains an error even with a usable environment fallback.
+    #[test]
+    fn host_proxy_gnome_preserves_an_automatic_mode_error() {
+        const CHILD: &str = "ORA_TEST_GNOME_PROXY_AUTOMATIC_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            assert!(matches!(
+                super::super::HostProxy::system()
+                    .route(&"https://origin.example/".parse().unwrap()),
+                Err(HostProxyError::Automatic),
+            ));
+            return;
+        }
+        let profile = tempfile::tempdir().unwrap();
+        let settings = profile.path().join("glib-2.0").join("settings");
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::write(settings.join("keyfile"), "[system/proxy]\nmode='auto'\n").unwrap();
+        let name = format!(
+            "{}::host_proxy_gnome_preserves_an_automatic_mode_error",
+            module_path!()
+        );
+        let name = name.split_once("::").unwrap().1;
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name])
+            .env(CHILD, "1")
+            .env("XDG_CURRENT_DESKTOP", "GNOME")
+            .env("XDG_CONFIG_HOME", profile.path())
+            .env("GSETTINGS_BACKEND", "keyfile")
+            .env("https_proxy", "http://127.0.0.1:3128")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}"
+        );
+    }
+
     /// Exercises HTTP fallback, explicit HTTPS precedence and invalid ports through GSettings.
     #[test]
     fn host_proxy_gnome_https_follows_http_until_an_override_is_enabled() {

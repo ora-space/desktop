@@ -146,9 +146,14 @@ mod tests {
 
     /// Runs a real Git network operation against a fully controlled local endpoint.
     fn ls_remote_stderr(remote: &str, env: GitEnv, global_config: &Path) -> String {
+        git_network_stderr(["ls-remote", remote], env, global_config)
+    }
+
+    /// Runs a fixture Git command and returns the diagnostic from its failed HTTP operation.
+    fn git_network_stderr(args: [&str; 2], env: GitEnv, global_config: &Path) -> String {
         let command = GitCommand::new(
             global_config.parent().expect("config parent").to_path_buf(),
-            vec!["ls-remote".to_owned(), remote.to_owned()],
+            args.into_iter().map(str::to_owned).collect(),
             env.with_variable("GIT_CONFIG_GLOBAL", global_config.to_string_lossy())
                 .with_variable("GIT_CONFIG_NOSYSTEM", "1"),
             GitIntent::Network,
@@ -156,7 +161,7 @@ mod tests {
         .with_time_limit(Duration::from_secs(10));
         match CliGitRunner.run(&command) {
             Err(GitExecError::NonZeroExit { stderr, .. }) => stderr,
-            other => panic!("expected git ls-remote to fail, got {other:?}"),
+            other => panic!("expected Git to fail, got {other:?}"),
         }
     }
 
@@ -213,15 +218,24 @@ mod tests {
         let config = temp.path().join("gitconfig");
         let (endpoint, server) = serve_http_request(UNAVAILABLE.to_owned());
         let remote = format!("{endpoint}/marketplace.git");
+        assert!(
+            std::process::Command::new("git")
+                .arg("init")
+                .arg("--quiet")
+                .current_dir(temp.path())
+                .status()
+                .unwrap()
+                .success()
+        );
         std::fs::write(
             &config,
-            format!("[http \"{remote}\"]\n  proxy = http://127.0.0.1:1\n[remote \"origin\"]\n  proxy = http://127.0.0.1:1\n"),
+            format!("[http \"{remote}\"]\n  proxy = http://127.0.0.1:1\n[remote \"origin\"]\n  url = {remote}\n  proxy = http://127.0.0.1:1\n"),
         )
         .expect("git config");
         let env = git_proxy_env(&remote, &HostProxy::direct())
             .expect("direct env")
             .with_variable("http_proxy", "http://127.0.0.1:1");
-        let stderr = ls_remote_stderr(&remote, env, &config);
+        let stderr = git_network_stderr(["fetch", "origin"], env, &config);
         assert!(stderr.contains("503"), "{stderr}");
         let line = server.join().expect("fixture");
         assert!(
@@ -233,6 +247,43 @@ mod tests {
     /// Git follows a repository redirect without consulting a conflicting proxy on either hop.
     #[test]
     fn direct_marketplace_git_follows_initial_redirect() {
+        assert_marketplace_git_follows_redirect(&HostProxy::direct());
+    }
+
+    /// An operation with no effective system proxy can safely follow a Git redirect.
+    #[cfg(not(windows))]
+    #[test]
+    fn system_without_a_proxy_follows_initial_git_redirect() {
+        const CHILD: &str = "ORA_TEST_GIT_SYSTEM_NO_PROXY_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            assert_marketplace_git_follows_redirect(&HostProxy::system());
+            return;
+        }
+        let name = format!(
+            "{}::system_without_a_proxy_follows_initial_git_redirect",
+            module_path!()
+        );
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name.split_once("::").unwrap().1])
+            .env(CHILD, "1")
+            .env("XDG_CURRENT_DESKTOP", "fixture")
+            .env_remove("http_proxy")
+            .env_remove("HTTP_PROXY")
+            .env_remove("https_proxy")
+            .env_remove("HTTPS_PROXY")
+            .env_remove("all_proxy")
+            .env_remove("ALL_PROXY")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}"
+        );
+    }
+
+    /// Drives a real redirect with the selected policy and confirms both requests stay direct.
+    fn assert_marketplace_git_follows_redirect(policy: &HostProxy) {
         let temp = tempfile::tempdir().expect("temp dir");
         let config = temp.path().join("gitconfig");
         let (destination, final_request) = serve_http_request(UNAVAILABLE.to_owned());
@@ -244,7 +295,7 @@ mod tests {
         std::fs::write(&config, format!(
             "[http]\n  proxy = http://127.0.0.1:1\n[http \"{destination}\"]\n  proxy = http://127.0.0.1:1\n"
         )).expect("git config");
-        let env = git_proxy_env(&remote, &HostProxy::direct())
+        let env = git_proxy_env(&remote, policy)
             .expect("direct env")
             .with_variable("http_proxy", "http://127.0.0.1:1");
         let stderr = ls_remote_stderr(&remote, env, &config);

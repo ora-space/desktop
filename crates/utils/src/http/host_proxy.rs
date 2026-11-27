@@ -287,4 +287,25 @@ mod tests {
             ));
         }
     }
+
+    /// Applies configured bypass rules to the actual destination, without disabling the proxy.
+    #[test]
+    fn host_proxy_matches_the_system_bypass_list() {
+        let policy = HostProxy {
+            settings: Ok(StaticProxy {
+                default: Some("http://proxy.example:8080".to_owned()),
+                bypass: vec!["*.internal.example".to_owned(), "<local>".to_owned()],
+                ..StaticProxy::default()
+            }),
+            origin: ProxyOrigin::System,
+        };
+        for (target, origin) in [
+            ("https://service.internal.example", ProxyOrigin::Direct),
+            ("https://intranet", ProxyOrigin::Direct),
+            ("https://public.example", ProxyOrigin::System),
+        ] {
+            let route = policy.route(&target.parse().unwrap()).unwrap();
+            assert_eq!(route.origin, origin, "{target}");
+        }
+    }
 }
