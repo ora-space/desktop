@@ -29,15 +29,23 @@ pub async fn install_desktop_update(
 
 /// Completes a refused installation request and projects it for the webview.
 ///
-/// A release replaced between the confirmation and the installation is an expected race: the host
-/// has already published the replacement as ready, so it is a conflict the webview can ignore and
-/// the request log records at WARN, not a fault of Ora's own.
+/// A confirmation that went stale before the installation began is an expected race, not a fault of
+/// Ora's own: another release replaced the confirmed one, or nothing is ready any more because a
+/// check withdrew the release, discarded its package, or is still running, or an installation is
+/// already under way. The host has already published the state that replaced the confirmed one, so
+/// both are conflicts the webview can ignore and the request log records at WARN.
 pub(super) fn install_command_error(error: UpdateError) -> CommandError {
     let error = match error {
         UpdateError::ReleaseReplaced => BackendError::with_source(
             ErrorClassification::Conflict,
             PublicError::DesktopUpdateReleaseReplaced(EmptyErrorParams {}),
             "the confirmed Desktop update was replaced",
+            error,
+        ),
+        UpdateError::NoPendingUpdate => BackendError::with_source(
+            ErrorClassification::Conflict,
+            PublicError::DesktopUpdateNoPendingUpdate(EmptyErrorParams {}),
+            "the confirmed Desktop update is no longer ready",
             error,
         ),
         error => BackendError::internal("failed to install Desktop update", error),

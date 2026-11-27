@@ -349,6 +349,9 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("desktop_update_release_replaced"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("desktop_update_no_pending_update"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("skill_manifest_missing"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -771,6 +774,9 @@ export const contractErrorSchema = z.object({
         "params": openLocationFailedParamsSchema
     }), z.object({
         "code": z.literal("desktop_update_release_replaced"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("desktop_update_no_pending_update"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("skill_manifest_missing"),
