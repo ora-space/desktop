@@ -78,10 +78,10 @@ describe("filterDiscoveredPlugins", () => {
 });
 
 describe("filterInstalledPlugins", () => {
-  /** Two installed packages whose canonical ids differ only by a suffix. */
+  /** Two installed packages whose canonical ids differ only by a slug suffix. */
   const siblings: InstalledPlugin[] = [
     { ...plugins[0]!, id: "official/ora-space.review" },
-    { ...plugins[0]!, id: "official/ora-space.review.v2" },
+    { ...plugins[0]!, id: "official/ora-space.review-v2" },
   ];
 
   it("locates exactly the named plugin when a sibling id extends it as a prefix", () => {
@@ -99,7 +99,7 @@ describe("filterInstalledPlugins", () => {
         kind: "search",
         text: "official/ora-space.review",
       }).map((plugin) => plugin.id),
-    ).toEqual(["official/ora-space.review", "official/ora-space.review.v2"]);
+    ).toEqual(["official/ora-space.review", "official/ora-space.review-v2"]);
   });
 
   it("matches a located id case-insensitively, like search matches ids", () => {

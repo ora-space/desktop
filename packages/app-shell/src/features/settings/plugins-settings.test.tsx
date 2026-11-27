@@ -4120,7 +4120,7 @@ it("reveals only the target member's installed card when a sibling id extends it
   const user = userEvent.setup();
   const { state, client } = packClientWithWorkflowPackage();
   const TARGET_MEMBER_ID = "official/ora-space.review";
-  const SIBLING_MEMBER_ID = `${TARGET_MEMBER_ID}.v2`;
+  const SIBLING_MEMBER_ID = `${TARGET_MEMBER_ID}-v2`;
   state.pluginReadmes.set(PACK_ID, "# Python Extension Pack");
   state.packMemberPlugins.set(PACK_ID, [
     { ...packMember(TARGET_MEMBER_ID), kind: "workflow" },
@@ -4169,7 +4169,7 @@ it("keeps fuzzy search when the prefix is typed into the installed-plugin search
   const PREFIX_MEMBER_ID = "official/ora-space.review";
   state.installedPlugins = [
     packMember(PREFIX_MEMBER_ID),
-    packMember(`${PREFIX_MEMBER_ID}.v2`),
+    packMember(`${PREFIX_MEMBER_ID}-v2`),
   ];
   renderSettings(client);
 
@@ -4180,7 +4180,7 @@ it("keeps fuzzy search when the prefix is typed into the installed-plugin search
   );
 
   expect(await screen.findByText(PREFIX_MEMBER_ID)).toBeVisible();
-  expect(screen.getByText(`${PREFIX_MEMBER_ID}.v2`)).toBeVisible();
+  expect(screen.getByText(`${PREFIX_MEMBER_ID}-v2`)).toBeVisible();
 });
 
 /**
