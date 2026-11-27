@@ -373,25 +373,29 @@ mod reqwest_integration {
     /// A proxy's CONNECT authentication challenge is not reported as a successful probe.
     #[tokio::test]
     async fn host_proxy_probe_reports_connect_auth_failure() {
-        let response = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\n\r\n";
-        let (policy, proxy) = proxy_once("CONNECT origin.example:443 ", response.to_owned()).await;
-        let error = ReqwestDownloader::for_host_proxy(policy)
-            .probe(
-                Url::parse("https://origin.example").unwrap(),
-                std::time::Duration::from_secs(10),
-            )
-            .await
-            .unwrap_err();
-        tokio::time::timeout(std::time::Duration::from_secs(2), proxy)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(
-            error
-                .to_string()
-                .contains("proxy authentication failed (HTTP 407)"),
-            "{error}"
-        );
+        for version in ["HTTP/1.0", "HTTP/1.1"] {
+            let response = format!(
+                "{version} 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\n\r\n"
+            );
+            let (policy, proxy) = proxy_once("CONNECT origin.example:443 ", response).await;
+            let error = ReqwestDownloader::for_host_proxy(policy)
+                .probe(
+                    Url::parse("https://origin.example").unwrap(),
+                    std::time::Duration::from_secs(10),
+                )
+                .await
+                .unwrap_err();
+            tokio::time::timeout(std::time::Duration::from_secs(2), proxy)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                error
+                    .to_string()
+                    .contains("proxy authentication failed (HTTP 407)"),
+                "{error}"
+            );
+        }
     }
 
     /// An HTTP proxy response is classified like an HTTPS CONNECT challenge.

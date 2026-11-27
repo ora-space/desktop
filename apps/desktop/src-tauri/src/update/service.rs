@@ -330,29 +330,33 @@ mod proxy_tests {
     /// The same updater transport reports an actual CONNECT 407 as a proxy auth failure.
     #[tokio::test]
     async fn updater_client_classifies_connect_407() {
-        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let policy = HostProxy::manual(
-            format!("http://{}", proxy.local_addr().unwrap())
-                .parse()
-                .unwrap(),
-        );
-        let response = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\n\r\n";
-        let client = client_for(&policy);
-        let (request, result) = tokio::time::timeout(Duration::from_secs(5), async {
-            tokio::join!(
-                proxy_exchange(proxy, response.to_owned()),
-                client
-                    .get("https://manifest.example.test/update.json")
-                    .send()
-            )
-        })
-        .await
-        .unwrap();
-        assert!(request.starts_with("CONNECT manifest.example.test:443 "));
-        assert!(matches!(
-            network_update_error(result.unwrap_err().into()),
-            UpdateError::Proxy(HostProxyError::Authentication)
-        ));
+        for version in ["HTTP/1.0", "HTTP/1.1"] {
+            let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let policy = HostProxy::manual(
+                format!("http://{}", proxy.local_addr().unwrap())
+                    .parse()
+                    .unwrap(),
+            );
+            let response = format!(
+                "{version} 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\n\r\n"
+            );
+            let client = client_for(&policy);
+            let (request, result) = tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(
+                    proxy_exchange(proxy, response),
+                    client
+                        .get("https://manifest.example.test/update.json")
+                        .send()
+                )
+            })
+            .await
+            .unwrap();
+            assert!(request.starts_with("CONNECT manifest.example.test:443 "));
+            assert!(matches!(
+                network_update_error(result.unwrap_err().into()),
+                UpdateError::Proxy(HostProxyError::Authentication)
+            ));
+        }
         assert!(matches!(
             network_update_error(tauri_plugin_updater::Error::Network(
                 "Download request failed with status: 407 Proxy Authentication Required".to_owned()
