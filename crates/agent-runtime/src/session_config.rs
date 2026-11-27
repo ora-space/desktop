@@ -11,6 +11,9 @@ use tokio::time::timeout;
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     /// Applies one configuration option to a persisted session.
+    ///
+    /// Says only whether the agent made the change: its options reach every view through the
+    /// session's streams and `getSessionOptions`, the one source of them.
     pub async fn set_session_config(
         &self,
         request: SetSessionConfigRequest,
@@ -39,7 +42,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                 route.await.map_err(|_error| runtime_unavailable())??
             }
         };
-        let config_options = match route {
+        match route {
             // Giving up here does not withdraw the change: the agent may still make it, and the
             // actor adopts its answer then.
             ConfigChangeRoute::Asked { write, outcome } => {
@@ -48,7 +51,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                     .map_err(|_elapsed| agent_timed_out("agent configuration timed out"))??
             }
         };
-        Ok(SetSessionConfigResponse { config_options })
+        Ok(SetSessionConfigResponse {})
     }
 }
 
@@ -60,8 +63,9 @@ async fn answered(
     if let Some(write) = write {
         tokio::select! {
             biased;
-            // Its session went first, so the agent was never asked and is not asked any more.
-            _ = &mut outcome => return Err(runtime_unavailable()),
+            // Its provider session went first, so the agent was never asked and is not asked any
+            // more: as for a session with no provider, the choice is the next attach's intent.
+            _ = &mut outcome => return Err(session_stopped()),
             written = write => written?,
         }
     }
@@ -79,7 +83,7 @@ mod tests {
     #[tokio::test]
     async fn a_settled_change_is_not_written() {
         let (caller, outcome) = oneshot::channel();
-        caller.send(Ok(Vec::new())).unwrap();
+        caller.send(Ok(())).unwrap();
         let written = Arc::new(AtomicBool::new(false));
         let report = written.clone();
         let write = Box::pin(async move {

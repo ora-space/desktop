@@ -24,7 +24,7 @@ export function createScriptedChatSession(
         yield* script(request);
       },
       respondToSessionPermission: async () => ({}),
-      setSessionConfig: async () => ({ configOptions: [] }),
+      setSessionConfig: async () => ({}),
     } satisfies TestHandlers,
   };
 }

@@ -272,9 +272,11 @@ describe("ModelSelector for a session that has not attached", () => {
    * or shown — it lists what the agent can serve, not what this conversation is running.
    */
   it("configures the live session once it reports options of its own", async () => {
-    const { discover, setConfig, chatStore } = renderModelSelector(
-      selectPersistedSession,
-    );
+    const { discover, setConfig, chatStore } = renderModelSelector((state) => {
+      selectPersistedSession(state);
+      // Live: the read after the change finds its provider.
+      state.sessions[0]!.status = "running";
+    });
     act(() => {
       chatStore.getState().setConfigOptions("s1", [
         {
@@ -359,6 +361,46 @@ describe("ModelSelector for a session that lost its provider", () => {
       ).toEqual("opencode/small-pickle"),
     );
     expect(setConfig).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The provider can go between the pick and its arrival. The pick is then what the next attach
+   * applies, as if it had been made a moment later, and nothing is reported as failed.
+   */
+  it("records a pick that finds the provider gone as an intent", async () => {
+    const { setConfig, chatStore } = renderModelSelector(
+      selectPersistedSession,
+    );
+    act(() => {
+      chatStore.getState().setConfigOptions("s1", sessionOptions());
+    });
+    setConfig.mockRejectedValueOnce(
+      new RemoteContractError(
+        {
+          code: "session_stopped",
+          params: {},
+          requestId: "00000000-0000-4000-8000-000000000000",
+        },
+        null,
+      ),
+    );
+    const user = userEvent.setup();
+
+    await user.click(picker());
+    const menu = await screen.findByRole("menu");
+    await user.click(within(menu).getByText(/Session Other/));
+
+    await waitFor(() =>
+      expect(
+        usePendingAgentStore.getState().models[
+          `session:s1|agent:${AGENT_REF.opencode}`
+        ],
+      ).toEqual("session/other"),
+    );
+    expect(chatStore.getState().conversations.s1).toMatchObject({
+      providerLost: true,
+      error: null,
+    });
   });
 
   it("keeps naming the last model in a read-only picker", async () => {

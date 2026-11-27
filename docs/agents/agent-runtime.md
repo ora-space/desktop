@@ -146,16 +146,20 @@ turn locally until `startSession` returns.
   answers and the agent's own `config_option_update`s are taken in the order their frames were read
   from the connection, whether a turn, a title poll, an MCP refresh or session setup reads them, or
   none of these. It takes the answer before the caller gets it, so a view opened later sees the
-  options after the change. A caller stops waiting after 30 seconds; a later answer is still taken
-  while the provider session lasts, and shown by the turn that is running. An agent that does not read
-  holds up the caller, not the actor. Changes in flight do not wait for each other. A change whose
-  provider session goes before answering is settled then: it succeeds when the host gave the session
-  up (`Stop`, which is also how a switch or a deletion reaches the actor, a turn whose owner stopped
-  reading, or a rebuild, which leaves the caller on the replacement's options) and fails when the
-  agent was lost. A change the agent was never sent fails on `Stop` as well, because nothing asked
-  for it. A session that holds no provider has no options to change: setting one fails, and a model
-  chosen meanwhile is an intent applied at the next attach. Reasoning effort is read only from the
-  `thought_level` option a live session reports; there is no pre-session effort catalog.
+  options after the change. The call says only whether the agent made the change: what the agent left
+  the session on, which may differ from the choice, reaches views the way all options do: every stream
+  of the session gets it once the answer is taken, whether or not its caller is still waiting. A
+  caller stops waiting after 30 seconds; a later answer is still taken while the provider session
+  lasts, and shown by the turn that is running. An agent that does not read holds up the caller, not
+  the actor. Changes in flight do not wait for each other. A change whose provider session goes before
+  answering is settled then: it succeeds when the host gave the session up (`Stop`, which is also how
+  a switch or a deletion reaches the actor, a turn whose owner stopped reading, or a rebuild, whose
+  replacement's options reach the views) and fails when the agent was lost. A change the agent was
+  never sent fails on `Stop` as well, because nothing asked for it, and like a change asked of a
+  session with no provider it becomes an intent for the next attach. A session that holds no provider
+  has no options to change: setting one fails, and a model chosen meanwhile is an intent applied at
+  the next attach. Reasoning effort is read only from the `thought_level` option a live session
+  reports; there is no pre-session effort catalog.
 - **Option delivery.** Views hold copies of the options the actor holds. Every load, follow and prompt
   stream of a session with a provider starts with its current options, an empty list included, and
   carries each options frame the actor takes after that. Each one taken, whatever its value and
@@ -169,8 +173,15 @@ turn locally until `startSession` returns.
   noted one or the stream brought no options. Announcements can be lost, so a view reads the
   sessions on screen again each time it subscribes to application events. A view told the session
   has no provider keeps its last options for what they showed; its model picker records an intent,
-  its effort control withdraws, and a read-only picker keeps naming the last model. Node has no
-  picker and ignores the announcement.
+  its effort control withdraws, and a read-only picker keeps naming the last model; a pick that
+  finds the provider already gone becomes that intent too, without an error. The view that made a
+  change keeps it in progress until it knows the options after it: without a stream it reads once
+  the change is made, and only a read started from then counts; with one, options the stream
+  brought since the change was sent count, and otherwise the next ones, or the read once the
+  stream ends. A change that moved the model is marked in the transcript when it ends, once; a
+  model the agent changes on its own is not marked. Options a start or a switch answers with count
+  as one more read, and give way to newer ones a stream brought meanwhile. Node has no picker and
+  ignores the announcement.
 - **Stop and delete.** Explicit stop calls `session/close` when advertised, unloads the route and
   keeps provider history. Deletion is described in [Session history](session-history.md#deletion).
 

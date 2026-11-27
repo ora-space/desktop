@@ -48,7 +48,15 @@ export function sessionHandlers(state: SessionMemoryState) {
       state.sessions.push(session);
       return { session, availableCommands: [], configOptions };
     },
-    setSessionConfig: async () => ({ configOptions: state.configOptions }),
+    setSessionConfig: async () => ({}),
+    // A running session has a provider and is on the fixture's options; a stopped one has none.
+    getSessionOptions: async (req) => {
+      const session = state.sessions.find((s) => s.id === req.sessionId);
+      return {
+        configOptions:
+          session?.status === "running" ? state.configOptions : null,
+      };
+    },
     switchSessionAgent: async (req) => {
       const session = state.sessions.find(
         (candidate) => candidate.id === req.sessionId,

@@ -42,7 +42,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let mut changes = std::mem::take(&mut channel.config_changes);
         self.isolate_channel(channel).await;
         let mut setup = self.rebuild_provider_session(model.as_deref()).await?;
-        changes.accept(&self.reported_config_options);
+        changes.accept();
         // Commands usually arrive only after setup, and then replace this empty catalog.
         let reported = setup
             .iter()

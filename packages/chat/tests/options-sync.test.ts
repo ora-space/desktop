@@ -309,8 +309,16 @@ test("replaying an unfinished turn keeps a lost provider lost", async () => {
   const loading = store.getState().loadSession("ora-1");
   // Text is previewed once per frame.
   await new Promise<void>((resolve) => setTimeout(resolve, 25));
-  assert.equal(conversation()?.isResponding, true, "the unfinished turn is previewed");
-  assert.equal(conversation()?.providerLost, true, "the preview cleared providerLost");
+  assert.equal(
+    conversation()?.isResponding,
+    true,
+    "the unfinished turn is previewed",
+  );
+  assert.equal(
+    conversation()?.providerLost,
+    true,
+    "the preview cleared providerLost",
+  );
   ending.resolve();
   await loading;
 });

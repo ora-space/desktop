@@ -149,10 +149,11 @@ impl Driven {
         self.answer(request, json!({"configOptions":model("a")}));
     }
 
-    /// Has the agent answer the choice with model `a`, and returns what its caller is told.
+    /// Has the agent answer the choice with model `a`, and names the model the session is on once
+    /// its caller is told the change was made.
     async fn accept(&self, choice: Choice, request: &Value) -> Option<String> {
         self.answer_choice(request);
-        chosen(choice).await
+        chosen(self, choice).await
     }
 
     /// Opens the session.
@@ -170,9 +171,21 @@ impl Driven {
 /// A choice in flight.
 type Choice = tokio::task::JoinHandle<Result<SetSessionConfigResponse, crate::RuntimeError>>;
 
-/// Waits for a choice and names the model its caller is told.
-async fn chosen(choice: Choice) -> Option<String> {
-    crate::model_config::current_model(&choice.await.unwrap().unwrap().config_options)
+/// Waits for a choice to be made, and names the model the session is on then, as a view reads it.
+///
+/// The caller learns only that the change was made, and the session is already on what it left.
+async fn chosen(driven: &Driven, choice: Choice) -> Option<String> {
+    choice.await.unwrap().unwrap();
+    let options = driven
+        .fixture
+        .manager
+        .get_session_options(ora_contracts::GetSessionOptionsRequest {
+            session_id: SESSION.into(),
+        })
+        .await
+        .unwrap()
+        .config_options?;
+    crate::model_config::current_model(&options)
 }
 
 /// Reads the session state a load delivers, up to its end.
@@ -286,7 +299,7 @@ fn a_late_answer_does_not_describe_the_session_that_replaced_its_own() {
                 json!({"sessionId":"replacement", "configOptions":model("b")}),
             );
             let running = driven.asked("session/prompt").await;
-            assert_eq!(chosen(choice).await, Some("b".to_string()));
+            assert_eq!(chosen(&driven, choice).await, Some("b".to_string()));
 
             if mid_turn {
                 driven.answer_choice(&request);
@@ -534,7 +547,15 @@ fn a_session_stops_while_its_agent_reads_nothing() {
 
         let mut made = 0;
         for choice in choices {
-            made += usize::from(choice.await.unwrap().is_ok());
+            match choice.await.unwrap() {
+                Ok(_) => made += 1,
+                // Never asked of the agent, so it is the next attach's intent, like a change asked
+                // of a session without a provider.
+                Err(error) => assert_eq!(
+                    error.public_error(),
+                    &PublicError::SessionStopped(EmptyErrorParams {})
+                ),
+            }
         }
         // Those the agent was never asked for fail at once as well.
         assert!((1..asked_for).contains(&made), "{made}");
@@ -638,9 +659,9 @@ fn changes_in_flight_are_answered_in_any_order() {
         let (first, first_request) = driven.choose().await;
         let (second, second_request) = driven.choose().await;
         driven.answer(&second_request, json!({"configOptions":model("a")}));
-        assert_eq!(chosen(second).await, Some("a".to_string()));
+        assert_eq!(chosen(&driven, second).await, Some("a".to_string()));
         driven.answer(&first_request, json!({"configOptions":model("b")}));
-        assert_eq!(chosen(first).await, Some("b".to_string()));
+        assert_eq!(chosen(&driven, first).await, Some("b".to_string()));
         driven.end_turn(&running);
         assert_eq!(completion(&mut turn).await, StopReason::EndTurn);
 
@@ -687,7 +708,9 @@ fn a_change_answered_while_a_turn_is_cancelled_is_kept() {
             .unwrap();
         driven.asked("session/cancel").await;
 
-        assert_eq!(driven.accept(choice, &request).await, Some("a".to_string()));
+        // Settling the cancel reads no commands, so what the session is on is read after it.
+        driven.answer_choice(&request);
+        choice.await.unwrap().unwrap();
         driven.answer(&running, json!(PromptResponse::new(StopReason::Cancelled)));
         assert_eq!(completion(&mut turn).await, StopReason::Cancelled);
         assert_eq!(loaded(driven.load().await).await, on("a"));
@@ -780,7 +803,7 @@ fn a_change_written_late_is_answered() {
             driven.answer_choice(request);
         }
         for choice in stuck.into_iter().chain([choice]) {
-            assert_eq!(chosen(choice).await, Some("a".to_string()));
+            assert_eq!(chosen(&driven, choice).await, Some("a".to_string()));
         }
         drop(turn);
         driven.fixture.shutdown().await;
@@ -1281,6 +1304,42 @@ fn the_options_are_read_without_waiting_for_a_title_poll() {
             tokio::time::timeout(std::time::Duration::from_millis(1), read_options(&driven)).await;
         assert_eq!(read.ok(), Some(Some(on("b"))));
         drop(turn);
+        driven.fixture.shutdown().await;
+    });
+}
+
+/// A change whose caller is still waiting reaches the views of a running turn as soon as it is
+/// answered, not only once its caller has gone.
+#[test]
+fn an_answer_its_caller_awaits_reaches_the_views_of_a_turn() {
+    run_case(async {
+        let mut driven = Driven::new().await;
+        driven.fixture.add_session(SESSION);
+        let (mut turn, running) = driven.restored(model("b")).await;
+        let mut view = driven.load().await;
+        let (choice, request) = driven.choose().await;
+        driven.answer_choice(&request);
+        assert_eq!(chosen(&driven, choice).await, Some("a".to_string()));
+
+        driven.end_turn(&running);
+        let mut owned = Vec::new();
+        while let Some(event) = turn.recv().await {
+            match event.unwrap() {
+                PromptSessionEvent::SessionUpdate { update, .. } => owned.extend(state(update)),
+                PromptSessionEvent::Completed { .. } => break,
+                unexpected => panic!("unexpected prompt event: {unexpected:?}"),
+            }
+        }
+        let mut followed = Vec::new();
+        while let Some(event) = view.recv().await {
+            if let LoadSessionEvent::SessionUpdate { update, .. } = event.unwrap() {
+                followed.extend(state(update));
+            }
+        }
+
+        assert_eq!(owned, [on("b"), on("a")].concat(), "prompt stream");
+        assert_eq!(followed, [on("b"), on("a")].concat(), "follower");
+        drop((turn, view));
         driven.fixture.shutdown().await;
     });
 }

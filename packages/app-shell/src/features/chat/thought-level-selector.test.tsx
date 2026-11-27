@@ -211,25 +211,27 @@ async function sliderThumb() {
 function deferredProvider() {
   const pending: Array<{
     value: string;
-    resolve: (response: { configOptions: acp.SessionConfigOption[] }) => void;
+    resolve: (response: Record<string, never>) => void;
     reject: (error: Error) => void;
   }> = [];
+  // What the agent is on, which a view reads once a change is made.
+  let applied = "high";
   return {
     handlers: {
       setSessionConfig: (request) =>
         new Promise((resolve, reject) => {
           pending.push({ value: request.value, resolve, reject });
         }),
+      getSessionOptions: async () => ({
+        configOptions: [MODEL_OPTION, thoughtLevelOption(LEVELS, applied)],
+      }),
     } satisfies Partial<TestHandlers>,
     pending: () => [...pending],
     answer: async () => {
       const next = pending.shift();
       if (next === undefined) throw new Error("no request to answer");
-      await act(async () =>
-        next.resolve({
-          configOptions: [MODEL_OPTION, thoughtLevelOption(LEVELS, next.value)],
-        }),
-      );
+      applied = next.value;
+      await act(async () => next.resolve({}));
     },
     fail: async () => {
       const next = pending.shift();
@@ -660,8 +662,11 @@ describe("ThoughtLevelSelector selection", () => {
 
   /** Releasing on the level already in effect is not a change and sends nothing. */
   it("sends nothing when released on the current level", async () => {
+    // The first change is still in progress when the thumb comes back.
+    const provider = deferredProvider();
     const { chatStore, setConfig } = renderThoughtLevelSelector(
       selectPersistedSession,
+      provider.handlers,
     );
     act(() =>
       chatStore
