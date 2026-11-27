@@ -93,7 +93,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.transfer.missingWarning":
       "仍可导入并编辑；启动前请补齐缺失依赖、修复不可用 Skill，或为歧义 Skill 指定来源。",
     "settings.workflow.transfer.unavailableWarning":
-      "{{total}} 个 MCP 已安装但当前不可用，请检查其状态或配置。",
+      "{{total}} 个 MCP 已安装但当前不可用。启动不受影响，但运行到使用它的节点时会失败，请检查其状态或配置。",
     "settings.workflow.transfer.allInstalled":
       "所有引用的插件都已安装，导入后可以直接运行。",
     "settings.workflow.transfer.dependencies": "插件依赖",
@@ -715,7 +715,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.transfer.missingWarning":
       "You can still import and edit. Before starting, install missing dependencies, fix unavailable Skills, or select a source for ambiguous Skills.",
     "settings.workflow.transfer.unavailableWarning":
-      "{{total}} MCP plugins are installed but unavailable. Check their status or configuration.",
+      "{{total}} MCP plugins are installed but unavailable. Launch is unaffected, but nodes using them will fail when reached. Check their status or configuration.",
     "settings.workflow.transfer.allInstalled":
       "Every referenced plugin is installed, so the workflow can run right after import.",
     "settings.workflow.transfer.dependencies": "Plugin dependencies",
