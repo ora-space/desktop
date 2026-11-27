@@ -7,7 +7,11 @@ import {
   type PromptSessionEvent,
   RemoteContractError,
 } from "@ora/contracts";
-import { createChatStore, type ChatSessionClient } from "../src/index.ts";
+import {
+  createChatStore,
+  type ChatSessionClient,
+  type SessionConversation,
+} from "../src/index.ts";
 
 /** Names the model a session is on. */
 function onModel(current: string): acp.SessionConfigOption[] {
@@ -237,6 +241,15 @@ test("a model the agent changes on its own, with no change in flight, is not mar
 
 test("options a start or a switch answered with give way to newer ones a stream brought", async () => {
   const { store, conversation, streams } = await session();
+  store.setState((state) => ({
+    conversations: {
+      ...state.conversations,
+      "ora-1": {
+        ...state.conversations["ora-1"]!,
+        diagnostics: {} as NonNullable<SessionConversation["diagnostics"]>,
+      },
+    },
+  }));
   const fetchedFrom = store.getState().optionsFetchedFrom("ora-1");
   streams(async function* () {
     yield optionsEvent(onModel("smart"));
@@ -253,6 +266,11 @@ test("options a start or a switch answered with give way to newer ones a stream 
     context: { status: "awaiting_report" },
     lastTurnTokens: { status: "awaiting_completion" },
   });
+  assert.equal(
+    conversation().diagnostics,
+    undefined,
+    "diagnostics start over too",
+  );
   // With nothing newer meanwhile, the answer is taken.
   store
     .getState()

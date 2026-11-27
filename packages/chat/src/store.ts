@@ -239,6 +239,8 @@ interface OptionsSync {
   changeBaseline: acp.SessionConfigOption[] | null;
   /** The mark the changes in flight left, which the next one to end replaces or withdraws. */
   changeMarker: string | null;
+  /** A mark from before the changes in flight that theirs replaced, put back if they withdraw it. */
+  replacedMarker: ChatModelChange | null;
 }
 
 /** A change waiting to learn the options it left the session on. */
@@ -281,6 +283,7 @@ export function createChatStore(
         changesInFlight: 0,
         changeBaseline: null,
         changeMarker: null,
+        replacedMarker: null,
       };
       optionsSync.set(oraSessionId, sync);
     }
@@ -481,21 +484,38 @@ export function createChatStore(
     sync: OptionsSync,
     conversation: SessionConversation,
   ): ChatModelChange[] => {
-    const left = conversation.modelChanges.filter(
+    // The marks as if these changes had left none: theirs out, any they replaced back.
+    const theirsOut = conversation.modelChanges.filter(
       (change) => change.id !== sync.changeMarker,
     );
+    const unmarked =
+      sync.replacedMarker === null ||
+      theirsOut.some((change) => change.id === sync.replacedMarker?.id)
+        ? theirsOut
+        : [...theirsOut, sync.replacedMarker];
     const marked = recordModelChange(
       {
         ...conversation,
         configOptions: sync.changeBaseline ?? conversation.configOptions,
-        modelChanges: left,
+        modelChanges: unmarked,
       },
       conversation.configOptions,
       createId,
       now(),
       conversation.turns.length,
     );
-    sync.changeMarker = marked === left ? null : (marked.at(-1)?.id ?? null);
+    if (marked === unmarked) {
+      // Back on the baseline's model: only these changes' own mark goes.
+      sync.changeMarker = null;
+      sync.replacedMarker = null;
+      return unmarked;
+    }
+    const mark = marked.at(-1) ?? null;
+    const newest = unmarked.at(-1);
+    // A mark at the same point is replaced; it is remembered so withdrawing can put it back.
+    if (newest !== undefined && !marked.includes(newest))
+      sync.replacedMarker = newest;
+    sync.changeMarker = mark?.id ?? null;
     return marked;
   };
 
@@ -553,6 +573,7 @@ export function createChatStore(
         sync.changeBaseline =
           get().conversations[oraSessionId]?.configOptions ?? [];
         sync.changeMarker = null;
+        sync.replacedMarker = null;
       }
       sync.changesInFlight += 1;
       try {

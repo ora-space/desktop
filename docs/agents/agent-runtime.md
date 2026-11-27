@@ -155,7 +155,8 @@ turn locally until `startSession` returns.
   answering is settled then: it succeeds when the host gave the session up (`Stop`, which is also how
   a switch or a deletion reaches the actor, a turn whose owner stopped reading, or a rebuild, whose
   replacement's options reach the views) and fails when the agent was lost. A change the agent was
-  never sent fails on `Stop` as well, because nothing asked for it. A session that holds no provider
+  never sent fails on `Stop` as well, because nothing asked for it, and like a change asked of a
+  session with no provider it becomes an intent for the next attach. A session that holds no provider
   has no options to change: setting one fails, and a model chosen meanwhile is an intent applied at
   the next attach. Reasoning effort is read only from the `thought_level` option a live session
   reports; there is no pre-session effort catalog.

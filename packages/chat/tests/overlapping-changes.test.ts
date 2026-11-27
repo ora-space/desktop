@@ -168,3 +168,81 @@ test("overlapping changes are marked against the options before the first of the
     "back on the model they started from",
   );
 });
+
+/** The models the transcript is marked as having switched to, oldest first. */
+function marks(conversation: { modelChanges: { modelName: string }[] }) {
+  return conversation.modelChanges.map((change) => change.modelName);
+}
+
+test("a group that comes back to its baseline leaves the mark of an earlier change in place", async () => {
+  const { store, read, conversation } = harness(async function* () {
+    yield optionsEvent(onModel("fast"));
+    yield { type: "completed", stopReason: "end_turn" } as const;
+  });
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hi" });
+  const earlier = store.getState().setSessionConfig("ora-1", "model", "smart");
+  await flushed();
+  await read(onModel("smart"));
+  await earlier;
+  assert.deepEqual(marks(conversation()), ["Smart"]);
+
+  // Back to Fast and on to Smart again, the second asked before the first ends.
+  const first = store.getState().setSessionConfig("ora-1", "model", "fast");
+  const second = store.getState().setSessionConfig("ora-1", "model", "smart");
+  await flushed();
+  await read(onModel("fast"));
+  await first;
+  await read(onModel("smart"));
+  await second;
+
+  assert.deepEqual(marks(conversation()), ["Smart"], "as if picked one by one");
+});
+
+test("three changes in flight are marked once, against the options before the first", async () => {
+  const { store, read, conversation } = harness(async function* () {
+    yield optionsEvent(onModel("fast"));
+    yield { type: "completed", stopReason: "end_turn" } as const;
+  });
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hi" });
+  const changes = ["smart", "fast", "smart"].map((model) =>
+    store.getState().setSessionConfig("ora-1", "model", model),
+  );
+  await flushed();
+  // The first is told by one read; the other two, made during it, by the read after.
+  await read(onModel("fast"));
+  await read(onModel("smart"));
+  await Promise.all(changes);
+
+  assert.deepEqual(marks(conversation()), ["Smart"]);
+});
+
+test("a change that fails still ends its group, and the next group takes its own baseline", async () => {
+  let calls = 0;
+  const { store, read, conversation } = harness(
+    async function* () {
+      yield optionsEvent(onModel("fast"));
+      yield { type: "completed", stopReason: "end_turn" } as const;
+    },
+    async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("agent unreachable");
+      return {};
+    },
+  );
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hi" });
+  const failing = store.getState().setSessionConfig("ora-1", "model", "smart");
+  const made = store.getState().setSessionConfig("ora-1", "model", "smart");
+  await assert.rejects(failing);
+  await flushed();
+  await read(onModel("smart"));
+  await made;
+  assert.deepEqual(marks(conversation()), ["Smart"]);
+
+  // A new group, so measured against Smart, not the Fast the earlier group started from.
+  const back = store.getState().setSessionConfig("ora-1", "model", "fast");
+  await flushed();
+  await read(onModel("fast"));
+  await back;
+
+  assert.deepEqual(marks(conversation()), ["Fast"]);
+});
