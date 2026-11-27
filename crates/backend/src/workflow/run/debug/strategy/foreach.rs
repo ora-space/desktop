@@ -137,6 +137,27 @@ pub(super) fn restore(
     payload
         .iteration_ledger
         .retain(|node, _| node == owner || !affected.contains(node));
+    if first.is_none() {
+        let declarations = ora_application::WorkflowVariablePool::from_graph(graph).catalog;
+        payload.variable_pool.catalog.extend(
+            declarations
+                .into_iter()
+                .filter(|(_, decl)| affected.contains(&decl.writer)),
+        );
+    }
+    payload.iteration_condition_decisions.retain(|key, _| {
+        let Some((node, i)) = key
+            .rsplit_once('#')
+            .and_then(|(n, i)| Some((n, i.parse::<u32>().ok()?)))
+        else {
+            return true;
+        };
+        if graph.region_owner(node) == Some(owner) {
+            first.is_some_and(|start| i < start || i == start && !member_tail.contains(node))
+        } else {
+            !affected.contains(node)
+        }
+    });
     let running: bool = tx.query_row(
         "SELECT run_status=?2 FROM workflow_runs WHERE id=?1",
         (&run, WorkflowRunStatus::Running.database_value()),
@@ -148,14 +169,6 @@ pub(super) fn restore(
             [&run, &serde_json::to_string(&payload)?],
         )?;
         return Ok(());
-    }
-    if first.is_none() {
-        let declarations = ora_application::WorkflowVariablePool::from_graph(graph).catalog;
-        payload.variable_pool.catalog.extend(
-            declarations
-                .into_iter()
-                .filter(|(_, decl)| affected.contains(&decl.writer)),
-        );
     }
     for (key, decl) in &payload.variable_pool.catalog {
         if !affected.contains(&decl.writer) {
@@ -178,19 +191,6 @@ pub(super) fn restore(
     payload
         .condition_decisions
         .retain(|n, _| !affected.contains(n));
-    payload.iteration_condition_decisions.retain(|key, _| {
-        let Some((node, i)) = key
-            .rsplit_once('#')
-            .and_then(|(n, i)| Some((n, i.parse::<u32>().ok()?)))
-        else {
-            return true;
-        };
-        if graph.region_owner(node) == Some(owner) {
-            first.is_some_and(|start| i < start || i == start && !member_tail.contains(node))
-        } else {
-            !affected.contains(node)
-        }
-    });
     tx.execute(
         "UPDATE workflow_runs SET payload=?2 WHERE id=?1",
         [&run, &serde_json::to_string(&payload)?],

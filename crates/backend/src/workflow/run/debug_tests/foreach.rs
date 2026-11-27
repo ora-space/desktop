@@ -10,17 +10,23 @@ use pretty_assertions::assert_eq;
 fn foreach_debug_preserves_a_run_that_failed_while_the_member_was_stopping() {
     run_test(async {
         let (temp, pool) = bootstrap();
-        let config = json!({"executor":{"agentCli":"c","modelId":"m"},"prompt":"run","retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0}});
-        let graph=json!({"nodes":[{"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
+        let config = json!({"executor":{"agentCli":"c","modelId":"m"},"prompt":"run","outputContract":{"type":"structured","textExposure":"includeFinalText","schema":{"type":"object"}},"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0}});
+        let graph=json!({"nodes":[{"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"},{"name":"objects","valueType":"array[object]"}]}},
             {"id":"iter","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["start","items"],"collectSelector":["member","output"],"errorStrategy":"continue"}}},
             {"id":"member","parentId":"iter","data":{"kind":"agent","agentConfig":config}},
-            {"id":"sibling","data":{"kind":"agent","agentConfig":config}}],"edges":[{"source":"start","target":"iter"},{"source":"start","target":"sibling"},{"source":"iter","target":"member"}]}).to_string();
+            {"id":"next","data":{"kind":"iteration","iterationConfig":{"iteratorSelector":["iter","output"],"collectSelector":["consumer","output"],"errorStrategy":"fail"}}},
+            {"id":"consumer","parentId":"next","data":{"kind":"agent","agentConfig":config}},
+            {"id":"sibling","data":{"kind":"agent","agentConfig":config}}],"edges":[{"source":"start","target":"iter"},{"source":"start","target":"sibling"},{"source":"iter","target":"member"},{"source":"iter","target":"next"},{"source":"next","target":"consumer"}]}).to_string();
         let run = seeded_pending_run(&temp, &pool, &graph);
         let repo = SqliteWorkflowRunEngineRepository::new(pool.clone());
         repo.update_run_input(
             &run,
             None,
-            [("items".into(), json!(["one", "two"]))].into(),
+            [
+                ("items".into(), json!(["one", "two"])),
+                ("objects".into(), json!([{"input":1}])),
+            ]
+            .into(),
             35,
         )
         .unwrap();
@@ -64,7 +70,7 @@ fn foreach_debug_preserves_a_run_that_failed_while_the_member_was_stopping() {
         };
         repo.bind_node_run_session(id("member"), &SessionId::new("session-1"), 50)
             .unwrap();
-        let preview=coordinator.preview(serde_json::from_value(json!({"runId":run.as_ref(),"nodeRunId":id("iter").as_ref(),"baseRevision":0,"patch":[{"op":"replace","path":"/iterationConfig/errorStrategy","value":"fail"}]})).unwrap()).unwrap();
+        let preview=coordinator.preview(serde_json::from_value(json!({"runId":run.as_ref(),"nodeRunId":id("iter").as_ref(),"baseRevision":0,"patch":[{"op":"replace","path":"/iterationConfig/errorStrategy","value":"fail"},{"op":"replace","path":"/iterationConfig/iteratorSelector","value":["start","objects"]},{"op":"replace","path":"/iterationConfig/collectSelector","value":["member","structured_output"]}]})).unwrap()).unwrap();
         assert_eq!(preview.impact.stop, vec![id("member").to_string()]);
         let request = CommitWorkflowDebugRequest {
             run_id: run.to_string(),
@@ -104,7 +110,7 @@ fn foreach_debug_preserves_a_run_that_failed_while_the_member_was_stopping() {
             serde_json::from_str(after.payload.as_deref().unwrap()).unwrap();
         assert!(prior.iteration_ledger.contains_key("iter"));
         assert!(!result.iteration_ledger.contains_key("iter"));
-        assert_eq!(result.variable_pool, prior.variable_pool);
+        assert_eq!(result.variable_pool.values, prior.variable_pool.values);
         let current = node_runs(&pool, &run);
         assert!(
             current
@@ -113,6 +119,56 @@ fn foreach_debug_preserves_a_run_that_failed_while_the_member_was_stopping() {
         );
         assert!(current.iter().any(|r| r.id == *id("sibling")));
         assert_eq!(dispatched(&exec, "member"), 2);
+        assert_eq!(
+            engine.resume_from_failure(&run).unwrap(),
+            ora_application::ResumeWorkflowRunResult::Resumed
+        );
+        let running = |name| {
+            node_runs(&pool, &run)
+                .into_iter()
+                .find(|r| r.node_id == name && r.status == WorkflowNodeStatus::Running)
+                .unwrap()
+        };
+        let values = || {
+            serde_json::from_str::<WorkflowRunPayload>(load().payload.as_deref().unwrap())
+                .unwrap()
+                .variable_pool
+                .values
+        };
+        assert_eq!(values()["iter.item"], json!({"input":1}));
+        engine
+            .complete_node(
+                &run,
+                &running("member").id,
+                Some("text".into()),
+                Some(json!({"result":7})),
+                None,
+                vec![],
+            )
+            .unwrap();
+        assert_eq!(values()["next.item"], json!({"result":7}));
+        engine
+            .complete_node(
+                &run,
+                &running("consumer").id,
+                Some("done".into()),
+                None,
+                None,
+                vec![],
+            )
+            .unwrap();
+        engine
+            .complete_node(
+                &run,
+                &running("sibling").id,
+                Some("recovered".into()),
+                None,
+                None,
+                vec![],
+            )
+            .unwrap();
+        assert_eq!(load().status, WorkflowRunStatus::Succeeded);
+        assert_eq!(values()["next.output"], json!(["done"]));
     });
 }
 
