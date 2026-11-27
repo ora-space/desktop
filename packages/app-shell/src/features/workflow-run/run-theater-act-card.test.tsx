@@ -646,6 +646,40 @@ describe("RunTheaterActCard conversation", () => {
     expect(screen.queryByText("已暂停")).toBeNull();
   });
 
+  it("dismisses an open force confirmation when the displayed attempt is replaced", async () => {
+    const card = (nodeRunId: string) => (
+      <RunTheaterActCard
+        data={INTERACTIVE_NODE_DATA}
+        runId="run-1"
+        nodeId="review"
+        state={{
+          nodeRunId,
+          status: "awaiting_input",
+          sessionId: "session-1",
+          completion: {
+            ready: false,
+            needsConfirmation: false,
+            provisional: false,
+            blockers: [{ kind: "turn_stopped", params: {} }],
+            warnings: [],
+          },
+        }}
+        conversation={CONVERSATION}
+        live
+      />
+    );
+    const user = userEvent.setup();
+    const view = render(card("old-attempt"), {
+      wrapper: createSessionWrapper(),
+    });
+    await user.click(screen.getByRole("button", { name: "查看节点会话" }));
+    await user.click(screen.getByTestId("force-complete-node"));
+    expect(screen.getByTestId("confirm-force-complete")).toBeInTheDocument();
+    view.rerender(card("replacement"));
+    expect(screen.queryByTestId("confirm-force-complete")).toBeNull();
+    expect(screen.getByTestId("force-complete-node")).toBeInTheDocument();
+  });
+
   it("keeps the session dock available while HITL interaction owns the footer", async () => {
     const user = userEvent.setup();
     render(

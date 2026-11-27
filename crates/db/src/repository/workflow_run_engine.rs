@@ -55,11 +55,33 @@ impl SqliteWorkflowRunEngineRepository {
         Self { pool }
     }
 
+    /// Includes retired rows when proving a node-only request has just one possible attempt.
+    pub fn unique_completion_attempt(
+        &self,
+        run: &WorkflowRunId,
+        node: &str,
+    ) -> Result<Option<WorkflowNodeRunId>, RepositoryError> {
+        self.pool
+            .with_connection(|db| {
+                let id: Option<String> = db
+                    .query_row(
+                        "SELECT MIN(id) FROM workflow_node_runs
+                 WHERE run_id = ?1 AND node_id = ?2
+                 HAVING COUNT(*) = 1 AND MAX(is_deleted) = 0",
+                        params![run.as_ref(), node],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                Ok(id.map(WorkflowNodeRunId::new))
+            })
+            .map_err(RepositoryError::new)
+    }
+
     /// Repairs one awaiting node's payload without changing its status.
     ///
     /// This is the `prepare`-time repair/materialize write: it only applies while the row is still
-    /// `Pending`, so a completion or cancel that won the race cannot have its terminal payload
-    /// rewritten by a stale snapshot. The single guarded statement keeps existing payload keys
+    /// `Pending` and outside a held debug fence. Checking both in the UPDATE prevents a stale
+    /// preparation from changing an attempt after quiescence begins. It keeps existing payload keys
     /// intact and reports whether it actually wrote anything.
     pub fn repair_node_payload(
         &self,
@@ -74,7 +96,10 @@ impl SqliteWorkflowRunEngineRepository {
                     "UPDATE workflow_node_runs
                      SET payload = json_patch(COALESCE(NULLIF(payload, ''), '{}'), ?2),
                          updated_at = ?3
-                     WHERE id = ?1 AND status = ?4 AND is_deleted = 0",
+                     WHERE id = ?1 AND status = ?4 AND is_deleted = 0
+                       AND NOT EXISTS (
+                           SELECT 1 FROM workflow_debug_boot_protected WHERE id = ?1
+                       )",
                     params![
                         node_run_id.as_ref(),
                         patch,

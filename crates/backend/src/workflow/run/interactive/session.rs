@@ -840,6 +840,8 @@ mod tests {
                     &completing,
                     &run_id,
                     "agent",
+                    None,
+                    &super::super::completion::CompletionApproval::PLAIN,
                 )
                 .is_ok()
             );
@@ -851,6 +853,8 @@ mod tests {
                     &completing,
                     &run_id,
                     "agent",
+                    None,
+                    &super::super::completion::CompletionApproval::PLAIN,
                 )
                 .is_err(),
                 "a second claim against the same awaiting node must be rejected"

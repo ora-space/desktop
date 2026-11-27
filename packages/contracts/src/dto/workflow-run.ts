@@ -20,6 +20,10 @@ export type CommitWorkflowDebugRequest = {
  * Identifies the awaiting interactive node to complete.
  */
 export type CompleteWorkflowNodeRequest = {
+  /**
+   * Attempt displayed when the user confirmed. Legacy callers may omit it for an unreplaced, unique attempt.
+   */
+  nodeRunId?: string;
   runId: string;
   nodeId: string;
   /**
