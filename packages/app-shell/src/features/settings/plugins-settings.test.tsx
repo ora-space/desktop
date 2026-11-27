@@ -4292,6 +4292,24 @@ it("keeps fuzzy search when the prefix is typed into the installed-plugin search
   expect(screen.queryByText(UNRELATED_MEMBER_ID)).not.toBeInTheDocument();
 });
 
+/** The clear button leaves with the text it cleared, so focus goes back to the box, not the body. */
+it("returns focus to the search box when the clear button is used from the keyboard", async () => {
+  const user = userEvent.setup();
+  const search = await jumpFromPackReport(
+    user,
+    PREFIX_MEMBER_ID,
+    SIBLING_MEMBER_ID,
+  );
+
+  const clear = screen.getByRole("button", { name: "清除搜索" });
+  clear.focus();
+  await user.keyboard("{Enter}");
+
+  expect(search).toHaveValue("");
+  expect(search).toHaveFocus();
+  expect(await screen.findByText(SIBLING_MEMBER_ID)).toBeVisible();
+});
+
 /**
  * When an upgrade opens the report for a first conflict, sibling known conflicts are listed as
  * still unresolved while deleted copies stay out of the "not imported" section and its count.

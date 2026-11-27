@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   AvailablePlugin,
@@ -118,6 +118,9 @@ export function PluginManager({
   // A located id stays in the box so the user sees why the list is narrowed; the first edit turns
   // it back into an ordinary fuzzy search.
   const searchText = filter.kind === "locate" ? filter.pluginId : filter.text;
+  // The clear button leaves together with the text it cleared, which would drop focus to the body;
+  // the box is where the next search starts, so it takes the focus back.
+  const searchBox = useRef<HTMLInputElement>(null);
 
   return (
     <div className="space-y-5">
@@ -159,6 +162,7 @@ export function PluginManager({
         <div className="relative min-w-0 flex-1 sm:max-w-xs sm:ml-auto">
           <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
+            ref={searchBox}
             value={searchText}
             onChange={(event) =>
               onFilterChange({ kind: "search", text: event.target.value })
@@ -174,7 +178,10 @@ export function PluginManager({
               size="icon-sm"
               className="absolute right-1 top-1/2 -translate-y-1/2"
               aria-label={t("settings.plugins.clearSearch")}
-              onClick={() => onFilterChange({ kind: "search", text: "" })}
+              onClick={() => {
+                onFilterChange({ kind: "search", text: "" });
+                searchBox.current?.focus();
+              }}
             >
               <IconX />
             </Button>
