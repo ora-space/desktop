@@ -149,7 +149,17 @@ pub(crate) async fn check_proxy(
         Ok(policy) => policy,
         Err(error) => return Ok(unreachable(error.to_string())),
     };
-    let origin = match policy.route(&parsed) {
+    let (status, final_url) = match ReqwestDownloader::for_host_proxy(policy.clone())
+        .probe(parsed, PROXY_CHECK_TIMEOUT)
+        .await
+    {
+        Ok(result) => result,
+        Err(error) => return Ok(unreachable(error.to_string())),
+    };
+    if !(200..300).contains(&status) {
+        return Ok(CheckProxySettingsResponse::HttpError { status });
+    }
+    let origin = match policy.route(&final_url) {
         Ok(route) => route.origin,
         Err(error) => return Ok(unreachable(error.to_string())),
     };
@@ -159,16 +169,10 @@ pub(crate) async fn check_proxy(
         ora_utils::http::ProxyOrigin::System => ProxyRoute::System,
         ora_utils::http::ProxyOrigin::Environment => ProxyRoute::Environment,
     };
-    match ReqwestDownloader::for_host_proxy(policy)
-        .probe(parsed, PROXY_CHECK_TIMEOUT)
-        .await
-    {
-        Ok(status) => Ok(CheckProxySettingsResponse::Reachable {
-            status,
-            route: Some(route),
-        }),
-        Err(error) => Ok(unreachable(error.to_string())),
-    }
+    Ok(CheckProxySettingsResponse::Reachable {
+        status,
+        route: Some(route),
+    })
 }
 
 #[cfg(test)]
@@ -198,8 +202,8 @@ mod tests {
     const UNAVAILABLE: &str =
         "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
-    /// Receives one Git request on a socket and returns its method and target.
-    fn serve_git_request(response: String) -> (String, std::thread::JoinHandle<String>) {
+    /// Receives one HTTP request on a socket and returns its method and target.
+    fn serve_http_request(response: String) -> (String, std::thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
         listener.set_nonblocking(true).expect("set nonblocking");
         let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
@@ -214,7 +218,7 @@ mod tests {
                     {
                         std::thread::sleep(Duration::from_millis(5))
                     }
-                    Err(error) => panic!("Git never reached the fixture: {error}"),
+                    Err(error) => panic!("no request reached the fixture: {error}"),
                 }
             };
             // Windows can inherit the listener's nonblocking mode on accepted sockets.
@@ -226,17 +230,96 @@ mod tests {
                 .expect("read timeout");
             let mut reader = BufReader::new(&mut socket);
             let mut request = String::new();
-            reader.read_line(&mut request).expect("read Git request");
+            reader.read_line(&mut request).expect("read request");
             loop {
                 let mut header = String::new();
                 if reader.read_line(&mut header).expect("read header") == 0 || header == "\r\n" {
                     break;
                 }
             }
-            socket.write_all(response.as_bytes()).expect("reply to Git");
+            socket
+                .write_all(response.as_bytes())
+                .expect("reply to client");
             request
         });
         (endpoint, task)
+    }
+
+    /// Follows a 301 from a manual proxy to a direct target and classifies the final response.
+    #[tokio::test]
+    async fn proxy_check_uses_final_status_and_route() {
+        for (status_line, expected) in [
+            (
+                "200 OK",
+                CheckProxySettingsResponse::Reachable {
+                    status: 200,
+                    route: Some(ora_contracts::ProxyRoute::Direct),
+                },
+            ),
+            (
+                "204 No Content",
+                CheckProxySettingsResponse::Reachable {
+                    status: 204,
+                    route: Some(ora_contracts::ProxyRoute::Direct),
+                },
+            ),
+            (
+                "403 Forbidden",
+                CheckProxySettingsResponse::HttpError { status: 403 },
+            ),
+            (
+                "404 Not Found",
+                CheckProxySettingsResponse::HttpError { status: 404 },
+            ),
+        ] {
+            let (destination, final_request) = serve_http_request(format!(
+                "HTTP/1.1 {status_line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            ));
+            let (proxy, initial_request) = serve_http_request(format!(
+                "HTTP/1.1 301 Moved Permanently\r\nLocation: {destination}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            ));
+            let port = Url::parse(&proxy).unwrap().port().unwrap();
+            let preferences = NetworkProxyPreferences {
+                mode: NetworkProxyMode::Manual,
+                manual: Some(NetworkProxySettings {
+                    host: "127.0.0.1".to_owned(),
+                    port,
+                    username: None,
+                    password: None,
+                }),
+            };
+            assert_eq!(
+                check_proxy(&preferences, "http://origin.example/first")
+                    .await
+                    .unwrap(),
+                expected
+            );
+            assert!(
+                initial_request
+                    .join()
+                    .unwrap()
+                    .starts_with("GET http://origin.example/first ")
+            );
+            assert!(final_request.join().unwrap().starts_with("GET /final "));
+        }
+    }
+
+    /// A redirect with no destination cannot be reported as a successful check.
+    #[tokio::test]
+    async fn proxy_check_rejects_a_bare_redirect() {
+        let (url, server) = serve_http_request(
+            "HTTP/1.1 301 Moved Permanently\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_owned(),
+        );
+        let preferences = NetworkProxyPreferences {
+            mode: NetworkProxyMode::Direct,
+            manual: None,
+        };
+        assert_eq!(
+            check_proxy(&preferences, &url).await.unwrap(),
+            CheckProxySettingsResponse::HttpError { status: 301 }
+        );
+        server.join().unwrap();
     }
 
     /// Direct Git traffic ignores URL-scoped Git settings and an inherited environment proxy.
@@ -244,7 +327,7 @@ mod tests {
     fn direct_route_overrides_user_git_proxy() {
         let temp = tempfile::tempdir().expect("temp dir");
         let config = temp.path().join("gitconfig");
-        let (endpoint, server) = serve_git_request(UNAVAILABLE.to_owned());
+        let (endpoint, server) = serve_http_request(UNAVAILABLE.to_owned());
         let remote = format!("{endpoint}/marketplace.git");
         std::fs::write(
             &config,
@@ -268,11 +351,11 @@ mod tests {
     fn direct_marketplace_git_follows_initial_redirect() {
         let temp = tempfile::tempdir().expect("temp dir");
         let config = temp.path().join("gitconfig");
-        let (destination, final_request) = serve_git_request(UNAVAILABLE.to_owned());
+        let (destination, final_request) = serve_http_request(UNAVAILABLE.to_owned());
         let redirect = format!(
             "HTTP/1.1 301 Moved Permanently\r\nLocation: {destination}/moved.git/info/refs?service=git-upload-pack\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         );
-        let (initial, first_request) = serve_git_request(redirect);
+        let (initial, first_request) = serve_http_request(redirect);
         let remote = format!("{initial}/initial.git");
         std::fs::write(&config, format!(
             "[http]\n  proxy = http://127.0.0.1:1\n[http \"{destination}\"]\n  proxy = http://127.0.0.1:1\n"
@@ -302,7 +385,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let config = temp.path().join("gitconfig");
         let remote = "http://origin.example/marketplace.git";
-        let (endpoint, server) = serve_git_request(UNAVAILABLE.to_owned());
+        let (endpoint, server) = serve_http_request(UNAVAILABLE.to_owned());
         std::fs::write(
             &config,
             format!("[http \"{remote}\"]\n  proxy = http://127.0.0.1:1\n[remote \"origin\"]\n  url = {remote}\n  proxy = http://127.0.0.1:1\n"),
@@ -325,7 +408,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let config = temp.path().join("gitconfig");
         let remote = "http://origin.example/marketplace.git";
-        let (endpoint, server) = serve_git_request(
+        let (endpoint, server) = serve_http_request(
             "HTTP/1.1 302 Found\r\nLocation: http://other.example/marketplace.git/info/refs\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
         );
         let policy = HostProxy::manual(Url::parse(&endpoint).expect("fixture URL"));
@@ -349,7 +432,7 @@ mod tests {
             ("http://origin.example/marketplace.git", "GET "),
             ("https://origin.example/marketplace.git", "CONNECT "),
         ] {
-            let (endpoint, server) = serve_git_request(
+            let (endpoint, server) = serve_http_request(
                 "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
             );
             let policy = HostProxy::manual(Url::parse(&endpoint).expect("fixture URL"));

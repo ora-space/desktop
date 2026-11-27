@@ -132,8 +132,8 @@ pub struct CheckProxySettingsRequest {
 
 /// Reports whether the supplied proxy could reach the requested URL.
 ///
-/// HTTP 407 reports a proxy authentication failure. Other HTTP responses establish reachability.
-/// Transport and proxy-resolution failures are `unreachable`.
+/// A final 2xx response is reachable. Other final statuses are HTTP errors, except for 407.
+/// Proxy authentication, transport and proxy-resolution failures are `unreachable`.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(
     tag = "outcome",
@@ -147,6 +147,9 @@ pub enum CheckProxySettingsResponse {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         route: Option<ProxyRoute>,
+    },
+    HttpError {
+        status: u16,
     },
     Unreachable {
         message: String,
@@ -261,6 +264,10 @@ mod tests {
             })
             .unwrap(),
             json!({ "outcome": "unreachable", "message": "connection refused" })
+        );
+        assert_eq!(
+            serde_json::to_value(CheckProxySettingsResponse::HttpError { status: 404 }).unwrap(),
+            json!({ "outcome": "http_error", "status": 404 })
         );
     }
 }

@@ -74,14 +74,15 @@ export const settingsTranslations = {
     "settings.proxy.modeDirect": "直连",
     "settings.proxy.routeSystem": "系统代理",
     "settings.proxy.routeEnvironment": "环境变量代理",
-    "settings.proxy.checkRouteDetail": "{{route}} · HTTP 状态码 {{status}}。",
+    "settings.proxy.checkRouteDetail":
+      "最终请求使用{{route}} · HTTP 状态码 {{status}}。",
     "settings.proxy.clear": "清空",
     "settings.proxy.cleared": "已清空代理配置。",
     "settings.proxy.clearError": "无法清空代理配置。",
     "settings.proxy.check": "验证代理",
     "settings.proxy.checkTitle": "验证代理设置",
     "settings.proxy.checkDescription":
-      "点击验证会保存探测网址，并使用当前表单中的代理配置探测；不会自动保存代理配置。无法连接可能由目标网站或网络限制引起，不代表代理配置有误。",
+      "验证会保存探测网址，使用当前代理设置跟随跳转，最终收到 HTTP 2xx 时显示成功。代理配置需单独保存。",
     "settings.proxy.checkUrl": "探测网址",
     "settings.proxy.checkUrlRequired": "请输入要探测的网址。",
     "settings.proxy.checkUrlLoadError":
@@ -92,6 +93,7 @@ export const settingsTranslations = {
     "settings.proxy.checking": "验证中",
     "settings.proxy.checkSuccess": "代理验证成功。",
     "settings.proxy.checkSuccessDetail": "HTTP 状态码 {{status}}。",
+    "settings.proxy.checkHttpError": "目标网址未返回成功状态。",
     "settings.proxy.checkFailed":
       "未能通过当前代理连接探测网址；这不代表代理配置有误。",
     "settings.proxy.loading": "加载中",
@@ -259,14 +261,15 @@ export const settingsTranslations = {
     "settings.proxy.modeDirect": "Direct connection",
     "settings.proxy.routeSystem": "System proxy",
     "settings.proxy.routeEnvironment": "Environment proxy",
-    "settings.proxy.checkRouteDetail": "{{route}} · HTTP status {{status}}.",
+    "settings.proxy.checkRouteDetail":
+      "Final request via {{route}} · HTTP status {{status}}.",
     "settings.proxy.clear": "Clear",
     "settings.proxy.cleared": "Proxy settings cleared.",
     "settings.proxy.clearError": "Could not clear proxy settings.",
     "settings.proxy.check": "Check connection",
     "settings.proxy.checkTitle": "Check proxy settings",
     "settings.proxy.checkDescription":
-      "Check saves this URL and fetches it through the proxy shown in this form. Proxy settings are not saved automatically. The site or network may prevent a connection; a failed check does not mean the proxy settings are invalid.",
+      "Check saves the test URL and follows redirects using the current proxy settings. A final HTTP 2xx response counts as success. Save proxy settings separately.",
     "settings.proxy.checkUrl": "URL to check",
     "settings.proxy.checkUrlRequired": "Enter a URL to check.",
     "settings.proxy.checkUrlLoadError":
@@ -277,6 +280,8 @@ export const settingsTranslations = {
     "settings.proxy.checking": "Checking",
     "settings.proxy.checkSuccess": "Proxy check succeeded.",
     "settings.proxy.checkSuccessDetail": "HTTP status {{status}}.",
+    "settings.proxy.checkHttpError":
+      "The test URL did not return a successful status.",
     "settings.proxy.checkFailed":
       "Could not reach this URL through the proxy; the proxy settings may still be valid.",
     "settings.proxy.loading": "Loading",

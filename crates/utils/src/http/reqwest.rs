@@ -168,9 +168,7 @@ impl ReqwestDownloader {
                 .map_err(|error| io_error(&request.destination, error))?;
         }
 
-        let mut response = self
-            .send(&request.options, url, extra_headers, true)
-            .await?;
+        let mut response = self.send(&request.options, url, extra_headers).await?;
         let status = response.status().as_u16();
         if !response.status().is_success() {
             remove_temporary(&temporary);
@@ -251,11 +249,8 @@ impl ReqwestDownloader {
         })
     }
 
-    /// Issues one GET against `url` and returns the HTTP status when a response arrives.
-    ///
-    /// The body is discarded: a connectivity probe only needs to know that the proxy path reached
-    /// a host. Any HTTP status, including 4xx and 5xx, is therefore a successful probe.
-    pub async fn probe(&self, url: Url, timeout: Duration) -> Result<u16, DownloadError> {
+    /// Follows redirects within one time budget and returns the final status and URL without reading the body.
+    pub async fn probe(&self, url: Url, timeout: Duration) -> Result<(u16, Url), DownloadError> {
         let options = DownloadOptions {
             connect_timeout: Some(timeout),
             per_attempt_timeout: Some(timeout),
@@ -264,8 +259,8 @@ impl ReqwestDownloader {
             ..DownloadOptions::default()
         };
         let operation = async {
-            let response = self.send(&options, &url, &[], false).await?;
-            Ok(response.status().as_u16())
+            let response = self.send(&options, &url, &[]).await?;
+            Ok((response.status().as_u16(), response.url().clone()))
         };
         match tokio::time::timeout(timeout, operation).await {
             Ok(result) => result,
@@ -281,7 +276,6 @@ impl ReqwestDownloader {
         options: &DownloadOptions,
         url: &Url,
         headers: &[(String, String)],
-        follow: bool,
     ) -> Result<reqwest::Response, DownloadError> {
         let mut current = url.clone();
         for hop in 0..=10 {
@@ -300,7 +294,6 @@ impl ReqwestDownloader {
                 return Err(proxy_error(HostProxyError::Authentication));
             }
             if self.host_proxy.is_none()
-                || !follow
                 || !headers.is_empty()
                 || !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308)
             {

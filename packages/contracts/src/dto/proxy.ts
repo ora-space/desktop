@@ -18,14 +18,13 @@ export type CheckProxySettingsRequest = {
 /**
  * Reports whether the supplied proxy could reach the requested URL.
  *
- * HTTP 407 reports a proxy authentication failure. Other HTTP responses establish reachability.
- * Transport and proxy-resolution failures are `unreachable`.
+ * A final 2xx response is reachable. Other final statuses are HTTP errors, except for 407.
+ * Proxy authentication, transport and proxy-resolution failures are `unreachable`.
  */
-export type CheckProxySettingsResponse = {
-  "outcome": "reachable";
-  status: number;
-  route?: ProxyRoute;
-} | { "outcome": "unreachable"; message: string };
+export type CheckProxySettingsResponse =
+  | { "outcome": "reachable"; status: number; route?: ProxyRoute }
+  | { "outcome": "http_error"; status: number }
+  | { "outcome": "unreachable"; message: string };
 
 /**
  * Requests deleting the configured network proxy.

@@ -556,12 +556,12 @@ mod reqwest_integration {
     #[tokio::test]
     async fn probe_reports_http_status_from_local_server() {
         let url = serve_once(b"ok").await;
-        let status = ReqwestDownloader::new(Default::default())
-            .probe(url, std::time::Duration::from_secs(2))
+        let result = ReqwestDownloader::new(Default::default())
+            .probe(url.clone(), std::time::Duration::from_secs(2))
             .await
             .unwrap();
 
-        assert_eq!(status, 200);
+        assert_eq!(result, (200, url));
     }
 
     /// A refused loopback port is reported as a network error rather than a successful status.

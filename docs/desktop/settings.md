@@ -58,8 +58,10 @@ this version's support. Loopback and system bypass targets go directly.
 Connection or proxy resolution failures are reported without retrying the request directly.
 
 These rules apply to Desktop updates and marketplace sources that opt in
-([Marketplace](../plugins/marketplace.md)). The connection test uses the selected form mode,
-shows the actual route and reports HTTP 407 as a proxy authentication failure.
+([Marketplace](../plugins/marketplace.md)). The connection test follows redirects using the
+selected mode and resolves the route for each destination. A final HTTP 2xx response succeeds
+and shows the final route. Other HTTP responses show the status, and HTTP 407 reports a proxy
+authentication failure.
 
 ## Cloud connection
 

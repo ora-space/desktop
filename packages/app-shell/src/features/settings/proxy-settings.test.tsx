@@ -497,6 +497,35 @@ it("reports an unreachable probe as connectivity without changing saved settings
   expect(dialog).toBeInTheDocument();
 });
 
+it("shows the destination HTTP status without reporting a successful check", async () => {
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  handlers.checkProxySettings = () =>
+    Promise.resolve({ outcome: "http_error", status: 404 });
+  const report = vi.spyOn(toast, "error");
+  const success = vi.spyOn(toast, "success");
+  const user = userEvent.setup();
+  renderProxy(createTestClient(handlers));
+
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() =>
+    expect(report).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /未返回成功状态|did not return a successful status/,
+      ),
+      { description: expect.stringMatching(/HTTP.*404/) },
+    ),
+  );
+  expect(success).not.toHaveBeenCalled();
+  expect(dialog).toBeInTheDocument();
+});
+
 it("resets a cancelled empty probe URL before opening a new check", async () => {
   const state = createFixtureState();
   state.proxySettings = {

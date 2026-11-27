@@ -432,6 +432,14 @@ function CheckProxyDialog({
         onOpenChange(false);
         return;
       }
+      if (result.outcome === "http_error") {
+        toast.error(t("settings.proxy.checkHttpError"), {
+          description: t("settings.proxy.checkSuccessDetail", {
+            status: result.status,
+          }),
+        });
+        return;
+      }
       toast.error(t("settings.proxy.checkFailed"), {
         description: result.message,
       });
