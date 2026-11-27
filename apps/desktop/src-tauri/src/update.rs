@@ -111,7 +111,7 @@ pub enum UpdateError {
     TrustConfiguration(String),
     #[error("update operation failed")]
     Updater(#[source] tauri_plugin_updater::Error),
-    #[error("failed to read configured proxy settings: {0}")]
+    #[error("failed to read configured proxy settings. Review Settings → Network Proxy: {0}")]
     ProxySettings(String),
     #[error(transparent)]
     Proxy(#[from] ora_utils::http::HostProxyError),

@@ -172,6 +172,11 @@ impl PluginApi {
                     let failure = RegistrySourceFailure::from_sync_error(source.canonical_url(), &error);
                     let failure = if proxy::git_proxy_auth_failure(failure.message()) {
                         RegistrySourceFailure::new(source.canonical_url(), ora_utils::http::HostProxyError::Authentication.to_string())
+                    } else if proxy::git_proxy_redirect_failure(failure.message()) {
+                        RegistrySourceFailure::new(
+                            source.canonical_url(),
+                            "Git refused a redirect. Use the final Git repository URL.",
+                        )
                     } else {
                         failure
                     };

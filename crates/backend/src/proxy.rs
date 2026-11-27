@@ -33,6 +33,19 @@ pub(crate) fn git_proxy_auth_failure(message: &str) -> bool {
         || message.contains("returned error: 407")
 }
 
+/// Recognizes a redirect that Git refused with redirects disabled.
+pub(crate) fn git_proxy_redirect_failure(message: &str) -> bool {
+    message
+        .match_indices("The requested URL returned error: ")
+        .any(|(index, prefix)| {
+            message[index + prefix.len()..]
+                .split_whitespace()
+                .next()
+                .and_then(|status| status.parse::<u16>().ok())
+                .is_some_and(|status| matches!(status, 301 | 302 | 303 | 307 | 308))
+        })
+}
+
 /// Pins a single Git operation to its selected route and disallows redirects Git cannot reroute.
 pub(crate) fn git_proxy_env(remote_url: &str, policy: &HostProxy) -> Result<GitEnv, BackendError> {
     let url = Url::parse(remote_url)
@@ -285,7 +298,7 @@ mod tests {
         let policy = HostProxy::manual(Url::parse(&endpoint).expect("fixture URL"));
         let env = git_proxy_env(remote, &policy).expect("proxy env");
         let stderr = ls_remote_stderr(remote, env, &config);
-        assert!(stderr.contains("302"), "{stderr}");
+        assert!(git_proxy_redirect_failure(&stderr), "{stderr}");
         assert!(
             server
                 .join()
