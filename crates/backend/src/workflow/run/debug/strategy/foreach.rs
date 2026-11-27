@@ -1,6 +1,8 @@
 //! Item-scoped planning and transactional repair of the active foreach projection.
 use ora_contracts::{WorkflowDebugImpact, WorkflowDebugPreview};
-use ora_db::workflow_debug::{DebugPlanningInput, DebugRejection, Transaction, WorkflowDebugStore};
+use ora_db::workflow_debug::{
+    DebugPlanningInput, DebugRejection, ForeachReplay, Transaction, WorkflowDebugStore,
+};
 use ora_domain::{WorkflowNodeStatus, WorkflowRunStatus};
 use std::collections::BTreeSet;
 
@@ -163,40 +165,32 @@ pub(super) fn restore(
         (&run, WorkflowRunStatus::Running.database_value()),
         |row| row.get(0),
     )?;
-    if !running {
-        tx.execute(
-            "UPDATE workflow_runs SET payload=?2 WHERE id=?1",
-            [&run, &serde_json::to_string(&payload)?],
-        )?;
-        return Ok(());
-    }
+    let mut inputs = std::collections::BTreeMap::new();
     for (key, decl) in &payload.variable_pool.catalog {
-        if !affected.contains(&decl.writer) {
-            continue;
-        }
-        // The target item can reuse its own active predecessor outputs, never later-item
-        // values or the old target's output. Fresh containers have no reusable item facts.
         let reusable = first.is_some()
             && ((decl.writer == owner
                 && (key == &format!("{owner}.item") || key == &format!("{owner}.index")))
                 || graph.region_owner(&decl.writer) == Some(owner)
                     && !member_tail.contains(&decl.writer));
-        if let Some(v) = input.pool.values.get(key).filter(|_| reusable) {
-            payload.variable_pool.values.insert(key.clone(), v.clone());
-        } else {
-            payload.variable_pool.values.remove(key);
+        if let Some(value) = input
+            .pool
+            .values
+            .get(key)
+            .filter(|_| reusable && affected.contains(&decl.writer))
+        {
+            inputs.insert(key.clone(), value.clone());
         }
     }
-    payload.variable_pool.revision = payload.variable_pool.revision.saturating_add(1);
-    payload
-        .condition_decisions
-        .retain(|n, _| !affected.contains(n));
+    let replay = ForeachReplay { affected, inputs };
+    let container = input.target.container_node_run_id.as_deref();
+    if running {
+        replay.apply(tx, &mut payload, container)?;
+    } else if let Some(container) = container {
+        replay.park(tx, container)?;
+    }
     tx.execute(
         "UPDATE workflow_runs SET payload=?2 WHERE id=?1",
         [&run, &serde_json::to_string(&payload)?],
     )?;
-    if let Some(id) = &input.target.container_node_run_id {
-        tx.execute("UPDATE workflow_node_runs SET status=?2,output=NULL,error=NULL,finished_at=NULL WHERE id=?1 AND is_deleted=0", (id, WorkflowNodeStatus::Running.database_value()))?;
-    }
     Ok(())
 }

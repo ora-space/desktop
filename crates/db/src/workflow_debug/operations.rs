@@ -108,7 +108,7 @@ impl WorkflowDebugStore {
             // A run accepted in a terminal state returns to running together with the revision,
             // but only while it still shows that very state. One that moved on while the stop was
             // in flight keeps its own outcome; recovery then reads the new revision.
-            tx.execute(
+            let reopened = tx.execute(
                 "UPDATE workflow_runs SET run_status=?2,error=NULL,output=NULL,finished_at=NULL,updated_at=?3
                 WHERE id=?1 AND run_status=(SELECT prior_status FROM workflow_debug_operations
                     WHERE run_id=?1 AND request_id=?4) AND run_status<>?2",
@@ -119,6 +119,9 @@ impl WorkflowDebugStore {
                     request
                 ],
             )?;
+            if reopened == 1 {
+                resume_foreach_replays(&tx, run)?;
+            }
             let live_before: String = tx.query_row(
                 "SELECT json_group_array(id) FROM workflow_node_runs WHERE run_id=?1 AND is_deleted=0",
                 [run], |row| row.get(0),

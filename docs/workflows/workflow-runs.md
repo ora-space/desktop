@@ -336,6 +336,8 @@ Failure recovery and a whole-run restart take the run’s current revision as th
 
 ## Recovery after restart
 
+If an independent branch fails while a foreach member edit is stopping downstream work, the run keeps its failure and its last visible aggregate. On ordinary recovery the original container replays from the selected item. Downstream consumers wait for the rebuilt aggregate.
+
 If the old attempts have stopped but the confirmed foreach edit cannot restore its inputs, Desktop rolls back the edit, records the reason as `stop_failed`, and releases the dispatch fence in the same transaction. A running workflow moves to Failed with that reason. An already finished workflow keeps its outcome. No new attempt starts automatically. Use ordinary failure recovery to continue from the last effective revision.
 
 If you cancel while a confirmed debug edit is stopping old work, its receipt records `stop_failed` with reason `run_cancelled`. A running workflow is cancelled; a previously finished workflow keeps its original outcome. If the edit applied first, its revision stays in history, but cancellation prevents the remaining dispatches.
