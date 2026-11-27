@@ -111,7 +111,13 @@ export interface ChatState {
   setConfigOptions(
     oraSessionId: string,
     configOptions: acp.SessionConfigOption[],
+    fetchedFrom?: number,
   ): void;
+  /**
+   * Marks when a start or a switch of this session is asked for, so its answer can be dropped
+   * when a stream has brought newer options meanwhile. Passed back as `fetchedFrom`.
+   */
+  optionsFetchedFrom(oraSessionId: string): number;
   /**
    * Adopts the options of an agent this session has just been rebound onto.
    *
@@ -123,20 +129,20 @@ export interface ChatState {
   adoptSwitchedAgent(
     oraSessionId: string,
     configOptions: acp.SessionConfigOption[],
+    fetchedFrom?: number,
   ): void;
   /**
    * Applies one configuration selection — in practice the model — to a session.
    *
-   * The agent's reply is authoritative rather than the requested value: an agent
-   * that adjusted or rejected the choice describes the result, and that is what
-   * gets recorded. A model chosen before any session exists is client-side
-   * intent instead, applied by the call that creates the session.
+   * Settles once the options the agent left the session on are known, whatever they are: an
+   * agent that adjusted the choice describes the result. `noProvider` means the session had none
+   * to change, so the choice is an intent for the next attach; a refusal rejects.
    */
   setSessionConfig(
     oraSessionId: string,
     configId: string,
     value: string,
-  ): Promise<void>;
+  ): Promise<SessionConfigOutcome>;
   loadSession(oraSessionId: string): Promise<void>;
   /**
    * Hears that a session's options may have changed, or that it has no provider now.
@@ -157,6 +163,9 @@ export interface ChatState {
   clearAll(): void;
   dispose(): void;
 }
+
+/** What came of a configuration selection that did not fail. */
+export type SessionConfigOutcome = "made" | "noProvider";
 
 export interface ChatStoreOptions {
   createId?: () => string;
@@ -216,8 +225,21 @@ interface OptionsSync {
   reading: boolean;
   /** Whether an announcement came while reading, so the session is read again. */
   readAgain: boolean;
-  /** Advances whenever a stream starts, so a read from before it is dropped. */
+  /** Advances whenever a stream starts or brings options, so anything fetched before is dropped. */
   generation: number;
+  /** The generation at which a stream last brought options. */
+  streamOptionsAt: number;
+  /** How many reads have started, so a change can wait for one that started after it. */
+  readsStarted: number;
+  /** Changes waiting to learn the options they left the session on. */
+  waiting: OptionsWaiter[];
+}
+
+/** A change waiting to learn the options it left the session on. */
+interface OptionsWaiter {
+  /** The first read that started late enough to tell it. */
+  fromRead: number;
+  resolve: () => void;
 }
 
 type ConversationUpdate = Extract<
@@ -247,6 +269,9 @@ export function createChatStore(
         reading: false,
         readAgain: false,
         generation: 0,
+        streamOptionsAt: 0,
+        readsStarted: 0,
+        waiting: [],
       };
       optionsSync.set(oraSessionId, sync);
     }
@@ -268,6 +293,8 @@ export function createChatStore(
     sync.reading = true;
     sync.readAgain = false;
     const generation = sync.generation;
+    sync.readsStarted += 1;
+    const read = sync.readsStarted;
     void client
       .getOptions({ sessionId: oraSessionId })
       .then(
@@ -278,9 +305,11 @@ export function createChatStore(
               ? { ...conversation, providerLost: true }
               : { ...conversation, configOptions, providerLost: false },
           );
+          tellWaiting(sync, read);
         },
-        // A lost read leaves the view where it was, like a lost announcement.
-        () => {},
+        // A lost read leaves the view where it was, like a lost announcement, and a change
+        // waiting for it stops waiting rather than staying in progress.
+        () => tellWaiting(sync, read),
       )
       .finally(() => {
         sync.reading = false;
@@ -289,6 +318,39 @@ export function createChatStore(
         if (sync.streams > 0) sync.announced = true;
         else readOptions(oraSessionId);
       });
+  };
+
+  /**
+   * Tells the changes waiting on `sync` that the session's options are known.
+   *
+   * `read` is the read that told, absent for a stream, which is always late enough.
+   */
+  const tellWaiting = (sync: OptionsSync, read?: number) => {
+    const told = sync.waiting.filter(
+      (waiter) => read === undefined || read >= waiter.fromRead,
+    );
+    sync.waiting = sync.waiting.filter((waiter) => !told.includes(waiter));
+    for (const waiter of told) waiter.resolve();
+  };
+
+  /**
+   * Waits until the session's options are known after a change the agent made.
+   *
+   * Without a stream the session is read once more, and only a read started from now tells.
+   * With one, options it brought since the change was asked for tell at once, and later ones,
+   * or the read once it ends, tell otherwise.
+   */
+  const learnOptionsAfterChange = (
+    oraSessionId: string,
+    askedAt: number,
+  ): Promise<void> => {
+    const sync = syncOf(oraSessionId);
+    if (sync.streams > 0 && sync.streamOptionsAt > askedAt)
+      return Promise.resolve();
+    return new Promise((resolve) => {
+      sync.waiting.push({ fromRead: sync.readsStarted + 1, resolve });
+      if (sync.streams === 0) readOptions(oraSessionId);
+    });
   };
 
   /** Notes a stream of this session starting: anything read before it is older than it. */
@@ -314,11 +376,14 @@ export function createChatStore(
   ) => {
     const sync = syncOf(oraSessionId);
     sync.streamOptions = true;
+    sync.generation += 1;
+    sync.streamOptionsAt = sync.generation;
     updateConversation(store.setState, oraSessionId, (conversation) => ({
       ...conversation,
       configOptions,
       providerLost: false,
     }));
+    tellWaiting(sync);
   };
 
   /**
@@ -331,7 +396,26 @@ export function createChatStore(
     const sync = syncOf(oraSessionId);
     sync.streams -= 1;
     if (sync.streams > 0) return;
-    if (sync.announced || !sync.streamOptions) readOptions(oraSessionId);
+    if (sync.announced || !sync.streamOptions || sync.waiting.length > 0)
+      readOptions(oraSessionId);
+  };
+
+  /**
+   * Takes options a start or a switch answered with, as one more read of them.
+   *
+   * Dropped when a stream started or brought options since `fetchedFrom`, because those are newer.
+   */
+  const takeFetchedOptions = (
+    oraSessionId: string,
+    fetchedFrom: number | undefined,
+    take: (conversation: SessionConversation) => SessionConversation,
+  ) => {
+    if (fetchedFrom !== undefined && syncOf(oraSessionId).generation !== fetchedFrom)
+      return;
+    updateConversation(store.setState, oraSessionId, (conversation) => ({
+      ...take(conversation),
+      providerLost: false,
+    }));
   };
 
   const store = createStore<ChatState>((set, get) => ({
@@ -346,8 +430,10 @@ export function createChatStore(
       }));
     },
 
-    setConfigOptions: (oraSessionId, configOptions) => {
-      updateConversation(set, oraSessionId, (conversation) =>
+    optionsFetchedFrom: (oraSessionId) => syncOf(oraSessionId).generation,
+
+    setConfigOptions: (oraSessionId, configOptions, fetchedFrom) => {
+      takeFetchedOptions(oraSessionId, fetchedFrom, (conversation) =>
         withConfigOptions(
           conversation,
           configOptions,
@@ -358,8 +444,8 @@ export function createChatStore(
       );
     },
 
-    adoptSwitchedAgent: (oraSessionId, configOptions) => {
-      updateConversation(set, oraSessionId, (conversation) => ({
+    adoptSwitchedAgent: (oraSessionId, configOptions, fetchedFrom) => {
+      takeFetchedOptions(oraSessionId, fetchedFrom, (conversation) => ({
         ...withConfigOptions(
           conversation,
           configOptions,
@@ -376,33 +462,45 @@ export function createChatStore(
     },
 
     setSessionConfig: async (oraSessionId, configId, value) => {
+      const before = get().conversations[oraSessionId]?.configOptions ?? [];
+      const askedAt = syncOf(oraSessionId).generation;
       try {
-        const { configOptions } = await client.setConfig({
-          sessionId: oraSessionId,
-          configId,
-          value,
-        });
-        updateConversation(set, oraSessionId, (conversation) => ({
-          ...withConfigOptions(
-            conversation,
-            configOptions,
-            createId,
-            now(),
-            conversation.turns.length,
-          ),
-          error: null,
-        }));
+        await client.setConfig({ sessionId: oraSessionId, configId, value });
       } catch (error) {
-        // Only the round trip itself can fail here — a rejected selection comes
-        // back as a successful response carrying the agent's own options. So the
-        // picker must not silently snap back to its old value; report it like
-        // every other session action that could not reach the agent.
+        // Losing the provider just before the change got there is no failure to report: the pick
+        // is what the next attach applies.
+        if (isSessionStoppedError(error)) {
+          updateConversation(set, oraSessionId, (conversation) => ({
+            ...conversation,
+            providerLost: true,
+          }));
+          return "noProvider";
+        }
+        // A refused selection fails too; the options stay what they were. Reported like every
+        // other session action that could not reach the agent.
         updateConversation(set, oraSessionId, (conversation) => ({
           ...conversation,
           error: describeError(error),
         }));
         throw error;
       }
+      // The answer says only that the agent made the change; what it left the session on comes
+      // the way all options do, and the change is in progress until then.
+      await learnOptionsAfterChange(oraSessionId, askedAt);
+      updateConversation(set, oraSessionId, (conversation) => ({
+        ...conversation,
+        // Marked here rather than when the options arrive: a model the agent changed on its own,
+        // with no change in flight, is not the user switching models.
+        modelChanges: recordModelChange(
+          { ...conversation, configOptions: before },
+          conversation.configOptions,
+          createId,
+          now(),
+          conversation.turns.length,
+        ),
+        error: null,
+      }));
+      return "made";
     },
 
     loadSession: async (oraSessionId) => {

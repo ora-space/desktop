@@ -29,6 +29,7 @@ export {
   type ContextUsageState,
   type LastTurnTokenState,
   type SendMessageRequest,
+  type SessionConfigOutcome,
   type SessionConversation,
   type SessionUsage,
 } from "./store.ts";

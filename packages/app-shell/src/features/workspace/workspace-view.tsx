@@ -351,6 +351,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               let response: Awaited<
                 ReturnType<typeof client.session.switchAgent>
               >;
+              // A stream of this session may bring newer options than the switch answers with.
+              const fetchedFrom = chatStore
+                .getState()
+                .optionsFetchedFrom(session.id);
               try {
                 response = await client.session.switchAgent({
                   sessionId: session.id,
@@ -377,7 +381,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               // the transcript is marked where the move actually takes effect.
               chatStore
                 .getState()
-                .adoptSwitchedAgent(session.id, response.configOptions);
+                .adoptSwitchedAgent(
+                  session.id,
+                  response.configOptions,
+                  fetchedFrom,
+                );
               const completedSetup: SessionSetupPresentation = {
                 ...handoffSetup,
                 status: "connected",

@@ -374,6 +374,14 @@ for (const ending of ["completed", "failed"] as const) {
           yield textEvent("user_message_chunk", "prompt", "user-1");
           yield textEvent("agent_message_chunk", "partial", "agent-1");
           await chosen.promise;
+          // The answer to the choice reaches the view through the stream it follows.
+          yield {
+            type: "session_update",
+            update: {
+              sessionUpdate: "config_option_update",
+              configOptions: on("b"),
+            },
+          } as const;
           yield textEvent("agent_message_chunk", " rest", "agent-1");
           await checked.promise;
           if (ending === "failed") throw new Error("stream lost");
@@ -383,9 +391,8 @@ for (const ending of ["completed", "failed"] as const) {
       }),
       prompt: () => events<PromptSessionEvent>([]),
       respondToPermission: async () => ({}),
-      // This agent reports the change only here.
       getOptions: async () => ({ configOptions: null }),
-      setConfig: async () => ({ configOptions: on("b") }),
+      setConfig: async () => ({}),
     };
     const store = createChatStore(client);
     const current = () =>
@@ -395,9 +402,11 @@ for (const ending of ["completed", "failed"] as const) {
     await conversationReaches(store, (state) => said(state) === "partial");
     assert.deepEqual(current(), on("a"));
 
-    await store.getState().setSessionConfig("ora-1", "model", "b");
-    assert.deepEqual(current(), on("b"));
+    const choosing = store.getState().setSessionConfig("ora-1", "model", "b");
     chosen.resolve();
+    // In progress until the stream brings the options the change left the session on.
+    assert.equal(await choosing, "made");
+    assert.deepEqual(current(), on("b"));
     await conversationReaches(store, (state) => said(state) === "partial rest");
     assert.deepEqual(current(), on("b"));
 
@@ -440,13 +449,14 @@ test("an option change the agent reports while following a turn wins over an ear
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
     getOptions: async () => ({ configOptions: null }),
-    setConfig: async () => ({ configOptions: on("b") }),
+    setConfig: async () => ({}),
   };
   const store = createChatStore(client);
   const loading = store.getState().loadSession("ora-1");
   await following.promise;
-  await store.getState().setSessionConfig("ora-1", "model", "b");
+  const choosing = store.getState().setSessionConfig("ora-1", "model", "b");
   chosen.resolve();
+  await choosing;
   await loading;
 
   assert.deepEqual(
@@ -2466,9 +2476,9 @@ test("adopts the agent's answer to a model selection over the requested value", 
     load: () => events<LoadSessionEvent>([]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
-    // The agent declined the switch and reported that it stayed on "fast".
-    getOptions: async () => ({ configOptions: null }),
-    setConfig: async () => ({ configOptions: modelOptions("fast") }),
+    // The agent declined the switch: the session is still on "fast" when it is read after.
+    getOptions: async () => ({ configOptions: modelOptions("fast") }),
+    setConfig: async () => ({}),
   };
   const store = createChatStore(client, {
     createId: () => "local",

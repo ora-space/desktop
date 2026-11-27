@@ -348,11 +348,17 @@ export function ModelSelector({
       return;
     }
     if (activeSessionId !== null && modelOption !== null) {
-      setSessionConfig.mutate({
-        sessionId: activeSessionId,
-        configId: modelOption.id,
-        value,
-      });
+      setSessionConfig.mutate(
+        { sessionId: activeSessionId, configId: modelOption.id, value },
+        {
+          // The session lost its provider just before the pick reached it, so the pick is
+          // what the next attach applies, as if it had been made a moment later.
+          onSuccess: (outcome) => {
+            if (outcome === "noProvider" && intentKey !== null)
+              setPendingModel(intentKey, value);
+          },
+        },
+      );
     }
   };
 
