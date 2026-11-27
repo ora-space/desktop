@@ -6,7 +6,7 @@
 
 use super::artifact_store::{ArtifactDescriptor, ArtifactVerifier, UpdateArtifactStore};
 use super::platform::InstallSupport;
-use super::state::{OfferedRelease, ReadyUpdate, RuntimeUpdateState};
+use super::state::{OfferedRelease, RuntimeUpdateState};
 use super::{DesktopUpdateStatus, UpdateError};
 use ora_logging::{ora_info, ora_warn};
 use ora_utils::error::error_chain;
@@ -123,8 +123,13 @@ impl<H: UpdateHost, V: ArtifactVerifier + Send + Sync> UpdateEngine<H, V> {
                 error = %error_chain(&error),
             );
             let verified = match retained {
-                Some(ready) if self.verifies(&ready).await => Some(ready),
-                Some(_) | None => None,
+                Some(ready) => self
+                    .artifacts
+                    .read_verified(&ready.artifact, &ready.descriptor, &self.verifier)
+                    .await
+                    .is_ok()
+                    .then_some(ready),
+                None => None,
             };
             self.set_state(RuntimeUpdateState::after_failed_check(verified, &error));
         }
@@ -168,14 +173,6 @@ impl<H: UpdateHost, V: ArtifactVerifier + Send + Sync> UpdateEngine<H, V> {
         self.set_state(RuntimeUpdateState::Current);
         self.artifacts.clear();
         Ok(())
-    }
-
-    /// Reports whether a retained package's bytes still match its record and signature.
-    async fn verifies(&self, ready: &ReadyUpdate<H::Release>) -> bool {
-        self.artifacts
-            .read_verified(&ready.artifact, &ready.descriptor, &self.verifier)
-            .await
-            .is_ok()
     }
 
     /// Reconciles the current manifest with an existing artifact or a newly verified download.
