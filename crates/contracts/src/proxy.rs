@@ -20,10 +20,6 @@ pub struct SetProxyCheckUrlRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "proxy.ts")]
 pub struct ProxyCheckUrlResponse {
-    /// The configured release manifest URL, when the host supplies one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub update_url: Option<String>,
     pub url: String,
 }
 

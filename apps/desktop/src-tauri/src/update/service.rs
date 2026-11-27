@@ -168,15 +168,6 @@ impl UpdateHost for TauriUpdateHost {
     }
 }
 
-/// Gives the settings probe the updater's configured manifest endpoint.
-pub(crate) fn probe_url(app: &AppHandle) -> Option<String> {
-    updater_config(app)
-        .ok()?
-        .endpoints
-        .first()
-        .map(ToString::to_string)
-}
-
 /// Reads the release transport configuration from its Tauri source of truth.
 fn updater_config(app: &AppHandle) -> Result<tauri_plugin_updater::Config, UpdateError> {
     let config = app

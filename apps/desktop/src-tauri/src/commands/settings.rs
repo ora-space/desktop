@@ -21,12 +21,10 @@ use crate::state::DesktopState;
 /// Reads the durable probe target without changing the proxy itself.
 #[tauri::command]
 pub async fn get_proxy_check_url(
-    app: tauri::AppHandle,
     state: State<'_, DesktopState>,
     request: ora_contracts::GetProxyCheckUrlRequest,
 ) -> Result<ora_contracts::ProxyCheckUrlResponse, CommandError> {
     let _ = request;
-    let update_url = crate::update::probe_url(&app);
     let settings = state.backend.settings().clone();
     run_async_backend(
         "get_proxy_check_url",
@@ -34,7 +32,7 @@ pub async fn get_proxy_check_url(
             settings
                 .network_proxy_check_url()
                 .await
-                .map(|url| ora_contracts::ProxyCheckUrlResponse { url, update_url })
+                .map(|url| ora_contracts::ProxyCheckUrlResponse { url })
         }),
     )
     .await
@@ -43,19 +41,17 @@ pub async fn get_proxy_check_url(
 /// Saves only the confirmed probe target; request failures leave its previous value intact.
 #[tauri::command]
 pub async fn set_proxy_check_url(
-    app: tauri::AppHandle,
     state: State<'_, DesktopState>,
     request: ora_contracts::SetProxyCheckUrlRequest,
 ) -> Result<ora_contracts::ProxyCheckUrlResponse, CommandError> {
     let settings = state.backend.settings().clone();
-    let update_url = crate::update::probe_url(&app);
     run_async_backend(
         "set_proxy_check_url",
         Box::pin(async move {
             settings
                 .set_network_proxy_check_url(request.url)
                 .await
-                .map(|url| ora_contracts::ProxyCheckUrlResponse { url, update_url })
+                .map(|url| ora_contracts::ProxyCheckUrlResponse { url })
         }),
     )
     .await

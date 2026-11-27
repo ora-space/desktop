@@ -497,12 +497,10 @@ it("reports an unreachable probe as connectivity without changing saved settings
   expect(dialog).toBeInTheDocument();
 });
 
-it("can test the advertised update URL while identifying an unsaved proxy draft", async () => {
-  const updateUrl = "https://updates.example/latest.json";
+it("tests an edited URL using an unsaved proxy draft", async () => {
+  const testUrl = "https://example.com/probe";
   const state = createFixtureState();
   const handlers = createFixtureHandlers(state);
-  handlers.getProxyCheckUrl = () =>
-    Promise.resolve({ url: state.proxyCheckUrl, updateUrl });
   handlers.checkProxySettings = () =>
     Promise.resolve({ outcome: "reachable", status: 200, route: "manual" });
   const client = createTestClient(handlers);
@@ -523,20 +521,15 @@ it("can test the advertised update URL while identifying an unsaved proxy draft"
   expect(
     within(dialog).getByText(/未保存的设置|uses unsaved settings/),
   ).toBeInTheDocument();
-  await user.click(
-    within(dialog).getByRole("button", {
-      name: /填入更新服务器地址|Use update server URL/,
-    }),
-  );
-  expect(within(dialog).getByLabelText(/探测网址|URL to check/)).toHaveValue(
-    updateUrl,
-  );
+  const urlInput = within(dialog).getByLabelText(/探测网址|URL to check/);
+  await user.clear(urlInput);
+  await user.type(urlInput, testUrl);
   await user.click(
     within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
   );
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(check).toHaveBeenCalledWith({
-    url: updateUrl,
+    url: testUrl,
     settings: {
       host: "https://proxy.example",
       port: 7890,

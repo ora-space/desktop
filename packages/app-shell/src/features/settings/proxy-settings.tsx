@@ -352,7 +352,6 @@ function ProxySettingsEditor({
         <CheckProxyDialog
           mode={mode}
           usingDraft={usingDraft}
-          updateUrl={controller.updateUrl}
           checking={controller.isChecking}
           blocked={checkBlocked}
           readError={
@@ -380,7 +379,6 @@ function ProxySettingsEditor({
 interface CheckProxyDialogProps {
   mode: ProxyMode;
   usingDraft: boolean;
-  updateUrl: string | undefined;
   checking: boolean;
   blocked: boolean;
   readError: string | null;
@@ -396,7 +394,6 @@ interface CheckProxyDialogProps {
 function CheckProxyDialog({
   mode,
   usingDraft,
-  updateUrl,
   checking,
   blocked,
   readError,
@@ -502,15 +499,6 @@ function CheckProxyDialog({
             }}
           />
         </label>
-        {updateUrl !== undefined && (
-          <Button
-            variant="outline"
-            disabled={blocked || checking}
-            onClick={() => onUrlChange(updateUrl)}
-          >
-            {t("settings.proxy.useUpdateUrl")}
-          </Button>
-        )}
         {usingDraft && (
           <p className="text-sm text-muted-foreground">
             {t("settings.proxy.checkDraft")}
