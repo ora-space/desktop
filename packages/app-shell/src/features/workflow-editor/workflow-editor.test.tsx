@@ -2866,6 +2866,85 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it.each(["draft", "published"] as const)(
+    "writes portable Skill references to the actual %s export file",
+    async (source) => {
+      const user = userEvent.setup();
+      const state = createFixtureState();
+      const platform = createStubPlatform();
+      const saveTextFile = vi.fn(platform.saveTextFile).mockResolvedValue(true);
+      platform.saveTextFile = saveTextFile;
+      renderEditor(
+        <PlatformProvider adapter={platform}>
+          <WorkflowEditorList />
+          <WorkflowEditor />
+        </PlatformProvider>,
+        state,
+        (handlers) => {
+          handlers.listSkills = async () => ({
+            skills: [...state.skills],
+            localSkillNamesForExport: {
+              "uuid-archive-change": "openspec-archive-change",
+              "deleted-local-uuid": "deleted-review",
+            },
+            retiredSkillIds: ["deleted-local-uuid"],
+          });
+          const record = state.workflows[0]!;
+          for (const snapshot of [record.draft, ...record.published]) {
+            const graph = JSON.parse(snapshot.graph);
+            const node = graph.nodes.find(
+              (node: { data: WorkflowNodeData }) => node.data.kind === "agent",
+            );
+            node.data.title =
+              snapshot === record.draft ? "Draft file" : "Published file";
+            node.data.agentConfig.skills = [
+              "uuid-archive-change",
+              "deleted-local-uuid",
+              "plugin:official/review:review",
+            ].map((skillId) => ({ skillId, enabled: true }));
+            snapshot.graph = JSON.stringify(graph);
+          }
+        },
+      );
+      await screen.findByLabelText("工作流画布");
+      await user.click(screen.getByRole("button", { name: "导出" }));
+      const dialog = await screen.findByRole("dialog");
+      if (source === "published")
+        await user.click(within(dialog).getAllByRole("radio")[1]!);
+      await waitFor(() => {
+        expect(dialog).toHaveTextContent(
+          `"title": "${source === "draft" ? "Draft file" : "Published file"}"`,
+        );
+        expect(dialog).toHaveTextContent('"skillId": "deleted-review"');
+        expect(dialog).not.toHaveTextContent("deleted-local-uuid");
+      });
+      await user.click(within(dialog).getByRole("button", { name: "导出…" }));
+      await waitFor(() => expect(saveTextFile).toHaveBeenCalledOnce());
+      const saved = JSON.parse(saveTextFile.mock.calls[0]![0].content);
+      const node = saved.nodes.find(
+        (node: { data: WorkflowNodeData }) =>
+          node.data.title ===
+          (source === "draft" ? "Draft file" : "Published file"),
+      );
+      expect(
+        node.data.agentConfig.skills.map(
+          (binding: { skillId: string }) => binding.skillId,
+        ),
+      ).toEqual([
+        "openspec-archive-change",
+        "deleted-review",
+        "plugin:official/review:review",
+      ]);
+      expect(saveTextFile.mock.calls[0]![0].content).not.toMatch(
+        /uuid-archive-change|deleted-local-uuid/,
+      );
+      expect(
+        state.skills.some((skill) => skill.id === "deleted-local-uuid"),
+      ).toBe(false);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    },
+  );
+
   it.each(["disabled", "unavailable-skill", "unavailable-mcp"] as const)(
     "counts only launch blockers in the import preview (%s)",
     async (scenario) => {
