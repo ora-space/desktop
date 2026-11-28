@@ -4,6 +4,9 @@ use ora_db::SqlitePluginSourceNamespaceRepository;
 use ora_domain::{PluginOriginCatalog, PluginOriginSource};
 use ora_logging::ora_warn;
 
+#[cfg(test)]
+mod tests;
+
 /// Reads every recorded source binding into a [`PluginOriginCatalog`] on demand.
 ///
 /// Nothing is cached: a new namesake source changes other sources' labels, and reading the
