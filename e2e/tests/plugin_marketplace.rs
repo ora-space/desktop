@@ -1050,23 +1050,44 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
     .await??;
     assert_eq!(first_byte, 0x16);
 
-    // Refresh the opted-in source through a real proxy challenge and check the published error.
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    // Index an HTTPS package while the source is direct, then opt it into the saved proxy.
+    stage_listing(
+        &official_origin,
+        "ora-space.weather",
+        &format!(
+            "resolver = 1\nidentifier = \"ora-space.weather\"\nkind = \"skill\"\nversion = \"0.4.0\"\ndescription = \"Proxied download fixture\"\nurl = \"https://package.example.test/weather.orax\"\nsha256 = \"{}\"\n",
+            "ab".repeat(32)
+        ),
+    )?;
+    publish(
+        &official_origin,
+        &git_config,
+        "publish proxied package fixture",
+    )?;
+    let indexed = plugins.sync_available(SyncAvailablePluginsRequest {})?;
+    let package = indexed
+        .plugins
+        .iter()
+        .find(|entry| entry.name == "ora-space.weather" && entry.version == "0.4.0")
+        .ok_or("proxied package fixture was not indexed")?;
+
+    // Save the reported HTTP-prefixed host through Settings before using both market routes.
     let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    db.execute(
-        "UPDATE user_config SET value = 'manual' WHERE key = 'network_proxy_mode'",
-        [],
-    )?;
-    db.execute(
-        "INSERT INTO user_config (key, value) VALUES ('network_proxy_settings', ?1)",
-        [serde_json::json!({
-            "host": "127.0.0.1",
-            "port": proxy.local_addr()?.port(),
-            "username": null,
-            "password": null,
-        })
-        .to_string()],
-    )?;
+    let settings = backend.settings();
+    settings.clear_network_proxy_settings().await?;
+    let mut preferences = settings.network_proxy_preferences().await?;
+    preferences.mode = "manual".parse()?;
+    preferences.manual = Some(serde_json::from_value(serde_json::json!({
+        "host": "http://127.0.0.1",
+        "port": proxy.local_addr()?.port(),
+        "username": null,
+        "password": null,
+    }))?);
+    let saved = settings.set_network_proxy_preferences(preferences).await?;
+    assert_eq!(
+        saved.manual.ok_or("manual settings were not saved")?.host,
+        "127.0.0.1"
+    );
     run_git(
         &third_party_checkout,
         &git_config,
@@ -1074,23 +1095,13 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
     )?;
     set_source(THIRD_PARTY_URL, true, true)?;
     let challenge = tokio::spawn(async move {
-        let (mut socket, _) = proxy.accept().await?;
-        let mut reader = BufReader::new(&mut socket);
-        let mut lines = String::new();
-        loop {
-            let offset = lines.len();
-            if reader.read_line(&mut lines).await? == 0 || &lines[offset..] == "\r\n" {
-                break;
-            }
-        }
-        socket.write_all(
-            b"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        ).await?;
-        Ok::<_, std::io::Error>(lines)
+        reject_marketplace_connect(&proxy, "github.com:443").await?;
+        Ok::<_, std::io::Error>(proxy)
     });
     let refreshed = plugins.sync_available(SyncAvailablePluginsRequest {})?;
-    let request = tokio::time::timeout(std::time::Duration::from_secs(5), challenge).await???;
-    assert!(request.starts_with("CONNECT github.com:443 "));
+    let proxy = tokio::time::timeout(std::time::Duration::from_secs(5), challenge)
+        .await
+        .map_err(|_| "Git sync did not reach the saved proxy")???;
     assert_eq!(
         refreshed.failed_sources,
         vec![MarketplaceSourceSyncFailure {
@@ -1098,5 +1109,57 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
             message: "proxy authentication failed (HTTP 407)".to_owned(),
         }],
     );
+
+    set_source(SOURCE_URL, true, true)?;
+    let install = plugins.install(InstallPluginRequest {
+        plugin_id: package.id.clone(),
+        hook_execution_acknowledged: false,
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        tokio::pin!(install);
+        tokio::select! {
+            biased;
+            request = reject_marketplace_connect(&proxy, "package.example.test:443") => {
+                request.map_err(Box::<dyn std::error::Error>::from)
+            }
+            result = &mut install => Err(Box::<dyn std::error::Error>::from(format!(
+                "install ended before reaching the proxy: {result:?}"
+            ))),
+        }
+    })
+    .await
+    .map_err(|_| "package download did not reach the saved proxy")??;
     Ok(())
+}
+
+/// Captures the CONNECT through the expected proxy and replies with an authentication challenge.
+async fn reject_marketplace_connect(
+    proxy: &tokio::net::TcpListener,
+    authority: &str,
+) -> io::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let expected = format!("CONNECT {authority} ");
+    loop {
+        let (mut socket, _) = proxy.accept().await?;
+        let mut reader = BufReader::new(&mut socket);
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).await?;
+        let mut header = String::new();
+        while reader.read_line(&mut header).await? != 0 && header != "\r\n" {
+            header.clear();
+        }
+        if !request_line.starts_with(&expected) {
+            // Ignore unrelated local requests while waiting for the expected CONNECT.
+            socket
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await?;
+            continue;
+        }
+        socket.write_all(
+            b"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ).await?;
+        return Ok(());
+    }
 }

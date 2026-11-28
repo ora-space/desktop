@@ -142,12 +142,19 @@ impl Settings {
         &self,
         preferences: ora_application::NetworkProxyPreferences,
     ) -> Result<ora_application::NetworkProxyPreferences, BackendError> {
-        if preferences.mode == ora_application::NetworkProxyMode::Manual {
-            crate::proxy::host_proxy(&preferences)?;
-        }
+        let manual = match preferences.mode {
+            ora_application::NetworkProxyMode::Manual => {
+                let settings = preferences.manual.ok_or_else(|| {
+                    BackendError::invalid_proxy_settings("manual proxy requires an endpoint")
+                })?;
+                Some(crate::proxy::normalize_manual_settings(settings)?)
+            }
+            ora_application::NetworkProxyMode::System
+            | ora_application::NetworkProxyMode::Direct => None,
+        };
         let service = self.service.clone();
         spawn_repository_work(move || {
-            service.set_network_proxy_preferences(preferences.mode, preferences.manual)?;
+            service.set_network_proxy_preferences(preferences.mode, manual)?;
             service
                 .network_proxy_preferences()
                 .map_err(BackendError::from)
@@ -181,6 +188,7 @@ impl Settings {
         &self,
         settings: NetworkProxySettings,
     ) -> Result<NetworkProxySettings, BackendError> {
+        let settings = crate::proxy::normalize_manual_settings(settings)?;
         let service = self.service.clone();
         spawn_repository_work(move || {
             service

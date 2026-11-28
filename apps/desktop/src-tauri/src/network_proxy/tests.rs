@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine as _;
 use ora_application::{NetworkProxyMode, NetworkProxyPreferences, NetworkProxySettings};
 use ora_backend::Settings;
 use rustls::pki_types::PrivatePkcs8KeyDer;
@@ -9,19 +10,28 @@ use tokio_rustls::TlsAcceptor;
 
 const OK: &str = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
-/// Replies to one request and returns the request line observed on the wire.
-async fn respond(stream: &mut (impl AsyncRead + AsyncWrite + Unpin), response: &str) -> String {
+/// Replies to one request and returns its line and proxy authentication value.
+async fn respond(
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    response: &str,
+) -> (String, Option<String>) {
     let mut reader = BufReader::new(&mut *stream);
     let mut line = String::new();
     reader.read_line(&mut line).await.unwrap();
+    let mut authorization = None;
     loop {
         let mut header = String::new();
         if reader.read_line(&mut header).await.unwrap() == 0 || header == "\r\n" {
             break;
         }
+        if let Some((name, value)) = header.split_once(':')
+            && name.eq_ignore_ascii_case("Proxy-Authorization")
+        {
+            authorization = Some(value.trim().to_owned());
+        }
     }
     stream.write_all(response.as_bytes()).await.unwrap();
-    line
+    (line, authorization)
 }
 
 /// Hosts a single HTTP redirect or final response on the loopback interface.
@@ -32,7 +42,7 @@ async fn serve_http(response: String) -> (Url, tokio::task::JoinHandle<String>) 
         .unwrap();
     let handle = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        respond(&mut socket, &response).await
+        respond(&mut socket, &response).await.0
     });
     (url, handle)
 }
@@ -72,11 +82,12 @@ fn tls_fixture() -> (TlsAcceptor, updater_http::Certificate) {
 async fn serve_connect(
     mut proxy: impl AsyncRead + AsyncWrite + Unpin,
     tls: TlsAcceptor,
-) -> (String, String) {
-    let connect = respond(&mut proxy, "HTTP/1.1 200 Connection Established\r\n\r\n").await;
+) -> (String, Option<String>, String) {
+    let (connect, authorization) =
+        respond(&mut proxy, "HTTP/1.1 200 Connection Established\r\n\r\n").await;
     let mut origin = tls.accept(proxy).await.unwrap();
-    let request = respond(&mut origin, OK).await;
-    (connect, request)
+    let (request, _) = respond(&mut origin, OK).await;
+    (connect, authorization, request)
 }
 
 /// Verifies actual transport parity for bare hosts, HTTP proxies and TLS-wrapped HTTPS proxies.
@@ -89,21 +100,27 @@ async fn manual_address_formats_work_for_the_probe_and_updater_transport() {
     let settings = backend.settings();
     let manifest: Url = "https://manifest.example.test/latest.json".parse().unwrap();
     for host in ["localhost", "http://localhost", "https://localhost"] {
+        let credentials = (host != "localhost").then_some(("fixture%2B", "password%40@"));
+        let expected_auth = credentials.map(|(user, password)| {
+            let encoded =
+                base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
+            format!("Basic {encoded}")
+        });
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let preferences = NetworkProxyPreferences {
             mode: NetworkProxyMode::Manual,
             manual: Some(NetworkProxySettings {
                 host: host.to_owned(),
                 port: listener.local_addr().unwrap().port(),
-                username: None,
-                password: None,
+                username: credentials.map(|(user, _)| user.to_owned()),
+                password: credentials.map(|(_, password)| password.to_owned()),
             }),
         };
         let server_tls = tls.clone();
         let server = tokio::spawn(async move {
             for _ in 0..2 {
                 let (socket, _) = listener.accept().await.unwrap();
-                let (connect, request) = if host.starts_with("https://") {
+                let (connect, authorization, request) = if host.starts_with("https://") {
                     let socket = server_tls.accept(socket).await.unwrap();
                     serve_connect(socket, server_tls.clone()).await
                 } else {
@@ -113,6 +130,7 @@ async fn manual_address_formats_work_for_the_probe_and_updater_transport() {
                     connect.starts_with("CONNECT manifest.example.test:443 "),
                     "{connect}"
                 );
+                assert_eq!(authorization, expected_auth);
                 assert!(request.starts_with("GET /latest.json "), "{request}");
             }
         });
@@ -130,12 +148,16 @@ async fn manual_address_formats_work_for_the_probe_and_updater_transport() {
             },
             "{host}"
         );
+        let mut expected = preferences.clone();
+        if host == "http://localhost" {
+            expected.manual.as_mut().unwrap().host = "localhost".to_owned();
+        }
         assert_eq!(
             settings
-                .set_network_proxy_preferences(preferences.clone())
+                .set_network_proxy_preferences(preferences)
                 .await
                 .unwrap(),
-            preferences
+            expected
         );
         let saved_policy = settings.network_proxy_policy().await.unwrap();
         let response = configure_client(

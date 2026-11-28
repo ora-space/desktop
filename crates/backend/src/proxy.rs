@@ -81,35 +81,68 @@ pub(crate) fn git_proxy_env(remote_url: &str, policy: &HostProxy) -> Result<GitE
 /// Returns the plain endpoint URL from user-provided proxy settings.
 fn proxy_endpoint(settings: &NetworkProxySettings) -> Result<Url, BackendError> {
     let mut endpoint = Url::parse(&normalized_proxy_url(settings)?)
-        .map_err(|_| proxy_error(HostProxyError::InvalidEndpoint))?;
-    if !matches!(endpoint.scheme(), "http" | "https" | "socks5" | "socks5h")
-        || endpoint.host().is_none()
-        || endpoint.query().is_some()
+        .map_err(|_| BackendError::invalid_proxy_settings("invalid proxy host".to_owned()))?;
+    if !matches!(endpoint.scheme(), "http" | "https" | "socks5" | "socks5h") {
+        return Err(BackendError::invalid_proxy_settings(
+            "proxy scheme must be HTTP, HTTPS, SOCKS5, or SOCKS5H".to_owned(),
+        ));
+    }
+    if endpoint.host().is_none() {
+        return Err(BackendError::invalid_proxy_settings(
+            "proxy address must include a host".to_owned(),
+        ));
+    }
+    if endpoint.query().is_some()
         || endpoint.fragment().is_some()
         || !matches!(endpoint.path(), "" | "/")
-        || !endpoint.username().is_empty()
-        || endpoint.password().is_some()
     {
-        return Err(proxy_error(HostProxyError::InvalidEndpoint));
+        return Err(BackendError::invalid_proxy_settings(
+            "proxy address must not include a path, query, or fragment".to_owned(),
+        ));
+    }
+    if !endpoint.username().is_empty() || endpoint.password().is_some() {
+        return Err(BackendError::invalid_proxy_settings(
+            "enter proxy credentials in the username and password fields".to_owned(),
+        ));
     }
     endpoint
         .set_port(Some(settings.port))
         .map_err(|_| proxy_error(HostProxyError::InvalidEndpoint))?;
+    endpoint.set_path("");
     Ok(endpoint)
+}
+
+/// Validates the endpoint before saving and stores only the host and non-default scheme.
+pub(crate) fn normalize_manual_settings(
+    mut settings: NetworkProxySettings,
+) -> Result<NetworkProxySettings, BackendError> {
+    let endpoint = proxy_endpoint_with_credentials(&settings)?;
+    let host = endpoint
+        .host_str()
+        .ok_or_else(|| proxy_error(HostProxyError::InvalidEndpoint))?;
+    settings.host = match endpoint.scheme() {
+        "http" => host.to_owned(),
+        scheme => format!("{scheme}://{host}"),
+    };
+    Ok(settings)
 }
 
 /// Returns a proxy URL with configured credentials embedded for Git's environment contract.
 fn proxy_endpoint_with_credentials(settings: &NetworkProxySettings) -> Result<Url, BackendError> {
     let mut endpoint = proxy_endpoint(settings)?;
+    // URL setters preserve percent escapes, but the clients decode URL credentials.
+    // Encode literal percent signs so those clients receive the saved field values.
     if let Some(username) = &settings.username {
         endpoint
-            .set_username(username)
+            .set_username(&username.replace('%', "%25"))
             .map_err(|()| proxy_error(HostProxyError::InvalidEndpoint))?;
     }
     if let Some(password) = &settings.password {
-        endpoint.set_password(Some(password)).map_err(|()| {
-            BackendError::invalid_proxy_settings("invalid proxy password".to_string())
-        })?;
+        endpoint
+            .set_password(Some(&password.replace('%', "%25")))
+            .map_err(|()| {
+                BackendError::invalid_proxy_settings("invalid proxy password".to_string())
+            })?;
     }
     Ok(endpoint)
 }
