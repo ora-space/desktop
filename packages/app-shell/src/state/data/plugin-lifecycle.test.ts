@@ -6,7 +6,10 @@ import {
   invalidateAgentModels,
   refreshAgent,
 } from "./agent-runtime";
-import { invalidatePluginState } from "./plugin-lifecycle";
+import {
+  invalidateMarketplaceSourceChange,
+  invalidatePluginState,
+} from "./plugin-lifecycle";
 import { invalidatePluginQueries, pluginKeys } from "./plugins";
 import { skillKeys } from "./skills";
 
@@ -50,6 +53,26 @@ function caches() {
 describe("plugin lifecycle cache ownership", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("relabels every origin-bearing list after a marketplace source change", async () => {
+    const { client, invalidated } = caches();
+    client.setQueryData(pluginKeys.marketplaceSources, []);
+    await invalidateMarketplaceSourceChange(client);
+    expect({
+      ...invalidated(),
+      sources: client.getQueryState(pluginKeys.marketplaceSources)
+        ?.isInvalidated,
+    }).toEqual({
+      installed: true,
+      available: true,
+      skills: true,
+      sources: true,
+      availability: false,
+      modelsA: false,
+      modelsAElsewhere: false,
+      modelsB: false,
+    });
   });
 
   it("refreshes all workspaces of the started agent, but never another agent", async () => {

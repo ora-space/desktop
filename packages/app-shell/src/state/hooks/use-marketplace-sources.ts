@@ -4,7 +4,8 @@ import type {
   UpdateMarketplaceSourceRequest,
 } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { pluginKeys, invalidateMarketplaceSources } from "../data/plugins";
+import { invalidateMarketplaceSourceChange } from "../data/plugin-lifecycle";
+import { pluginKeys } from "../data/plugins";
 
 /** Loads the user-configured marketplace source list. */
 export function useMarketplaceSources() {
@@ -16,8 +17,8 @@ export function useMarketplaceSources() {
 }
 
 /**
- * Adds one marketplace source and refreshes the source list after the backend
- * persists it.
+ * Adds one marketplace source and refreshes the source list, and every origin
+ * label the new source can change, after the backend persists it.
  *
  * The add contract always stores Direct HTTPS. S3 credentials stay on the
  * existing update path, so choosing SigV4 follows the add with that update.
@@ -61,7 +62,7 @@ export function useAddMarketplaceSource() {
         throw error;
       }
     },
-    onSettled: () => invalidateMarketplaceSources(queryClient),
+    onSettled: () => invalidateMarketplaceSourceChange(queryClient),
   });
 }
 
@@ -75,7 +76,7 @@ export function useDeleteMarketplaceSource() {
   return useMutation({
     mutationFn: ({ url }: { url: string }) =>
       client.plugin.deleteSource({ url }),
-    onSettled: () => invalidateMarketplaceSources(queryClient),
+    onSettled: () => invalidateMarketplaceSourceChange(queryClient),
   });
 }
 
@@ -89,6 +90,6 @@ export function useUpdateMarketplaceSource() {
   return useMutation({
     mutationFn: (request: UpdateMarketplaceSourceRequest) =>
       client.plugin.updateSource(request),
-    onSettled: () => invalidateMarketplaceSources(queryClient),
+    onSettled: () => invalidateMarketplaceSourceChange(queryClient),
   });
 }
