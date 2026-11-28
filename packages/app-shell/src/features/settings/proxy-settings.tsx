@@ -87,6 +87,15 @@ export function ProxySettings() {
   );
 }
 
+/** Decodes URL credentials while preserving a literal percent sign or malformed escape. */
+function decodeProxyCredential(value: string): string {
+  try {
+    return decodeURIComponent(value.replace(/%(?![\da-f]{2})/gi, "%25"));
+  } catch {
+    return value;
+  }
+}
+
 /** Splits pasted addresses into form fields, keeping schemes that affect routing. */
 function splitProxyAddress(input: string) {
   const address = input.trim();
@@ -103,15 +112,17 @@ function splitProxyAddress(input: string) {
     // URL.port omits explicit defaults such as :80 and :443.
     const rawPort = /:(\d+)$/.exec(hostAndPort)?.[1];
     if (url.hostname === "") return null;
-    const username = decodeURIComponent(url.username);
-    const password = decodeURIComponent(url.password);
+    // SOCKS URLs otherwise retain an opaque, percent-encoded hostname.
+    const hostname = url.hostname.includes("%")
+      ? new URL("http://" + url.hostname).hostname
+      : url.hostname;
+    const username = decodeProxyCredential(url.username);
+    const password = decodeProxyCredential(url.password);
     // Single-line inputs cannot display line breaks from encoded URL credentials.
     if (/[\r\n]/.test(username) || /[\r\n]/.test(password)) return null;
     return {
       host:
-        url.protocol === "http:"
-          ? url.hostname
-          : url.protocol + "//" + url.hostname,
+        url.protocol === "http:" ? hostname : url.protocol + "//" + hostname,
       port: rawPort === undefined ? "" : String(Number(rawPort)),
       credentials: authority.includes("@") ? { username, password } : null,
     };
@@ -139,7 +150,10 @@ function ProxySettingsEditor({
   const [port, setPort] = useState(
     initialSettings ? String(initialSettings.port) : "",
   );
-  const [username, setUsername] = useState(initialSettings?.username ?? "");
+  const [username, setUsername] = useState({
+    value: initialSettings?.username ?? "",
+    edited: false,
+  });
   const [password, setPassword] = useState(initialSettings?.password ?? "");
   const [manualLoaded, setManualLoaded] = useState(initialSettings !== null);
   const [manualLoading, setManualLoading] = useState(false);
@@ -158,19 +172,28 @@ function ProxySettingsEditor({
   const parsedPort = portEntered
     ? fieldPort
     : parseProxyPort(address?.port ?? "");
-  const credentials = address?.credentials ?? { username, password };
+  const parsedUsername =
+    address?.credentials?.username ??
+    (username.edited ? username.value.trim() : username.value);
+  const parsedPassword = address?.credentials?.password ?? password;
   const parsed: ProxySettings | null =
     address === null || parsedPort === null
       ? null
       : {
           host: address.host,
           port: parsedPort,
-          username: credentials.username.trim() || null,
-          password: credentials.password || null,
+          username: parsedUsername || null,
+          password: parsedPassword || null,
         };
   const invalidAddress =
     mode === "manual" && host.trim() !== "" && address === null;
   const invalidPort = portEntered && fieldPort === null;
+  const missingPort = address !== null && !portEntered && address.port === "";
+  const portError = invalidPort
+    ? t("settings.proxy.invalidPort")
+    : missingPort
+      ? t("settings.proxy.missingPort")
+      : null;
   const invalid = mode === "manual" && parsed === null;
   const usingDraft =
     mode !== controller.mode ||
@@ -199,7 +222,7 @@ function ProxySettingsEditor({
       setUnusedAddressPort(value.port);
     }
     if (value.credentials !== null) {
-      setUsername(value.credentials.username);
+      setUsername({ value: value.credentials.username, edited: false });
       setPassword(value.credentials.password);
     }
   };
@@ -212,7 +235,7 @@ function ProxySettingsEditor({
       const saved = await controller.loadManual();
       setHost(saved?.host ?? "");
       setPort(saved ? String(saved.port) : "");
-      setUsername(saved?.username ?? "");
+      setUsername({ value: saved?.username ?? "", edited: false });
       setPassword(saved?.password ?? "");
     } catch {
       setManualLoadError(true);
@@ -244,7 +267,7 @@ function ProxySettingsEditor({
       setHost("");
       setPort("");
       setUnusedAddressPort(null);
-      setUsername("");
+      setUsername({ value: "", edited: false });
       setPassword("");
       setManualLoadError(false);
       toast.success(t("settings.proxy.cleared"));
@@ -344,30 +367,28 @@ function ProxySettingsEditor({
                       }}
                       placeholder={t("settings.proxy.portPlaceholder")}
                       aria-label={t("settings.proxy.port")}
-                      aria-invalid={invalidPort}
+                      aria-invalid={portError !== null}
                       aria-describedby={
-                        invalidPort || unusedAddressPort !== null
+                        portError !== null || unusedAddressPort !== null
                           ? portHintId
                           : undefined
                       }
                       inputMode="numeric"
                     />
                   </label>
-                  {(invalidPort || unusedAddressPort !== null) && (
-                    <p
-                      id={portHintId}
-                      className={
-                        invalidPort
-                          ? "text-xs text-destructive"
-                          : "text-xs text-muted-foreground"
-                      }
-                    >
-                      {invalidPort
-                        ? t("settings.proxy.invalidPort")
-                        : t("settings.proxy.keptPort", {
+                  {(portError !== null || unusedAddressPort !== null) && (
+                    <div id={portHintId} className="space-y-1">
+                      {portError !== null && (
+                        <p className="text-xs text-destructive">{portError}</p>
+                      )}
+                      {unusedAddressPort !== null && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.proxy.keptPort", {
                             port: unusedAddressPort,
                           })}
-                    </p>
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -391,8 +412,10 @@ function ProxySettingsEditor({
                     {t("settings.proxy.username")}
                   </span>
                   <Input
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
+                    value={username.value}
+                    onChange={(event) =>
+                      setUsername({ value: event.target.value, edited: true })
+                    }
                     placeholder={t("settings.proxy.optional")}
                     aria-label={t("settings.proxy.username")}
                     autoComplete="off"

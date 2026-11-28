@@ -233,6 +233,75 @@ it("explains an invalid port and accepts a corrected IPv6 endpoint", async () =>
   );
 });
 
+it("shows both the invalid port error and the port from the pasted address", async () => {
+  const state = createFixtureState();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
+  const port = await screen.findByLabelText(/端口|Port/);
+  await user.type(port, "0");
+  await user.click(screen.getByLabelText(/主机|Host/));
+  await user.paste("https://proxy.example:443");
+  expect(port).toHaveValue("0");
+  expect(port).toBeInvalid();
+  expect(port).toHaveAccessibleDescription(/1 至 65535|1 to 65535/);
+  expect(port).toHaveAccessibleDescription(/端口是 443|included port 443/);
+  expect(screen.getByRole("button", { name: /^保存$|^Save$/ })).toBeDisabled();
+});
+
+it("prompts for an explicit port when the pasted HTTPS address has none", async () => {
+  const state = createFixtureState();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
+  const host = await screen.findByLabelText(/主机|Host/);
+  const port = screen.getByLabelText(/端口|Port/);
+  const save = screen.getByRole("button", { name: /^保存$|^Save$/ });
+  const check = screen.getByRole("button", {
+    name: /验证代理|Check connection/,
+  });
+  await user.click(host);
+  await user.paste("https://proxy.example");
+  expect(port).toHaveValue("");
+  expect(port).toBeInvalid();
+  expect(port).toHaveAccessibleDescription(/请输入端口|Enter a port/);
+  expect(save).toBeDisabled();
+  expect(check).toBeDisabled();
+  await user.type(port, "443");
+  expect(port).toBeValid();
+  expect(save).toBeEnabled();
+  expect(check).toBeEnabled();
+});
+
+it("displays and saves an internationalized SOCKS hostname in ASCII", async () => {
+  const state = createFixtureState();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
+  const host = await screen.findByLabelText(/主机|Host/);
+  await user.click(host);
+  await user.paste("socks5h://bücher.example:1080");
+  expect(host).toHaveValue("socks5h://xn--bcher-kva.example");
+  await user.click(screen.getByRole("button", { name: /^保存$|^Save$/ }));
+  await waitFor(() =>
+    expect(state.proxySettings).toEqual({
+      host: "socks5h://xn--bcher-kva.example",
+      port: 1080,
+      username: null,
+      password: null,
+    }),
+  );
+});
+
 it("keeps the independent port on a legacy address with an embedded zero", async () => {
   const state = createFixtureState();
   state.proxyMode = "manual";
@@ -246,6 +315,14 @@ it("keeps the independent port on a legacy address with an embedded zero", async
   const user = userEvent.setup();
   const host = await screen.findByLabelText(/主机|Host/);
   const save = screen.getByRole("button", { name: /^保存$|^Save$/ });
+  await user.click(
+    screen.getByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    within(dialog).queryByText(/未保存的设置|uses unsaved settings/),
+  ).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
   await user.click(host);
   await user.tab();
   expect(host).toHaveValue("proxy.example");
@@ -495,6 +572,66 @@ it("checks and saves the same normalized proxy while preserving password whitesp
     expect(state.proxySettings).toEqual(check.mock.calls[0][0].settings),
   );
 });
+
+it.each([
+  {
+    case: "URL-encoded username whitespace",
+    address: "http://%20alice%20:secret@proxy.example:7890",
+    username: " alice ",
+    password: "secret",
+  },
+  {
+    case: "a literal percent sign alongside encoded credentials",
+    address: "http://a%40b:50%off%20today@proxy.example:7890",
+    username: "a@b",
+    password: "50%off today",
+  },
+])(
+  "checks and saves $case from a pasted proxy address",
+  async ({ address, username, password }) => {
+    const state = createFixtureState();
+    const client = createTestClient(createFixtureHandlers(state));
+    const check = vi.spyOn(client.proxy, "check");
+    const user = userEvent.setup();
+    const first = renderProxy(client);
+    await user.selectOptions(
+      await screen.findByLabelText(/代理模式|Proxy mode/),
+      "manual",
+    );
+    await user.click(await screen.findByLabelText(/主机|Host/));
+    await user.paste(address);
+    expect(screen.getByLabelText(/用户名|Username/)).toHaveValue(username);
+    expect(screen.getByLabelText(/密码|Password/)).toHaveValue(password);
+    const expected = { host: "proxy.example", port: 7890, username, password };
+    const checkButton = () =>
+      screen.getByRole("button", { name: /验证代理|Check connection/ });
+    await user.click(checkButton());
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+    );
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(check).toHaveBeenLastCalledWith({
+      url: "https://google.com",
+      settings: expected,
+    });
+    expect(state.proxySettings).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^保存$|^Save$/ }));
+    await waitFor(() => expect(state.proxySettings).toEqual(expected));
+
+    first.unmount();
+    renderProxy(client);
+    expect(await screen.findByLabelText(/用户名|Username/)).toHaveValue(
+      username,
+    );
+    await user.click(checkButton());
+    const reopened = await screen.findByRole("dialog");
+    expect(
+      within(reopened).queryByText(/未保存的设置|uses unsaved settings/),
+    ).not.toBeInTheDocument();
+  },
+);
+
 it("retains the draft and blocks actions during a production reconnect read failure", async () => {
   const state = createFixtureState();
   state.proxySettings = {
