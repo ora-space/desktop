@@ -9,6 +9,8 @@ mod pack_uninstall;
 mod registry_sync;
 mod skill_environment;
 mod workflow_documents;
+
+use crate::plugin_origins::SourceNamespaceOrigins;
 pub use operations::{AdmittedSync, Plugins};
 
 use hook_lifecycle::HookLifecycle;
@@ -163,6 +165,8 @@ pub(crate) struct PluginApi {
     hook_lifecycle: HookLifecycle,
     /// Process-local Host MCP health, shared with the Session runtime and plugin queries.
     pub(crate) mcp_health: McpHealthStore,
+    /// Classifies every listed plugin's origin from the recorded source bindings.
+    origins: SourceNamespaceOrigins,
     clock: SystemClock,
     /// Test-only transport substitution for production-entry marketplace qualification.
     #[cfg(test)]
@@ -244,6 +248,8 @@ impl PluginApi {
         let configuration = ConfigurationService::new(home_directory.clone());
         let mcp_health =
             McpHealthStore::new(publisher.clone(), ora_utils::mcp::DEFAULT_PROBE_TIMEOUT);
+        let origins =
+            SourceNamespaceOrigins::new(SqlitePluginSourceNamespaceRepository::new(pool.clone()));
         let lifecycle = PluginLifecycle::open(
             PluginLifecycleConfig {
                 data_directory: home_directory.clone(),
@@ -255,6 +261,7 @@ impl PluginApi {
             ),
             publisher,
             notifications.clone(),
+            origins.clone(),
         )
         .map_err(BackendError::from)?;
 
@@ -282,6 +289,7 @@ impl PluginApi {
             mcp_wakeup: OnceLock::new(),
             hook_lifecycle,
             mcp_health,
+            origins,
             clock,
             #[cfg(test)]
             local_marketplace_releases: Mutex::new(BTreeMap::new()),
@@ -870,6 +878,7 @@ mod tests {
             ),
             hub.publisher(),
             super::BroadcastNotificationSink::new(),
+            ora_domain::PluginOriginCatalog::EMPTY,
         )
         .expect("open lifecycle");
         lifecycle

@@ -7,10 +7,11 @@ use super::{
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, InstalledPlugin, InstalledPluginContribution,
     ListInstalledPluginsResponse, PluginConfigurationSummary, PluginDataDisposition,
-    PluginInstallationValidity, PluginRuntimeStatus, ScanPluginsRequest, ScanPluginsResponse,
-    StopPluginRequest, StopPluginResponse, UninstallPluginRequest, UninstallPluginResponse,
+    PluginInstallationValidity, PluginOrigin, PluginRuntimeStatus, ScanPluginsRequest,
+    ScanPluginsResponse, StopPluginRequest, StopPluginResponse, UninstallPluginRequest,
+    UninstallPluginResponse,
 };
-use ora_domain::PluginId;
+use ora_domain::{PluginId, PluginOriginCatalog};
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
 use std::fs;
@@ -40,6 +41,7 @@ pub(super) fn open_without_runtime(
         UnusedRuntimeLauncher,
         NoopStatusPublisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle")
 }
@@ -106,6 +108,84 @@ fn opens_with_discovered_plugins_stopped() {
             ListInstalledPluginsResponse {
                 plugins: vec![expected_plugin()],
             },
+        );
+    });
+}
+
+/// Moves the shared Skill fixture under `namespace`, as an install from a marketplace would.
+fn relocate_skill_package(data_dir: &Path, name: &str, namespace: &str) {
+    let installed = data_dir.join("plugins").join("installed");
+    let target = installed.join(namespace).join(name);
+    fs::create_dir_all(installed.join(namespace)).expect("create namespace directory");
+    fs::rename(installed.join("official").join(name), &target).expect("move package");
+    let manifest = target.join("1.0.0").join("orax.toml");
+    let text = fs::read_to_string(&manifest).expect("read manifest");
+    fs::write(
+        &manifest,
+        text.replace(
+            "namespace = \"official\"",
+            &format!("namespace = \"{namespace}\""),
+        ),
+    )
+    .expect("rewrite manifest namespace");
+}
+
+/// Verifies each installed plugin carries the origin its namespace resolves to, and that a
+/// namespace with no recorded source degrades to its slug instead of hiding the list.
+#[test]
+fn lists_installed_plugins_with_their_origins() {
+    with_trace_logging(|| {
+        let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
+        write_skill_plugin_package(temp_dir.path(), "acme.review");
+        relocate_skill_package(temp_dir.path(), "acme.review", "tools.1a2b3c4d");
+        write_skill_plugin_package(temp_dir.path(), "acme.lint");
+        relocate_skill_package(temp_dir.path(), "acme.lint", "ghost.33333333");
+        write_skill_plugin_package(temp_dir.path(), "ora.skill-pack");
+        let lifecycle = PluginLifecycle::open(
+            PluginLifecycleConfig {
+                data_directory: temp_dir.path().to_path_buf(),
+                deno_path: PathBuf::from("deno"),
+            },
+            UnusedRuntimeLauncher,
+            NoopStatusPublisher,
+            NoopNotificationSink,
+            PluginOriginCatalog::from_bindings([(
+                "tools.1a2b3c4d".to_string(),
+                "https://github.com/acme/tools".to_string(),
+            )]),
+        )
+        .expect("open plugin lifecycle");
+
+        let mut origins: Vec<(String, PluginOrigin)> = lifecycle
+            .list_installed_plugins()
+            .plugins
+            .into_iter()
+            .map(|plugin| (plugin.id, plugin.origin))
+            .collect();
+        origins.sort_by(|left, right| left.0.cmp(&right.0));
+
+        assert_eq!(
+            origins,
+            vec![
+                (
+                    "ghost.33333333/acme.lint".to_string(),
+                    PluginOrigin::Marketplace {
+                        source_url: None,
+                        label: "ghost".to_string(),
+                    },
+                ),
+                (
+                    "official/ora.skill-pack".to_string(),
+                    PluginOrigin::Official
+                ),
+                (
+                    "tools.1a2b3c4d/acme.review".to_string(),
+                    PluginOrigin::Marketplace {
+                        source_url: Some("https://github.com/acme/tools".to_string()),
+                        label: "tools".to_string(),
+                    },
+                ),
+            ],
         );
     });
 }
@@ -216,6 +296,7 @@ async fn activates_plugin_and_starts_its_runtime() {
         ImmediateRuntimeLauncher { runtime },
         publisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
 
@@ -345,6 +426,7 @@ async fn scan_stops_runtime_for_package_deleted_outside_ora() {
         ImmediateRuntimeLauncher { runtime },
         NoopStatusPublisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
     let activation = lifecycle
@@ -422,6 +504,7 @@ async fn activation_launches_the_plugin_and_publishes_each_transition() {
         launcher,
         publisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
     let response = lifecycle
@@ -506,6 +589,7 @@ async fn stops_running_plugin() {
         launcher,
         publisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -573,6 +657,7 @@ async fn queues_stop_behind_an_in_flight_launch() {
         launcher,
         publisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -632,6 +717,7 @@ async fn uninstalls_running_plugin_after_stopping_it() {
         launcher,
         publisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -710,6 +796,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
         ImmediateRuntimeLauncher { runtime },
         publisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -783,6 +870,7 @@ async fn records_runtime_failure() {
         FailureRuntimeLauncher { runtime },
         publisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -836,6 +924,7 @@ fn expected_skill_plugin() -> InstalledPlugin {
         description: "Example Skill plugin".to_string(),
         homepage: None,
         license: None,
+        origin: PluginOrigin::Official,
         contribution: InstalledPluginContribution::Skill,
         logo: Some(universal_logo("official/ora.skill-pack")),
         installation_validity: PluginInstallationValidity::Valid,
@@ -855,6 +944,7 @@ fn expected_hook_plugin() -> InstalledPlugin {
         description: "Example Hook plugin".to_string(),
         homepage: None,
         license: None,
+        origin: PluginOrigin::Official,
         contribution: InstalledPluginContribution::Hook {
             executable: "assets/rtk.exe".to_string(),
             supported_agents: vec!["claude-code".to_string(), "codex".to_string()],
@@ -878,6 +968,7 @@ fn expected_plugin_with_runtime(runtime: PluginRuntimeStatus) -> InstalledPlugin
         description: "Example plugin".to_string(),
         homepage: None,
         license: None,
+        origin: PluginOrigin::Official,
         contribution: InstalledPluginContribution::Agent {
             agent_display_name: "ora.example".to_string(),
         },

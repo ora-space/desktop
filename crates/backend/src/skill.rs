@@ -1,5 +1,6 @@
 use crate::BackendError;
 use crate::clock::SystemClock;
+use crate::plugin_origins::SourceNamespaceOrigins;
 use crate::skill_catalog::skill_package_dir;
 use crate::skill_revision::{CountedSkillRepository, CountedSkillStorage, SkillRevision};
 use ora_application::{
@@ -14,7 +15,7 @@ use ora_contracts::{
     GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse,
     PrepareSkillImportRequest, PrepareSkillImportResponse, UpdateSkillRequest, UpdateSkillResponse,
 };
-use ora_db::{RepositoryPool, SqliteSkillRepository};
+use ora_db::{RepositoryPool, SqlitePluginSourceNamespaceRepository, SqliteSkillRepository};
 use ora_utils::path::strip_verbatim_prefix;
 use std::path::PathBuf;
 
@@ -27,8 +28,8 @@ type Storage = CountedSkillStorage<FilesystemSkillStorage>;
 /// Groups the concrete skill handlers and import service shared by runtime adapters.
 pub struct SkillApi {
     create: CreateSkillHandler<CountedSkillRepository, Storage, UuidSkillIdGenerator, SystemClock>,
-    get: GetSkillHandler<CountedSkillRepository, Storage>,
-    list: ListSkillsHandler<CountedSkillRepository, Storage>,
+    get: GetSkillHandler<CountedSkillRepository, Storage, SourceNamespaceOrigins>,
+    list: ListSkillsHandler<CountedSkillRepository, Storage, SourceNamespaceOrigins>,
     update: UpdateSkillHandler<CountedSkillRepository, Storage, SystemClock>,
     delete: DeleteSkillHandler<CountedSkillRepository, Storage, SystemClock>,
     import: SkillImportService<
@@ -52,6 +53,8 @@ impl SkillApi {
         revision: SkillRevision,
         clock: SystemClock,
     ) -> Self {
+        let origins =
+            SourceNamespaceOrigins::new(SqlitePluginSourceNamespaceRepository::new(pool.clone()));
         let repository =
             CountedSkillRepository::new(SqliteSkillRepository::new(pool.clone()), revision.clone());
         let storage = CountedSkillStorage::new(
@@ -66,8 +69,8 @@ impl SkillApi {
                 UuidSkillIdGenerator::new(),
                 clock,
             ),
-            get: GetSkillHandler::new(repository.clone(), storage.clone()),
-            list: ListSkillsHandler::new(repository.clone(), storage.clone()),
+            get: GetSkillHandler::new(repository.clone(), storage.clone(), origins.clone()),
+            list: ListSkillsHandler::new(repository.clone(), storage.clone(), origins),
             update: UpdateSkillHandler::new(repository.clone(), storage.clone(), clock),
             delete: DeleteSkillHandler::new(repository.clone(), storage, clock),
             import: SkillImportService::new(

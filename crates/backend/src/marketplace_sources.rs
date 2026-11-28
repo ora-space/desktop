@@ -16,7 +16,7 @@ use ora_utils::url::canonical_repository_url;
 use std::path::{Path, PathBuf};
 
 /// The seed source used the first time a backend opens before any user configuration exists.
-const DEFAULT_MARKETPLACE_URL: &str = "https://github.com/ora-space/marketplace";
+const DEFAULT_MARKETPLACE_URL: &str = PluginNamespace::DEFAULT_MARKETPLACE_URL;
 const DEFAULT_MARKETPLACE_BRANCH: &str = "main";
 
 /// Owns SQLite-backed marketplace source configuration and binds each row to a namespace and a

@@ -10,6 +10,7 @@ mod marketplace_sources;
 mod plugin;
 mod plugin_configuration;
 mod plugin_gateway;
+mod plugin_origins;
 mod project;
 mod proxy;
 mod repository_work;

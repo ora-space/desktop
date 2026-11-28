@@ -60,7 +60,7 @@ use ora_contracts::{
     PluginDataDisposition, StopPluginRequest, StopPluginResponse, UninstallPluginRequest,
     UninstallPluginResponse,
 };
-use ora_domain::PluginId;
+use ora_domain::{PluginId, PluginOriginSource};
 use ora_logging::{LogLevel, ora_warn};
 use ora_plugin_config::ConfigurationService;
 use ora_plugin_manager::{
@@ -155,6 +155,12 @@ where
     /// from different host runs of the same plugin could carry the same generation.
     pub(crate) host_session_id: String,
     surface_closer: SurfaceCloserSlot,
+    /// Classifies each plugin's origin afresh for every projection to the contract.
+    ///
+    /// A trait object rather than a fourth type parameter: it is consulted once per query, never
+    /// on a hot path, and threading another generic through every lifecycle impl block would buy
+    /// nothing measurable.
+    origins: Arc<dyn PluginOriginSource>,
     pub(crate) config: PluginLifecycleConfig,
 }
 
@@ -171,6 +177,7 @@ where
         launcher: RuntimeLauncher,
         publisher: StatusPublisher,
         sink: NotificationSink,
+        origins: impl PluginOriginSource,
     ) -> Result<Self, PluginLifecycleError> {
         let manager = PluginManager::discover(&config.data_directory);
         // Discovery drops unusable packages silently, so startup is the only place an operator can
@@ -202,6 +209,7 @@ where
                 log_levels: PluginLogLevels::open(&config.data_directory),
                 host_session_id: uuid::Uuid::new_v4().to_string(),
                 surface_closer: SurfaceCloserSlot::default(),
+                origins: Arc::new(origins),
                 config,
             }),
         })
@@ -274,6 +282,7 @@ where
     /// Package identity stays cached until an explicit scan; configuration completeness is not,
     /// because a later editor save would otherwise leave the list showing a stale Available state.
     pub fn list_installed_plugins(&self) -> ListInstalledPluginsResponse {
+        let origins = self.inner.origins.plugin_origins();
         let state = self.read_state();
         ListInstalledPluginsResponse {
             plugins: state
@@ -286,6 +295,7 @@ where
                             .managed(&plugin.id)
                             .unwrap_or(&ManagedPluginState::Stopped),
                         &self.inner.configuration,
+                        &origins,
                     )
                 })
                 .collect(),
@@ -346,6 +356,7 @@ where
                             &plugin,
                             managed,
                             &self.inner.configuration,
+                            &self.inner.origins.plugin_origins(),
                         ),
                     });
                 }
@@ -356,6 +367,7 @@ where
                             &plugin,
                             &starting,
                             &self.inner.configuration,
+                            &self.inner.origins.plugin_origins(),
                         ),
                     };
                     state.set_managed(&plugin_id, starting);
@@ -416,7 +428,12 @@ where
             .managed(&plugin_id)
             .unwrap_or(&ManagedPluginState::Stopped);
         Ok(StopPluginResponse {
-            plugin: discovered_plugin_contract(&plugin, managed, &self.inner.configuration),
+            plugin: discovered_plugin_contract(
+                &plugin,
+                managed,
+                &self.inner.configuration,
+                &self.inner.origins.plugin_origins(),
+            ),
         })
     }
 

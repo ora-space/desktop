@@ -1,11 +1,19 @@
 //! Projection of one cached registry entry into the marketplace summary the frontend renders.
 
+use ora_application::plugin_origin_contract;
 use ora_contracts::{AvailablePlugin, PluginHostCompatibility};
+use ora_domain::PluginOriginCatalog;
 use ora_plugin_asset::{AssetUrlForm, LogoAssetRoot, plugin_logo};
 use ora_plugin_registry::RegistryEntry;
 
 /// Converts one registry entry into the frontend-facing marketplace summary.
-pub(super) fn available_plugin(entry: &RegistryEntry) -> AvailablePlugin {
+///
+/// `origins` is the snapshot shared by every entry of one response, so namesake sources in the
+/// same list are labelled against the same binding set.
+pub(super) fn available_plugin(
+    entry: &RegistryEntry,
+    origins: &PluginOriginCatalog,
+) -> AvailablePlugin {
     AvailablePlugin {
         id: entry.id().canonical(),
         name: entry.identifier().to_owned(),
@@ -13,6 +21,7 @@ pub(super) fn available_plugin(entry: &RegistryEntry) -> AvailablePlugin {
         kind: entry.kind().to_owned(),
         namespace: entry.namespace().to_owned(),
         source_url: entry.source_url().to_owned(),
+        origin: plugin_origin_contract(origins, entry.namespace()),
         version: entry.version().to_string(),
         description: entry.description().to_owned(),
         logo: entry.logo().and_then(|variants| {
@@ -119,7 +128,10 @@ mod tests {
         );
 
         let build = RegistryIndex::build_all(&[&source], 1);
-        let listed = available_plugin(&build.index().plugins()[0]);
+        let listed = available_plugin(
+            &build.index().plugins()[0],
+            &ora_domain::PluginOriginCatalog::EMPTY,
+        );
 
         let origin = AssetUrlForm::CURRENT.origin();
         assert_eq!(
@@ -128,6 +140,77 @@ mod tests {
                 light: format!("{origin}logo/registry/official/acme.hub/light.svg"),
                 dark: format!("{origin}logo/registry/official/acme.hub/dark.png"),
             })
+        );
+        Ok(())
+    }
+
+    /// A third-party listing carries the label computed against every recorded source binding.
+    #[test]
+    fn labels_a_third_party_listing_against_its_namesakes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let checkout = tempfile::tempdir()?;
+        write_registry_entry(checkout.path(), "acme.hub");
+        let url = "https://github.com/obsismc/marketplace";
+        let namespace = PluginNamespace::derive_from_canonical_url(url);
+        let source = RegistrySource::new(
+            url,
+            namespace.clone(),
+            BranchName::new("main"),
+            checkout.path(),
+        );
+        let origins = ora_domain::PluginOriginCatalog::from_bindings([
+            (
+                "marketplace.11111111".to_string(),
+                "https://github.com/ora-space-fork/marketplace".to_string(),
+            ),
+            (namespace.to_string(), url.to_string()),
+        ]);
+
+        let build = RegistryIndex::build_all(&[&source], 1);
+        let listed = available_plugin(&build.index().plugins()[0], &origins);
+
+        assert_eq!(
+            (listed.source_url, listed.origin),
+            (
+                url.to_string(),
+                ora_contracts::PluginOrigin::Marketplace {
+                    source_url: Some(url.to_string()),
+                    label: "obsismc/marketplace".to_string(),
+                },
+            ),
+        );
+        Ok(())
+    }
+
+    /// A lone fork of the official marketplace is labelled against the default source's URL even
+    /// though that URL is not a binding, so the card reads `obsismc/marketplace` beside "official".
+    #[test]
+    fn labels_a_lone_official_fork_against_the_default_marketplace()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let checkout = tempfile::tempdir()?;
+        write_registry_entry(checkout.path(), "acme.hub");
+        let url = "https://github.com/obsismc/marketplace";
+        let namespace = PluginNamespace::derive_from_canonical_url(url);
+        let source = RegistrySource::new(
+            url,
+            namespace.clone(),
+            BranchName::new("main"),
+            checkout.path(),
+        );
+        let origins = ora_domain::PluginOriginCatalog::from_bindings([(
+            namespace.to_string(),
+            url.to_string(),
+        )]);
+
+        let build = RegistryIndex::build_all(&[&source], 1);
+        let listed = available_plugin(&build.index().plugins()[0], &origins);
+
+        assert_eq!(
+            listed.origin,
+            ora_contracts::PluginOrigin::Marketplace {
+                source_url: Some(url.to_string()),
+                label: "obsismc/marketplace".to_string(),
+            },
         );
         Ok(())
     }
@@ -254,7 +337,14 @@ mod tests {
 
         let build = RegistryIndex::build_all(&[&source], 1);
 
-        assert_eq!(available_plugin(&build.index().plugins()[0]).logo, None);
+        assert_eq!(
+            available_plugin(
+                &build.index().plugins()[0],
+                &ora_domain::PluginOriginCatalog::EMPTY
+            )
+            .logo,
+            None
+        );
         assert_eq!(
             build.index().plugins()[0].id(),
             &PluginId::new("official", "acme.hub").expect("plugin id")

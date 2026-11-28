@@ -669,6 +669,7 @@ mod tests {
                 skills[0].source,
                 ora_contracts::SkillSource::Plugin {
                     plugin_id: "official/review-pack".to_string(),
+                    origin: ora_contracts::PluginOrigin::Official,
                 }
             );
             assert_eq!(

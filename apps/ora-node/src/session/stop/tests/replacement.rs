@@ -80,6 +80,7 @@ async fn replacement_waits_for_retirement_before_registering_the_successor() -> 
         launcher,
         IgnoredStatus,
         GenerationTaps::default(),
+        ora_domain::PluginOriginCatalog::EMPTY,
     )?;
     shared
         .controls

@@ -1,8 +1,9 @@
 use ora_contracts::{
     InstalledPlugin, InstalledPluginContribution, PluginConfigurationCompleteness,
-    PluginConfigurationSummary, PluginInstallationValidity, PluginRuntimeStatus,
+    PluginConfigurationSummary, PluginInstallationValidity, PluginOrigin, PluginRuntimeStatus,
 };
-use ora_domain::PluginId;
+use ora_domain::{PluginId, PluginOriginCatalog};
+use ora_logging::ora_warn;
 use ora_plugin_asset::{AssetUrlForm, LogoAssetRoot, plugin_logo};
 use ora_plugin_config::{ConfigurationCompleteness, ConfigurationService, ConfigurationSummary};
 use ora_plugin_manager::InstalledPlugin as DiscoveredPlugin;
@@ -134,6 +135,7 @@ pub(super) fn discovered_plugin_contract<Runtime>(
     plugin: &DiscoveredPlugin,
     managed: &ManagedPluginState<Runtime>,
     configuration: &ConfigurationService,
+    origins: &PluginOriginCatalog,
 ) -> InstalledPlugin {
     let runtime = match managed {
         ManagedPluginState::Stopped => PluginRuntimeStatus::Stopped,
@@ -212,6 +214,7 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         description: plugin.description.clone(),
         homepage: plugin.homepage.clone(),
         license: plugin.license.clone(),
+        origin: contract_origin(origins, plugin.id.namespace()),
         contribution,
         logo: plugin.logo.and_then(|variants| {
             // Discovery resolved these variants from the package root, so the URL names
@@ -227,5 +230,26 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         installation_validity,
         configuration,
         runtime,
+    }
+}
+
+/// Classifies one installed plugin's origin, degrading instead of failing on a lost binding.
+///
+/// One damaged binding must not hide every installed plugin, so the entry is shown with the
+/// degraded origin and the damage is left in the log for diagnosis.
+fn contract_origin(origins: &PluginOriginCatalog, namespace: &str) -> PluginOrigin {
+    let origin = origins.origin_of(namespace).unwrap_or_else(|missing| {
+        ora_warn!(
+            namespace = missing.namespace(),
+            "installed plugin namespace has no recorded marketplace source"
+        );
+        missing.into_degraded_origin()
+    });
+    match origin {
+        ora_domain::PluginOrigin::LocalArchive => PluginOrigin::LocalArchive,
+        ora_domain::PluginOrigin::Official => PluginOrigin::Official,
+        ora_domain::PluginOrigin::Marketplace { source_url, label } => {
+            PluginOrigin::Marketplace { source_url, label }
+        }
     }
 }

@@ -36,6 +36,12 @@ impl PluginNamespace {
     /// reads far better in install paths, logs, and error messages than a digest-suffixed slug,
     /// and the overwhelming majority of plugins come from it.
     pub const OFFICIAL: &'static str = "official";
+    /// Canonical URL of the default first-party marketplace.
+    ///
+    /// The default source short-circuits to [`PluginNamespace::OFFICIAL`], so this URL never
+    /// enters the binding table; marketplace label disambiguation still compares against it
+    /// (plugin origin presentation D3) so a lone fork of the official market is told apart.
+    pub const DEFAULT_MARKETPLACE_URL: &'static str = "https://github.com/ora-space/marketplace";
     /// Namespace of packages imported from a local `.orax` archive.
     ///
     /// Unlike `official` this one is structurally necessary: a local archive has no source URL,

@@ -748,6 +748,8 @@ fn open_lifecycle(
         launcher,
         IgnoredStatus,
         taps.clone(),
+        // A Node session never lists plugins to a user, so origin labels have no reader here.
+        ora_domain::PluginOriginCatalog::EMPTY,
     )
 }
 
