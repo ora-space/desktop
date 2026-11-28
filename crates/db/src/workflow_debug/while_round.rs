@@ -182,17 +182,15 @@ fn parked_replays(
 }
 
 impl WhileReplay {
-    /// Whether the Loop still stands where this edit left it: the edited round is the active or
-    /// the last settled round, and every later slot is attributed to this operation.
+    /// Whether the Loop still stands where this edit left it: the edited round is the owner's
+    /// scope at that index, and every later slot is attributed to this operation. The edit wrote
+    /// a history row for every slot after the edited round, and this build creates no slot
+    /// between apply and consumption, so a later slot without that row means another build
+    /// advanced the Loop. How far the Loop had advanced before the edit does not matter.
     fn is_current(&self, tx: &Transaction<'_>, owner: &str) -> Result<bool, DatabaseError> {
         Ok(tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM workflow_execution_scopes s
                  WHERE s.id = ?2 AND s.parent_loop_node_run_id = ?1 AND s.round_index = ?3
-                   AND ?3 IN (
-                       (SELECT MAX(round_index) FROM workflow_execution_scopes
-                        WHERE parent_loop_node_run_id = ?1 AND status = 1),
-                       (SELECT MAX(round_index) FROM workflow_execution_scopes
-                        WHERE parent_loop_node_run_id = ?1 AND status = 2))
                    AND NOT EXISTS (SELECT 1 FROM workflow_execution_scopes later
                        WHERE later.parent_loop_node_run_id = ?1 AND later.round_index > ?3
                          AND NOT EXISTS (SELECT 1 FROM workflow_debug_round_history h

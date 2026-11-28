@@ -303,3 +303,255 @@ fn a_stale_parked_round_reopen_is_dropped_instead_of_rewinding_the_loop() {
         assert_eq!(f.row("out").output.as_deref(), Some(r#"{"draft":"done"}"#));
     });
 }
+
+/// Five-round Loop with `outside` and, when `post` is set, a downstream agent `post` reading
+/// the Loop's export. Rounds before `live` complete with S1, S2, …; returns the round-3 and
+/// round-4 writers. Then edit round 3 while `outside` fails during the stop of `stop_node`'s
+/// live attempt (the reverse race at a larger distance than round 4, review 2 R2-H1).
+async fn reverse_race_at_round_three(
+    f: &Fixture,
+    barrier: &super::super::lifecycle::StopBarrier,
+    finished: &[&str],
+    stop_node: &str,
+) -> (DispatchRecord, DispatchRecord) {
+    let mut observed = Vec::new();
+    for value in finished {
+        observed.push(f.observe_live_writer());
+        f.finish_writer(value);
+    }
+    let live = last_dispatch(&f.executor, stop_node);
+    f.bind_agent(&WorkflowNodeRunId::new(&live.node_run_id));
+    let preview = f.prompt_preview(&observed[2].node_run_id, 0, "new");
+    assert_eq!(
+        (preview.target.round, preview.impact.stop.clone()),
+        (Some(3), vec![live.node_run_id.clone()])
+    );
+    let (op, ()) = tokio::join!(
+        f.coordinator.commit(f.commit_request(&preview, "race")),
+        async {
+            barrier.entered.notified().await;
+            fail_outside(f);
+            barrier.release.notify_one();
+        }
+    );
+    assert_eq!(
+        op.unwrap().phase,
+        WorkflowDebugPhase::Applied { revision: 1 }
+    );
+    assert_eq!(f.run_status(), WorkflowRunStatus::Failed);
+    (observed[2].clone(), observed[3].clone())
+}
+
+/// Scenario J: round 3 is edited while round 5 runs. Ordinary recovery reruns round 3 in its
+/// own scope with the new prompt and its entrance value S2, not round 5 with the retired S4.
+#[test]
+fn ordinary_recovery_replays_an_edited_round_two_rounds_behind_the_live_one() {
+    run_test(async {
+        let barrier = Arc::new(super::super::lifecycle::StopBarrier::default());
+        let f = Fixture::with_graph(barrier.clone(), &five_rounds_with_outside());
+        let (round_three, round_four) =
+            reverse_race_at_round_three(&f, &barrier, &["S1", "S2", "S3", "S4"], "writer").await;
+        assert_eq!(
+            f.engine.resume_from_failure(&f.run_id).unwrap(),
+            ora_application::ResumeWorkflowRunResult::Resumed
+        );
+        assert_eq!(parked_on_owner(&f), None);
+        let replay = last_dispatch(&f.executor, "writer");
+        assert_eq!(
+            (
+                replay.prompt.as_deref(),
+                replay.variable_pool.values["loop.draft"].as_str(),
+                f.scope_of(&replay.node_run_id),
+                replay.variable_pool.values.contains_key("writer.output"),
+            ),
+            (
+                Some("new"),
+                Some("S2"),
+                f.scope_of(&round_three.node_run_id),
+                false
+            )
+        );
+        f.finish_writer("T3");
+        let next = last_dispatch(&f.executor, "writer");
+        assert_eq!(
+            (
+                next.prompt.as_deref(),
+                next.variable_pool.values["loop.draft"].as_str(),
+                f.scope_of(&next.node_run_id),
+            ),
+            (Some("new"), Some("T3"), f.scope_of(&round_four.node_run_id))
+        );
+    });
+}
+
+/// Scenario K: the Loop already finished all five rounds and its consumer `post` is in flight
+/// when round 3 is edited. Recovery withdraws the Loop's export and the output node's value
+/// before dispatching, and reruns round 3 with the new prompt and S2.
+#[test]
+fn ordinary_recovery_replays_an_edited_round_of_a_finished_loop() {
+    run_test(async {
+        let mut graph: serde_json::Value =
+            serde_json::from_str(&five_rounds_with_outside()).unwrap();
+        graph["nodes"].as_array_mut().unwrap().push(json!({
+            "id":"post", "data":{"kind":"agent", "agentConfig":{
+                "retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},
+                "executor":{"agentCli":"c","modelId":"m"}, "prompt":"post {{#loop.result#}}"
+            }}
+        }));
+        graph["edges"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"source":"loop","target":"post"}));
+        let barrier = Arc::new(super::super::lifecycle::StopBarrier::default());
+        let f = Fixture::with_graph(barrier.clone(), &graph.to_string());
+        let (round_three, _) =
+            reverse_race_at_round_three(&f, &barrier, &["S1", "S2", "S3", "S4", "done"], "post")
+                .await;
+        assert_eq!(f.row("loop").status, WorkflowNodeStatus::Succeeded);
+        let stale = ["loop.result", "out.output"];
+        let present = |f: &Fixture| {
+            let run = SqliteWorkflowRunRepository::new(f.pool.clone())
+                .find_run(&f.run_id)
+                .unwrap()
+                .unwrap();
+            let payload: ora_application::WorkflowRunPayload =
+                serde_json::from_str(run.payload.as_deref().unwrap()).unwrap();
+            stale
+                .iter()
+                .filter(|key| payload.variable_pool.values.contains_key(**key))
+                .map(|key| key.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(present(&f), stale.map(String::from));
+        let skip = f.executor.records().len();
+        assert_eq!(
+            f.engine.resume_from_failure(&f.run_id).unwrap(),
+            ora_application::ResumeWorkflowRunResult::Resumed
+        );
+        assert_eq!(present(&f), Vec::<String>::new());
+        let redispatched: Vec<_> = f.executor.records().into_iter().skip(skip).collect();
+        let mut nodes: Vec<_> = redispatched.iter().map(|r| r.node_id.clone()).collect();
+        nodes.sort();
+        assert_eq!(nodes, ["outside", "writer"]);
+        assert!(
+            redispatched
+                .iter()
+                .all(|r| !r.variable_pool.values.contains_key("loop.result"))
+        );
+        let replay = last_dispatch(&f.executor, "writer");
+        assert_eq!(
+            (
+                replay.prompt.as_deref(),
+                replay.variable_pool.values["loop.draft"].as_str(),
+                f.scope_of(&replay.node_run_id),
+            ),
+            (
+                Some("new"),
+                Some("S2"),
+                f.scope_of(&round_three.node_run_id)
+            )
+        );
+        f.finish_writer("done");
+        assert_eq!(
+            (
+                dispatched(&f.executor, "post"),
+                f.row("loop").output.as_deref()
+            ),
+            (2, Some(r#"{"result":"done"}"#))
+        );
+    });
+}
+
+/// Review 2 R2-L1: a second edit on an already debugged Loop is anchored on its own revision.
+/// After a first edit at round 1 reran to completion, a second edit at round 3 that crashes
+/// after acceptance still reopens and dispatches round 3 at boot.
+#[test]
+fn a_second_edit_of_a_debugged_loop_dispatches_at_boot() {
+    run_test(async {
+        let f = Fixture::with_graph(Arc::new(NoSessions), LOOP_GRAPH);
+        let first = f.observe_live_writer();
+        f.finish_writer("done");
+        assert_eq!(f.run_status(), WorkflowRunStatus::Succeeded);
+        let op = f
+            .coordinator
+            .commit(f.commit_request(&f.prompt_preview(&first.node_run_id, 0, "new1"), "first"))
+            .await
+            .unwrap();
+        assert_eq!(op.phase, WorkflowDebugPhase::Applied { revision: 1 });
+        f.finish_writer("T1");
+        f.finish_writer("T2");
+        let third = f.observe_live_writer();
+        f.finish_writer("done");
+        assert_eq!(f.run_status(), WorkflowRunStatus::Succeeded);
+        let preview = f.prompt_preview(&third.node_run_id, 1, "new3");
+        assert_eq!(
+            (preview.target.round, preview.impact.stop.is_empty()),
+            (Some(3), true)
+        );
+        f.store
+            .claim(&f.commit_request(&preview, "second"))
+            .unwrap();
+        let executor = boot(&f);
+        let replay = last_dispatch(&executor, "writer");
+        assert_eq!(
+            (
+                f.run_status(),
+                executor.records().len(),
+                replay.prompt.as_deref(),
+                replay.variable_pool.values["loop.draft"].as_str(),
+            ),
+            (WorkflowRunStatus::Running, 1, Some("new3"), Some("T2"))
+        );
+    });
+}
+
+/// Review 2 R2-L2: only an applied edit reopens a container. A Loop pointed at by a released
+/// failed stop alone is ordinary interrupted work at restart (while D6).
+#[test]
+fn a_loop_named_only_by_a_released_failed_stop_still_fails_at_restart() {
+    run_test(async {
+        let f = Fixture::with_graph(Arc::new(UnprovableStop), LOOP_GRAPH);
+        let selected = f.observe_live_writer();
+        f.finish_writer("again");
+        let second = f.observe_live_writer();
+        f.bind_agent(&WorkflowNodeRunId::new(&second.node_run_id));
+        let preview = f.prompt_preview(&selected.node_run_id, 0, "new");
+        assert_eq!(preview.impact.stop, vec![second.node_run_id.clone()]);
+        let receipt = f
+            .coordinator
+            .commit(f.commit_request(&preview, "unproven"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            receipt.phase,
+            WorkflowDebugPhase::StopFailed { .. }
+        ));
+        assert!(
+            f.store
+                .release_failed_stop(f.run_id.as_ref(), "unproven")
+                .unwrap()
+        );
+        // The stopped writer was cancelled and nothing else runs in the round: an idle window.
+        assert_eq!(
+            (f.run_status(), f.row("loop").status),
+            (WorkflowRunStatus::Running, WorkflowNodeStatus::Running)
+        );
+        let executor = boot(&f);
+        assert_eq!(
+            (
+                loop_outcome(&f),
+                scope_status(&f, &f.scope_of(&second.node_run_id)),
+                executor.records().len()
+            ),
+            (
+                (
+                    WorkflowRunStatus::Failed,
+                    WorkflowNodeStatus::Failed,
+                    Some(INTERRUPTED.to_string())
+                ),
+                WorkflowScopeStatus::Failed.database_value(),
+                0
+            )
+        );
+    });
+}
