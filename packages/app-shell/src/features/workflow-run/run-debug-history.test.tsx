@@ -104,7 +104,7 @@ it("opens the stored dispatch configuration from a reloaded run's history", asyn
       revision: nodeRunId === "it1" ? 0 : null,
       configuration: nodeRunId === "it1" ? { maxIterations: 5 } : null,
       snapshotId: null,
-      selectedBranch: null,
+      selectedBranch: nodeRunId === "it1" ? "else-if" : null,
       superseded: nodeRunId === "it1",
       retiredByOperationId: nodeRunId === "it1" ? "op1" : null,
       inputRecorded: true,
@@ -147,6 +147,7 @@ it("opens the stored dispatch configuration from a reloaded run's history", asyn
   expect(attempt).not.toHaveBeenCalled();
   await user.click(screen.getByText("Inspect execution it1"));
   expect(await screen.findByText(/"maxIterations": 5/)).toBeVisible();
+  expect(screen.getByText("Selected branch: else-if")).toBeVisible();
   expect(screen.getByText(/This attempt was superseded/)).toBeVisible();
   expect(
     screen.getByText("Execution supplying the dispatch input"),

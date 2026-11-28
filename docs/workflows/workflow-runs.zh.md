@@ -16,17 +16,18 @@
 
 ## 生命周期
 
-| 操作                                                                                       | 效果                                                |
-| ------------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| `createWorkflowRun`                                                                        | 校验并持久化一个 `Pending` 运行                     |
-| `startWorkflowRun`                                                                         | 校验可执行性与依赖并开始调度                        |
-| `updateWorkflowRunInput`                                                                   | 在运行开始之前填写 Start 输入                       |
-| `cancelWorkflowRun`、`restartWorkflowRun`                                                  | 取消；以新的根执行从头重新开始                      |
-| `previewWorkflowRunResume`、`resumeWorkflowRunFromFailure`                                 | 预览并执行恢复，见[恢复失败的运行](#恢复失败的运行) |
-| `completeWorkflowNode`                                                                     | 手动完成一个交互节点                                |
-| `diagnoseWorkflowNodeFailure`                                                              | 按需对失败节点做 AI 诊断                            |
-| `getWorkflowRun`、`listWorkflowRuns`、`listWorkflowRunsByWorkflow`、`listWorkflowNodeRuns` | 读取运行、按项目的摘要和节点历史                    |
-| `renameWorkflowRun`、`deleteWorkflowRun`                                                   | 改名；删除不在活跃状态的运行                        |
+| 操作                                                                                       | 效果                                                   |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| `createWorkflowRun`                                                                        | 校验并持久化一个 `Pending` 运行                        |
+| `startWorkflowRun`                                                                         | 校验可执行性与依赖并开始调度                           |
+| `updateWorkflowRunInput`                                                                   | 在运行开始之前填写 Start 输入                          |
+| `cancelWorkflowRun`、`restartWorkflowRun`                                                  | 取消；以新的根执行从头重新开始                         |
+| `previewWorkflowRunResume`、`resumeWorkflowRunFromFailure`                                 | 预览并执行恢复，见[恢复失败的运行](#恢复失败的运行)    |
+| `completeWorkflowNode`                                                                     | 手动完成一个交互节点                                   |
+| `diagnoseWorkflowNodeFailure`                                                              | 按需对失败节点做 AI 诊断                               |
+| `getWorkflowDebugContext` (`workflowRun.debugContext`)                                     | 查询所选位置的有效图、目标和基础修订，供编辑与预览使用 |
+| `getWorkflowRun`、`listWorkflowRuns`、`listWorkflowRunsByWorkflow`、`listWorkflowNodeRuns` | 读取运行、按项目的摘要和节点历史                       |
+| `renameWorkflowRun`、`deleteWorkflowRun`                                                   | 改名；删除不在活跃状态的运行                           |
 
 ### 创建
 
@@ -140,6 +141,10 @@ Start 输入把表单控件与变量池类型分开：文本、段落和下拉�
 | `checkpoint` | 把整个 Workspace 恢复到恢复单位的检查点 | `no_checkpoint`、`siblings_ran_after_checkpoint`、`not_resumable` |
 
 被自动重试替代的节点与它重试链上的每次尝试（`payload.retry_chain`）作为一个单位回滚。按需的 AI 诊断写入 `payload.ai_diagnosis`，标注为推测，调度、恢复、回滚和快照切换从不读取它。
+
+## 从选中的执行位置编辑并续跑
+
+在剧场检查器中选择目标执行或尚未派发的位置，点击 **从此位置编辑并续跑**。修改有效配置，点击 **预览改动**，核对保留、停稳、失效和重新派发的范围，再点击 **确认并续跑**。回执会保留到关闭编辑器。确认响应丢失时，在同一编辑器重试会沿用原请求 ID，也可以从调试历史查回结果。确认前选点改变，请关闭编辑器，重新选点并预览。服务端拒绝过期预览时，编辑器重新读取当前配置，再次预览后才能确认。
 
 ## 查询运行内调试历史
 

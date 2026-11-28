@@ -63,6 +63,13 @@ function AttemptFacts({
               {JSON.stringify(attempt.configuration, null, 2)}
             </pre>
           )}
+          {attempt.selectedBranch !== null && (
+            <p>
+              {t("workflowRun.debug.selectedBranch", {
+                branch: attempt.selectedBranch,
+              })}
+            </p>
+          )}
           {attempt.output !== null && (
             <p className="whitespace-pre-wrap">
               {t("workflowRun.inspector.output")} · {attempt.output}

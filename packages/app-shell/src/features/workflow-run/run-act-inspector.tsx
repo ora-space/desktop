@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { hashKey } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button, Input, Spinner, Textarea, cn } from "@ora/ui";
 import {
@@ -20,7 +22,10 @@ import { RunActArtifacts } from "./run-act-artifacts";
 import { RunActFailedAttempts } from "./run-act-failed-attempts";
 import { RunDebugAttempt } from "./run-debug-attempt";
 import { RunDebugEdit } from "./run-debug-edit";
-import type { PendingWorkflowDebugTarget } from "@ora/contracts";
+import type {
+  GetWorkflowDebugContextRequest,
+  PendingWorkflowDebugTarget,
+} from "@ora/contracts";
 import { RunActFileChanges } from "./run-act-file-changes";
 import { RunBriefPopover } from "./run-brief-popover";
 import { RunLoopRoundHistory } from "./run-loop-round-history";
@@ -135,7 +140,11 @@ function parseInputVariableValue(
  * Theater companion rail: read-only settings-parity configuration plus
  * execution metrics and artifacts.
  */
-export function RunActInspector({
+export function RunActInspector(props: RunActInspectorProps) {
+  return <Inspector key={props.runId} {...props} />;
+}
+
+function Inspector({
   runId,
   pendingPosition,
   nodeId,
@@ -177,6 +186,38 @@ export function RunActInspector({
   // The node's incremental worktree changes arrive in its run payload, captured by the engine.
   const fileChanges = effectiveState?.fileChanges ?? [];
 
+  const [session, setSession] = useState<{
+    id: string;
+    target: GetWorkflowDebugContextRequest;
+  }>();
+  const target =
+    runId &&
+    runStatus &&
+    runStatus !== "pending" &&
+    nodeId &&
+    data &&
+    effectiveState &&
+    ["agent", "condition", "loop", "iteration"].includes(data.kind)
+      ? effectiveState.nodeRunId
+        ? { runId, nodeRunId: effectiveState.nodeRunId }
+        : pendingPosition && { runId, pendingTarget: pendingPosition }
+      : undefined;
+  if (session) {
+    return (
+      <aside
+        aria-label={t("workflowRun.inspector.label")}
+        className="min-w-0 flex-1 overflow-y-auto bg-background p-4"
+      >
+        <RunDebugEdit
+          key={session.id}
+          target={session.target}
+          selectionChanged={hashKey([target]) !== hashKey([session.target])}
+          onClose={() => setSession(undefined)}
+        />
+      </aside>
+    );
+  }
+
   if (nodeId === null || data === null || state === null) {
     return (
       <aside
@@ -206,7 +247,11 @@ export function RunActInspector({
   return (
     <RunActInspectorPanel
       inspectedRunId={runId}
-      pendingPosition={pendingPosition}
+      onEdit={
+        target
+          ? () => setSession({ id: crypto.randomUUID(), target })
+          : undefined
+      }
       nodeId={nodeId}
       data={data}
       state={effectiveState ?? state}
@@ -239,7 +284,7 @@ export function RunActInspector({
 
 function RunActInspectorPanel({
   inspectedRunId,
-  pendingPosition,
+  onEdit,
   nodeId,
   data,
   state,
@@ -268,7 +313,7 @@ function RunActInspectorPanel({
   runSnapshotId,
 }: {
   inspectedRunId?: string;
-  pendingPosition?: PendingWorkflowDebugTarget;
+  onEdit?: () => void;
   nodeId: string;
   data: WorkflowNodeData;
   state: GraphWorkflowNodeState;
@@ -636,23 +681,11 @@ function RunActInspectorPanel({
         </InspectorSection>
 
         <InspectorSection title={t("workflowRun.inspector.execution")}>
-          {inspectedRunId &&
-            runStatus &&
-            runStatus !== "pending" &&
-            (state.nodeRunId || pendingPosition) &&
-            ["agent", "condition", "loop", "iteration"].includes(data.kind) && (
-              <RunDebugEdit
-                key={JSON.stringify([
-                  inspectedRunId,
-                  state.nodeRunId ?? pendingPosition,
-                ])}
-                target={
-                  state.nodeRunId
-                    ? { runId: inspectedRunId, nodeRunId: state.nodeRunId }
-                    : { runId: inspectedRunId, pendingTarget: pendingPosition! }
-                }
-              />
-            )}
+          {onEdit && (
+            <Button size="sm" variant="outline" onClick={onEdit}>
+              {t("workflowRun.debug.edit")}
+            </Button>
+          )}
           {state.nodeRunId &&
             (inspectedRunId ? (
               <RunDebugAttempt

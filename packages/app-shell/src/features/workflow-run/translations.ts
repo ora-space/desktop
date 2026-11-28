@@ -133,12 +133,16 @@ export const workflowRunTranslations = {
     "workflowRun.debug.stop": "需要先停止的尝试",
     "workflowRun.debug.schedule": "将执行或重新计算",
     "workflowRun.debug.item": "第 {{item}} 项",
+    "workflowRun.debug.selectedBranch": "实际选择的分支：{{branch}}",
     "workflowRun.debug.branch": "预计分支：{{branch}}",
     "workflowRun.debug.members": "新容器使用的成员配置",
     "workflowRun.debug.files":
       "保留当前工作区文件。续跑可能读到上次生成的文件。",
     "workflowRun.debug.repeat": "发送消息等外部动作可能重复。",
     "workflowRun.debug.stopping": "正在等待旧尝试停止。",
+    "workflowRun.debug.reselect":
+      "所选执行位置已改变。请关闭编辑器，重新选择位置并预览。",
+    "workflowRun.debug.close": "关闭编辑器",
     "workflowRun.debug.edit": "从此位置编辑并续跑",
     "workflowRun.debug.confirm": "确认并续跑",
     "workflowRun.debug.uncertain":
@@ -730,6 +734,7 @@ export const workflowRunTranslations = {
     "workflowRun.debug.stop": "Attempts to stop first",
     "workflowRun.debug.schedule": "Work to run or repeat",
     "workflowRun.debug.item": "Item {{item}}",
+    "workflowRun.debug.selectedBranch": "Selected branch: {{branch}}",
     "workflowRun.debug.branch": "Predicted branch: {{branch}}",
     "workflowRun.debug.members": "Member configuration for the new container",
     "workflowRun.debug.files":
@@ -737,6 +742,9 @@ export const workflowRunTranslations = {
     "workflowRun.debug.repeat":
       "External actions such as sending messages may repeat.",
     "workflowRun.debug.stopping": "Waiting for earlier attempts to stop.",
+    "workflowRun.debug.reselect":
+      "The selected execution changed. Close the editor, select a position and preview again.",
+    "workflowRun.debug.close": "Close editor",
     "workflowRun.debug.edit": "Edit and resume from here",
     "workflowRun.debug.confirm": "Confirm and resume",
     "workflowRun.debug.uncertain":
