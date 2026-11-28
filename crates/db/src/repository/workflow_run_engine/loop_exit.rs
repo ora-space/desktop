@@ -24,13 +24,20 @@ pub(super) fn request(
     if changed != 1 {
         return Err(crate::DatabaseError::IncompleteWorkflowRunContext);
     }
+    // Capture exactly the rows fenced by this exit in the same transaction.
+    let mut cancel = transaction.prepare(
+        "UPDATE workflow_node_runs SET status=4, finished_at=?2, updated_at=?2
+         WHERE scope_id=?1 AND status IN (0,1) AND is_deleted=0 RETURNING id",
+    )?;
+    let cancelled_attempts = cancel
+        .query_map(params![scope_id.as_ref(), now], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
     state.exit = Some(LoopExitState {
+        cancelled_attempts: Some(cancelled_attempts),
         node_run_id: node_run_id.to_string(),
         requested_at: now,
         result: result.clone(),
     });
     transaction.execute("UPDATE workflow_execution_scopes SET state = ?2, updated_at = ?3 WHERE id = ?1 AND status = 1", params![scope_id.as_ref(), serde_json::to_string(&state)?, now])?;
-    // Terminal child rows reject both late completions and session attachments.
-    transaction.execute("UPDATE workflow_node_runs SET status = 4, finished_at = ?2, updated_at = ?2 WHERE scope_id = ?1 AND status IN (0, 1) AND is_deleted = 0", params![scope_id.as_ref(), now])?;
     Ok(())
 }

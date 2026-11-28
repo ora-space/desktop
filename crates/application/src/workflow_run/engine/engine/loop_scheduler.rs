@@ -28,6 +28,16 @@ where
     G: WorkflowNodeRunIdGenerator,
     C: Clock,
 {
+    // The dispatch fence already protects affected attempts and their container.
+    // Also check the blocked node here so a scheduling pass from a sibling callback
+    // cannot evaluate old feedback or an exit while the edit is being applied.
+    if engine
+        .repository
+        .debug_dispatch_fence(run_id)?
+        .is_some_and(|fence| fence.blocked_nodes.contains(&loop_node_run.node_id))
+    {
+        return Ok(LoopScheduleOutcome::Waiting);
+    }
     let Some((config, body)) = graph.loop_body(&loop_node_run.node_id) else {
         engine.repository.fail_node(
             &loop_node_run.id,
@@ -147,6 +157,12 @@ where
             if let Some(RegisteredNodeRuntime::Async(runtime)) =
                 engine.runtimes.runtime(node.node_type)
             {
+                let revised = engine.repository.revised_graph(run_id, &node_run.id)?;
+                let body = revised
+                    .as_ref()
+                    .and_then(|g| g.loop_body(&loop_node_run.node_id))
+                    .map_or(body, |(_, b)| b);
+                let node = body.node(&node.id).unwrap_or(node);
                 runtime.dispatch(
                     &node_run.id,
                     node,

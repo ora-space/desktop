@@ -133,7 +133,7 @@ See [Agent runtime](../agents/agent-runtime.md#prompt-inactivity-and-retries).
 
 Human completion, including force and signal confirmation, uses the attempt ID shown on the run page (`nodeRunId`). If the attempt changes, refresh the run before confirming. Older clients can omit the ID only while the node has one unreplaced attempt in the run.
 
-While a debug edit is stopping, or a failed stop still holds its fence, affected interactive attempts reject follow-up prompts and completion. A completion claimed before the edit checks the attempt again before committing. A rejected completion returns `workflow_node_not_awaiting_input`.
+While a debug edit is stopping, or a failed stop still holds its fence, affected interactive attempts reject follow-up prompts and completion. This includes parked members of every Loop round rebuilt by an upstream edit. The fence also prevents completion-snapshot repair. A completion claimed before the edit checks the attempt again before committing. A rejected completion returns `workflow_node_not_awaiting_input`.
 
 An interactive Agent node parks as awaiting input after its first turn. Follow-up messages run as
 human turns on the same session, and `completeWorkflowNode` completes the node manually; a completion
@@ -322,6 +322,10 @@ never read by scheduling, resume, rollback or snapshot switching.
 
 ## Querying run-local debug history
 
+Editing a while member resumes at the selected one-based round. Earlier rounds and unaffected members keep their results. Subsequent rounds of this Loop execution use the revised configuration and new feedback; superseded attempts remain queryable by id. Editing the Loop configuration instead starts a new container execution at round one. Preview rejects a member edit that would leave the round's explicit exit in effect. An edit that would retire the exit must wait for successful cleanup. After successful cleanup, editing the exit path reopens the siblings it cancelled. The preview includes those siblings and their reachable successors.
+
+If the run is cancelled before the acknowledgement arrives or cleanup fails, Desktop cannot verify that cancelled siblings stopped. Previews that would retire that exit, including edits upstream of the Loop, remain blocked. Use [ordinary failure recovery](#resuming-a-failed-run) to restart the affected Loop from round one.
+
 A waiting automatic retry can preview the nearest recorded dispatch in its retry chain at the same node, scope, container attempt, iteration, snapshot and revision. The preview names that attempt in `inputSourceNodeRunId`. If that nearest dispatch differs in any coordinate, preview is refused even when an older dispatch matches. Missing dispatch evidence also prevents preview.
 
 `workflowRun.debugHistory({ runId })` returns confirmations in acceptance order with the request key, preview, patch and phase. An applied edit identifies its parent and resulting revisions. A failed stop retains its reason and the attempts that could not be proven stopped (`unsettledNodeRunIds`). Each entry also records the status and error the run had when it was accepted (`priorRunStatus`, `priorError`): a failed, cancelled or succeeded run keeps them while the stop is in flight and returns to `running` in the commit that applies the revision. After reconnecting, the request key identifies the same operation. While a stop is in progress or failed without a released fence, new previews, new confirmations, failure recovery, a whole-run restart and a snapshot switch are refused with `workflow_debug_operation_active`. Refusals reach the page as typed public errors: `workflow_debug_stale_preview`, `workflow_debug_operation_active`, `workflow_debug_request_conflict`, `workflow_debug_patch_invalid` with the field path and reason, and `workflow_debug_target_rejected` with the missing fact or position.
@@ -342,7 +346,7 @@ If the old attempts have stopped but the confirmed foreach edit cannot restore i
 
 If you cancel while a confirmed debug edit is stopping old work, its receipt records `stop_failed` with reason `run_cancelled`. A running workflow is cancelled; a previously finished workflow keeps its original outcome. If the edit applied first, its revision stays in history, but cancellation prevents the remaining dispatches.
 
-Once the edit applies, a session bound only to a retired attempt rejects follow-up prompts with `workflow_node_not_awaiting_input`. Open the replacement attempt to continue the conversation.
+Once the edit applies, every retired attempt rejects completion with `workflow_node_not_awaiting_input`. A follow-up prompt requires a session bound to a current interactive attempt. Open the replacement attempt to continue.
 
 On startup Desktop checks unfinished debug operations before ordinary interruption cleanup. If isolation of an external writer cannot be proved, history lists the unresolved attempt IDs and their scope remains blocked. If the revision was already applied, the scheduler can dispatch a ready, unclaimed position. An attempt already started under that revision follows ordinary interruption recovery; it is not dispatched a second time.
 

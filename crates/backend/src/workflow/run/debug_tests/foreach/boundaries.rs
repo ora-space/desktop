@@ -8,6 +8,20 @@ fn batch(stopper: Arc<dyn DebugSessionStopper>) -> Fixture {
 }
 
 fn batch_graph(stopper: Arc<dyn DebugSessionStopper>, sibling: bool) -> Fixture {
+    let graph = batch_definition(sibling);
+    Fixture::with_inputs(
+        stopper,
+        &graph.to_string(),
+        [
+            ("items".into(), json!(["a", "b", "c", "d", "e"])),
+            ("objects".into(), json!([{"label":"new"}])),
+        ]
+        .into(),
+    )
+}
+
+/// Build the iteration graph so recovery tests can add an independent container.
+fn batch_definition(sibling: bool) -> serde_json::Value {
     let agent = |name: &str, parent: &str| {
         json!({"id":name,"parentId":parent,"data":{"kind":"agent","agentConfig":{
         "executor":{"agentCli":"c","modelId":"m"},"prompt":"old","outputContract":{"type":"structured","textExposure":"includeFinalText","schema":{"type":"object"}},"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0}}}})
@@ -30,15 +44,7 @@ fn batch_graph(stopper: Arc<dyn DebugSessionStopper>, sibling: bool) -> Fixture 
             .unwrap()
             .push(json!({"source":"start","target":"sibling"}));
     }
-    Fixture::with_inputs(
-        stopper,
-        &graph.to_string(),
-        [
-            ("items".into(), json!(["a", "b", "c", "d", "e"])),
-            ("objects".into(), json!([{"label":"new"}])),
-        ]
-        .into(),
-    )
+    graph
 }
 
 /// Reads the effective projection through the same repository as the scheduler.
@@ -378,3 +384,5 @@ fn failed_batch_recovers_then_rebuilds_with_an_object_source_and_empty_downstrea
 }
 
 mod recovery;
+
+mod cross_container;

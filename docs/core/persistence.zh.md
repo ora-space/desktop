@@ -44,6 +44,9 @@ Desktop 把应用状态保存在一个由 `ora-db` 拥有的 SQLite 数据库里
 | `0025` | 在 `skills` 表记录插件 `package_root`，并在一次性旧受管 Skill 目录清理后删除已退役的 Effect 账本与表 |
 | `0026` | 运行内调试的输入证据、配置修订、预览回执与操作栅栏 |
 | `0027` | `workflow_debug_boot_protected` 视图标识启动时要保留的执行尝试。`workflow_debug_dispatch` 表指向决定续派范围的调试操作。运行离开 Running 状态时，`workflow_debug_end_dispatch` 触发器清除续派指针。 |
+| `0028` | while 轮次的退役记录与等待重放的轮位 |
+
+回退 `0028` 时，SQLite 将每个待重放轮位的操作 ID 存入已有轮次状态。在 `0027` 版本上，插入同一轮号会触发唯一约束，带待重放轮位的 Loop 因此无法推进。再次升级会恢复这些标记，调度器可以复用原轮号。降级会清除该表中已完成的退役记录。
 
 单个迁移的细节见 [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md)。目录只描述当前 schema；`migrations` 表早于 SQL 快照机制的数据库不受支持，需要重建。
 

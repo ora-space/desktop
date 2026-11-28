@@ -52,6 +52,11 @@ impl From<DebugRejection> for BackendError {
                 target_rejected(reason),
                 "workflow debug target is rejected",
             ),
+            DebugRejection::LoopExitCleanupPending | DebugRejection::LoopExitRecoveryRequired => (
+                ErrorClassification::InvalidRequest,
+                target_rejected(&rejection.to_string()),
+                "workflow debug target is rejected",
+            ),
             DebugRejection::InvalidTarget => (
                 ErrorClassification::InvalidRequest,
                 target_rejected("the target is not a selectable attempt or position of this run"),

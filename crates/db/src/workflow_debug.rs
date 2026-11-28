@@ -21,6 +21,8 @@ mod normalize;
 mod operations;
 mod pending;
 mod read_set;
+mod while_round;
+pub use while_round::restore_while_round;
 mod recovery;
 pub use operations::DebugClaim;
 pub(crate) use operations::attempt_fenced;
@@ -61,6 +63,14 @@ pub enum DebugRejection {
     OperationActive,
     #[error("missing_input_evidence: {0}")]
     MissingFact(String),
+    #[error(
+        "LoopExit cleanup is still in progress. Wait for it to finish before previewing this edit."
+    )]
+    LoopExitCleanupPending,
+    #[error(
+        "The Loop round ended without confirmation that its cancelled siblings stopped. Use ordinary failure recovery to resume the run."
+    )]
+    LoopExitRecoveryRequired,
     #[error("invalid_target")]
     InvalidTarget,
     #[error("invalid_patch at {path}: {reason}")]

@@ -8,18 +8,115 @@ use ora_domain::{WorkflowNodeStatus, WorkflowRunStatus, WorkflowScopeStatus};
 use std::collections::BTreeSet;
 
 mod foreach;
+mod while_member;
 
-/// Plans a top-level edit: the target plus its transitive successors are the recompute scope.
+/// Resolve the target scope before fencing every affected round.
 pub(in crate::workflow::run) fn plan(
     input: &DebugPlanningInput,
 ) -> Result<(WorkflowDebugImpact, Vec<String>), DebugRejection> {
-    if input.target.index.is_some() || input.candidate.region(&input.target.node_id).is_some() {
-        return foreach::plan(input);
+    let foreach =
+        input.target.index.is_some() || input.candidate.region(&input.target.node_id).is_some();
+    let (mut impact, mut fence) = match (foreach, input.target.round.is_some()) {
+        (true, true) => return Err(DebugRejection::InvalidTarget),
+        (true, false) => foreach::plan(input)?,
+        (false, true) => {
+            let impact = while_member::plan(input)?;
+            let fence = impact.schedule.clone();
+            (impact, fence)
+        }
+        (false, false) => plan_root(input)?,
+    };
+    // The edited round keeps its own Loop. Only rebuilt containers authorize their whole body.
+    let retained = input.candidate.loop_owner(&input.target.node_id);
+    for positions in [&mut impact.schedule, &mut fence] {
+        let members: Vec<_> = positions
+            .iter()
+            .filter(|id| Some(id.as_str()) != retained)
+            .filter_map(|id| input.candidate.loop_body(id))
+            .flat_map(|(_, body)| body.nodes().map(|node| node.id.clone()))
+            .collect();
+        for id in members {
+            if !positions.contains(&id) {
+                positions.push(id);
+            }
+        }
     }
+    for exit in input.current_attempts.iter().filter(|row| {
+        row.node_type == "loopExit" && impact.invalidate.iter().any(|id| id == row.id.as_ref())
+    }) {
+        let scope = input
+            .current_scopes
+            .iter()
+            .find(|scope| scope.id == exit.scope_id)
+            .ok_or(DebugRejection::MissingInputEvidence)?;
+        if scope.status != WorkflowScopeStatus::Succeeded {
+            let state: ora_application::LoopRoundExecutionState =
+                serde_json::from_str(&scope.state)
+                    .map_err(|_| DebugRejection::MissingInputEvidence)?;
+            if state
+                .exit
+                .is_some_and(|request| request.node_run_id == exit.id.as_ref())
+            {
+                // A terminal round cannot accept another cleanup acknowledgement.
+                return Err(
+                    if matches!(
+                        scope.status,
+                        WorkflowScopeStatus::Cancelled | WorkflowScopeStatus::Failed
+                    ) {
+                        DebugRejection::LoopExitRecoveryRequired
+                    } else {
+                        DebugRejection::LoopExitCleanupPending
+                    },
+                );
+            }
+        }
+    }
+    Ok((impact, fence))
+}
+
+/// Resolve physical round scopes only for affected Loop executions in the target root.
+fn rebuilt_rounds(
+    input: &DebugPlanningInput,
+    affected: impl Fn(&str) -> bool,
+) -> BTreeSet<&ora_domain::WorkflowScopeId> {
+    let root = input
+        .current_attempts
+        .iter()
+        .find(|row| Some(row.id.as_ref()) == input.target.container_node_run_id.as_deref())
+        .map_or(input.target.scope_id.as_str(), |owner| {
+            owner.scope_id.as_ref()
+        });
+    let owners: BTreeSet<_> = input
+        .current_attempts
+        .iter()
+        .filter(|row| {
+            row.node_type == "loop" && row.scope_id.as_ref() == root && affected(&row.node_id)
+        })
+        .map(|row| &row.id)
+        .collect();
+    input
+        .current_scopes
+        .iter()
+        .filter(|scope| owners.contains(&scope.parent_loop_node_run_id))
+        .map(|scope| &scope.id)
+        .collect()
+}
+
+/// Plan a root edit against both the old and newly selected routes.
+fn plan_root(
+    input: &DebugPlanningInput,
+) -> Result<(WorkflowDebugImpact, Vec<String>), DebugRejection> {
     // Container members are scoped by their round/item, not the root DAG; the container strategies
     // (#1431/#1432) own them. Refuse here rather than mis-scope a member as a top-level node.
     if input.target.container_node_run_id.is_some() {
         return Err(DebugRejection::InvalidTarget);
+    }
+    if let Some((config, _)) = input.candidate.loop_body(&input.target.node_id) {
+        // Only entrance values must exist now. Feedback and until expressions read
+        // newly produced members later, when the scheduler completes the new round.
+        config
+            .initialize_carried(&input.pool)
+            .map_err(|_| DebugRejection::MissingInputEvidence)?;
     }
     let target = &input.target.node_id;
     let affected = downstream_closure(&input.candidate, target);
@@ -29,19 +126,7 @@ pub(in crate::workflow::run) fn plan(
     let mut stop = Vec::new();
     let mut invalidate = Vec::new();
     let mut keep = Vec::new();
-    // A while member belongs to its owner's actual execution, not just its definition.
-    let round_scopes: BTreeSet<_> = input
-        .current_scopes
-        .iter()
-        .filter(|scope| {
-            input.current_attempts.iter().any(|owner| {
-                owner.id == scope.parent_loop_node_run_id
-                    && owner.scope_id.as_ref() == input.target.scope_id
-                    && is_affected(&owner.node_id)
-            })
-        })
-        .map(|scope| &scope.id)
-        .collect();
+    let round_scopes = rebuilt_rounds(input, is_affected);
     for attempt in &input.current_attempts {
         let in_round = round_scopes.contains(&attempt.scope_id);
         if attempt.scope_id.as_ref() != input.target.scope_id && !in_round {
@@ -56,7 +141,8 @@ pub(in crate::workflow::run) fn plan(
         {
             invalidate.push(attempt.id.to_string());
             // Parked attempts are isolated by the fence until retirement; only running ones need a stop.
-            if attempt.status == WorkflowNodeStatus::Running {
+            let local = attempt.node_type == "loop" || in_round && attempt.node_type != "agent";
+            if attempt.status == WorkflowNodeStatus::Running && !local {
                 stop.push(attempt.id.to_string());
             }
         } else {
@@ -148,12 +234,17 @@ pub(in crate::workflow::run) fn settle(
     if is_foreach {
         foreach::restore(transaction, preview)
             .map_err(|error| ora_db::DatabaseError::ForeachProjection(Box::new(error)))?;
+    } else if preview.target.round.is_some() {
+        ora_db::workflow_debug::restore_while_round(transaction, preview)?;
     }
     let mut retired = BTreeSet::new();
     let ids = serde_json::to_string(&preview.impact.invalidate)?;
     let mut writers = transaction.prepare("SELECT DISTINCT node_id FROM workflow_node_runs WHERE run_id=?1 AND id IN (SELECT value FROM json_each(?2))")?;
     for writer in writers.query_map([run_id, &ids], |r| r.get::<_, String>(0))? {
         retired.insert(writer?);
+    }
+    if preview.target.round.is_some() {
+        retired.extend(preview.impact.schedule.iter().cloned());
     }
     transaction.execute("UPDATE workflow_node_runs SET is_deleted=1,updated_at=?3 WHERE run_id=?1 AND is_deleted=0 AND id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now))?;
     transaction.execute("UPDATE workflow_execution_scopes SET status=?4,updated_at=?3 WHERE run_id=?1 AND status IN (?5,?6) AND parent_loop_node_run_id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now,WorkflowScopeStatus::Cancelled.database_value(),WorkflowScopeStatus::Pending.database_value(),WorkflowScopeStatus::Running.database_value()))?;

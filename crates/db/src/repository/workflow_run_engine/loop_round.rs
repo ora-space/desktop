@@ -147,24 +147,47 @@ pub(super) fn advance(
                         return Err(crate::DatabaseError::IncompleteWorkflowRunContext);
                     }
                     settle(&transaction, scope_id, WorkflowScopeStatus::Succeeded, now)?;
-                    transaction.execute(
-                        "INSERT INTO workflow_execution_scopes
-                         (id, run_id, parent_loop_node_run_id, round_index, status, state, created_at, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-                        params![
-                            next.id.as_ref(),
-                            &run_id,
-                            next.parent_loop_node_run_id.as_ref(),
-                            next.round_index,
-                            WorkflowScopeStatus::Running.database_value(),
-                            &next.state,
-                            now,
-                        ],
-                    )?;
+                    // A debug rewind can leave an archived logical round at this index.
+                    // Reactivate that slot with only the freshly computed input; its old
+                    // attempts stay retired and no old branch/exit decision is replayed.
+                    let archived: Option<String> = transaction.query_row(
+                        "SELECT s.id FROM workflow_execution_scopes s JOIN workflow_debug_round_history h ON h.scope_id=s.id
+                         WHERE s.parent_loop_node_run_id=?1 AND s.round_index=?2 AND h.awaiting_replay=1",
+                        params![parent_run_id, next.round_index],
+                        |r| r.get(0),
+                    ).optional()?;
+                    let mut start = next.start_node_run.clone();
+                    if let Some(id) = archived {
+                        transaction.execute(
+                            "UPDATE workflow_execution_scopes SET state=?2, status=1, updated_at=?3 WHERE id=?1",
+                            params![id, next.state, now],
+                        )?;
+                        transaction.execute(
+                            "UPDATE workflow_debug_round_history SET awaiting_replay=0
+                             WHERE scope_id=?1 AND awaiting_replay=1",
+                            [&id],
+                        )?;
+                        start.scope_id = ora_domain::WorkflowScopeId::new(id);
+                    } else {
+                        transaction.execute(
+                            "INSERT INTO workflow_execution_scopes
+                             (id, run_id, parent_loop_node_run_id, round_index, status, state, created_at, updated_at)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                            params![
+                                next.id.as_ref(),
+                                &run_id,
+                                next.parent_loop_node_run_id.as_ref(),
+                                next.round_index,
+                                WorkflowScopeStatus::Running.database_value(),
+                                &next.state,
+                                now,
+                            ],
+                        )?;
+                    }
                     insert_node_run(
                         &transaction,
                         &WorkflowRunId::new(run_id),
-                        &next.start_node_run,
+                        &start,
                         now,
                     )?;
                 }
