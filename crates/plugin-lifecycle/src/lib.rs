@@ -337,6 +337,9 @@ where
                 plugin_id: request.plugin_id,
             });
         }
+        // Snapshot the origins before the state lock: reading the binding store is a display
+        // query that must not hold the global write lock while the SQLite pool is busy.
+        let origins = self.inner.origins.plugin_origins();
         let (attempt, response) = {
             let mut state = self.write_state();
             let attempt = state.next_attempt;
@@ -356,7 +359,7 @@ where
                             &plugin,
                             managed,
                             &self.inner.configuration,
-                            &self.inner.origins.plugin_origins(),
+                            &origins,
                         ),
                     });
                 }
@@ -367,7 +370,7 @@ where
                             &plugin,
                             &starting,
                             &self.inner.configuration,
-                            &self.inner.origins.plugin_origins(),
+                            &origins,
                         ),
                     };
                     state.set_managed(&plugin_id, starting);
@@ -423,6 +426,8 @@ where
             transition_to_stopped(Arc::clone(&self.inner), plugin_id.clone(), attempt);
         }
 
+        // Snapshot the origins before the state lock, as activate and the installed list do.
+        let origins = self.inner.origins.plugin_origins();
         let state = self.read_state();
         let managed = state
             .managed(&plugin_id)
@@ -432,7 +437,7 @@ where
                 &plugin,
                 managed,
                 &self.inner.configuration,
-                &self.inner.origins.plugin_origins(),
+                &origins,
             ),
         })
     }
