@@ -791,6 +791,7 @@ function PanelButton({
       size="sm"
       variant={active ? "secondary" : "ghost"}
       className="h-7 px-2.5 shadow-none"
+      aria-label={label}
       aria-pressed={active}
       onClick={onClick}
     >

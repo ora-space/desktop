@@ -32,21 +32,21 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@ora/ui";
-import {
-  IconCode,
-  IconGitBranch,
-  IconRefresh,
-  IconUpload,
-} from "@tabler/icons-react";
+import { IconGitBranch, IconRefresh, IconUpload } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { useContractsClient } from "../../contracts-client-context";
 import { localizeContractError } from "../../i18n/contract-error";
 import { refreshWorkspaceReview } from "../../state/data/workspace-review";
 import { refreshWorkspaceDirectories } from "../../state/data/workspace";
-import { useWorkspaceDiff } from "../../state/hooks/use-workspace-diff";
+import {
+  isWorkspaceDiffTooLarge,
+  useWorkspaceDiff,
+} from "../../state/hooks/use-workspace-diff";
 import { useWorkspaceStatus } from "../../state/hooks/use-workspace-status";
 import { useWorkspaceGitAvailability } from "../../state/hooks/use-workspace-git";
 import { TaskDiffNotGitState } from "./task-diff-not-git";
+import { TaskDiffLargeChanges } from "./task-diff-large-changes";
+import { DiffLoadingState, DiffMessage } from "./task-diff-states";
 import {
   countChanges,
   DEFER_PARSE_PATCH_CHARS,
@@ -170,6 +170,13 @@ export function TaskDiffView({
   // A disabled diff query never reports loading, so a list still being checked must count too,
   // or a chat jump would resolve against an empty patch and bounce to Files.
   const diffPending = diffQuery.isLoading || gitAvailability === "checking";
+  const sizeError = isWorkspaceDiffTooLarge(diffQuery.error);
+  const [largeScope, setLargeScope] = useState<WorkspaceDiffScope | null>(null);
+  // Keep the file selection mounted while a refresh retries an oversized aggregate.
+  if (sizeError && largeScope !== scope) setLargeScope(scope);
+  if (diffQuery.isSuccess && largeScope === scope) setLargeScope(null);
+  const diffTooLarge =
+    sizeError || (largeScope === scope && !diffQuery.isSuccess);
   const stagedByPath = useMemo(() => {
     const staged = new Set<string>();
     for (const entry of statusQuery.data?.entries ?? []) {
@@ -265,7 +272,7 @@ export function TaskDiffView({
    * empty list on the first render and lets the session page paint, then a
    * post-paint macro-task parses. Mount-only — a refetch never re-defers.
    */
-  const patch = diffQuery.data?.patch ?? "";
+  const patch = diffTooLarge ? "" : (diffQuery.data?.patch ?? "");
   const [parseDeferred, setParseDeferred] = useState(
     () => patch.length > DEFER_PARSE_PATCH_CHARS,
   );
@@ -343,6 +350,7 @@ export function TaskDiffView({
   if (
     fileRequest !== undefined &&
     !diffPending &&
+    !diffTooLarge &&
     !parseDeferred &&
     fileRequest.requestId !== appliedFileRequestId
   ) {
@@ -440,7 +448,13 @@ export function TaskDiffView({
 
   // A plain folder has no diff, so every chat jump resolves here to the Files panel.
   useEffect(() => {
-    if (fileRequest === undefined || diffPending || parseDeferred) {
+    if (
+      fileRequest === undefined ||
+      diffPending ||
+      diffTooLarge ||
+      parseDeferred ||
+      (diffQuery.error !== null && gitAvailability !== "notRepository")
+    ) {
       return;
     }
     if (fileRequest.requestId !== appliedFileRequestId) return;
@@ -464,6 +478,9 @@ export function TaskDiffView({
     diffPending,
     onFileNotFound,
     parseDeferred,
+    diffTooLarge,
+    diffQuery.error,
+    gitAvailability,
   ]);
 
   useEffect(() => {
@@ -676,29 +693,12 @@ export function TaskDiffView({
     return <TaskDiffNotGitState toolbar={toolbar} />;
   }
 
-  if (diffPending) {
-    return <DiffLoadingState />;
-  }
-
-  if (diffQuery.error !== null) {
-    const error = diffQuery.error;
-    return (
-      <DiffMessage
-        title={t("diff.loadError")}
-        detail={localizeContractError(error, t)}
-        action={
-          <Button size="sm" variant="outline" onClick={() => void refresh()}>
-            <IconRefresh />
-            {t("diff.retry")}
-          </Button>
-        }
-      />
-    );
-  }
-
-  if (diff === undefined) return null;
-
+  const blockingError =
+    diffQuery.error !== null && diff === undefined && !diffTooLarge;
+  const refreshError =
+    !sizeError && (diff !== undefined || diffTooLarge) ? diffQuery.error : null;
   const reviewError =
+    refreshError ??
     commitChanges.error ??
     pushBranch.error ??
     stageOne.error ??
@@ -711,22 +711,24 @@ export function TaskDiffView({
     <section
       className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
       aria-label={t("diff.taskChanges")}
-      aria-busy={diffQuery.isFetching}
+      aria-busy={diffPending || diffQuery.isFetching}
     >
       <header className="ora-diff-toolbar flex min-h-12 min-w-0 shrink-0 flex-nowrap items-center gap-2 overflow-hidden border-b border-border px-3 py-2 sm:px-4">
-        <div className="ora-diff-toolbar__summary flex shrink-0 items-center gap-2 whitespace-nowrap">
-          <span className="text-xs font-semibold">{files.length}</span>
-          <span className="ora-diff-toolbar__summary-label text-xs font-semibold">
-            {changedFilesLabel}
-          </span>
-          <span className="text-xs font-medium text-emerald-600">
-            +{stats.additions}
-          </span>
-          <span className="text-xs font-medium text-red-600">
-            −{stats.deletions}
-          </span>
-        </div>
-        {gitActions}
+        {diff !== undefined && !diffTooLarge && (
+          <div className="ora-diff-toolbar__summary flex shrink-0 items-center gap-2 whitespace-nowrap">
+            <span className="text-xs font-semibold">{files.length}</span>
+            <span className="ora-diff-toolbar__summary-label text-xs font-semibold">
+              {changedFilesLabel}
+            </span>
+            <span className="text-xs font-medium text-emerald-600">
+              +{stats.additions}
+            </span>
+            <span className="text-xs font-medium text-red-600">
+              −{stats.deletions}
+            </span>
+          </div>
+        )}
+        {gitReadsEnabled && (diff !== undefined || diffTooLarge) && gitActions}
         <div className="ora-diff-toolbar__scope-group flex h-8 shrink-0 items-center gap-0.5 rounded-lg bg-muted/50 p-0.5">
           <Select
             value={scope}
@@ -789,9 +791,14 @@ export function TaskDiffView({
       {reviewError !== null && (
         <div
           role="alert"
-          className="border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive"
+          className="flex items-center justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive"
         >
           {localizeContractError(reviewError, t)}
+          {refreshError !== null && (
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              {t("diff.retry")}
+            </Button>
+          )}
         </div>
       )}
       {gitNotice !== null && (
@@ -808,7 +815,34 @@ export function TaskDiffView({
           diffQuery.isPlaceholderData ? "opacity-70" : "opacity-100"
         }`}
       >
-        {files.length === 0 ? (
+        {diffPending && !diffTooLarge ? (
+          <DiffLoadingState />
+        ) : diffTooLarge ? (
+          <TaskDiffLargeChanges
+            key={scope}
+            workspaceId={workspaceId}
+            scope={scope}
+            viewType={viewType}
+            fileRequest={fileRequest}
+            onOpenFile={onFileNotFound}
+            onPreviewPathChange={onPreviewPathChange}
+          />
+        ) : blockingError ? (
+          <DiffMessage
+            title={t("diff.loadError")}
+            detail={localizeContractError(diffQuery.error, t)}
+            action={
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void refresh()}
+              >
+                <IconRefresh />
+                {t("diff.retry")}
+              </Button>
+            }
+          />
+        ) : files.length === 0 ? (
           parseDeferred ? (
             <DiffLoadingState />
           ) : (
@@ -1111,69 +1145,6 @@ function TaskDiffFileViewport({
       {shouldRender ? (
         <MemoizedTaskDiffFile file={file} {...fileProps} />
       ) : null}
-    </div>
-  );
-}
-
-interface DiffMessageProps {
-  title: string;
-  detail: string;
-  action?: ReactNode;
-}
-
-/** Keeps the Changes layout stable while its first snapshot is being loaded. */
-function DiffLoadingState() {
-  const { t } = useTranslation();
-  return (
-    <section
-      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
-      aria-label={t("diff.taskChanges")}
-      aria-busy="true"
-    >
-      <span role="status" className="sr-only">
-        {t("diff.loading")}
-      </span>
-      <header className="flex h-12 shrink-0 animate-pulse items-center gap-3 border-b border-border py-2 pl-4 pr-40">
-        <span className="h-3 w-28 rounded-full bg-muted" />
-        <span className="h-7 w-24 rounded-md bg-muted/80" />
-        <span className="flex-1" />
-        <span className="h-7 w-16 rounded-md bg-muted/70" />
-        <span className="h-7 w-16 rounded-md bg-muted/70" />
-      </header>
-      <div className="flex min-h-0 flex-1 animate-pulse">
-        <div className="min-w-0 flex-1 space-y-5 overflow-hidden px-4 py-3">
-          {[0, 1, 2].map((index) => (
-            <div key={index} className="space-y-2">
-              <div className="h-7 rounded-md bg-muted/65" />
-              <div className="space-y-1">
-                <div className="h-5 rounded-sm bg-muted/35" />
-                <div className="h-5 w-11/12 rounded-sm bg-muted/35" />
-                <div className="h-5 w-4/5 rounded-sm bg-muted/35" />
-              </div>
-            </div>
-          ))}
-        </div>
-        <aside className="w-60 shrink-0 space-y-3 border-l border-border px-3 py-3">
-          <div className="h-3 w-16 rounded-full bg-muted" />
-          <div className="h-6 w-4/5 rounded-sm bg-muted/55" />
-          <div className="h-6 w-3/5 rounded-sm bg-muted/55" />
-          <div className="h-6 w-11/12 rounded-sm bg-muted/55" />
-        </aside>
-      </div>
-    </section>
-  );
-}
-
-/** Shows a centered task-diff loading, empty, or error state. */
-function DiffMessage({ title, detail, action }: DiffMessageProps) {
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center p-8">
-      <div className="max-w-sm text-center">
-        <IconCode className="mx-auto size-6 text-muted-foreground" />
-        <h2 className="mt-3 text-sm font-semibold">{title}</h2>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
-        {action && <div className="mt-4">{action}</div>}
-      </div>
     </div>
   );
 }

@@ -63,6 +63,13 @@ review, `resolve_task_cwd` and `resolve_workspace_cwd` all use that resolution. 
 resolves its stored location against the Desktop path base, see
 [Desktop host](../desktop/desktop-host.md#persistent-paths).
 
+## Reviewing large change sets
+
+The Changes and Files controls stay available when a Git comparison is loading or fails.
+If the complete patch exceeds the preview limit, Changes lists the files in the selected Git
+scope and loads the selected file's diff with nearby context. A file that still exceeds the
+limit remains listed, and other files can still be reviewed.
+
 ## Deletion and durable Git cleanup
 
 Task, project and workflow-run deletion share one rule: **the database cascade is the success;
