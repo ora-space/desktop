@@ -133,7 +133,13 @@ impl WorkflowDebugStore {
             let tx = connection.transaction()?;
             fence::ensure_inactive(&tx, &request.run_id)?;
             let base_revision = run_version(&tx, &request.run_id)?;
-            let selected = load(&tx, &request.run_id, &request.selection, base_revision, None)?;
+            let selected = load(
+                &tx,
+                &request.run_id,
+                &request.selection,
+                base_revision,
+                None,
+            )?;
             Ok(GetWorkflowDebugContextResponse {
                 base_revision,
                 target: selected.target,
