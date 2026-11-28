@@ -3,11 +3,6 @@ use crate::AgentRuntimeHost;
 use ora_history::{TurnEndedBy, TurnFailure};
 
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
-    /// Closes the recorded turn after the ordered event consumer has settled its events.
-    pub(crate) fn end_turn(&mut self, stop_reason: StopReason) {
-        self.end_turn_with(stop_reason, None, None);
-    }
-
     /// Closes the recorded turn and records why a turn that did not complete ended.
     pub(crate) fn end_turn_with(
         &mut self,

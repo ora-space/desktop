@@ -132,12 +132,14 @@ impl<G: WriteGuard> SessionJournal<G> {
 }
 
 /// Settles every still-queued `CancelTurn` as `session_ending` in acceptance order, inside the
-/// caller's transaction, and returns the execution's new last sequence. Called wherever the
-/// session's end is decided, so no `session_ending` can be visible without the decision.
+/// caller's transaction after the sequence `last`, and returns the execution's new last sequence.
+/// Called wherever the session's end is decided, so no `session_ending` can be visible without
+/// the decision.
 pub(crate) fn settle_pending_as_ending<G: WriteGuard>(
     tx: &rusqlite::Transaction<'_>,
     guard: &Arc<G>,
     current: &SessionExecution,
+    last: u64,
 ) -> Result<u64, Error> {
     let pending = tx
         .prepare("SELECT command_id,input FROM session_commands WHERE execution=?1 AND state='queued' ORDER BY acceptance_order")?
@@ -145,7 +147,7 @@ pub(crate) fn settle_pending_as_ending<G: WriteGuard>(
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut last = current.last_sequence;
+    let mut last = last;
     for (command, input) in pending {
         let SessionCommandInput::CancelTurn(cancel) = serde_json::from_str(&input)? else {
             continue;

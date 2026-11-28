@@ -395,6 +395,15 @@ impl EchoAgent {
             )
             .await;
         }
+        if text.contains("[auth-code]") {
+            // ACP's `AuthRequired` code with wording that is neither of the two known texts.
+            return acp(
+                output,
+                json!({"jsonrpc": JSON_RPC_VERSION, "id": id,
+                "error": {"code": -32000, "message": "Sign in to the provider first"}}),
+            )
+            .await;
+        }
         if text.contains("[request-failed]") {
             return acp(
                 output,

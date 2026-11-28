@@ -1,5 +1,11 @@
 //! The one durable settlement of a kept-on-failure session's failed turn.
 //!
+//! Persisting a failed `turnEnded` Thread event records a pending settlement row in the same
+//! transaction. The row is not part of the outbox, so a Controller acknowledging the Thread event
+//! cannot remove it: `kept` and every end decision consume that row, and nothing else is read to
+//! decide whether a conclusion is due. A failure whose Thread event was never persisted has no row
+//! and therefore never receives a conclusion (D6).
+//!
 //! A failed turn's `kept` settlement is written in the same transaction as the cancels merged into
 //! the stop, so an `EndSession` landing between them can never surface a `kept` that a later
 //! `session_ending` contradicts. The ledger refuses `kept` once an `EndSession` was accepted.
@@ -25,12 +31,18 @@ impl<G: WriteGuard> SessionJournal<G> {
         if current.state != ExecutionState::Running {
             return Err(Error::InvalidTransition);
         }
-        if let Some((sequence, recorded)) = failure_settled(&tx, execution, turn)? {
-            return if recorded == outcome {
-                Ok(sequence)
-            } else {
-                Err(Error::IdentityConflict)
-            };
+        match failure_settled(&tx, execution, turn)? {
+            Some(Settlement::Recorded(sequence, recorded)) => {
+                return if recorded == outcome {
+                    Ok(sequence)
+                } else {
+                    Err(Error::IdentityConflict)
+                };
+            }
+            Some(Settlement::Pending) => {}
+            // No failed `turnEnded` of this turn was persisted, so the Controller never saw the
+            // failure and must not be told the session survived it.
+            None => return Err(Error::InvalidTransition),
         }
         // An accepted EndSession wins over every conclusion queued before it (D6): only a
         // `session_ending` settlement may be recorded once one exists.
@@ -81,82 +93,85 @@ impl<G: WriteGuard> SessionJournal<G> {
         turn: &TurnId,
     ) -> Result<Option<TurnFailureOutcome>, Error> {
         let db = self.lock()?;
-        Ok(failure_settled(&db.connection, execution, turn)?.map(|(_, outcome)| outcome))
+        Ok(match failure_settled(&db.connection, execution, turn)? {
+            Some(Settlement::Recorded(_, outcome)) => Some(outcome),
+            Some(Settlement::Pending) | None => None,
+        })
     }
 }
 
-/// Back-fills `TurnFailureSettled{session_ending}` for the last failed turn, when one is due, and
-/// returns the execution's new last sequence.
+/// Records the pending settlement of a failed turn whose `turnEnded` Thread event is persisted at
+/// `failed_sequence`, inside that event's transaction. Only sessions that chose
+/// `keep_session_on_failure` receive conclusions, so only they get a row.
+pub(crate) fn record_pending_failure(
+    tx: &rusqlite::Transaction<'_>,
+    current: &SessionExecution,
+    event: &ThreadEvent,
+    failed_sequence: Sequence,
+) -> Result<(), Error> {
+    if !current.command.payload.spec.keep_session_on_failure {
+        return Ok(());
+    }
+    let Some(turn) = &event.turn_id else {
+        return Ok(());
+    };
+    let is_turn_end =
+        event.record.get("type").and_then(serde_json::Value::as_str) == Some("turnEnded");
+    let failed = event
+        .record
+        .get("failure")
+        .is_some_and(|failure| !failure.is_null());
+    if !is_turn_end || !failed {
+        return Ok(());
+    }
+    // A turn ends once; a repeated row would only come from a replayed line and must not reopen
+    // a conclusion that was already recorded.
+    tx.execute(
+        "INSERT OR IGNORE INTO session_turn_failure_settlements(execution,turn_id,failed_sequence) VALUES(?1,?2,?3)",
+        params![
+            current.command.execution_id.as_str(),
+            turn.as_str(),
+            failed_sequence.value() as i64
+        ],
+    )?;
+    Ok(())
+}
+
+/// Back-fills `TurnFailureSettled{session_ending}` for every failed turn whose settlement is still
+/// pending and returns the execution's new last sequence.
 ///
-/// Called in the transaction of every end decision: the last Thread event was persisted before it,
-/// so a keep-on-failure session whose last event is a failed `turnEnded` without a settlement gets
-/// its conclusion here, mirroring the cancels the same decision settles as `session_ending` (D6).
+/// Called in the transaction of every end decision, before the cancels the same decision settles
+/// as `session_ending`, so the failure's conclusion precedes the merged cancels' (D6). The pending
+/// rows survive acknowledgements and restarts, so a Controller that already acknowledged the
+/// failed `turnEnded` still receives its conclusion.
 pub(crate) fn settle_failure_as_ending_if_due<G: WriteGuard>(
     tx: &rusqlite::Transaction<'_>,
     guard: &Arc<G>,
     current: &SessionExecution,
     last: u64,
 ) -> Result<u64, Error> {
-    if !current.command.payload.spec.keep_session_on_failure {
-        return Ok(last);
+    let pending = tx
+        .prepare("SELECT turn_id FROM session_turn_failure_settlements WHERE execution=?1 AND outcome IS NULL ORDER BY failed_sequence")?
+        .query_map([current.command.execution_id.as_str()], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut last = last;
+    for turn in pending {
+        guard.before_write(WritePoint::Progress)?;
+        last = write_failure_settlement(
+            tx,
+            guard,
+            current,
+            last,
+            TurnFailureSettled {
+                turn_id: TurnId::new(turn),
+                outcome: TurnFailureOutcome::SessionEnding,
+            },
+        )?
+        .value();
     }
-    let Some(turn) = last_failed_turn(tx, &current.command.execution_id)? else {
-        return Ok(last);
-    };
-    if failure_settled(tx, &current.command.execution_id, &turn)?.is_some() {
-        return Ok(last);
-    }
-    guard.before_write(WritePoint::Progress)?;
-    Ok(write_failure_settlement(
-        tx,
-        guard,
-        current,
-        last,
-        TurnFailureSettled {
-            turn_id: turn,
-            outcome: TurnFailureOutcome::SessionEnding,
-        },
-    )?
-    .value())
-}
-
-/// The failed turn of the last persisted Thread event, when that event is a `turnEnded` carrying a
-/// `failure`. A failure without a persisted Thread event has no conclusion to back-fill (D6).
-fn last_failed_turn(
-    tx: &rusqlite::Transaction<'_>,
-    execution: &ExecutionId,
-) -> Result<Option<TurnId>, Error> {
-    let mut statement =
-        tx.prepare("SELECT event FROM execution_events WHERE execution=?1 ORDER BY sequence DESC")?;
-    let events = statement.query_map([execution.as_str()], |row| row.get::<_, String>(0))?;
-    for event in events {
-        let message: NodeToControllerMessage = serde_json::from_str(&event?)?;
-        let NodeToControllerMessage::ThreadEvent(thread) = message else {
-            continue;
-        };
-        let Some(turn) = thread.payload.turn_id else {
-            continue;
-        };
-        if thread
-            .payload
-            .record
-            .get("type")
-            .and_then(serde_json::Value::as_str)
-            != Some("turnEnded")
-        {
-            continue;
-        }
-        if thread
-            .payload
-            .record
-            .get("failure")
-            .is_none_or(serde_json::Value::is_null)
-        {
-            continue;
-        }
-        return Ok(Some(turn));
-    }
-    Ok(None)
+    Ok(last)
 }
 
 /// Writes one failed-turn settlement after `last` and queues the event.
@@ -184,8 +199,9 @@ fn write_failure_settlement<G: WriteGuard>(
     let NodeToControllerMessage::TurnFailureSettled(message) = &event else {
         unreachable!("constructed above");
     };
-    tx.execute(
-        "INSERT INTO session_turn_failure_settlements VALUES(?1,?2,?3,?4)",
+    // Only a pending row may be concluded: the caller checked it exists in this transaction.
+    let concluded = tx.execute(
+        "UPDATE session_turn_failure_settlements SET outcome=?3,sequence=?4 WHERE execution=?1 AND turn_id=?2 AND outcome IS NULL",
         params![
             execution.as_str(),
             message.payload.turn_id.as_str(),
@@ -193,6 +209,9 @@ fn write_failure_settlement<G: WriteGuard>(
             sequence.value() as i64
         ],
     )?;
+    if concluded != 1 {
+        return Err(Error::InvalidTransition);
+    }
     tx.execute(
         "UPDATE node_executions SET last_sequence=?1 WHERE execution=?2",
         params![sequence.value() as i64, execution.as_str()],
@@ -209,24 +228,35 @@ fn write_failure_settlement<G: WriteGuard>(
     Ok(sequence)
 }
 
-/// The recorded settlement and its sequence for a failed turn.
+/// The settlement row of one failed turn.
+enum Settlement {
+    /// The failed `turnEnded` is persisted and its conclusion is still due.
+    Pending,
+    /// The conclusion and the sequence it was emitted at.
+    Recorded(Sequence, TurnFailureOutcome),
+}
+
+/// The settlement row of a failed turn; `None` when no failed `turnEnded` of it was persisted.
 fn failure_settled(
     connection: &rusqlite::Connection,
     execution: &ExecutionId,
     turn: &TurnId,
-) -> Result<Option<(Sequence, TurnFailureOutcome)>, Error> {
-    let row: Option<(String, i64)> = connection
+) -> Result<Option<Settlement>, Error> {
+    let row: Option<(Option<String>, Option<i64>)> = connection
         .query_row(
             "SELECT outcome,sequence FROM session_turn_failure_settlements WHERE execution=?1 AND turn_id=?2",
             params![execution.as_str(), turn.as_str()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    row.map(|(outcome, sequence)| {
-        Ok((
+    row.map(|row| match row {
+        (None, None) => Ok(Settlement::Pending),
+        (Some(outcome), Some(sequence)) => Ok(Settlement::Recorded(
             Sequence::new(sequence as u64),
             parse_failure_outcome(&outcome)?,
-        ))
+        )),
+        // The table's CHECK forbids a half-written conclusion.
+        (Some(_), None) | (None, Some(_)) => Err(Error::InvalidSchema),
     })
     .transpose()
 }

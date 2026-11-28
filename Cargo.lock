@@ -4041,6 +4041,7 @@ dependencies = [
  "ora-git",
  "ora-history",
  "ora-logging",
+ "ora-node",
  "ora-node-db",
  "ora-node-protocol",
  "ora-node-transport",

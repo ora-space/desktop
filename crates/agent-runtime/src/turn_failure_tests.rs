@@ -150,3 +150,88 @@ fn no_progress_maps_the_agents_answer() {
     assert_eq!(unanswered.answer, Some(TurnFailureAnswer::None));
     assert_eq!(unanswered.acp_code, None);
 }
+
+/// Case 3: a cut that lands right after a space leaves no trailing whitespace behind.
+#[test]
+fn sanitize_trims_whitespace_left_by_truncation() {
+    let primary = format!("{} {}", "a".repeat(1023), "b".repeat(8));
+    let (text, truncated) = sanitize_agent_text(&primary, &None).unwrap();
+    assert_eq!((text, truncated), ("a".repeat(1023), true));
+}
+
+/// Case 1: a supplement standing alone, after an empty main text, gets no `: ` separator.
+#[test]
+fn a_supplement_without_main_text_has_no_separator() {
+    for primary in ["", " \n\u{200B} "] {
+        assert_eq!(
+            sanitize_agent_text(primary, &Some(json!({"message": "detail"}))),
+            Some(("detail".to_string(), false))
+        );
+    }
+}
+
+/// Case 2: ACP's `AuthRequired` code needs authentication whatever the Agent wrote, and the
+/// public error the Node maps to its terminal detail agrees with the recorded code.
+#[test]
+fn the_auth_required_code_maps_to_authentication_whatever_the_text() {
+    let error = crate::support::map_prompt_error(AcpError::RequestFailed(AcpRequestError {
+        code: -32000,
+        message: "upstream refused the request".into(),
+        data: None,
+    }));
+    assert_eq!(
+        (
+            error.public_error().clone(),
+            error.turn_failure().map(|failure| failure.code.clone())
+        ),
+        (
+            ora_contracts::PublicError::AgentAuthenticationRequired(
+                ora_contracts::EmptyErrorParams {}
+            ),
+            Some(TurnFailureCode::AgentAuthenticationRequired)
+        )
+    );
+    let other = crate::support::map_prompt_error(AcpError::RequestFailed(AcpRequestError {
+        code: -32001,
+        message: "upstream refused the request".into(),
+        data: None,
+    }));
+    assert_eq!(
+        other.turn_failure().map(|failure| failure.code.clone()),
+        Some(TurnFailureCode::AgentError)
+    );
+}
+
+/// Case 7: a broken prompt transport is the Agent's absence, and a frame or answer Ora cannot
+/// read is Ora's own failure; neither carries Agent text.
+#[test]
+fn transport_and_protocol_errors_map_to_their_failure_codes() {
+    let cases = [
+        (AcpError::StreamClosed, TurnFailureCode::AgentUnavailable),
+        (
+            AcpError::Io(std::io::Error::other("broken pipe")),
+            TurnFailureCode::AgentUnavailable,
+        ),
+        (
+            AcpError::InvalidFrame("not json".into()),
+            TurnFailureCode::Internal,
+        ),
+        (
+            AcpError::InvalidResponse("missing stopReason".into()),
+            TurnFailureCode::Internal,
+        ),
+    ];
+    for (error, code) in cases {
+        assert_eq!(
+            crate::support::map_prompt_error(error).turn_failure(),
+            Some(&ora_history::TurnFailure {
+                code,
+                acp_code: None,
+                message: None,
+                message_truncated: None,
+                attempts: None,
+                answer: None,
+            })
+        );
+    }
+}

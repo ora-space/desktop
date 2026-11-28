@@ -1,9 +1,10 @@
 use super::RuntimeActor;
+use super::agent_timed_out;
 use super::events::{drain_queued_prompt_events, settle_cancelled_prompt};
 use super::limits::CANCELLATION_GRACE;
 use super::prompt_liveness::PromptLiveness;
 use super::routing::SessionChannel;
-use super::{agent_timed_out, map_acp_error};
+use super::support::map_prompt_error;
 use crate::AgentRuntimeHost;
 use crate::RuntimeError;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
@@ -204,7 +205,8 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         .await
     {
         Ok(pending) => StalledPrompt::Resent(pending),
-        Err(error) => StalledPrompt::Failed(map_acp_error(error)),
+        // A transport failure on the resend is the Agent's absence, as on the first send (D2/D7).
+        Err(error) => StalledPrompt::Failed(map_prompt_error(error)),
     }
 }
 

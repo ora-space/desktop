@@ -85,3 +85,93 @@ async fn a_failure_that_cannot_keep_settles_session_ending() {
         )
     );
 }
+
+/// The watchdog's windows, short enough for the give-up path to run within a test.
+const WATCHDOG: &[std::time::Duration] = &[std::time::Duration::from_secs(1)];
+
+/// The `turnEnded` failure the session's history recorded.
+fn recorded_failure(fixture: &Fixture) -> Option<serde_json::Value> {
+    fixture
+        .history_lines()
+        .iter()
+        .find(|line| line.get("type").and_then(serde_json::Value::as_str) == Some("turnEnded"))
+        .and_then(|line| line.get("failure").cloned())
+}
+
+/// Case 6: a watchdog cancel the Agent never answers ends the session with
+/// `turn_cancel_unanswered`, for a session that did not choose failure keeping too, and records
+/// `no_progress` with no answer; without failure keeping there is no settlement (case 14).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unanswered_watchdog_cancel_ends_as_turn_cancel_unanswered() {
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    sessions.set_test_prompt_inactivity_windows(WATCHDOG);
+    fixture.start(&sessions, PLUGIN_VERSION, "[ignore-cancel]");
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (
+            ended.reason,
+            ended.detail.as_deref(),
+            recorded_failure(&fixture),
+            fixture.ledger.failures(),
+        ),
+        (
+            AgentSessionEndReason::AgentFailed,
+            Some("turn_cancel_unanswered"),
+            Some(serde_json::json!({"code": "no_progress", "attempts": 1, "answer": "none"})),
+            Vec::new(),
+        )
+    );
+}
+
+/// Case 6: a session that chose failure keeping ends the same way, after the turn's
+/// `session_ending` settlement.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unanswered_watchdog_cancel_of_a_keeping_session_settles_session_ending() {
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    sessions.set_test_prompt_inactivity_windows(WATCHDOG);
+    fixture.start_keeping(&sessions, "[ignore-cancel]", FAILURE);
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (
+            ended.reason,
+            ended.detail.as_deref(),
+            fixture.ledger.failures(),
+        ),
+        (
+            AgentSessionEndReason::AgentFailed,
+            Some("turn_cancel_unanswered"),
+            vec![("turn-1".to_string(), TurnFailureOutcome::SessionEnding)],
+        )
+    );
+}
+
+/// Case 2: ACP's `AuthRequired` code ends the session with `agent_authentication_required`
+/// whatever the Agent's text, and the recorded failure says the same.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_auth_required_code_ends_with_agent_authentication_required() {
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start(&sessions, PLUGIN_VERSION, "[auth-code]");
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (
+            ended.reason,
+            ended.detail.as_deref(),
+            recorded_failure(&fixture),
+        ),
+        (
+            AgentSessionEndReason::AgentFailed,
+            Some("agent_authentication_required"),
+            Some(serde_json::json!({
+                "code": "agent_authentication_required",
+                "acp_code": -32000,
+                "message": "Sign in to the provider first",
+            })),
+        )
+    );
+}

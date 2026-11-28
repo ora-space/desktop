@@ -42,14 +42,39 @@ fn is_format_char(c: char) -> bool {
 /// The sanitized Agent text: `message` carries the bounded cleaned text, `truncated` says it was
 /// cut at the byte limit. `None` text means it cleaned to nothing and must be omitted.
 pub(crate) fn sanitize_agent_text(primary: &str, data: &Option<Value>) -> Option<(String, bool)> {
-    let mut text = primary.to_string();
-    if let Some(supplement) = data_supplement_text(data)
-        && !supplement.is_empty()
-        && supplement != primary
-    {
-        text.push_str(": ");
-        text.push_str(supplement);
+    let primary = clean_agent_text(primary);
+    let mut text = primary.clone();
+    if let Some(supplement) = data_supplement_text(data) {
+        let supplement = clean_agent_text(supplement);
+        if !supplement.is_empty() && supplement != primary {
+            // A supplement standing alone is not a continuation of anything, so it gets no
+            // separator of its own.
+            if !text.is_empty() {
+                text.push_str(": ");
+            }
+            text.push_str(&supplement);
+        }
     }
+    if text.is_empty() {
+        return None;
+    }
+    if text.len() <= MAX_FAILURE_MESSAGE_BYTES {
+        return Some((text, false));
+    }
+    let mut end = 0;
+    for (at, c) in text.char_indices() {
+        if at + c.len_utf8() > MAX_FAILURE_MESSAGE_BYTES {
+            break;
+        }
+        end = at + c.len_utf8();
+    }
+    // The cut can land right after a space; the bounded text keeps no trailing whitespace (D3).
+    Some((text[..end].trim_end().to_owned(), true))
+}
+
+/// One piece of the Agent's text with line breaks and tabs turned into spaces, the remaining
+/// control and format characters deleted, and surrounding Unicode `White_Space` removed.
+fn clean_agent_text(text: &str) -> String {
     let cleaned: String = text
         .chars()
         .filter_map(|c| {
@@ -62,21 +87,7 @@ pub(crate) fn sanitize_agent_text(primary: &str, data: &Option<Value>) -> Option
             }
         })
         .collect();
-    let cleaned = cleaned.trim_matches(char::is_whitespace);
-    if cleaned.is_empty() {
-        return None;
-    }
-    if cleaned.len() <= MAX_FAILURE_MESSAGE_BYTES {
-        return Some((cleaned.to_owned(), false));
-    }
-    let mut end = 0;
-    for (at, c) in cleaned.char_indices() {
-        if at + c.len_utf8() > MAX_FAILURE_MESSAGE_BYTES {
-            break;
-        }
-        end = at + c.len_utf8();
-    }
-    Some((cleaned[..end].to_owned(), true))
+    cleaned.trim_matches(char::is_whitespace).to_owned()
 }
 
 /// Extracts the supplemental text from an ACP error's `data`: a string, or a string `message` field

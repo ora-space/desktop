@@ -1,7 +1,7 @@
 //! Serialization compatibility of the `TurnEnded` attribution fields.
 //!
 //! Evidence for specs/test-cases/node/protocol/turn-failure-reason.md case 10.
-use crate::record::{HistoryRecord, TurnEndedBy, TurnFailure, TurnFailureCode};
+use crate::record::{HistoryRecord, TurnEndedBy, TurnFailure, TurnFailureAnswer, TurnFailureCode};
 use agent_client_protocol_schema::v1::StopReason;
 use pretty_assertions::assert_eq;
 
@@ -85,6 +85,36 @@ fn a_reader_folds_unknown_failure_codes_into_internal() {
                 message_truncated: None,
                 attempts: None,
                 answer: None,
+            }),
+        }
+    );
+}
+
+/// A reader keeps a `turnEnded` line whose watchdog answer a newer writer added (invariant 10).
+#[test]
+fn a_reader_keeps_a_turn_end_with_an_unknown_watchdog_answer() {
+    let record: HistoryRecord = serde_json::from_value(serde_json::json!({
+        "type": "turnEnded",
+        "stop_reason": "cancelled",
+        "failure": {
+            "code": "no_progress",
+            "attempts": 2,
+            "answer": "some_future_stop_reason"
+        }
+    }))
+    .unwrap();
+    assert_eq!(
+        record,
+        HistoryRecord::TurnEnded {
+            stop_reason: StopReason::Cancelled,
+            ended_by: None,
+            failure: Some(TurnFailure {
+                code: TurnFailureCode::NoProgress,
+                acp_code: None,
+                message: None,
+                message_truncated: None,
+                attempts: Some(2),
+                answer: Some(TurnFailureAnswer::Unrecognized),
             }),
         }
     );

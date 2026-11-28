@@ -249,7 +249,15 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         break TurnOutcome::Finished;
                     }
                     Some(Err(error)) => {
-                        if !merged.is_empty() && error.is_turn_cancel_unanswered() {
+                        // A cancel nobody answered, the caller's or the watchdog's own, leaves the
+                        // Agent possibly running: `turn_cancel_unanswered` for every session (D7).
+                        let watchdog_unanswered = error.turn_failure().is_some_and(|failure| {
+                            failure.code == ora_history::TurnFailureCode::NoProgress
+                                && failure.answer == Some(ora_history::TurnFailureAnswer::None)
+                        });
+                        if (!merged.is_empty() && error.is_turn_cancel_unanswered())
+                            || watchdog_unanswered
+                        {
                             break TurnOutcome::Unanswered;
                         }
                         // The terminal detail follows the failure's code when the runtime recorded

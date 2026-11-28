@@ -105,6 +105,9 @@ pub(super) struct RouteRegistry {
     setup_count: AtomicU64,
     pending_setup_updates: Mutex<VecDeque<(ReadOrder, SessionNotification)>>,
     setup_activity: SetupActivity,
+    /// Controls a test queues on a route the moment it is registered, before its actor can read it.
+    #[cfg(test)]
+    controls_on_register: Mutex<HashMap<String, SessionControl>>,
 }
 
 struct RouteEntry {
@@ -145,6 +148,15 @@ impl RouteRegistry {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let token = self.next_token.fetch_add(1, Ordering::Relaxed) + 1;
+        #[cfg(test)]
+        if let Some(control) = self
+            .controls_on_register
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(session_id)
+        {
+            let _ = controls.send(control);
+        }
         self.write_entries().insert(
             session_id.to_string(),
             RouteEntry {
@@ -168,6 +180,25 @@ impl RouteRegistry {
             session_id: session_id.to_string(),
             token,
             registry: self.clone(),
+        }
+    }
+
+    /// Queues `control` on the route `session_id` gets when it is next registered, so a test can
+    /// reach what an actor reads first on a route it just opened.
+    #[cfg(test)]
+    pub(super) fn control_on_register(&self, session_id: &str, control: SessionControl) {
+        self.controls_on_register
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(session_id.to_string(), control);
+    }
+
+    /// Drops one route's control sender while its event sender stays registered: the half of a
+    /// route teardown an actor may observe first, which tests cannot otherwise choose.
+    #[cfg(test)]
+    pub(super) fn close_controls(&self, session_id: &str) {
+        if let Some(entry) = self.write_entries().get_mut(session_id) {
+            entry.controls = mpsc::unbounded_channel().0;
         }
     }
 

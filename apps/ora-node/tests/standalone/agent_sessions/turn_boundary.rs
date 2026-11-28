@@ -9,7 +9,9 @@
 //! started outside the sessions of the Agent's earlier processes was alive when the stop settled,
 //! no marker was written afterwards, and the next turn completed. A failed turn settles no
 //! cancel, so for `error` the processes are sampled at the next turn's first event, which the
-//! Node writes only after it judged the failed turn and ran the fence.
+//! Node writes only after it judged the failed turn and ran the fence. Keeping a session after a
+//! failure needs `turn_failure`, so `error` negotiates it and also requires the failed turn's
+//! `TurnFailureSettled` to be `kept`.
 //!
 //! The test finds the turn's processes the way the Node does, by the attempt mark, so it shares
 //! the mark's blind spot: an orphan that cleared or rewrote its environment is invisible to both.
@@ -205,7 +207,11 @@ fn attempt(fixture: &Fixture) -> Option<String> {
 #[derive(Debug, Default, serde::Serialize)]
 struct Turn {
     ended: bool,
+    /// The turn's `TurnEnded` carried a `failure`, so its conclusion is awaited.
+    failed: bool,
     settled: Option<TurnCancelOutcome>,
+    /// The failed turn's `TurnFailureSettled` outcome.
+    failure_settled: Option<TurnFailureOutcome>,
     session_end: Option<(AgentSessionEndReason, Option<String>)>,
     /// Marked processes alive when the stop settled, or when the turn ended without a cancel.
     alive_at_end: Vec<Marked>,
@@ -214,7 +220,8 @@ struct Turn {
 }
 
 /// Receives until the turn has ended and, with `command` given, its cancel settled, or until
-/// the session ended. Events are acknowledged as they arrive.
+/// the session ended. A failed turn is followed until its `TurnFailureSettled`, and past it to
+/// the session's end when that is `session_ending`. Events are acknowledged as they arrive.
 async fn follow(stream: &mut UnixStream, command: Option<&str>, attempt: &str) -> Turn {
     let mut turn = Turn::default();
     loop {
@@ -232,7 +239,17 @@ async fn follow(stream: &mut UnixStream, command: Option<&str>, attempt: &str) -
                     == Some("turnEnded")
                 {
                     turn.ended = true;
+                    turn.failed = event
+                        .payload
+                        .record
+                        .get("failure")
+                        .is_some_and(|failure| !failure.is_null());
                 }
+            }
+            NodeToControllerMessage::TurnFailureSettled(event) => {
+                send(stream, ack(event.sequence.value())).await;
+                turn.failure_settled = Some(event.payload.outcome);
+                turn.alive_at_end = marked(attempt);
             }
             NodeToControllerMessage::TurnCancelSettled(event)
                 if Some(event.payload.command_id.as_str()) == command =>
@@ -248,8 +265,11 @@ async fn follow(stream: &mut UnixStream, command: Option<&str>, attempt: &str) -
             }
             _ => {}
         }
+        // A failed turn waits for its conclusion; `session_ending` is followed by the end.
+        let concluded = !turn.failed || turn.failure_settled == Some(TurnFailureOutcome::Kept);
         // A stop that settled `session_ending` is followed by the session's end.
         if turn.ended
+            && concluded
             && (command.is_none()
                 || turn
                     .settled
@@ -327,7 +347,13 @@ fn turn_boundary_conformance() {
             .build()
             .unwrap();
         let summary = runtime.block_on(async {
-            let (mut stream, _) = super::turn_cancel::greet(&fixture, /*turn_cancel*/ true).await;
+            // Keeping a session after a failure needs `turn_failure` negotiated as well (D6).
+            let declared = if failing {
+                super::turn_cancel::Declared::TurnFailure
+            } else {
+                super::turn_cancel::Declared::TurnCancel
+            };
+            let (mut stream, _) = super::turn_cancel::greet_declaring(&fixture, declared).await;
             let mut input = start("Answer briefly.");
             input.payload.spec.agent_plugin_id = PluginId::new(format!("official/{identifier}"));
             input.payload.spec.agent_plugin_version = PluginVersion::new(version.clone());
@@ -404,6 +430,8 @@ fn turn_boundary_conformance() {
                 && target.ended
                 && target.session_end.is_none()
                 && (failing || target.settled == Some(TurnCancelOutcome::Stopped))
+                && (!failing
+                    || (target.failed && target.failure_settled == Some(TurnFailureOutcome::Kept)))
                 && escaped.is_empty()
                 && markers_after == [false, false]
                 && next

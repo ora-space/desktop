@@ -6,6 +6,10 @@ edition.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Lets integration tests shorten the runtime's prompt inactivity windows; never enabled in builds.
+test-support = ["ora-agent-runtime/test-support"]
+
 [[bin]]
 name = "ora-node-echo-agent"
 path = "fixtures/echo-agent/main.rs"
@@ -61,6 +65,7 @@ zip.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
+ora-node = { path = ".", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 futures-util.workspace = true
 tokio-tungstenite = "0.29"

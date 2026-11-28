@@ -144,6 +144,10 @@ pub enum TurnFailureCode {
 }
 
 /// How the Agent answered the last watchdog cancel, carried in `TurnFailure.answer`.
+///
+/// ACP may add stop reasons, and a later decision may record them; an older reader must still
+/// decode the whole `turnEnded` line, so `#[serde(other)]` folds an answer it does not know into
+/// [`TurnFailureAnswer::Unrecognized`]. Ora never writes that value itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnFailureAnswer {
@@ -154,6 +158,9 @@ pub enum TurnFailureAnswer {
     Refusal,
     Error,
     None,
+    /// An answer recorded by a newer writer that this reader does not know.
+    #[serde(other)]
+    Unrecognized,
 }
 
 /// The reason one turn failed, attached to `TurnEnded`.

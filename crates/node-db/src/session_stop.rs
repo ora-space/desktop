@@ -217,9 +217,14 @@ impl<G: WriteGuard> SessionJournal<G> {
         tx.execute("UPDATE session_stop_attempts SET first_stop_at_ms=coalesce(first_stop_at_ms,?2),bound_at_ms=coalesce(bound_at_ms,?3),state=CASE WHEN state='prepared' THEN 'stopping' ELSE state END WHERE execution=?1 AND state!='confirmed'", params![execution.as_str(), at_ms, bound_at_ms])?;
         // Settling is idempotent: only still-queued cancels are written.
         if let Some(current) = crate::session::read_running(&tx, execution)? {
-            let last = crate::session::settle_pending_as_ending(&tx, &guard, &current)?;
-            // The last failed turn gets its `session_ending` beside the decision (D6).
-            crate::session::settle_failure_as_ending_if_due(&tx, &guard, &current, last)?;
+            // A failed turn's conclusion precedes the cancels merged into its stop (D6).
+            let last = crate::session::settle_failure_as_ending_if_due(
+                &tx,
+                &guard,
+                &current,
+                current.last_sequence,
+            )?;
+            crate::session::settle_pending_as_ending(&tx, &guard, &current, last)?;
         }
         tx.commit()?;
         Ok(())

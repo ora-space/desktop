@@ -53,7 +53,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     if !publish_setup(&events, setup) {
                         self.record_cleanup(operation_id, Ok(()));
                         end_report.record(PromptEndCause::StreamDropped);
-                        self.end_timed_turn(StopReason::Cancelled, tool_timings);
+                        // The host stopped reading this recorded turn's events (D1).
+                        self.end_timed_turn_with(
+                            StopReason::Cancelled,
+                            tool_timings,
+                            Some(TurnEndedBy::SessionEnd),
+                            None,
+                        );
                         followers.finish(StopReason::Cancelled);
                         return;
                     }
@@ -81,10 +87,18 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     );
                     self.record_cleanup(operation_id, Ok(()));
                     end_report.record(PromptEndCause::Unknown);
-                    self.end_timed_turn(StopReason::Cancelled, tool_timings);
+                    // The turn records the same failure the Node is told about.
+                    let failure = map_prompt_error(error);
+                    let turn_failure = failure.turn_failure().cloned();
+                    self.end_timed_turn_with(
+                        StopReason::Cancelled,
+                        tool_timings,
+                        None,
+                        turn_failure,
+                    );
                     followers.finish(StopReason::Cancelled);
                     self.load_restoration = LoadRestoration::NotRestored;
-                    let _ = events.try_send(Err(map_prompt_error(error)));
+                    let _ = events.try_send(Err(failure));
                     return;
                 }
             }

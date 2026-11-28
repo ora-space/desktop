@@ -73,7 +73,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
             && super::end_decided(&tx, input.execution_id())?
         {
             let guard = Arc::clone(&self.guard);
-            super::settle_pending_as_ending(&tx, &guard, &session)?;
+            super::settle_pending_as_ending(&tx, &guard, &session, session.last_sequence)?;
         }
         tx.commit()?;
         Ok(CommandAdmission::Accepted)

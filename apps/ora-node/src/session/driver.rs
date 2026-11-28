@@ -591,6 +591,10 @@ where
     });
     let end = match manager {
         Ok(manager) => {
+            #[cfg(feature = "test-support")]
+            if let Some(windows) = shared.prompt_inactivity_windows.get() {
+                manager.set_test_prompt_inactivity_windows(windows);
+            }
             if let Some(control) = &control {
                 super::mcp::probes::register(
                     shared,

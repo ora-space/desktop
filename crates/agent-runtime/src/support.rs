@@ -279,7 +279,8 @@ pub(super) fn map_acp_error(error: ora_acp::AcpError) -> RuntimeError {
     )
 }
 
-/// Maps a prompt rejection that has one known authentication meaning onto a stable public error.
+/// Maps a failed `session/prompt` (its send, or its answer) onto a stable public error carrying the
+/// turn's failure: the Agent's own ACP error, a lost Agent, or an Ora-side protocol failure.
 ///
 /// Authentication is recognized by the ACP code `-32000` or the two known texts; the text match is
 /// kept for Agents that do not use the code. The failure's sanitized, bounded reason is carried so
@@ -311,7 +312,14 @@ pub(super) fn map_prompt_error(error: ora_acp::AcpError) -> RuntimeError {
             };
             runtime_error.with_turn_failure(failure)
         }
-        _ => map_acp_error(error),
+        // The prompt's transport broke, on the send or before its answer: the Agent is gone (D2).
+        ora_acp::AcpError::StreamClosed | ora_acp::AcpError::Io(_) => {
+            map_acp_error(error).with_turn_failure(crate::turn_failure::agent_unavailable_failure())
+        }
+        // The Agent broke the ACP frame or response format, which Ora cannot follow (D2).
+        ora_acp::AcpError::InvalidFrame(_) | ora_acp::AcpError::InvalidResponse(_) => {
+            map_acp_error(error).with_turn_failure(crate::turn_failure::internal_failure())
+        }
     }
 }
 

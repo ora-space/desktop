@@ -10,6 +10,8 @@ mod restore_replay;
 mod skill_catalog_runtime_tests;
 #[path = "turn_cancel_tests.rs"]
 mod turn_cancel_tests;
+#[path = "turn_failure_paths_tests.rs"]
+mod turn_failure_paths_tests;
 
 use super::*;
 use crate::host::SessionStore;
@@ -2495,6 +2497,7 @@ mod restored_sessions {
     mod command_limit_tests;
     mod follower_retry_tests;
     mod follower_setup_tests;
+    mod send_failure_tests;
     mod set_config_tests;
     mod setup_options_tests;
     use super::*;
