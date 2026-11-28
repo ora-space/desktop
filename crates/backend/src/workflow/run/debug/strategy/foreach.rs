@@ -1,9 +1,11 @@
 //! Item-scoped planning and transactional repair of the active foreach projection.
+use ora_application::RoundOutcome;
 use ora_contracts::{WorkflowDebugImpact, WorkflowDebugPreview};
 use ora_db::workflow_debug::{
     DebugPlanningInput, DebugRejection, ForeachReplay, Transaction, WorkflowDebugStore,
 };
 use ora_domain::{WorkflowNodeStatus, WorkflowRunStatus};
+use serde_json::Value;
 use std::collections::BTreeSet;
 
 /// The owner instance stays live on a member edit, keeping its frozen inputs and the
@@ -41,7 +43,83 @@ fn owner(input: &DebugPlanningInput) -> Result<&str, DebugRejection> {
     }
 }
 
-/// Only the selected member's descendants are replayed within the target item. All members
+/// The item ledger can prove a typed collection even when the Agent's output column
+/// holds only its final text. An unfinished item may have only the producer's row.
+struct ItemReplay {
+    tail: BTreeSet<String>,
+    collection: Option<(String, Value)>,
+}
+
+impl ItemReplay {
+    /// Resolve the collection before rewinding the ledger. Never borrow a later item's pool.
+    fn from_input(input: &DebugPlanningInput, owner: &str) -> Result<Self, DebugRejection> {
+        let graph = &input.candidate;
+        let mut replay = Self {
+            tail: super::downstream_closure(graph, &input.target.node_id)
+                .into_iter()
+                .collect(),
+            collection: None,
+        };
+        let Some(index) = input.target.index else {
+            return Ok(replay);
+        };
+        let config = graph
+            .node(owner)
+            .and_then(|n| n.iteration_config.as_ref())
+            .ok_or(DebugRejection::InvalidTarget)?;
+        let selector = &config.collect_selector;
+        let producer = &selector.node_id;
+        if replay.tail.contains(producer) {
+            return Ok(replay);
+        }
+        let Some(row) = input.current_attempts.iter().find(|row| {
+            row.scope_id.as_ref() == input.target.scope_id
+                && row.iteration == Some(index)
+                && row.node_id == *producer
+                && row.status == WorkflowNodeStatus::Succeeded
+        }) else {
+            return Ok(replay);
+        };
+        let key = selector.qualified();
+        let settled = input
+            .current_payload
+            .as_ref()
+            .and_then(|p| p.iteration_ledger(owner))
+            .and_then(|ledger| ledger.get(&index));
+        let row_value = match (
+            selector.root.as_str(),
+            row.node_type.as_str(),
+            row.output.as_ref(),
+        ) {
+            ("output", "agent", Some(text)) => Some(Value::String(text.clone())),
+            ("output", "aggregator", Some(json)) => serde_json::from_str(json).ok(),
+            _ => None,
+        };
+        let value = row_value
+            .or_else(|| match settled {
+                Some(RoundOutcome::Succeeded { output, .. }) => Some(output.clone()),
+                _ => None,
+            })
+            .or_else(|| {
+                let completed = input.entry["completedAttempts"].as_array()?;
+                completed
+                    .iter()
+                    .any(|id| id.as_str() == Some(row.id.as_ref()))
+                    .then(|| input.pool.values.get(&key).cloned())
+                    .flatten()
+            });
+        if let Some(value) = value {
+            replay.collection = Some((key, value));
+        } else {
+            replay
+                .tail
+                .extend(super::downstream_closure(graph, producer));
+        }
+        Ok(replay)
+    }
+}
+
+/// The selected member's descendants and any unproven collector replay within the target item. All members
 /// of later items and all consumers of the batch projection become invalid.
 pub(super) fn plan(
     input: &DebugPlanningInput,
@@ -50,9 +128,7 @@ pub(super) fn plan(
     let graph = &input.candidate;
     let first = input.target.index;
     let target = &input.target.node_id;
-    let tail: BTreeSet<_> = super::downstream_closure(graph, target)
-        .into_iter()
-        .collect();
+    let item = ItemReplay::from_input(input, owner)?;
     let after: BTreeSet<_> = super::downstream_closure(graph, owner)
         .into_iter()
         .collect();
@@ -71,7 +147,9 @@ pub(super) fn plan(
         } else if graph.region_owner(&row.node_id) == Some(owner) {
             match (first, row.iteration) {
                 (None, _) => true,
-                (Some(start), Some(i)) => i > start || i == start && tail.contains(&row.node_id),
+                (Some(start), Some(i)) => {
+                    i > start || i == start && item.tail.contains(&row.node_id)
+                }
                 _ => return Err(DebugRejection::MissingInputEvidence),
             }
         } else {
@@ -132,9 +210,21 @@ pub(super) fn restore(
     let affected: BTreeSet<_> = super::downstream_closure(graph, owner)
         .into_iter()
         .collect();
-    let member_tail: BTreeSet<_> = super::downstream_closure(graph, &input.target.node_id)
-        .into_iter()
-        .collect();
+    let item = ItemReplay::from_input(&input, owner)?;
+    // Stop and apply run in separate transactions. Keep the producer and its
+    // descendants on exactly the side of the boundary the user confirmed.
+    if first.is_some()
+        && input.current_attempts.iter().any(|row| {
+            row.scope_id.as_ref() == input.target.scope_id
+                && row.iteration == first
+                && graph.region_owner(&row.node_id) == Some(owner)
+                && item.tail.contains(&row.node_id)
+                    != preview.impact.invalidate.contains(&row.id.to_string())
+        })
+    {
+        return Err(DebugRejection::MissingInputEvidence.into());
+    }
+    let member_tail = item.tail;
     // A terminal run keeps its visible variables and outcome. Its invalidated ledger
     // suffix still retires with the attempts and cannot contribute on later recovery.
     payload
@@ -182,6 +272,7 @@ pub(super) fn restore(
             inputs.insert(key.clone(), value.clone());
         }
     }
+    inputs.extend(item.collection);
     let replay = ForeachReplay { affected, inputs };
     let container = input.target.container_node_run_id.as_deref();
     if running {

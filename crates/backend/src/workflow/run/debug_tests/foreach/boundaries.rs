@@ -385,4 +385,6 @@ fn failed_batch_recovers_then_rebuilds_with_an_object_source_and_empty_downstrea
 
 mod recovery;
 
+mod parallel;
+
 mod cross_container;
