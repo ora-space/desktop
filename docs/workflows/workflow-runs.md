@@ -328,7 +328,9 @@ retry can link to the earlier execution that supplied its input. For a position 
 dispatch, history links to the first execution once the scheduler creates it. The Theater inspector
 also opens the selected execution record.
 
-Editing a while member resumes at the selected one-based round. Earlier rounds and unaffected members keep their results. Subsequent rounds of this Loop execution use the revised configuration and new feedback; superseded attempts remain queryable by id. Editing the Loop configuration instead starts a new container execution at round one. Preview rejects a member edit that would leave the round's explicit exit in effect. An edit that would retire the exit must wait for successful cleanup. After successful cleanup, editing the exit path reopens the siblings it cancelled. The preview includes those siblings and their reachable successors.
+Editing a while member resumes at the selected one-based round. Earlier rounds and unaffected members keep their results. Subsequent rounds of this Loop execution use the revised configuration and new feedback; superseded attempts remain queryable by id. Editing the Loop configuration instead starts a new container execution at round one. Preview rejects a member edit that would leave the round's explicit exit in effect.
+
+To edit the Condition or another node that led to an explicit exit, wait for the cancelled siblings to stop. Once cleanup succeeds, you can preview the edit even if the round failed because a cancelled sibling never produced an exported value. The preview includes the siblings that will reopen and their reachable successors. If cleanup failed, or an older failed round has no cleanup receipt, use ordinary failure recovery.
 
 If the run is cancelled before the acknowledgement arrives or cleanup fails, Desktop cannot verify that cancelled siblings stopped. Previews that would retire that exit, including edits upstream of the Loop, remain blocked. Use [ordinary failure recovery](#resuming-a-failed-run) to restart the affected Loop from round one.
 

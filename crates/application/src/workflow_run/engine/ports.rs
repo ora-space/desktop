@@ -104,6 +104,11 @@ pub enum LoopRoundAdvance {
         node_run_id: WorkflowNodeRunId,
         result: Result<BTreeMap<String, serde_json::Value>, String>,
     },
+    /// Records the cleanup receipt and settles the matching exit using its frozen exports.
+    FinishExit {
+        node_run_id: String,
+        cleanup: Result<(), String>,
+    },
     /// Closes the current round and starts the next round from its Start node.
     Continue { next: LoopRoundToStart },
     /// Closes the round and publishes the configured values through the parent Loop node.
