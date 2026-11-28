@@ -365,45 +365,47 @@ export function TaskDiffView({
       ? (files.find((file) => diffFilePath(file) === activeFilePath) ?? null)
       : null;
 
-  // Deferring the parse leaves `filePaths` empty for one render. Do not mark
-  // the request applied yet, or `onFileNotFound` (a chat jump that could not
-  // resolve a path) fires while the patch is still parsing and yanks the
-  // layout into the Files panel. A failed read likewise leaves the request
-  // pending so a successful retry can still resolve it.
+  const requestedFilePath = useMemo(
+    () =>
+      fileRequest === undefined
+        ? undefined
+        : filePaths.find((path) =>
+            pathsMatchForWorkspace(fileRequest.path, path),
+          ),
+    [filePaths, fileRequest],
+  );
+  // A failed refresh can still leave a usable patch. Resolve cached matches,
+  // but wait for a successful read before deciding that a path is missing.
   const canApplyFileRequest =
     !diffPending &&
     !fileMode &&
     !parseDeferred &&
-    (diffQuery.error === null || gitAvailability === "notRepository");
+    (requestedFilePath !== undefined ||
+      diffQuery.error === null ||
+      gitAvailability === "notRepository");
   if (
     fileRequest !== undefined &&
     canApplyFileRequest &&
     fileRequest.requestId !== appliedFileRequestId
   ) {
     setAppliedFileRequestId(fileRequest.requestId);
-    const matchingPath = filePaths.find((path) =>
-      pathsMatchForWorkspace(fileRequest.path, path),
-    );
-    if (matchingPath !== undefined) {
-      setSelectedFilePath(matchingPath);
+    if (requestedFilePath !== undefined) {
+      setSelectedFilePath(requestedFilePath);
     }
   }
 
   useLayoutEffect(() => {
     if (fileRequest === undefined || diffPending) return;
     if (fileRequest.requestId !== appliedFileRequestId) return;
-    const matchingPath = filePaths.find((path) =>
-      pathsMatchForWorkspace(fileRequest.path, path),
-    );
-    if (matchingPath !== undefined) {
-      notifyPreviewPath(matchingPath);
+    if (requestedFilePath !== undefined) {
+      notifyPreviewPath(requestedFilePath);
     }
   }, [
     appliedFileRequestId,
     diffPending,
-    filePaths,
     fileRequest,
     notifyPreviewPath,
+    requestedFilePath,
   ]);
 
   /**
@@ -456,18 +458,19 @@ export function TaskDiffView({
     // they scrolled — visible as a double run when tree-clicking the very
     // file a restored request points at).
     if (jumpScrollRequestIdRef.current === fileRequest.requestId) return;
-    const matchingPath = filePaths.find((path) =>
-      pathsMatchForWorkspace(fileRequest.path, path),
-    );
-    if (matchingPath === undefined || matchingPath !== selectedFilePath) return;
+    if (
+      requestedFilePath === undefined ||
+      requestedFilePath !== selectedFilePath
+    )
+      return;
     jumpScrollRequestIdRef.current = fileRequest.requestId;
-    startScrollRun(matchingPath);
+    startScrollRun(requestedFilePath);
   }, [
     appliedFileRequestId,
     diffPending,
-    filePaths,
     fileRequest,
     isFocusMode,
+    requestedFilePath,
     selectedFilePath,
     startScrollRun,
   ]);
@@ -478,10 +481,7 @@ export function TaskDiffView({
       return;
     }
     if (fileRequest.requestId !== appliedFileRequestId) return;
-    const matchingPath = filePaths.find((path) =>
-      pathsMatchForWorkspace(fileRequest.path, path),
-    );
-    if (matchingPath === undefined) {
+    if (requestedFilePath === undefined) {
       onFileNotFound?.(
         fileRequest.path,
         fileNavigationLocation({
@@ -494,7 +494,7 @@ export function TaskDiffView({
   }, [
     fileRequest,
     appliedFileRequestId,
-    filePaths,
+    requestedFilePath,
     canApplyFileRequest,
     onFileNotFound,
   ]);

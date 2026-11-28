@@ -16,7 +16,7 @@ import {
   type TestHandlers,
 } from "../../test/contracts-transport";
 import "../../i18n/i18n-instance";
-import { TaskDiffView } from "./task-diff-view";
+import { TaskDiffView, type TaskDiffFileRequest } from "./task-diff-view";
 import { DIFF_FILE_SCROLL_INSET_PX } from "./task-diff-scroll";
 
 /** Builds a tiny new-file patch so tests can name the requested path independently of order. */
@@ -76,22 +76,26 @@ function renderRequestedDiff(fileRequest?: {
         createElement(AppI18nProvider, null, children),
       ),
     );
-  return render(
+  const view = (request: TaskDiffFileRequest) => (
     <TaskDiffView
       workspaceId="task-1"
       hasBaseline
       viewType="unified"
       fileTreeOpen
-      fileRequest={{
-        path: fileRequest?.path ?? REQUESTED_FILE,
-        requestId: fileRequest?.requestId ?? 1,
-        line: fileRequest?.line,
-      }}
+      fileRequest={request}
       onFileNotFound={fileRequest?.onFileNotFound}
       onFileTreeOpenChange={() => undefined}
-    />,
+    />
+  );
+  const rendered = render(
+    view({
+      path: fileRequest?.path ?? REQUESTED_FILE,
+      requestId: fileRequest?.requestId ?? 1,
+      line: fileRequest?.line,
+    }),
     { wrapper },
   );
+  return (request: TaskDiffFileRequest) => rendered.rerender(view(request));
 }
 
 const REQUESTED_FILE_OFFSET = 800;
@@ -151,6 +155,33 @@ describe("TaskDiffView file requests", () => {
       ).toHaveAttribute("aria-current", "page");
     });
     expect(onFileNotFound).not.toHaveBeenCalled();
+  });
+
+  it("uses cached matches after a failed refresh and waits before falling back for missing paths", async () => {
+    let fail = false;
+    const onFileNotFound = vi.fn();
+    const requestFile = renderRequestedDiff({
+      path: FIRST_FILE,
+      beforeDiff: () => {
+        if (fail) throw new Error("patch unavailable");
+      },
+      onFileNotFound,
+    });
+    const target = await screen.findByRole("button", { name: "demo-spec.md" });
+    expect(target).not.toHaveAttribute("aria-current");
+    fail = true;
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "刷新变更" }));
+    const retry = await screen.findByRole("button", { name: "重试" });
+    requestFile({ path: REQUESTED_FILE, requestId: 2 });
+    expect(target).toHaveAttribute("aria-current", "page");
+    requestFile({ path: "missing.txt", requestId: 3 });
+    expect(onFileNotFound).not.toHaveBeenCalled();
+    fail = false;
+    await user.click(retry);
+    await waitFor(() =>
+      expect(onFileNotFound).toHaveBeenCalledWith("missing.txt", undefined),
+    );
   });
 
   const nativeGetBoundingClientRect =
