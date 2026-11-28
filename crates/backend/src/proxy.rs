@@ -130,15 +130,19 @@ pub(crate) fn normalize_manual_settings(
 /// Returns a proxy URL with configured credentials embedded for Git's environment contract.
 fn proxy_endpoint_with_credentials(settings: &NetworkProxySettings) -> Result<Url, BackendError> {
     let mut endpoint = proxy_endpoint(settings)?;
+    // URL setters preserve percent escapes, but the clients decode URL credentials.
+    // Encode literal percent signs so those clients receive the saved field values.
     if let Some(username) = &settings.username {
         endpoint
-            .set_username(username)
+            .set_username(&username.replace('%', "%25"))
             .map_err(|()| proxy_error(HostProxyError::InvalidEndpoint))?;
     }
     if let Some(password) = &settings.password {
-        endpoint.set_password(Some(password)).map_err(|()| {
-            BackendError::invalid_proxy_settings("invalid proxy password".to_string())
-        })?;
+        endpoint
+            .set_password(Some(&password.replace('%', "%25")))
+            .map_err(|()| {
+                BackendError::invalid_proxy_settings("invalid proxy password".to_string())
+            })?;
     }
     Ok(endpoint)
 }
