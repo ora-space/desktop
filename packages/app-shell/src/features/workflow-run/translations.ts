@@ -140,6 +140,8 @@ export const workflowRunTranslations = {
       "保留当前工作区文件。续跑可能读到上次生成的文件。",
     "workflowRun.debug.repeat": "发送消息等外部动作可能重复。",
     "workflowRun.debug.stopping": "正在等待旧尝试停止。",
+    "workflowRun.debug.draftMoved":
+      "所选位置已改变。草稿仍针对打开时的执行位置。请返回原位置预览，或关闭编辑器重新选择。",
     "workflowRun.debug.reselect":
       "所选执行位置已改变。请关闭编辑器，重新选择位置并预览。",
     "workflowRun.debug.close": "关闭编辑器",
@@ -742,6 +744,8 @@ export const workflowRunTranslations = {
     "workflowRun.debug.repeat":
       "External actions such as sending messages may repeat.",
     "workflowRun.debug.stopping": "Waiting for earlier attempts to stop.",
+    "workflowRun.debug.draftMoved":
+      "The selection moved. This draft still edits the original execution. Return to it to preview, or close the editor and select a new position.",
     "workflowRun.debug.reselect":
       "The selected execution changed. Close the editor, select a position and preview again.",
     "workflowRun.debug.close": "Close editor",

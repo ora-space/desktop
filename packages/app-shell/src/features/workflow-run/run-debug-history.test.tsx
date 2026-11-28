@@ -163,6 +163,7 @@ it("opens the stored dispatch configuration from a reloaded run's history", asyn
       "This execution has no recorded configuration.",
     ),
   ).toBeVisible();
+  expect(newAttempt.queryByText(/Selected branch:/)).toBeNull();
   expect(newAttempt.queryByText(/maxIterations/)).toBeNull();
   expect(attempt.mock.calls.map(([request]) => request)).toEqual([
     { runId: "F", nodeRunId: "it1" },

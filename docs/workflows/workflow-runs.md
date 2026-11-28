@@ -323,7 +323,7 @@ never read by scheduling, resume, rollback or snapshot switching.
 
 ## Editing and resuming from a selected execution
 
-Select an execution or an undispatched position in the Theater inspector and choose **Edit and resume from here**. Edit the effective configuration, choose **Preview changes**, and review what will be kept, stopped, invalidated and scheduled. Choose **Confirm and resume** to apply the edit. The receipt stays visible until you close the editor. If the reply is lost, retry in the same editor to reuse the original request ID, or check the run’s debug history. If the selection changes before confirmation, close the editor, select a position and preview again. If the server rejects a stale preview, the editor reloads the current configuration for a fresh preview.
+Select an execution or an undispatched position in the Theater inspector and choose **Edit and resume from here**. Edit the effective configuration, choose **Preview changes**, and review what will be kept, stopped, invalidated and scheduled. Choose **Confirm and resume** to apply the edit. The receipt stays visible until you close the editor. If the reply is lost, retry in the same editor to reuse the original request ID, or check the run’s debug history. If the selection moves while you are drafting, the editor keeps your changes for the original execution. Return to that position to preview them. If the selection changes after preview, close the editor, select a position and preview again. An open editor stays visible when the run finishes. If the server rejects a stale preview, the editor reloads the current configuration for a fresh preview.
 
 ## Querying run-local debug history
 
