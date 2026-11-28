@@ -122,6 +122,8 @@ fn reopened_members_keep_their_own_ledger_and_pool() {
     for (version, id, kind, payload) in [
         ("0028", "a", "agent", &first),
         ("0029", "b", "condition", &second),
+        ("0028", "c", "loop", &first),
+        ("0029", "d", "iteration", &second),
     ] {
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(&location, &catalog_through(version))
@@ -141,7 +143,7 @@ fn reopened_members_keep_their_own_ledger_and_pool() {
             .bootstrap_repository_pool(&location, &catalog_through(version))
             .unwrap();
         pool.with_connection(|db| {
-            for (id,expected) in [("a",&first),("b",&second)] {
+            for (id,expected) in [("a",&first),("b",&second),("c",&first),("d",&second)] {
                 let compact: String = db.query_row("SELECT body FROM workflow_debug_documents WHERE node_run_id=?1 AND kind='run'",[id],|row|row.get(0))?;
                 let compact: Value = serde_json::from_str(&compact)?;
                 assert!(compact.get("iterationLedger").is_none());

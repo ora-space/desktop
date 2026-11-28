@@ -52,11 +52,13 @@ BEGIN
     WHERE id=NEW.scope_id AND state IS NOT NULL AND NEW.node_type IN ('agent','condition','loop','iteration');
     -- Pack the run/scope documents first: each document consumes its own buffered refs.
     INSERT INTO workflow_debug_value_input(run_id,owner,key,outcome,digest)
-    WITH ledger(owner,key,outcome) AS MATERIALIZED (
+    WITH ledger(owner,key,outcome) AS (
         SELECT owner.key,item.key,item.value FROM workflow_runs r
         CROSS JOIN json_each(CASE WHEN json_valid(r.payload) THEN r.payload END,'$.iterationLedger') owner
         LEFT JOIN json_each(owner.value) item ON true
         WHERE r.id=NEW.run_id AND NEW.node_type IN ('agent','condition','loop','iteration')
+        -- Prevent flattening so SQLite yields each extracted value without spooling the ledger.
+        LIMIT -1 OFFSET 0
     )
     SELECT NEW.run_id,owner,key,outcome,CASE WHEN outcome IS NOT NULL THEN ora_debug_hash(outcome) END
     FROM ledger
