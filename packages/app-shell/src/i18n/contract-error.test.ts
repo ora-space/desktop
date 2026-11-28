@@ -1,4 +1,5 @@
 import {
+  decodeRemoteError,
   LocalTransportError,
   RemoteContractError,
   UnknownRemoteError,
@@ -74,6 +75,20 @@ describe("contract error translations", () => {
     }
   });
 });
+
+it.each([undefined, { code: "future_reason" }])(
+  "shows the fallback when debug details are unavailable or unknown (%j)",
+  (detail) => {
+    const error = decodeRemoteError({
+      code: "workflow_debug_target_rejected",
+      params: { reason: "Select a reachable position.", detail },
+      requestId: "00000000-0000-4000-8000-000000000001",
+    });
+    expect(localizeContractError(error, appI18n.t)).toContain(
+      "Select a reachable position.",
+    );
+  },
+);
 
 describe("plugin package failures", () => {
   it("renders the rejected field and reason instead of a bare request ID", () => {

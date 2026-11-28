@@ -75,6 +75,47 @@ export const workflowRunTranslations = {
     "errors.workflow_debug_patch_invalid":
       "这处修改未被接受（{{path}}）：{{reason}}",
     "errors.workflow_debug_target_rejected": "无法调试选中的执行：{{reason}}",
+    "workflowRun.debug.reason.input_not_recorded":
+      "此次尝试未记录输入。请选择有输入记录的尝试。",
+    "workflowRun.debug.reason.invalid_target":
+      "请选择本次运行的当前尝试或可到达的位置。",
+    "workflowRun.debug.reason.prerequisites_not_ready":
+      "作用域 {{scope}} 中的节点 {{node}} 尚不能首次派发。请检查其前置节点（{{prerequisites}}）。",
+    "workflowRun.debug.reason.live_round_required":
+      "请选择循环 {{node}} 正在执行的轮次。",
+    "workflowRun.debug.reason.round_exited":
+      "循环 {{node}} 的第 {{round}} 轮已退出。请选择正在执行的轮次。",
+    "workflowRun.debug.reason.position_field_required":
+      "请选择 foreach 成员 {{node}} 的位置，并提供 {{field}}。",
+    "workflowRun.debug.reason.container_input_missing":
+      "容器 {{node}} 缺少冻结的输入。请选择有输入记录的执行。",
+    "workflowRun.debug.reason.item_out_of_range":
+      "索引 {{index}} 未指向 {{node}} 当前绑定且尚未结算的项。请选择当前项。",
+    "workflowRun.debug.reason.before_baseline":
+      "尝试 {{attempt}} 使用修订 {{revision}}，早于基线 {{baseline}}。请选择当前快照中的尝试。",
+    "workflowRun.debug.reason.loop_exit_cleanup_pending":
+      "LoopExit 仍在清理。请等清理完成后再预览。",
+    "workflowRun.debug.reason.loop_exit_recovery_required":
+      "循环轮次结束时，部分已取消的同级尝试尚未确认停稳。请通过失败恢复继续运行。",
+    "workflowRun.debug.reason.variable_unavailable":
+      "请确认变量 {{variable}} 已声明，且在所选位置有记录值。",
+    "workflowRun.debug.reason.invalid_variable_path":
+      "请检查变量引用 {{variable}} 的字段路径。",
+    "workflowRun.debug.reason.comparison_type_mismatch":
+      "请检查变量 {{variable}} 及其比较值的类型是否适用于运算符 {{operator}}。",
+    "workflowRun.debug.reason.expected_text": "请输入文本。",
+    "workflowRun.debug.reason.expected_selector": "请用字段名列表选择变量。",
+    "workflowRun.debug.reason.expected_integer": "请输入非负整数。",
+    "workflowRun.debug.reason.expected_object": "请提供配置对象。",
+    "workflowRun.debug.reason.field_not_editable": "请选择可编辑的配置字段。",
+    "workflowRun.debug.reason.field_missing": "请选择配置中已有的字段。",
+    "workflowRun.debug.reason.empty_patch": "请至少修改一个配置字段。",
+    "workflowRun.debug.reason.root_array_required":
+      "请选择在根作用域声明的数组变量。",
+    "workflowRun.debug.reason.expected_array":
+      "请在所选位置为变量 {{variable}} 提供数组值。",
+    "workflowRun.debug.reason.array_exceeds_limit":
+      "请为变量 {{variable}} 选择最多包含 {{limit}} 项的数组。",
     "workflowRun.loading": "正在加载运行…",
     "workflowRun.unrecognizedNodes":
       "有 {{count}} 个节点的类型无法识别（{{kinds}}）。它们不是有意保留的备用节点，不会出现在执行路径里。",
@@ -667,6 +708,53 @@ export const workflowRunTranslations = {
       "This edit was rejected at {{path}}: {{reason}}",
     "errors.workflow_debug_target_rejected":
       "The selected execution cannot be debugged: {{reason}}",
+    "workflowRun.debug.reason.input_not_recorded":
+      "The input for this attempt was not recorded. Select an attempt with recorded input.",
+    "workflowRun.debug.reason.invalid_target":
+      "Select a current attempt or a reachable position in this run.",
+    "workflowRun.debug.reason.prerequisites_not_ready":
+      "Node {{node}} in {{scope}} is not ready for its first dispatch. Check its prerequisites ({{prerequisites}}).",
+    "workflowRun.debug.reason.live_round_required":
+      "Select a live round of Loop {{node}}.",
+    "workflowRun.debug.reason.round_exited":
+      "Round {{round}} of Loop {{node}} has already exited. Select a live round.",
+    "workflowRun.debug.reason.position_field_required":
+      "Supply {{field}} for foreach member {{node}}.",
+    "workflowRun.debug.reason.container_input_missing":
+      "The frozen input for {{node}} is unavailable. Select an execution with recorded input.",
+    "workflowRun.debug.reason.item_out_of_range":
+      "Index {{index}} does not identify the bound, unsettled item of {{node}}. Select its current item.",
+    "workflowRun.debug.reason.before_baseline":
+      "Attempt {{attempt}} used revision {{revision}}, before baseline {{baseline}}. Select an attempt from the current snapshot.",
+    "workflowRun.debug.reason.loop_exit_cleanup_pending":
+      "LoopExit cleanup is still in progress. Wait for it to finish before previewing this edit.",
+    "workflowRun.debug.reason.loop_exit_recovery_required":
+      "The Loop round ended without confirmation that its cancelled siblings stopped. Use ordinary failure recovery to resume the run.",
+    "workflowRun.debug.reason.variable_unavailable":
+      "Check that {{variable}} is declared and has a recorded value at this position.",
+    "workflowRun.debug.reason.invalid_variable_path":
+      "Check the field path in variable reference {{variable}}.",
+    "workflowRun.debug.reason.comparison_type_mismatch":
+      "Check the type of {{variable}} and its comparison value for operator {{operator}}.",
+    "workflowRun.debug.reason.expected_text": "Enter a text value.",
+    "workflowRun.debug.reason.expected_selector":
+      "Select a variable using a list of field names.",
+    "workflowRun.debug.reason.expected_integer":
+      "Enter a non-negative integer.",
+    "workflowRun.debug.reason.expected_object":
+      "Supply a configuration object.",
+    "workflowRun.debug.reason.field_not_editable":
+      "Choose an editable configuration field.",
+    "workflowRun.debug.reason.field_missing":
+      "Select a field that exists in this configuration.",
+    "workflowRun.debug.reason.empty_patch":
+      "Change at least one configuration field.",
+    "workflowRun.debug.reason.root_array_required":
+      "Select an array variable declared at the root.",
+    "workflowRun.debug.reason.expected_array":
+      "Assign an array to {{variable}} at the selected position.",
+    "workflowRun.debug.reason.array_exceeds_limit":
+      "Select an array for {{variable}} with at most {{limit}} items.",
     "workflowRun.loading": "Loading run…",
     "workflowRun.unrecognizedNodes":
       "{{count}} nodes use an unrecognized type ({{kinds}}). They are not spare nodes kept on purpose and are left off the execution path.",

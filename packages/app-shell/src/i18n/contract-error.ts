@@ -30,13 +30,24 @@ function formatInterpolationParams(
 export function localizeContractError(error: unknown, t: TFunction): string {
   const lng = activeLocale();
   if (error instanceof RemoteContractError) {
+    const payload = error.payload;
+    const params = formatInterpolationParams(payload.params, lng);
+    if (
+      (payload.code === "workflow_debug_target_rejected" ||
+        payload.code === "workflow_debug_patch_invalid") &&
+      payload.params.detail
+    ) {
+      const detail = payload.params.detail;
+      const reasonKey = `workflowRun.debug.reason.${detail.code}` as const;
+      params.reason = t(reasonKey, {
+        ...formatInterpolationParams(detail, lng),
+        lng,
+      });
+    }
     const key = `errors.${error.code}`;
     if (key in translationResources[lng]) {
       return t(key as TranslationKey, {
-        ...formatInterpolationParams(
-          error.payload.params as Record<string, unknown>,
-          lng,
-        ),
+        ...params,
         requestId: error.requestId,
         lng,
       });
