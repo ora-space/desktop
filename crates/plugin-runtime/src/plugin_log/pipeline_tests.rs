@@ -18,8 +18,8 @@ use super::pipeline::{PluginLogCounters, run_writer, start_with_sink, submit};
 use super::record::RecordOrigin;
 use super::sink::{LineSink, PluginLogSink, SinkOpenError, confirm_writer_released};
 use super::{
-    MAX_QUEUE_BYTES, MAX_RECORD_BYTES, PluginLogSetup, PluginLogStats, PluginLogTeardown, finish,
-    start,
+    MAX_QUEUE_BYTES, MAX_RECORD_BYTES, PluginLogSetup, PluginLogStats, PluginLogTeardown,
+    Redactions, finish, start,
 };
 
 const PLUGIN_ID: &str = "official/example";
@@ -73,6 +73,7 @@ fn pipeline_over_pipe(
     level: watch::Receiver<LogLevel>,
 ) -> (tokio::io::DuplexStream, super::PluginLogPipeline) {
     let (writer, reader) = duplex(64);
+    let (_redactions_tx, redactions) = watch::channel(Redactions::default());
     let pipeline = start(
         reader,
         PLUGIN_ID.to_string(),
@@ -82,6 +83,7 @@ fn pipeline_over_pipe(
             host_session_id: SESSION.to_string(),
             generation,
             level,
+            redactions,
         },
     );
     (writer, pipeline)
@@ -235,6 +237,7 @@ async fn applies_the_live_threshold_as_a_floor_without_restart() {
 async fn a_full_queue_drops_the_newest_records_and_counts_them() {
     ora_logging::initialize_test_clock();
     let (_level_tx, level) = watch::channel(LogLevel::Info);
+    let (_redactions_tx, redactions) = watch::channel(Redactions::default());
     let (queue_tx, mut queue_rx) = mpsc::channel(2);
     let counters = Arc::new(PluginLogCounters::default());
     for index in 0..5 {
@@ -242,6 +245,7 @@ async fn a_full_queue_drops_the_newest_records_and_counts_them() {
             LineFrame::Line(format!("record {index}").into_bytes()),
             &origin(1),
             &level,
+            &redactions,
             &queue_tx,
             &counters,
         );
@@ -251,6 +255,7 @@ async fn a_full_queue_drops_the_newest_records_and_counts_them() {
         LineFrame::Line(b"@ora/plugin-log/v1 {\"level\":\"DEBUG\",\"message\":\"x\"}".to_vec()),
         &origin(1),
         &level,
+        &redactions,
         &queue_tx,
         &counters,
     );
@@ -286,6 +291,7 @@ async fn a_full_queue_drops_the_newest_records_and_counts_them() {
 async fn the_queue_is_bounded_by_bytes_as_well_as_count() {
     ora_logging::initialize_test_clock();
     let (_level_tx, level) = watch::channel(LogLevel::Info);
+    let (_redactions_tx, redactions) = watch::channel(Redactions::default());
     let (queue_tx, queue_rx) = mpsc::channel(super::QUEUE_CAPACITY);
     let counters = Arc::new(PluginLogCounters::default());
     let attempts = 200_u64;
@@ -294,6 +300,7 @@ async fn the_queue_is_bounded_by_bytes_as_well_as_count() {
             LineFrame::Line(vec![b'a'; MAX_RECORD_BYTES]),
             &origin(1),
             &level,
+            &redactions,
             &queue_tx,
             &counters,
         );
@@ -545,16 +552,24 @@ async fn teardown_shares_one_deadline_and_reports_the_unreleased_writer() {
     let (gate_tx, gate_rx) = std::sync::mpsc::channel();
     let written = Arc::new(AtomicUsize::new(0));
     let (_level_tx, level) = watch::channel(LogLevel::Info);
+    let (_redactions_tx, redactions) = watch::channel(Redactions::default());
     let (mut stderr, reader) = duplex(64);
-    let pipeline = start_with_sink(reader, PLUGIN_ID.to_string(), origin(4), level, {
-        let written = Arc::clone(&written);
-        move || {
-            Ok(BlockingSink {
-                gate: gate_rx,
-                written,
-            })
-        }
-    });
+    let pipeline = start_with_sink(
+        reader,
+        PLUGIN_ID.to_string(),
+        origin(4),
+        level,
+        redactions,
+        {
+            let written = Arc::clone(&written);
+            move || {
+                Ok(BlockingSink {
+                    gate: gate_rx,
+                    written,
+                })
+            }
+        },
+    );
     stderr.write_all(b"one\ntwo\nthree\n").await.expect("write");
     // Let the writer take the first line and block on it before teardown starts.
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -655,12 +670,20 @@ async fn teardown_is_bounded_when_stderr_never_closes() {
 async fn an_opener_error_fails_the_generation_up_front() {
     ora_logging::initialize_test_clock();
     let (_level_tx, level) = watch::channel(LogLevel::Info);
+    let (_redactions_tx, redactions) = watch::channel(Redactions::default());
     let (mut stderr, reader) = duplex(64);
-    let pipeline = start_with_sink(reader, PLUGIN_ID.to_string(), origin(5), level, || {
-        Err::<FaultySink, _>(SinkOpenError::Busy {
-            path: std::path::PathBuf::from("plugin.log.lock"),
-        })
-    });
+    let pipeline = start_with_sink(
+        reader,
+        PLUGIN_ID.to_string(),
+        origin(5),
+        level,
+        redactions,
+        || {
+            Err::<FaultySink, _>(SinkOpenError::Busy {
+                path: std::path::PathBuf::from("plugin.log.lock"),
+            })
+        },
+    );
     stderr.write_all(b"a\nb\n").await.expect("write");
     drop(stderr);
 

@@ -4254,6 +4254,7 @@ dependencies = [
 name = "ora-plugin-runtime"
 version = "0.0.0"
 dependencies = [
+ "aho-corasick",
  "libc",
  "ora-logging",
  "ora-plugin-protocol",
