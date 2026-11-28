@@ -27,7 +27,9 @@ use ora_domain::{
     AgentRef, PluginId, PromptInactivityPolicy, SessionHostCapabilities, SessionMcpSelection,
     WorkspaceId,
 };
-use ora_plugin_lifecycle::{ConnectionError, InboundNotification, PluginGenerationKey};
+use ora_plugin_lifecycle::{
+    ConnectionError, InboundNotification, PluginGenerationKey, RedactionRegistry,
+};
 use ora_plugin_protocol::{read_message, write_message};
 use ora_plugin_runtime::{
     NoHostRequests, PluginLogSetup, PluginRuntime, PluginRuntimeConfig, Redactions,
@@ -598,6 +600,7 @@ async fn run_skill_catalog_e2e_scenario() {
     let store = MemorySessionStore::default();
     let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
     let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        redactions: RedactionRegistry::default(),
         attach: attach.clone(),
         store: store.clone(),
         directory: FixedDir(dir.path().to_path_buf()),
@@ -760,6 +763,7 @@ async fn run_skill_catalog_e2e_scenario() {
         )
         .await;
     let restarted = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        redactions: RedactionRegistry::default(),
         attach: restarted_attach.clone(),
         store: store.clone(),
         directory: FixedDir(dir.path().to_path_buf()),
@@ -938,6 +942,7 @@ async fn run_empty_init_and_compaction_reset_scenario() {
     let store = MemorySessionStore::default();
     let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
     let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        redactions: RedactionRegistry::default(),
         attach,
         store,
         directory: FixedDir(dir.path().to_path_buf()),
@@ -1088,6 +1093,7 @@ async fn run_catalog_read_failure_scenario() {
     let store = MemorySessionStore::default();
     let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
     let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        redactions: RedactionRegistry::default(),
         attach,
         store,
         directory: FixedDir(dir.path().to_path_buf()),
@@ -1365,6 +1371,7 @@ async fn run_discovery_matches_session_setup_scenario() {
     ]);
     let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
     let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        redactions: RedactionRegistry::default(),
         attach: attach.clone(),
         store: MemorySessionStore::default(),
         directory: FixedDir(dir.path().to_path_buf()),
@@ -1504,6 +1511,7 @@ async fn run_mcp_refresh_replay_compaction_scenario() {
     let store = MemorySessionStore::default();
     let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
     let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        redactions: RedactionRegistry::default(),
         attach,
         store,
         directory: FixedDir(dir.path().to_path_buf()),
@@ -1601,6 +1609,7 @@ async fn run_stale_load_rebuild_scenario() {
     let store = MemorySessionStore::default();
     let scheduler = Scheduler::new(chrono_tz::Asia::Shanghai);
     let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<SkillTestHost> {
+        redactions: RedactionRegistry::default(),
         attach,
         store,
         directory: FixedDir(dir.path().to_path_buf()),
@@ -1695,6 +1704,7 @@ async fn run_direct_attach_reset_scenario() {
     let agent_ref = AgentRef::parse(PLUGIN_ID).unwrap();
     let connections = crate::connection::ConnectionSupervisors::<SkillTestHost>::start(
         attach,
+        RedactionRegistry::default(),
         store.clone(),
         dir.path().to_path_buf(),
         crate::clock::SystemClock,

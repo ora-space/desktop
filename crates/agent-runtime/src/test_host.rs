@@ -14,7 +14,7 @@ use crate::{
 };
 use ora_domain::{AgentRef, PluginId, SessionId, WorkspaceId};
 use ora_history::HistoryLine;
-use ora_plugin_lifecycle::ConnectionError;
+use ora_plugin_lifecycle::{ConnectionError, RedactionRegistry};
 use ora_scheduler::Scheduler;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -163,6 +163,7 @@ pub(crate) fn test_runtime(
 ) -> TestRuntime {
     let manager = AgentRuntimeManager::new(AgentRuntimeSetup::<TestHost> {
         attach: Arc::new(InstalledAgents::new(installed)),
+        redactions: RedactionRegistry::default(),
         store,
         directory: FixedDirectory {
             root: root.to_path_buf(),
