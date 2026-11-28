@@ -72,6 +72,10 @@ setInterval(() => {{}}, 1000);
                     host_session_id: "test".into(),
                     generation: if agent { 1 } else { 2 },
                     level: tokio::sync::watch::channel(ora_logging::LogLevel::Info).1,
+                    redactions: tokio::sync::watch::channel(
+                        ora_plugin_runtime::Redactions::default(),
+                    )
+                    .1,
                 },
             )
             .await

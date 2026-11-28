@@ -7,7 +7,7 @@ use ora_domain::PluginId;
 use ora_node_protocol::{ExecutionId, GitIdentity};
 use ora_plugin_lifecycle::{
     ChildProcessEnvironmentProvider, DenoPermission, DenoPluginRuntime, LaunchedRuntime,
-    PluginLaunchRequest, PluginLogSetup, PluginRuntimeFailure, PluginRuntimeLauncher,
+    PluginLaunchRequest, PluginLogSetup, PluginRuntimeFailure, PluginRuntimeLauncher, Redactions,
 };
 use ora_process::ProcessIdentity;
 use pretty_assertions::assert_eq;
@@ -381,6 +381,7 @@ async fn launch_through(
                 host_session_id: "session".to_string(),
                 generation: 1,
                 level: tokio::sync::watch::channel(ora_logging::LogLevel::Info).1,
+                redactions: tokio::sync::watch::channel(Redactions::default()).1,
             },
         )
         .await

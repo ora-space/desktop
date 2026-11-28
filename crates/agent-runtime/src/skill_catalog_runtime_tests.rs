@@ -29,7 +29,9 @@ use ora_domain::{
 };
 use ora_plugin_lifecycle::{ConnectionError, InboundNotification, PluginGenerationKey};
 use ora_plugin_protocol::{read_message, write_message};
-use ora_plugin_runtime::{NoHostRequests, PluginLogSetup, PluginRuntime, PluginRuntimeConfig};
+use ora_plugin_runtime::{
+    NoHostRequests, PluginLogSetup, PluginRuntime, PluginRuntimeConfig, Redactions,
+};
 use ora_scheduler::Scheduler;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -221,6 +223,7 @@ impl MockAgentAttach {
             next_load_updates,
         ));
         let (_level, level) = watch::channel(ora_logging::LogLevel::Info);
+        let (_redactions, redactions) = watch::channel(Redactions::default());
         let (runtime, mut notifications) = PluginRuntime::launch(
             &spawner,
             PluginRuntimeConfig {
@@ -241,6 +244,7 @@ impl MockAgentAttach {
                 host_session_id: "skill-test".to_string(),
                 generation: 1,
                 level,
+                redactions,
             },
         )
         .await

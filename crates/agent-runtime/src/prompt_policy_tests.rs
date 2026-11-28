@@ -29,7 +29,7 @@ use ora_domain::{
     AuditFields, PromptInactivityPolicy, Session, SessionId, SessionMcpSelection, WorkspaceId,
 };
 use ora_plugin_protocol::{read_message, write_message};
-use ora_plugin_runtime::{NoHostRequests, PluginLogSetup, PluginRuntimeConfig};
+use ora_plugin_runtime::{NoHostRequests, PluginLogSetup, PluginRuntimeConfig, Redactions};
 use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -185,6 +185,7 @@ impl Fixture {
         let (sent, frames) = mpsc::unbounded_channel();
         tokio::spawn(fake_agent(agent_reader, agent_writer, input, sent, exited));
         let (_level, level) = watch::channel(ora_logging::LogLevel::Info);
+        let (_redactions, redactions) = watch::channel(Redactions::default());
         let (plugin, mut notifications) = PluginRuntime::launch(
             &spawner,
             PluginRuntimeConfig {
@@ -205,6 +206,7 @@ impl Fixture {
                 host_session_id: "test".to_string(),
                 generation: 1,
                 level,
+                redactions,
             },
         )
         .await
@@ -2501,6 +2503,7 @@ mod restored_sessions {
             let (sent, frames) = mpsc::unbounded_channel();
             tokio::spawn(agent(agent_reader, agent_writer, input, sent, exited));
             let (_level, level) = watch::channel(ora_logging::LogLevel::Info);
+            let (_redactions, redactions) = watch::channel(Redactions::default());
             let (plugin, mut notifications) = PluginRuntime::launch(
                 &spawner,
                 PluginRuntimeConfig {
@@ -2521,6 +2524,7 @@ mod restored_sessions {
                     host_session_id: "test".to_string(),
                     generation: 1,
                     level,
+                    redactions,
                 },
             )
             .await
