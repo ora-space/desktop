@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { hashKey } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button, Input, Spinner, Textarea, cn } from "@ora/ui";
@@ -54,6 +54,7 @@ import {
 const KNOWN_NODE_FAILURE_KINDS = new Set<string>(NODE_FAILURE_KINDS);
 
 interface RunActInspectorProps {
+  onDebugSessionChange?: (open: boolean) => void;
   runId?: string;
   pendingPosition?: PendingWorkflowDebugTarget;
   nodeId: string | null;
@@ -145,6 +146,7 @@ export function RunActInspector(props: RunActInspectorProps) {
 }
 
 function Inspector({
+  onDebugSessionChange,
   runId,
   pendingPosition,
   nodeId,
@@ -190,6 +192,10 @@ function Inspector({
     id: string;
     target: GetWorkflowDebugContextRequest;
   }>();
+  const editing = session !== undefined;
+  useEffect(() => {
+    onDebugSessionChange?.(editing);
+  }, [editing, onDebugSessionChange]);
   const target =
     runId &&
     runStatus &&

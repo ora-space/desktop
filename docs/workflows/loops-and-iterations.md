@@ -135,7 +135,7 @@ round. **Loop results** shows the committed exports, error and termination reaso
 satisfied condition, an explicit exit and the round limit. Running or failed Loops never present
 partial values as exports.
 
-After a restart or ordinary recovery, the round buttons include the container execution ID when rounds from both executions are visible. A debug edit that rebuilds the Loop removes the old rounds from the Theater. Open the run’s debug history to inspect the superseded attempts. Select a round to see its members' execution IDs in the inspector. A
+After a restart or ordinary recovery, the round buttons include the container execution ID when rounds from both executions are visible. A debug edit that rebuilds the Loop removes the old rounds from the Theater. Open the run’s debug history to inspect the superseded attempts. Until the current execution records a round, historical round buttons remain available. Select one to inspect its members’ execution IDs. A
 completed historical round shows a specific stop reason only when the recorded container ID matches.
 
 ## Execution scopes

@@ -124,6 +124,7 @@ export function RunTheater({
   const resizeDragRef = useRef<{ startX: number; startWidth: number } | null>(
     null,
   );
+  const [debugSessionOpen, setDebugSessionOpen] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
   const pathScrollOpenSigRef = useRef<string>("");
@@ -588,12 +589,12 @@ export function RunTheater({
   ]);
 
   useEffect(() => {
-    if (!showResultAct || inspectorCollapsed) {
+    if (!showResultAct || debugSessionOpen || inspectorCollapsed) {
       return;
     }
     closeInspector();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
-  }, [showResultAct]);
+  }, [showResultAct, debugSessionOpen]);
 
   const primaryConversationOpen =
     primaryNode?.data.kind === "agent" &&
@@ -881,6 +882,7 @@ export function RunTheater({
               }}
             >
               <RunActInspector
+                onDebugSessionChange={setDebugSessionOpen}
                 runId={run.id}
                 pendingPosition={
                   primaryDisplayState?.nodeRunId
@@ -923,7 +925,7 @@ export function RunTheater({
                 }
                 selectedLoopRoundId={
                   primaryNode?.data.kind === "loop"
-                    ? primaryLoopRound?.id
+                    ? (primaryLoopRound?.id ?? null)
                     : undefined
                 }
                 onSelectedLoopRoundChange={
