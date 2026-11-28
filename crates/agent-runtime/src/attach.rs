@@ -225,6 +225,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let agent_session_id = self.provider_session_id().to_string();
         let mut servers = snapshot.servers().to_vec();
         servers.extend(self.session_mcp.host_mcp_servers());
+        if let Some(plugin_id) = self
+            .session_mcp
+            .plugin_id_for_agent(&self.session.agent_ref)
+        {
+            self.connections.redactions().register(
+                &plugin_id,
+                crate::mcp_resolver::redactable_mcp_values(&servers),
+            );
+        }
         let skill_entries = match self.skill_catalog.skill_catalog(&self.session.workspace_id) {
             Ok(snapshot) => snapshot.entries,
             Err(error) => {

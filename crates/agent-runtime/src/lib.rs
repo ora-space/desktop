@@ -113,6 +113,7 @@ use ora_domain::{
 };
 use ora_history::{binding_needs_handoff, read_session_history};
 use ora_logging::{ora_debug, ora_warn};
+use ora_plugin_lifecycle::RedactionRegistry;
 use ora_scheduler::Scheduler;
 use routing::SessionChannel;
 use std::collections::{HashMap, HashSet};
@@ -228,6 +229,9 @@ enum SessionVisibility {
 pub struct AgentRuntimeSetup<H: AgentRuntimeHost> {
     /// Owns the processes behind plugin-provided agents and the set of installed packages.
     pub attach: Arc<H::Attach>,
+    /// Shared redaction registry, delivered into the plugin-log pipeline and registered into
+    /// before a sensitive value reaches a plugin (ADR D2).
+    pub redactions: RedactionRegistry,
     pub store: H::Store,
     pub directory: H::Directory,
     /// Resolves session MCP with the automatic selection; sessions narrow it to their own.

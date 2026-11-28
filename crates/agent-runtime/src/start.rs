@@ -342,6 +342,13 @@ pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
     let setup_registration = supervisor.begin_session_setup();
     let mut servers = mcp.into_servers();
     servers.extend(session_mcp.host_mcp_servers());
+    // Register the sensitive runtime values before they reach the Agent (ADR D2/D4).
+    if let Some(plugin_id) = session_mcp.plugin_id_for_agent(agent_ref) {
+        connections.redactions().register(
+            &plugin_id,
+            crate::mcp_resolver::redactable_mcp_values(&servers),
+        );
+    }
     let skill_entries = match skill_catalog.skill_catalog(workspace_id) {
         Ok(snapshot) => snapshot.entries,
         Err(error) => {

@@ -580,6 +580,7 @@ where
                 .as_ref()
                 .and_then(|access| access.context.clone()),
         }),
+        redactions: lifecycle.redaction_registry(),
         store: MemorySessionStore::default(),
         directory: CheckoutDirectory(checkout.clone()),
         session_setup,

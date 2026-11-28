@@ -225,6 +225,12 @@ where
         &self.inner.data_directories
     }
 
+    /// Returns the shared redaction registry, so delivery sites register a value before handing
+    /// it to a plugin and the plugin-log pipeline redacts with the same registry (ADR D2).
+    pub fn redaction_registry(&self) -> RedactionRegistry {
+        self.inner.redactions.clone()
+    }
+
     /// Returns the effective plugin log level of one plugin identity.
     ///
     /// The setting belongs to the identity, not to an installed package, so an unknown or

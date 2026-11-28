@@ -19,7 +19,7 @@ use agent_client_protocol_schema::v1::{
 };
 use ora_acp::{AcpMessages, AcpPeer, ReadEvent};
 use ora_domain::PluginId;
-use ora_plugin_lifecycle::ConnectionError;
+use ora_plugin_lifecycle::{ConnectionError, RedactionRegistry};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -69,13 +69,14 @@ pub(super) struct SharedProcess<A: AgentAttach> {
 pub(super) async fn spawn_initialized_process<A: AgentAttach>(
     plugin_id: &PluginId,
     plugin_host: &Arc<A>,
+    redactions: &RedactionRegistry,
     home_directory: &Path,
 ) -> Result<SharedProcess<A>, StartFailure> {
     let StartedAgent {
         process,
         transport,
         messages,
-    } = spawn_plugin_connection(plugin_id, plugin_host, home_directory).await?;
+    } = spawn_plugin_connection(plugin_id, plugin_host, redactions, home_directory).await?;
     let peer = AcpPeer::spawn(messages, transport);
     // Config options are only sent by agents that see the client advertise them,
     // so the model selector depends on this declaration. Boolean options stay
@@ -142,18 +143,25 @@ pub(super) async fn spawn_initialized_process<A: AgentAttach>(
 async fn spawn_plugin_connection<A: AgentAttach>(
     plugin_id: &PluginId,
     plugin_host: &Arc<A>,
+    redactions: &RedactionRegistry,
     home_directory: &Path,
 ) -> Result<StartedAgent<A>, StartFailure> {
     let attachment = plugin_host
         .attach_agent(plugin_id)
         .await
         .map_err(plugin_attach_error)?;
+    let model_context = plugin_host.model_context();
+    // The adapter token is delivered to the plugin in the start context; register it first so a
+    // plugin that echoes it never persists it (ADR D2/D4).
+    if let Some(context) = &model_context {
+        redactions.register(plugin_id, std::iter::once(context.token.clone()));
+    }
     let LaunchedPluginAgent { runtime, messages } = match plugin_agent::attach(
         attachment,
         &plugin_id.canonical(),
         home_directory,
         env!("CARGO_PKG_VERSION"),
-        plugin_host.model_context(),
+        model_context,
     )
     .await
     {

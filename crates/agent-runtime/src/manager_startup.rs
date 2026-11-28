@@ -20,6 +20,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     pub fn new(setup: AgentRuntimeSetup<H>) -> Result<Self, RuntimeError> {
         let AgentRuntimeSetup {
             attach,
+            redactions,
             store,
             directory,
             session_setup: session_mcp,
@@ -33,7 +34,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         reconcile_running_sessions(&store, clock)?;
         let barriers = Arc::new(AgentSessionBarriers::new());
         let connections =
-            ConnectionSupervisors::start(attach, store.clone(), home_directory, clock);
+            ConnectionSupervisors::start(attach, redactions, store.clone(), home_directory, clock);
         Ok(Self {
             inner: Arc::new(ManagerInner {
                 store,
