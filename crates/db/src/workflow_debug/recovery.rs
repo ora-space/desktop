@@ -1,6 +1,17 @@
 use super::*;
 use ora_domain::WorkflowNodeRunId;
 
+/// Selects the reopened Loop owners of run `?1`; see [`WorkflowDebugStore::reopened_loops`]. The
+/// boot failure path embeds the same query, so the exemption cannot drift between the two.
+pub(crate) const REOPENED_LOOPS: &str = "SELECT owner.id FROM workflow_node_runs owner
+    JOIN workflow_execution_scopes s ON s.parent_loop_node_run_id = owner.id AND s.status = 1
+    WHERE owner.run_id = ?1 AND owner.node_type = 'loop' AND owner.status = 1 AND owner.is_deleted = 0
+      AND EXISTS (SELECT 1 FROM workflow_debug_round_history h
+                  JOIN workflow_debug_operations o ON o.id = h.operation_id
+                  WHERE h.scope_id = s.id AND o.state = 'applied')
+      AND NOT EXISTS (SELECT 1 FROM workflow_node_runs n
+                      WHERE n.scope_id = s.id AND n.is_deleted = 0 AND n.status IN (0, 1))";
+
 impl WorkflowDebugStore {
     /// A parked independent node is not a reason to skip resuming committed debug work at boot.
     pub fn has_dispatch(&self, run: &str) -> Result<bool, DatabaseError> {
@@ -43,6 +54,28 @@ impl WorkflowDebugStore {
             }
         }
         Ok(())
+    }
+
+    /// Running Loop owners whose active round an applied edit reopened and whose new attempts
+    /// were never claimed (ADR "debug from a selected execution" D5.5).
+    ///
+    /// A Running Loop row normally means a round was executing, and a restart fails it (while
+    /// D6). A reopened round without any pending or running row has no work in flight: its
+    /// positions are still to be dispatched, so boot must neither fail it as interrupted nor
+    /// leave the run inert. The round may be parked behind a terminal run (the reverse race) or
+    /// awaiting dispatch in a running one.
+    pub fn reopened_loops(
+        &self,
+        run: &str,
+    ) -> Result<std::collections::HashSet<WorkflowNodeRunId>, DatabaseError> {
+        self.pool.with_connection(|db| {
+            Ok(db
+                .prepare(REOPENED_LOOPS)?
+                .query_map([run], |r| {
+                    Ok(WorkflowNodeRunId::new(r.get::<_, String>(0)?))
+                })?
+                .collect::<Result<_, _>>()?)
+        })
     }
 
     /// Includes the precise old attempts and container owners which must not settle during boot.

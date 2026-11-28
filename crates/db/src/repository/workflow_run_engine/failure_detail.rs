@@ -131,11 +131,15 @@ pub(super) fn fail_orphaned_run(
         return Ok(());
     }
     let nodes = {
-        let mut statement = transaction.prepare(
+        // A Loop round reopened by an applied debug edit has nothing in flight: it waits for its
+        // first dispatch, which ordinary recovery performs after the run's interrupted work.
+        let mut statement = transaction.prepare(&format!(
             "SELECT id, node_id, payload FROM workflow_node_runs
              WHERE run_id = ?1 AND status IN (?2, ?3) AND is_deleted = 0
-               AND id NOT IN (SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1)",
-        )?;
+               AND id NOT IN (SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1)
+               AND id NOT IN ({reopened})",
+            reopened = crate::workflow_debug::REOPENED_LOOPS
+        ))?;
         let rows = statement.query_map(
             params![
                 run_id.as_ref(),
@@ -179,10 +183,14 @@ pub(super) fn fail_orphaned_run(
         ],
     )?;
     transaction.execute(
-        "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
-         WHERE run_id = ?1 AND parent_loop_node_run_id IS NOT NULL
-           AND parent_loop_node_run_id NOT IN (SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1)
-           AND status IN (0, 1)",
+        &format!(
+            "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
+             WHERE run_id = ?1 AND parent_loop_node_run_id IS NOT NULL
+               AND parent_loop_node_run_id NOT IN (SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1)
+               AND parent_loop_node_run_id NOT IN ({reopened})
+               AND status IN (0, 1)",
+            reopened = crate::workflow_debug::REOPENED_LOOPS
+        ),
         params![
             run_id.as_ref(),
             WorkflowScopeStatus::Failed.database_value(),

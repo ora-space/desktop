@@ -24,9 +24,11 @@ mod pending;
 mod read_set;
 mod while_round;
 pub use while_round::restore_while_round;
+pub(crate) use while_round::resume_while_replays;
 mod recovery;
 pub use operations::DebugClaim;
 pub(crate) use operations::attempt_fenced;
+pub(crate) use recovery::REOPENED_LOOPS;
 #[cfg(test)]
 mod tests;
 
@@ -164,6 +166,7 @@ impl WorkflowDebugStore {
             let mut input = configuration::prepare(&tx, request, /*confirmed_retry_source*/ None)?;
             let (mut impact, fence_nodes) = plan(&input)?;
             foreach_replay::include_parked_schedule(&tx, &request.run_id, &mut impact, &mut input.read_nodes)?;
+            while_round::include_parked_schedule(&tx, &request.run_id, &mut impact, &mut input.read_nodes)?;
             let nodes = serde_json::to_string(&input.read_nodes)?;
             let facts = read_set::facts(&tx, &request.run_id, &nodes)?;
             let kind = input.candidate.execution_node(&input.target.node_id).ok_or(DebugRejection::InvalidTarget)?.node_type.as_str();
