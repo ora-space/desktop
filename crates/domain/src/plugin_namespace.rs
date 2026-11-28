@@ -166,6 +166,17 @@ mod tests {
     use ora_utils::url::canonical_repository_url;
     use pretty_assertions::assert_eq;
 
+    /// The default marketplace URL is already canonical, so joining it to the label comparison
+    /// set verbatim is correct: canonicalising it again would be a no-op, and a non-canonical
+    /// constant would silently fail to disambiguate the official market's lone fork.
+    #[test]
+    fn the_default_marketplace_url_is_already_canonical() {
+        assert_eq!(
+            canonical_repository_url(PluginNamespace::DEFAULT_MARKETPLACE_URL),
+            PluginNamespace::DEFAULT_MARKETPLACE_URL,
+        );
+    }
+
     /// Verifies the published derivation example, so the compatibility contract is pinned to a
     /// literal rather than to whatever the current implementation happens to produce.
     #[test]

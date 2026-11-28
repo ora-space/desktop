@@ -206,6 +206,19 @@ mod tests {
         );
     }
 
+    /// A rival that runs out of segments at a position counts as different from one that has a
+    /// segment there, so the deeper URL is told apart by the segment the shallower one lacks.
+    #[test]
+    fn a_rival_missing_a_segment_is_different_from_one_that_has_it() {
+        assert_eq!(
+            labels(&[
+                "https://corp.example.com/gitlab/acme/tools",
+                "https://gitlab/acme/tools",
+            ]),
+            ["corp.example.com/…/tools", "gitlab/acme/tools"],
+        );
+    }
+
     /// No single segment separates the first URL from both rivals, so it falls back to the URL.
     #[test]
     fn crossing_differences_fall_back_to_the_full_url() {
