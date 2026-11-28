@@ -322,6 +322,12 @@ never read by scheduling, resume, rollback or snapshot switching.
 
 ## Querying run-local debug history
 
+Open **Debug history for this run** on the run page to inspect accepted operations, their impact,
+and their patches. Expand an execution ID to read the configuration recorded at dispatch. A waiting
+retry can link to the earlier execution that supplied its input. For a position selected before
+dispatch, history links to the first execution once the scheduler creates it. The Theater inspector
+also opens the selected execution record.
+
 Editing a while member resumes at the selected one-based round. Earlier rounds and unaffected members keep their results. Subsequent rounds of this Loop execution use the revised configuration and new feedback; superseded attempts remain queryable by id. Editing the Loop configuration instead starts a new container execution at round one. Preview rejects a member edit that would leave the round's explicit exit in effect. An edit that would retire the exit must wait for successful cleanup. After successful cleanup, editing the exit path reopens the siblings it cancelled. The preview includes those siblings and their reachable successors.
 
 If the run is cancelled before the acknowledgement arrives or cleanup fails, Desktop cannot verify that cancelled siblings stopped. Previews that would retire that exit, including edits upstream of the Loop, remain blocked. Use [ordinary failure recovery](#resuming-a-failed-run) to restart the affected Loop from round one.

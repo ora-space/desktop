@@ -6,6 +6,15 @@ import type {
 
 export type LoopRoundSelection = Readonly<Record<string, string>>;
 
+/** Distinguish repeated round numbers when history spans several container executions. */
+export function loopRoundLabel(
+  ordinal: string,
+  round: GraphWorkflowRound,
+  showAttempt: boolean,
+) {
+  return showAttempt ? `${ordinal} · ${round.parentLoopNodeRunId}` : ordinal;
+}
+
 /** Container history stays pinned when a background occurrence completes. */
 export function isLoopHistoryNode(
   run: GraphWorkflowRun,
@@ -54,6 +63,8 @@ export function loopRoundOutcome(
   )
     return "workflowRun.loopView.continue";
   const parent = run.nodeStates[round.parentLoopNodeId];
+  if (parent?.nodeRunId !== round.parentLoopNodeRunId)
+    return "workflowRun.loopView.completed";
   if (parent?.stopReason === "loop_max_iterations")
     return "workflowRun.loopView.maxIterations";
   if (parent?.stopReason === "loop_exit") return "workflowRun.loopView.exit";

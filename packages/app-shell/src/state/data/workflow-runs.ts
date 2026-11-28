@@ -98,6 +98,30 @@ export function invalidateWorkflowRun(queryClient: QueryClient, runId: string) {
   });
 }
 
+/** Run invalidations refresh history alongside detail; stopping receipts also recover missed events. */
+export function useWorkflowDebugHistory(runId: string) {
+  const client = useContractsClient();
+  return useQuery({
+    queryKey: [...workflowRunKeys.detail(runId), "debugHistory"],
+    queryFn: async ({ signal }) =>
+      (await client.workflowRun.debugHistory({ runId }, { signal })).entries,
+    refetchInterval: (query) =>
+      query.state.data?.some((entry) => entry.operation.state === "stopping")
+        ? 4000
+        : false,
+    refetchOnMount: "always",
+  });
+}
+
+export function useWorkflowDebugAttempt(runId: string, nodeRunId: string) {
+  const client = useContractsClient();
+  return useQuery({
+    queryKey: [...workflowRunKeys.detail(runId), "debugAttempt", nodeRunId],
+    queryFn: ({ signal }) =>
+      client.workflowRun.debugAttempt({ runId, nodeRunId }, { signal }),
+  });
+}
+
 /** Lists the persisted workflow runs of one project. */
 export function useWorkflowRunsByProject(
   projectId: string | null | undefined,
@@ -454,6 +478,7 @@ export type RealWorkflowRunDetail = {
 /** Projects a persisted run detail onto the Theater/Overview display model. */
 export function buildDisplayRun(
   detail: {
+    rootScopeId?: string;
     run: {
       id: string;
       workflowId: string;
@@ -597,6 +622,18 @@ export function buildDisplayRun(
     }
     // The node-level state is the latest round's state for region nodes.
     nodeStates[node.id] = states[states.length - 1] ?? { status: "idle" };
+    if (
+      node.data.kind === "iteration" &&
+      nodeStates[node.id].status === "running"
+    ) {
+      const index = variableValues.get(`${node.id}.index`);
+      if (
+        typeof index === "number" &&
+        Number.isSafeInteger(index) &&
+        index >= 0
+      )
+        nodeStates[node.id].boundItemIndex = index;
+    }
   }
   // A node behind a lost condition branch has no node-run and never will; mark it inactive so the
   // overview distinguishes it from a node still waiting on the active path.
@@ -614,6 +651,7 @@ export function buildDisplayRun(
   }
   return {
     id: detail.run.id,
+    ...(detail.rootScopeId && { rootScopeId: detail.rootScopeId }),
     projectId: detail.projectId,
     definitionId: detail.run.workflowId,
     definitionSnapshot,

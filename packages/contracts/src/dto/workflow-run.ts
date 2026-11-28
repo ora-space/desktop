@@ -130,6 +130,22 @@ export type GetWorkflowDebugAttemptResponse = {
   error: string | null;
 };
 
+/**
+ * Selects the physical attempt or scheduler position to edit under the active revision.
+ */
+export type GetWorkflowDebugContextRequest =
+  & { runId: string }
+  & ({ "nodeRunId": string } | { "pendingTarget": PendingWorkflowDebugTarget });
+
+/**
+ * The position-specific graph used for both configuration and variable visibility.
+ */
+export type GetWorkflowDebugContextResponse = {
+  baseRevision: number;
+  target: WorkflowDebugTarget;
+  graph: string;
+};
+
 export type GetWorkflowDebugHistoryRequest = { runId: string };
 
 export type GetWorkflowDebugHistoryResponse = {
@@ -145,6 +161,10 @@ export type GetWorkflowRunRequest = { runId: string };
  * Returns the full run detail including its display name and node runs.
  */
 export type GetWorkflowRunResponse = {
+  /**
+   * Active root execution for selecting an undispatched position; absent on older hosts.
+   */
+  rootScopeId?: string;
   run: WorkflowRun;
   name: string;
   workspaceId: string;

@@ -371,6 +371,21 @@ fn revision_history_survives_reopen_and_two_edits() {
     let applied = store.apply_after_stop("F", "k", 1, |_, _| Ok(())).unwrap();
     assert_eq!(applied.phase, WorkflowDebugPhase::Applied { revision: 1 });
     let reopened = WorkflowDebugStore::new(RepositoryPool::new(&path).unwrap());
+    let context = reopened
+        .edit_context(&GetWorkflowDebugContextRequest {
+            run_id: "F".into(),
+            selection: edit("two", 1).selection,
+        })
+        .unwrap();
+    assert_eq!(context.base_revision, 1);
+    let graph: Value = serde_json::from_str(&context.graph).unwrap();
+    let edited = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == context.target.node_id)
+        .unwrap();
+    assert_eq!(edited["data"]["agentConfig"]["prompt"], "one");
     let DebugClaim::Existing(original) = reopened.claim(&commit).unwrap() else {
         panic!("duplicate claim");
     };

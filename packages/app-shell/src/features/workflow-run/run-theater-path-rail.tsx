@@ -15,6 +15,7 @@ import {
   type RunPathRegionStage,
 } from "./run-path-structure";
 import { RunTheaterRegionNavigator } from "./run-theater-region-navigator";
+import { iterationItemIndices } from "./run-debug-position";
 import "./theater-motion.css";
 
 interface RunTheaterPathRailProps {
@@ -327,11 +328,9 @@ function countRegionRounds(
       (round) => round.parentLoopNodeId === region.nodeId,
     ).length;
   }
-  const rounds = new Set<number>();
-  for (const nodeId of region.phases.flatMap((phase) => phase.nodeIds)) {
-    for (const state of run.roundStates?.[nodeId] ?? []) {
-      if (state.iteration !== undefined) rounds.add(state.iteration);
-    }
-  }
-  return rounds.size;
+  return iterationItemIndices(
+    run,
+    region.nodeId,
+    region.phases.flatMap((phase) => phase.nodeIds),
+  ).length;
 }

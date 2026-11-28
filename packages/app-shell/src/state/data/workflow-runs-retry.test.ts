@@ -667,8 +667,8 @@ describe("buildDisplayRun failed attempts", () => {
     );
 
     const round1State = {
-      iteration: 1,
       nodeRunId: "fix-round-1-attempt-2",
+      iteration: 1,
       status: "retry_waiting",
       retryWait: {
         attempt: 2,
@@ -689,8 +689,8 @@ describe("buildDisplayRun failed attempts", () => {
     };
     expect(display.roundStates?.fix).toStrictEqual([
       {
-        iteration: 0,
         nodeRunId: "fix-round-0-attempt-2",
+        iteration: 0,
         status: "succeeded",
         sessionId: "session-fix-round-0-2",
         startedAt: iso(20_000),

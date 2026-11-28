@@ -609,6 +609,8 @@ export interface WorkflowNodeAttemptFailure {
 }
 
 export interface GraphWorkflowNodeState {
+  /** Index currently bound by a running foreach container, including before member dispatch. */
+  boundItemIndex?: number;
   /** Persisted attempt represented by this state, when backed by a real run. */
   nodeRunId?: string;
   /** The branch committed for this exact node execution, not a global latest decision. */
@@ -718,6 +720,8 @@ export type WorkflowNodeConversationItem =
  * A project-scoped execution of a mounted workflow definition.
  */
 export interface GraphWorkflowRun {
+  /** Persisted root execution generation for positions without a physical attempt. */
+  rootScopeId?: string;
   id: string;
   projectId: string;
   definitionId: string;

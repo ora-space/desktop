@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { iterationItemIndices } from "./run-debug-position";
 import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@ora/ui";
@@ -13,7 +14,7 @@ import { RunStatusMark } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
 import type { RunPathRegionStage } from "./run-path-structure";
 import { formatElapsedDuration } from "../../lib/format";
-import { loopRoundOutcome } from "./loop-round-state";
+import { loopRoundLabel, loopRoundOutcome } from "./loop-round-state";
 import { RunLoopMemberPath } from "./run-loop-member-path";
 
 interface RunTheaterRegionNavigatorProps {
@@ -57,7 +58,9 @@ export function RunTheaterRegionNavigator({
     .filter((round) => round.parentLoopNodeId === region.nodeId)
     .sort((a, b) => a.roundIndex - b.roundIndex);
   const memberIds = region.phases.flatMap((phase) => phase.nodeIds);
-  const rounds = availableRounds(run, memberIds);
+  const hasMultipleAttempts =
+    new Set(loopRounds.map((round) => round.parentLoopNodeRunId)).size > 1;
+  const rounds = iterationItemIndices(run, region.nodeId, memberIds);
   const effectiveRound =
     selectedRound !== null && rounds.includes(selectedRound)
       ? selectedRound
@@ -224,25 +227,32 @@ export function RunTheaterRegionNavigator({
               {t("workflowRun.loopView.empty")}
             </p>
           )}
-          {loopRounds.map((round) => (
-            <button
-              key={round.id}
-              type="button"
-              aria-pressed={!loopResultSelected && loopRound?.id === round.id}
-              aria-label={`${t("workflowRun.loopRounds.round", { round: round.roundIndex })} · ${t(loopRoundOutcome(run, round))}`}
-              title={t(loopRoundOutcome(run, round))}
-              onClick={() => onLoopRoundChange?.(round.id)}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs",
-                !loopResultSelected &&
-                  loopRound?.id === round.id &&
-                  "border-violet-500/45 bg-violet-500/10",
-              )}
-            >
-              <RunStatusMark status={round.status} quiet />
-              {t("workflowRun.loopRounds.round", { round: round.roundIndex })}
-            </button>
-          ))}
+          {loopRounds.map((round) => {
+            const label = loopRoundLabel(
+              t("workflowRun.loopRounds.round", { round: round.roundIndex }),
+              round,
+              hasMultipleAttempts,
+            );
+            return (
+              <button
+                key={round.id}
+                type="button"
+                aria-pressed={!loopResultSelected && loopRound?.id === round.id}
+                aria-label={`${label} · ${t(loopRoundOutcome(run, round))}`}
+                title={t(loopRoundOutcome(run, round))}
+                onClick={() => onLoopRoundChange?.(round.id)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs",
+                  !loopResultSelected &&
+                    loopRound?.id === round.id &&
+                    "border-violet-500/45 bg-violet-500/10",
+                )}
+              >
+                <RunStatusMark status={round.status} quiet />
+                {label}
+              </button>
+            );
+          })}
         </div>
       )}
       {isLoop && loopRound !== undefined && !loopResultSelected && (
@@ -396,17 +406,6 @@ function stateDuration(state: GraphWorkflowNodeState | null): string | null {
     return null;
   }
   return formatElapsedDuration(finishedAt - startedAt);
-}
-
-/** Returns all persisted rounds represented by any member in this region. */
-function availableRounds(run: GraphWorkflowRun, memberIds: string[]): number[] {
-  const rounds = new Set<number>();
-  for (const nodeId of memberIds) {
-    for (const state of run.roundStates?.[nodeId] ?? []) {
-      if (state.iteration !== undefined) rounds.add(state.iteration);
-    }
-  }
-  return [...rounds].sort((left, right) => left - right);
 }
 
 /** Resolves only the requested round so an older/newer result cannot leak into the view. */

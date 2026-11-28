@@ -16,6 +16,10 @@ import {
   selectedLoopRound,
   type LoopRoundSelection,
 } from "./loop-round-state";
+import {
+  iterationItemIndices,
+  pendingDebugPosition,
+} from "./run-debug-position";
 import { RunActInspector } from "./run-act-inspector";
 import { RunResultAct } from "./run-result-act";
 import { RunLoopStage } from "./run-loop-stage";
@@ -276,15 +280,15 @@ export function RunTheater({
     primaryId !== null ? (run.roundStates?.[primaryId] ?? []) : [];
   const regionRoundNumbers = useMemo(() => {
     if (primaryRegionId === null) return [];
-    const rounds = new Set<number>();
-    for (const node of run.definitionSnapshot.nodes) {
-      if (node.parentId !== primaryRegionId) continue;
-      for (const state of run.roundStates?.[node.id] ?? []) {
-        if (state.iteration !== undefined) rounds.add(state.iteration);
-      }
-    }
-    return [...rounds].sort((left, right) => left - right);
-  }, [primaryRegionId, run.definitionSnapshot.nodes, run.roundStates]);
+    const members = run.definitionSnapshot.nodes.filter(
+      (node) => node.parentId === primaryRegionId,
+    );
+    return iterationItemIndices(
+      run,
+      primaryRegionId,
+      members.map((node) => node.id),
+    );
+  }, [primaryRegionId, run]);
   // Round selection belongs to the region, not an individual member. Sibling switches therefore
   // preserve the round while leaving/re-entering the region resumes automatic latest-round follow.
   const regionSelectionKey = `${run.id}:${primaryRegionId ?? "outer"}`;
@@ -676,6 +680,8 @@ export function RunTheater({
                   loopId={primaryNode.id}
                   round={primaryLoopRound}
                   showResult={loopResultId === primaryNode.id}
+                  inspectorOpen={!inspectorCollapsed}
+                  onToggleInspector={toggleInspector}
                   onFocusNode={focusPathNode}
                 />
               ) : showParallelCarousel && !primaryConversationOpen ? (
@@ -875,6 +881,17 @@ export function RunTheater({
               }}
             >
               <RunActInspector
+                runId={run.id}
+                pendingPosition={
+                  primaryDisplayState?.nodeRunId
+                    ? undefined
+                    : pendingDebugPosition(
+                        run,
+                        primaryNode,
+                        primaryLoopRound,
+                        effectiveRegionRound,
+                      )
+                }
                 roundStates={run.roundStates}
                 selectedRound={effectiveRegionRound}
                 onRoundChange={setSelectedRound}

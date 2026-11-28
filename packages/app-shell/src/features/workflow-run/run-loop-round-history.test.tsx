@@ -32,6 +32,36 @@ const rounds: GraphWorkflowRound[] = [
 ];
 
 describe("RunLoopRoundHistory", () => {
+  it("distinguishes the same round number in two container attempts", async () => {
+    await appI18n.changeLanguage("en-US");
+    const user = userEvent.setup();
+    const original = {
+      ...rounds[0],
+      nodeStates: {
+        writer: { status: "succeeded" as const, nodeRunId: "writer-first" },
+      },
+    };
+    const rebuilt = {
+      ...original,
+      id: "new-round",
+      parentLoopNodeRunId: "loop-rebuilt",
+      nodeStates: {
+        writer: { status: "running" as const, nodeRunId: "writer-new" },
+      },
+    };
+    render(
+      <RunLoopRoundHistory
+        rounds={[original, rebuilt]}
+        nodeTitles={{ writer: "Writer" }}
+      />,
+    );
+    expect(screen.getByText("writer-first")).toBeVisible();
+    await user.click(
+      screen.getByRole("tab", { name: /Round 1.*loop-rebuilt/ }),
+    );
+    expect(screen.getByText("writer-new")).toBeVisible();
+    expect(screen.queryByText("writer-first")).toBeNull();
+  });
   it("defaults to the first round and keeps repeated states isolated when selecting history", async () => {
     await appI18n.changeLanguage("en-US");
     const user = userEvent.setup();

@@ -1,0 +1,57 @@
+{
+  "condition": {
+    "data": {
+      "kind": "condition",
+      "cases": [
+        {
+          "id": "A",
+          "conditions": [
+            {
+              "variableSelector": ["start", "items"],
+              "operator": "empty"
+            },
+            {
+              "variableSelector": ["start", "items"],
+              "operator": "empty"
+            }
+          ]
+        }
+      ]
+    },
+    "default": "and",
+    "preview": {
+      "runId": "run-7",
+      "nodeRunId": "attempt-3",
+      "baseRevision": 2,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/cases/0/logic",
+          "value": "or"
+        }
+      ]
+    }
+  },
+  "iteration": {
+    "data": {
+      "kind": "iteration",
+      "iterationConfig": {
+        "iteratorSelector": ["start", "items"],
+        "collectSelector": ["member", "output"]
+      }
+    },
+    "default": "fail",
+    "preview": {
+      "runId": "run-7",
+      "nodeRunId": "attempt-3",
+      "baseRevision": 2,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/iterationConfig/errorStrategy",
+          "value": "continue"
+        }
+      ]
+    }
+  }
+}

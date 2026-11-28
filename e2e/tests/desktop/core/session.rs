@@ -8,6 +8,7 @@ mod tests {
     mod lifecycle;
     mod skill_catalog;
     mod workflow_agent_completion;
+    mod workflow_debug;
     mod workflow_interactive;
     mod workflow_mcp;
     mod workflow_resume;

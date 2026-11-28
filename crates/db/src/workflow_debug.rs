@@ -13,6 +13,7 @@ pub use rusqlite::Transaction;
 
 mod attempts;
 mod configuration;
+mod context;
 mod foreach_replay;
 pub use foreach_replay::ForeachReplay;
 pub(crate) use foreach_replay::resume_foreach_replays;
