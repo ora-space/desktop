@@ -16,6 +16,9 @@ import {
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceFileIcon } from "../files/workspace-file-visuals";
+import { originCopy, skillOriginDisplay } from "../settings/origin-display";
+import { OriginTag } from "../settings/origin-tag";
+import { usePluginDisplayName } from "../../state/hooks/use-installed-plugins";
 import {
   COLLAPSED_ACTION_GROUP_SIZE,
   COMPOSER_ACTION_GROUPS,
@@ -63,6 +66,7 @@ export function ComposerActionMenu({
   selectionLocked = false,
 }: ComposerActionMenuProps) {
   const { t } = useTranslation();
+  const pluginDisplayName = usePluginDisplayName();
   const allVisibleActions = useMemo(
     () => visibleComposerActions(actions, expandedGroups),
     [actions, expandedGroups],
@@ -187,6 +191,7 @@ export function ComposerActionMenu({
                     action={action}
                     active={index === activeIndex}
                     compactFile={filesPalette && action.group === "files"}
+                    pluginDisplayName={pluginDisplayName}
                     selectionLocked={rowLocked}
                     buttonRef={(node) => {
                       optionRefs.current[index] = node;
@@ -254,6 +259,7 @@ function ActionOption({
   action,
   active,
   compactFile,
+  pluginDisplayName,
   selectionLocked,
   buttonRef,
   onPointerMove,
@@ -263,11 +269,14 @@ function ActionOption({
   action: ComposerAction;
   active: boolean;
   compactFile: boolean;
+  /** Names a local package's plugin in a Skill row's origin tooltip. */
+  pluginDisplayName: (pluginId: string) => string;
   selectionLocked: boolean;
   buttonRef: (node: HTMLButtonElement | null) => void;
   onPointerMove: (event: PointerEvent<HTMLButtonElement>) => void;
   onSelect: () => void;
 }) {
+  const { t } = useTranslation();
   // Prefer aria-disabled over the disabled attribute so clicks still land and
   // can be ignored in onSelect — native disabled swallows the event entirely.
   const sharedProps = {
@@ -330,14 +339,29 @@ function ActionOption({
     );
   }
 
+  const origin =
+    action.group === "skills"
+      ? skillOriginDisplay(action.skill.source, pluginDisplayName)
+      : undefined;
   return (
     <button
       {...sharedProps}
+      // A Skill row keeps the Skill's name as its option name; the origin tag only describes it.
+      {...(origin === undefined
+        ? {}
+        : {
+            "aria-label": action.label,
+            "aria-description": originCopy(origin, t).text,
+          })}
       title={action.description || undefined}
       className="group flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none transition-colors duration-150 hover:bg-accent aria-selected:bg-accent aria-selected:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
     >
       {actionIcon(action)}
       <span className="min-w-0 flex-1 truncate">{action.label}</span>
+      {/* Namesake Skills from different sources would otherwise look identical. */}
+      {origin !== undefined && (
+        <OriginTag origin={origin} className="max-w-32 shrink-0" />
+      )}
       {action.group === "commands" && action.hint && (
         <span className="max-w-24 truncate font-mono text-[10px] text-muted-foreground">
           {action.hint}

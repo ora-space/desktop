@@ -146,9 +146,10 @@ describe("atom settings content", () => {
     );
   });
 
-  it("opens a long plugin source from a compact button with a friendly tooltip", async () => {
+  it("labels every Skill with its origin and opens a plugin Skill's plugin from the tag", async () => {
     const user = userEvent.setup();
-    const pluginId = "official/review-pack-with-a-name-that-does-not-fit";
+    const marketPluginId = "marketplace.22222222/review-pack";
+    const localPluginId = "local/lint-pack";
     const onOpenPlugin = vi.fn();
     renderSettings(
       "skill",
@@ -156,12 +157,60 @@ describe("atom settings content", () => {
         handlers.listSkills = async () => ({
           skills: [
             {
-              id: "plugin:" + pluginId + ":review",
-              namespace: pluginId,
+              id: "skill-1",
+              namespace: "local",
+              name: "mine",
+              description: "Mine",
+              source: { kind: "local" },
+              availability: "available",
+            },
+            {
+              id: `plugin:${marketPluginId}:review`,
+              namespace: marketPluginId,
               name: "review",
               description: "Reviews changes",
-              source: { kind: "plugin", pluginId },
+              source: {
+                kind: "plugin",
+                pluginId: marketPluginId,
+                origin: {
+                  kind: "marketplace",
+                  sourceUrl: "https://github.com/obsismc/marketplace",
+                  label: "obsismc/marketplace",
+                },
+              },
               availability: "available",
+            },
+            {
+              id: `plugin:${localPluginId}:lint`,
+              namespace: localPluginId,
+              name: "lint",
+              description: "Lints changes",
+              source: {
+                kind: "plugin",
+                pluginId: localPluginId,
+                origin: { kind: "local_archive" },
+              },
+              availability: "available",
+            },
+          ],
+        });
+        handlers.listInstalledPlugins = async () => ({
+          plugins: [
+            {
+              id: localPluginId,
+              namespace: "local",
+              name: "lint-pack",
+              displayName: "Lint Pack",
+              version: "1.0.0",
+              description: "Lints",
+              homepage: null,
+              license: null,
+              origin: { kind: "local_archive" },
+              kind: "skill",
+              logo: null,
+              installationValidity: { validity: "valid" },
+              configuration: { state: "not_declared" },
+              runtime: "stopped",
             },
           ],
         });
@@ -169,20 +218,37 @@ describe("atom settings content", () => {
       onOpenPlugin,
     );
 
-    const item = await screen.findByRole("listitem");
-    const sourceIcon = within(item).getByRole("button", {
-      name: "查看来源插件详情",
+    const items = await screen.findAllByRole("listitem");
+    expect(
+      items.map(
+        (item) => item.querySelector("[data-slot=origin-tag]")?.textContent,
+      ),
+    ).toEqual(["用户", "obsismc/marketplace", "本地包"]);
+    // The digest-suffixed namespace is identity only and never reaches the page.
+    expect(screen.queryByText(/22222222/)).toBeNull();
+
+    await user.hover(within(items[0]!).getByText("用户"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "你新建或导入的技能，可以编辑和删除",
+    );
+    await user.unhover(within(items[0]!).getByText("用户"));
+
+    const localTag = within(items[2]!).getByRole("button", {
+      name: "本地包 · 查看来源插件详情",
     });
-    expect(within(item).queryByText(pluginId)).toBeNull();
+    await user.hover(localTag);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip")).toHaveTextContent(
+        "本地导入的插件包「Lint Pack」，只读，卸载插件后移除",
+      ),
+    );
 
-    await user.hover(sourceIcon);
-    const tooltip = await screen.findByText("查看来源插件详情");
-    expect(tooltip).toBeVisible();
-    expect(tooltip).toHaveTextContent("查看来源插件详情");
-    expect(tooltip).not.toHaveTextContent(pluginId);
-
-    await user.click(sourceIcon);
-    expect(onOpenPlugin).toHaveBeenCalledWith(pluginId);
+    await user.click(
+      within(items[1]!).getByRole("button", {
+        name: "obsismc/marketplace · 查看来源插件详情",
+      }),
+    );
+    expect(onOpenPlugin).toHaveBeenCalledWith(marketPluginId);
   });
 
   it("uninstalls a source plugin after warning that all of its Skills are deleted", async () => {
@@ -197,7 +263,11 @@ describe("atom settings content", () => {
             namespace: pluginId,
             name: "review",
             description: "Reviews changes",
-            source: { kind: "plugin", pluginId },
+            source: {
+              kind: "plugin",
+              pluginId,
+              origin: { kind: "official" },
+            },
             availability: "available",
           },
         ],
@@ -303,7 +373,11 @@ describe("atom settings content", () => {
             namespace: pluginId,
             name: "release-notes",
             description: "Writes release notes",
-            source: { kind: "plugin", pluginId },
+            source: {
+              kind: "plugin",
+              pluginId,
+              origin: { kind: "official" },
+            },
             availability: "available",
           },
         ],
@@ -319,6 +393,7 @@ describe("atom settings content", () => {
             description: "Release skills",
             homepage: null,
             license: null,
+            origin: { kind: "official" },
             kind: "skill",
             logo: null,
             installationValidity: { validity: "valid" },

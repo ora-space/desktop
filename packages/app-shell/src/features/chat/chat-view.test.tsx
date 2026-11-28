@@ -537,6 +537,55 @@ describe("Composer", () => {
     expect(onSend).toHaveBeenCalledWith("/mcp");
   });
 
+  it("tells namesake Skills apart by their origin tags in the slash menu", async () => {
+    const user = userEvent.setup();
+    const skill = {
+      name: "archify",
+      description: "Draws architecture",
+      availability: "available",
+    } as const;
+    renderWithI18n(
+      <Composer
+        onSend={vi.fn()}
+        isResponding={false}
+        availableCommands={null}
+        skills={[
+          {
+            ...skill,
+            id: "skill-1",
+            namespace: "local",
+            source: { kind: "local" },
+          },
+          {
+            ...skill,
+            id: "plugin:marketplace.22222222/arch:archify",
+            namespace: "marketplace.22222222/arch",
+            source: {
+              kind: "plugin",
+              pluginId: "marketplace.22222222/arch",
+              origin: {
+                kind: "marketplace",
+                sourceUrl: "https://github.com/obsismc/marketplace",
+                label: "obsismc/marketplace",
+              },
+            },
+          },
+        ]}
+      />,
+    );
+    await user.type(screen.getByRole("textbox"), "/");
+
+    const options = await screen.findAllByRole("option", { name: "archify" });
+    expect(
+      options.map((option) => option.getAttribute("aria-description")),
+    ).toEqual(["用户", "obsismc/marketplace"]);
+    expect(
+      options.map(
+        (option) => option.querySelector("[data-slot=origin-tag]")?.textContent,
+      ),
+    ).toEqual(["用户", "obsismc/marketplace"]);
+  });
+
   it("keeps the pending notice above the options and out of keyboard selection", async () => {
     const user = userEvent.setup();
     renderWithI18n(

@@ -11,6 +11,9 @@ import {
 } from "@ora/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePlatform } from "../../platform";
+import { usePluginDisplayName } from "../../state/hooks/use-installed-plugins";
+import { skillOriginDisplay } from "./origin-display";
+import { OriginTag } from "./origin-tag";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,7 +46,6 @@ import {
   IconLoader2,
   IconPencil,
   IconPlus,
-  IconPuzzle,
   IconRobot,
   IconSearch,
   IconSparkles,
@@ -176,7 +178,6 @@ export function RolesSettings() {
 
 /** The Skills pane manages the reusable skills surfaced to Ora sessions. */
 const EMPTY_SKILLS: Skill[] = [];
-const MAX_INLINE_PLUGIN_ID_LENGTH = 24;
 
 export function SkillsSettings({
   onOpenPlugin,
@@ -185,6 +186,7 @@ export function SkillsSettings({
 }) {
   const { t } = useTranslation();
   const skillsQuery = useSkills();
+  const pluginDisplayName = usePluginDisplayName();
   const createSkill = useCreateSkill();
   const updateSkill = useUpdateSkill();
   const deleteSkill = useDeleteSkill();
@@ -266,15 +268,22 @@ export function SkillsSettings({
         }
 
         getItemBadge={(item) => {
-          if (!("source" in item) || item.source.kind !== "plugin") {
-            return undefined;
+          if (!("source" in item)) return undefined;
+          const origin = skillOriginDisplay(item.source, pluginDisplayName);
+          if (item.source.kind !== "plugin") {
+            return <OriginTag origin={origin} />;
           }
           const pluginId = item.source.pluginId;
           return (
             <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
-              <PluginSkillActions
-                pluginId={pluginId}
-                onOpen={() => onOpenPlugin?.(pluginId)}
+              <OriginTag
+                origin={origin}
+                action={{
+                  label: t("settings.skills.viewSourcePlugin"),
+                  onActivate: () => onOpenPlugin?.(pluginId),
+                }}
+              />
+              <DeletePluginSkillsButton
                 onDelete={() => setPluginDeleteTarget(pluginId)}
               />
             </div>
@@ -336,54 +345,24 @@ export function SkillsSettings({
   );
 }
 
-/** Links a read-only skill to its owning plugin and offers package-wide removal. */
-function PluginSkillActions({
-  pluginId,
-  onOpen,
-  onDelete,
-}: {
-  pluginId: string;
-  onOpen: () => void;
-  onDelete: () => void;
-}) {
+/** Offers package-wide removal, since a plugin's Skills cannot be deleted one by one. */
+function DeletePluginSkillsButton({ onDelete }: { onDelete: () => void }) {
   const { t } = useTranslation();
-  const compact = pluginId.length > MAX_INLINE_PLUGIN_ID_LENGTH;
 
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger
-          aria-label={t("settings.skills.viewSourcePlugin")}
-          className={cn(
-            "inline-flex h-6 shrink-0 items-center justify-center gap-1.5 rounded-full bg-secondary text-xs font-medium text-secondary-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-            compact ? "w-6" : "max-w-52 px-2",
-          )}
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpen();
-          }}
-        >
-          <IconPuzzle className="size-3" aria-hidden="true" />
-          {!compact && <span className="truncate">{pluginId}</span>}
-        </TooltipTrigger>
-        <TooltipContent>{t("settings.skills.viewSourcePlugin")}</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          aria-label={t("settings.skills.deletePluginSkills")}
-          className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-destructive outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDelete();
-          }}
-        >
-          <IconTrash className="size-3.5" />
-        </TooltipTrigger>
-        <TooltipContent>
-          {t("settings.skills.deletePluginSkills")}
-        </TooltipContent>
-      </Tooltip>
-    </>
+    <Tooltip>
+      <TooltipTrigger
+        aria-label={t("settings.skills.deletePluginSkills")}
+        className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-destructive outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDelete();
+        }}
+      >
+        <IconTrash className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipContent>{t("settings.skills.deletePluginSkills")}</TooltipContent>
+    </Tooltip>
   );
 }
 
