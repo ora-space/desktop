@@ -73,25 +73,31 @@ export function loopRoundOutcome(
   return "workflowRun.loopView.completed";
 }
 
-/** Resolves one Loop's explicit round selection, defaulting to its first persisted round. */
+/** Resolves one Loop's explicit round selection, defaulting to the first round of the current container execution. */
 export function selectedLoopRound(
-  rounds: GraphWorkflowRound[],
+  run: GraphWorkflowRun,
   loopNodeId: string,
   selection: LoopRoundSelection,
 ): GraphWorkflowRound | undefined {
-  const loopRounds = rounds.filter(
+  const currentAttempt = run.nodeStates[loopNodeId]?.nodeRunId;
+  const loopRounds = (run.rounds ?? []).filter(
     (round) => round.parentLoopNodeId === loopNodeId,
   );
   const selectedRoundId = selection[loopNodeId];
   return (
     loopRounds.find((round) => round.id === selectedRoundId) ??
-    loopRounds.reduce<GraphWorkflowRound | undefined>(
-      (latest, round) =>
-        latest === undefined || round.roundIndex < latest.roundIndex
-          ? round
-          : latest,
-      undefined,
-    )
+    loopRounds
+      .filter(
+        (round) =>
+          !currentAttempt || round.parentLoopNodeRunId === currentAttempt,
+      )
+      .reduce<GraphWorkflowRound | undefined>(
+        (latest, round) =>
+          latest === undefined || round.roundIndex < latest.roundIndex
+            ? round
+            : latest,
+        undefined,
+      )
   );
 }
 
@@ -104,7 +110,6 @@ export function projectLoopRoundNodeStates(
   run: GraphWorkflowRun,
   selection: LoopRoundSelection,
 ): Record<string, GraphWorkflowNodeState> {
-  const rounds = run.rounds ?? [];
   const loopNodeIds = new Set(
     run.definitionSnapshot.nodes
       .filter((node) => node.data.kind === "loop")
@@ -118,7 +123,7 @@ export function projectLoopRoundNodeStates(
         nodeStates[member.id] = { status: "inactive" };
       }
     }
-    const round = selectedLoopRound(rounds, loopNodeId, selection);
+    const round = selectedLoopRound(run, loopNodeId, selection);
     if (round !== undefined) {
       Object.assign(nodeStates, round.nodeStates);
     }

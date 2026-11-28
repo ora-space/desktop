@@ -13,12 +13,12 @@ round a DAG; nested containers are not supported. General workflow and run behav
 An `iteration` node owns a region: the nodes whose React Flow `parentId` points at it. Its
 `data.iterationConfig` carries:
 
-| Field | Meaning |
-|---|---|
-| `iteratorSelector` | An array-typed variable to iterate |
-| `collectSelector` | A root variable declared inside the region, collected each round |
-| `errorStrategy` | `fail` (default) stops at the first failed round and fails the run; `continue` records failed rounds and runs the rest |
-| `maxIterations` | Safety ceiling, default 50, at least 1 |
+| Field              | Meaning                                                                                                                |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `iteratorSelector` | An array-typed variable to iterate                                                                                     |
+| `collectSelector`  | A root variable declared inside the region, collected each round                                                       |
+| `errorStrategy`    | `fail` (default) stops at the first failed round and fails the run; `continue` records failed rounds and runs the rest |
+| `maxIterations`    | Safety ceiling, default 50, at least 1                                                                                 |
 
 Region boundaries are validated at parse: the region is non-empty and entered by an edge from the
 iteration node, contains no Output and no nested container, member out-edges stay inside, and no
@@ -63,13 +63,13 @@ A root `loop` node owns `data.loopConfig`; every child declares the Loop through
 `parentId` and `data.containerId` (schema version 2). Each body is a separate DAG with exactly one
 reachable child Start.
 
-| Field | Meaning |
-|---|---|
-| `maxIterations` | Round limit, 1–100 |
-| `maxIterationsBehavior` | `fail` (default) or `succeed` when the limit is reached without another ending |
-| `variables` | Carried variables: `name`, `valueType`, `initial` (`{ "kind": "constant", "value" }` or `{ "kind": "variable", "selector" }`) and a `feedback` selector |
-| `until` | End conditions in the Condition `logic`/`conditions` syntax; may be empty |
-| `outputs` | Named exports, `{ "name": "result", "variableSelector": ["child", "output"] }` |
+| Field                   | Meaning                                                                                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxIterations`         | Round limit, 1–100                                                                                                                                      |
+| `maxIterationsBehavior` | `fail` (default) or `succeed` when the limit is reached without another ending                                                                          |
+| `variables`             | Carried variables: `name`, `valueType`, `initial` (`{ "kind": "constant", "value" }` or `{ "kind": "variable", "selector" }`) and a `feedback` selector |
+| `until`                 | End conditions in the Condition `logic`/`conditions` syntax; may be empty                                                                               |
+| `outputs`               | Named exports, `{ "name": "result", "variableSelector": ["child", "output"] }`                                                                          |
 
 Initializers can read globals and upstream outer nodes. Feedback, conditions and exports read the
 completed body, carried values, globals and upstream outer values. Outer nodes read only the Loop's
@@ -126,7 +126,7 @@ exports it as `result`. Members are added from a member's output port and belong
 dragging a node into the frame does not establish ownership. Deleting a Loop removes its descendants
 and edges atomically, and root auto-layout keeps child positions.
 
-In a run, the outer path shows each Loop as one container. Opening it shows its first persisted round
+In a run, the outer path shows each Loop as one container. Opening it shows the first persisted round of its current execution
 and an overview; round buttons carry live status, and selecting a round switches the member path,
 outputs, inspector and conversation together without borrowing another round's results. Members are
 shown in a wrapping grid that follows the definition structure, with unexecuted members in a
@@ -135,8 +135,7 @@ round. **Loop results** shows the committed exports, error and termination reaso
 satisfied condition, an explicit exit and the round limit. Running or failed Loops never present
 partial values as exports.
 
-When the history contains several executions of the same Loop, the round buttons also show the
-container execution ID. Select a round to see its members' execution IDs in the inspector. A
+After a restart or ordinary recovery, the round buttons include the container execution ID when rounds from both executions are visible. A debug edit that rebuilds the Loop removes the old rounds from the Theater. Open the run’s debug history to inspect the superseded attempts. Select a round to see its members' execution IDs in the inspector. A
 completed historical round shows a specific stop reason only when the recorded container ID matches.
 
 ## Execution scopes
