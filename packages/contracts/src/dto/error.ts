@@ -122,6 +122,7 @@ export type ContractError =
     | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
     | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
     | { "code": "desktop_update_release_replaced"; "params": EmptyErrorParams }
+    | { "code": "desktop_update_no_pending_update"; "params": EmptyErrorParams }
     | { "code": "skill_manifest_missing"; "params": EmptyErrorParams }
     | { "code": "skill_manifest_invalid"; "params": EmptyErrorParams }
     | { "code": "skill_manifest_name_blank"; "params": EmptyErrorParams }
@@ -404,6 +405,7 @@ export type PublicError =
   | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
   | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
   | { "code": "desktop_update_release_replaced"; "params": EmptyErrorParams }
+  | { "code": "desktop_update_no_pending_update"; "params": EmptyErrorParams }
   | { "code": "skill_manifest_missing"; "params": EmptyErrorParams }
   | { "code": "skill_manifest_invalid"; "params": EmptyErrorParams }
   | { "code": "skill_manifest_name_blank"; "params": EmptyErrorParams }

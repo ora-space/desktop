@@ -13,6 +13,8 @@ export const commonTranslations = {
     "errors.open_location_failed": "无法使用 {{target}} 打开所选位置。",
     "errors.desktop_update_release_replaced":
       "要安装的版本已被更新的版本替换，请查看新版本后再安装。",
+    "errors.desktop_update_no_pending_update":
+      "确认的版本已不能安装，请查看当前的更新状态。",
     "errors.unknown": "发生未知错误。请提供请求编号 {{requestId}} 以便排查。",
     "errors.downloadLogs": "下载日志",
     "errors.logsDownloaded": "今日日志已下载。",
@@ -58,6 +60,8 @@ export const commonTranslations = {
       "Could not open the selected location with {{target}}.",
     "errors.desktop_update_release_replaced":
       "A newer release replaced the one you confirmed. Review it before installing.",
+    "errors.desktop_update_no_pending_update":
+      "The release you confirmed can no longer be installed. Check the current update status.",
     "errors.unknown":
       "An unknown error occurred. Provide request ID {{requestId}} for support.",
     "errors.downloadLogs": "Download logs",

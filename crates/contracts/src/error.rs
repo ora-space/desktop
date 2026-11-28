@@ -414,6 +414,7 @@ pub enum PublicError {
     WorktreeRootNotDirectory(EmptyErrorParams),
     OpenLocationFailed(OpenLocationFailedParams),
     DesktopUpdateReleaseReplaced(EmptyErrorParams),
+    DesktopUpdateNoPendingUpdate(EmptyErrorParams),
     SkillManifestMissing(EmptyErrorParams),
     SkillManifestInvalid(EmptyErrorParams),
     SkillManifestNameBlank(EmptyErrorParams),
@@ -572,6 +573,7 @@ impl PublicError {
             Self::WorktreeRootNotDirectory(_) => "worktree_root_not_directory",
             Self::OpenLocationFailed(_) => "open_location_failed",
             Self::DesktopUpdateReleaseReplaced(_) => "desktop_update_release_replaced",
+            Self::DesktopUpdateNoPendingUpdate(_) => "desktop_update_no_pending_update",
             Self::SkillManifestMissing(_) => "skill_manifest_missing",
             Self::SkillManifestInvalid(_) => "skill_manifest_invalid",
             Self::SkillManifestNameBlank(_) => "skill_manifest_name_blank",
@@ -828,6 +830,7 @@ mod tests {
                 target: OpenLocationTarget::Explorer,
             }),
             PublicError::DesktopUpdateReleaseReplaced(empty),
+            PublicError::DesktopUpdateNoPendingUpdate(empty),
             PublicError::SkillManifestMissing(empty),
             PublicError::SkillManifestInvalid(empty),
             PublicError::SkillManifestNameBlank(empty),
@@ -1019,6 +1022,7 @@ mod tests {
                 | PublicError::WorktreeRootNotDirectory(_)
                 | PublicError::OpenLocationFailed(_)
                 | PublicError::DesktopUpdateReleaseReplaced(_)
+                | PublicError::DesktopUpdateNoPendingUpdate(_)
                 | PublicError::SkillManifestMissing(_)
                 | PublicError::SkillManifestInvalid(_)
                 | PublicError::SkillManifestNameBlank(_)
@@ -1096,7 +1100,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 134);
+        assert_eq!(samples.len(), 135);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

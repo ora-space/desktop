@@ -516,18 +516,20 @@ fn manual_update_reasons_serialize_as_the_webview_discriminants() {
     );
 }
 
-/// A replaced release is refused with its own code at WARN; other refusals stay internal faults.
+/// A stale confirmation is refused with its own code at WARN; other refusals stay internal faults.
 #[test]
-fn a_replaced_release_is_refused_as_a_conflict() {
+fn a_stale_confirmation_is_refused_as_a_conflict() {
     use crate::update::commands::install_command_error;
 
     let recorder = CompletionRecorder::default();
-    let (replaced, missing) = ora_logging::with_recorded_trace_logging(recorder.clone(), || {
-        (
-            install_command_error(UpdateError::ReleaseReplaced),
-            install_command_error(UpdateError::NoPendingUpdate),
-        )
-    });
+    let (replaced, missing, broken) =
+        ora_logging::with_recorded_trace_logging(recorder.clone(), || {
+            (
+                install_command_error(UpdateError::ReleaseReplaced),
+                install_command_error(UpdateError::NoPendingUpdate),
+                install_command_error(UpdateError::CachedArtifactChanged),
+            )
+        });
     let code = |error| {
         serde_json::to_value(error).expect("command error serializes")["code"]
             .as_str()
@@ -536,14 +538,24 @@ fn a_replaced_release_is_refused_as_a_conflict() {
     };
 
     assert_eq!(
-        (code(replaced), code(missing), recorder.completions()),
+        (
+            code(replaced),
+            code(missing),
+            code(broken),
+            recorder.completions()
+        ),
         (
             "desktop_update_release_replaced".to_owned(),
+            "desktop_update_no_pending_update".to_owned(),
             "internal_error".to_owned(),
             vec![
                 (
                     tracing::Level::WARN,
                     "desktop_update_release_replaced".to_owned()
+                ),
+                (
+                    tracing::Level::WARN,
+                    "desktop_update_no_pending_update".to_owned()
                 ),
                 (tracing::Level::ERROR, "internal_error".to_owned()),
             ],

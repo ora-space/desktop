@@ -82,6 +82,7 @@ worktree 根目录是非敏感配置，在 设置 → 数据与隐私 中选择�
 - 已下载的包在后续检查失败时仍可安装；只有在没有任何可安装的包时才报告 `Failed`。`Failed` 写明失败的是检查还是安装（安装时带版本），外壳据此写标题。设置侧栏和更新日志页显示失败，更新日志页还显示原因、安装失败的提示，并可以重试。
 - 确认后的安装有两种失败：平台安装器拒绝了包时，版本恢复为 `Ready`，包保留，用户可以重试，外壳根据被拒绝的命令提示失败；包在交给安装器前的最后一次校验没有通过时，包被删除，`Failed` 写明是安装失败。
 - 确认之后、安装开始之前，后台检查把版本换成了另一个时，宿主以公开的 `Conflict` 错误 `desktop_update_release_replaced` 拒绝这次确认，日志记 WARN。新版本已经是 `Ready`，所以外壳不提示失败。宿主答复上一次确认之前，外壳不接受第二次确认。
+- 安装请求会先等正在进行的检查、下载或安装结束；等完之后同一版本仍是 `Ready` 就照常安装。只有那时已没有 `Ready` 的版本——检查撤回了版本或丢弃了包、或前一次安装已经结束——宿主才以公开的 `Conflict` 错误 `desktop_update_no_pending_update` 拒绝这次确认，日志记 WARN。外壳不提示失败，以宿主已发布的状态为准。
 - Linux 发布的是 AppImage，所以 `deb`/`rpm` 安装或裸可执行文件会在下载之前就报告 `ManualUpdate` 及原因，外壳会指向发布页而不是提供安装按钮。
 - `Ready` 和 `ManualUpdate` 带有清单里的更新日志，见[更新日志](../development/release-notes.zh.md#更新之前)。
 - 更新器公钥在 `apps/desktop/src-tauri/tauri.conf.json` 中；发布构建需要 GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY` 中对应的私钥。
