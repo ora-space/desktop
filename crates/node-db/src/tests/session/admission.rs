@@ -346,3 +346,311 @@ fn controlled_start_keeps_the_runtime_singleton_conflict() {
         Err(Error::ResourceConflict)
     ));
 }
+
+/// Holds admissions at the `Accept` boundary until the expected number have all arrived, so two
+/// admission paths contend for the same slot from the same instant instead of by timing.
+struct Rendezvous(std::sync::Arc<Shared>);
+
+#[derive(Default)]
+struct Shared {
+    arrivals: std::sync::Mutex<Arrivals>,
+    released: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct Arrivals {
+    expected: usize,
+    arrived: usize,
+}
+
+impl Shared {
+    /// Arms the rendezvous for `expected` admissions; admissions before that pass straight
+    /// through, and so do any beyond the expected count once they have all met.
+    fn arm(&self, expected: usize) {
+        *self.arrivals.lock().unwrap() = Arrivals {
+            expected,
+            arrived: 0,
+        };
+    }
+}
+
+impl WriteGuard for Rendezvous {
+    /// Counts an admission at the `Accept` boundary and, while armed, waits for the others. The
+    /// wait is bounded, so a path that failed earlier surfaces as an error instead of a hang.
+    fn before_write(&self, point: WritePoint) -> Result<(), Error> {
+        if point != WritePoint::Accept {
+            return Ok(());
+        }
+        let mut arrivals = self.0.arrivals.lock().unwrap();
+        if arrivals.expected == 0 {
+            return Ok(());
+        }
+        arrivals.arrived += 1;
+        self.0.released.notify_all();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(/*secs*/ 5);
+        while arrivals.arrived < arrivals.expected {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(Error::Injected(WritePoint::Accept));
+            }
+            arrivals = self.0.released.wait_timeout(arrivals, remaining).unwrap().0;
+        }
+        Ok(())
+    }
+}
+
+/// What one admission path reports back across a thread boundary.
+#[derive(Debug, Eq, PartialEq)]
+enum Admission {
+    Accepted,
+    Refused(SessionRefusal),
+    Failed(String),
+}
+
+impl Admission {
+    /// Puts the outcomes in a stable order, since which racer wins is not determined.
+    fn rank(&self) -> u8 {
+        match self {
+            Self::Accepted => 0,
+            Self::Refused(_) => 1,
+            Self::Failed(_) => 2,
+        }
+    }
+}
+
+/// Runs one admission and classifies its result into a value that crosses threads.
+fn admitted_by(admission: impl FnOnce() -> Result<SessionExecution, Error>) -> Admission {
+    match admission() {
+        Ok(record) if record.state == ExecutionState::Accepted => Admission::Accepted,
+        Ok(record) => Admission::Failed(format!("returned {record:?}")),
+        Err(Error::SessionRefused(refused)) => Admission::Refused(refused.refusal()),
+        Err(error) => Admission::Failed(error.to_string()),
+    }
+}
+
+/// Two admission paths that reach a checkout with one free slot at the same moment contend for
+/// it inside the immediate transaction: exactly one is admitted and the other learns the limit,
+/// so the checkout never holds more than `MAX_SESSIONS_PER_CHECKOUT` unfinished sessions. A
+/// count taken before the transaction, or outside it, would admit both.
+#[test]
+fn concurrent_admissions_cannot_both_take_the_last_slot() {
+    let directory = tempfile::tempdir().unwrap();
+    let shared = std::sync::Arc::new(Shared::default());
+    let mut db = NodeDatabase::open_with_guard(
+        &directory.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+        Rendezvous(std::sync::Arc::clone(&shared)),
+    )
+    .unwrap();
+    let journal = db.session_journal().unwrap();
+    for round in 0..3 {
+        let checkout = format!("clone-{round}");
+        let on_round = |id: &str| on_checkout(&format!("{round}-{id}"), &checkout);
+        for index in 0..MAX_SESSIONS_PER_CHECKOUT - 1 {
+            db.accept_session(&on_round(&index.to_string())).unwrap();
+        }
+        let (left, right) = (on_round("left"), on_round("right"));
+        let other = journal.clone();
+        shared.arm(/*expected*/ 2);
+        let racer =
+            std::thread::spawn(move || admitted_by(|| other.lock().unwrap().accept_session(&left)));
+        let here = admitted_by(|| db.accept_session(&right));
+        let mut outcomes = [here, racer.join().unwrap()];
+        outcomes.sort_by_key(Admission::rank);
+        assert_eq!(
+            outcomes,
+            [
+                Admission::Accepted,
+                Admission::Refused(SessionRefusal::CheckoutSessionLimit),
+            ],
+            "round {round}: both admissions were admitted or neither reached the slot"
+        );
+        let unfinished = db
+            .recoverable_sessions()
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.command.payload.spec.checkout_execution_id.as_str() == checkout)
+            .count();
+        assert_eq!(unfinished, MAX_SESSIONS_PER_CHECKOUT as usize);
+    }
+}
+
+/// An uncleaned restore attempt fences the checkout on its own, whatever became of the
+/// execution that recorded it. The journal itself never ends a session whose restore stop is
+/// unproven (the restore suites cover that refusal), so the ended execution is written to the
+/// ledger directly: the decision keys the fence on the attempt alone, whatever business terminal
+/// the execution carries, and neither that terminal nor the stop bound expiring releases it.
+/// Only original host proof does, after which the ended restore is history.
+#[test]
+fn an_uncleaned_restore_attempt_keeps_fencing_after_its_execution_ended() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node"))).unwrap();
+    let restore = resumed("restore");
+    db.accept_session(&restore).unwrap();
+    db.start_session(&restore, &NodeIncarnationId::new("incarnation"))
+        .unwrap();
+    let journal = db.session_journal().unwrap();
+    let process = ProcessAttempt {
+        execution: restore.execution_id.clone(),
+        id: AttemptId::generate(),
+    };
+    journal
+        .record_restore_attempt(&process, &git_command(), StopContainment::BestEffort)
+        .unwrap();
+
+    // The execution ends with the attempt still uncleaned, written as the terminal writer
+    // would have: the attempt is all that is left holding the checkout.
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE node_executions SET state='completed',result=?2 WHERE execution=?1",
+            rusqlite::params![
+                restore.execution_id.as_str(),
+                serde_json::to_string(&AgentSessionResult::AgentSessionEnded(ended())).unwrap()
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        journal
+            .pending_restore_attempts(&restore.execution_id)
+            .unwrap(),
+        vec![RestoreAttempt {
+            process: process.clone(),
+            guarantee: StopContainment::BestEffort,
+            first_stop_at_ms: None,
+            stop_bound_at_ms: None,
+            stop_unconfirmed: false,
+        }]
+    );
+    assert_eq!(
+        refusal_of(&db.accept_session(&named("plain"))),
+        Some(SessionRefusal::CheckoutBusy)
+    );
+
+    // The stop bound expiring only marks the stop unconfirmed; it frees nothing.
+    journal
+        .request_session_restore_stop(
+            &restore.execution_id,
+            /*now_ms*/ 1_000,
+            /*bound_ms*/ 10_000,
+        )
+        .unwrap();
+    journal
+        .mark_restore_stop_unconfirmed(&process.id, /*now_ms*/ 11_000)
+        .unwrap();
+    assert_eq!(
+        journal
+            .pending_restore_attempts(&restore.execution_id)
+            .unwrap(),
+        vec![RestoreAttempt {
+            process: process.clone(),
+            guarantee: StopContainment::BestEffort,
+            first_stop_at_ms: Some(1_000),
+            stop_bound_at_ms: Some(11_000),
+            stop_unconfirmed: true,
+        }]
+    );
+    assert_eq!(
+        refusal_of(&db.accept_session(&named("plain"))),
+        Some(SessionRefusal::CheckoutBusy)
+    );
+
+    // Original host proof cleans the attempt; with its execution ended, the restore is history.
+    journal.confirm_restore_stop(&process.id).unwrap();
+    assert!(
+        journal
+            .pending_restore_attempts(&restore.execution_id)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        db.accept_session(&named("plain")).unwrap().state,
+        ExecutionState::Accepted
+    );
+}
+
+/// A finished restore is history at every phase. `pending`, `git_admitted` and `restored`
+/// fence a plain sibling only while the restoring execution is unfinished; once it has ended
+/// with its attempt cleaned by original proof, no phase it reached — `agent_admitted` included
+/// — keeps the checkout busy.
+#[test]
+fn finished_restores_fence_nothing_whatever_phase_they_reached() {
+    for phase in [
+        RestorePhase::Pending,
+        RestorePhase::GitAdmitted,
+        RestorePhase::Restored,
+        RestorePhase::AgentAdmitted,
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut db = NodeDatabase::open(
+            &directory.path().join("db"),
+            NodeIdentity::Require(NodeId::new("node")),
+        )
+        .unwrap();
+        let restore = resumed("restore");
+        db.accept_session(&restore).unwrap();
+        let journal = db.session_journal().unwrap();
+        if phase != RestorePhase::Pending {
+            db.start_session(&restore, &NodeIncarnationId::new("incarnation"))
+                .unwrap();
+            let attempt = ProcessAttempt {
+                execution: restore.execution_id.clone(),
+                id: AttemptId::generate(),
+            };
+            journal
+                .record_restore_attempt(&attempt, &git_command(), StopContainment::BestEffort)
+                .unwrap();
+            // Original host proof cleans the attempt; without it the journal refuses to end.
+            journal.confirm_restore_stop(&attempt.id).unwrap();
+            if phase != RestorePhase::GitAdmitted {
+                journal.restored(&restore.execution_id).unwrap();
+                if phase == RestorePhase::AgentAdmitted {
+                    journal.agent_admitted(&restore.execution_id).unwrap();
+                }
+            }
+        }
+        // While unfinished, every phase before Agent admission fences the plain sibling; this
+        // is what the terminal below turns off, so the contrast is observed rather than assumed.
+        let while_unfinished = refusal_of(&db.accept_session(&named("while-unfinished")));
+        assert_eq!(
+            while_unfinished,
+            (phase != RestorePhase::AgentAdmitted).then_some(SessionRefusal::CheckoutBusy),
+            "{phase:?}"
+        );
+
+        journal.end_session(&restore.execution_id, ended()).unwrap();
+        assert_eq!(
+            db.find_session(&restore.operation_id, &restore.execution_id)
+                .unwrap(),
+            Some(SessionExecution {
+                host_mcp_server_names: Vec::new(),
+                command: restore.clone(),
+                state: ExecutionState::Completed(ExecutionResult::AgentSession(
+                    AgentSessionResult::AgentSessionEnded(ended())
+                )),
+                last_sequence: 1,
+            }),
+            "{phase:?}"
+        );
+        assert_eq!(
+            journal.restore_phase(&restore.execution_id).unwrap(),
+            Some(phase),
+            "the finished restore keeps the phase it reached"
+        );
+        assert_eq!(
+            journal
+                .pending_restore_attempts(&restore.execution_id)
+                .unwrap(),
+            Vec::new(),
+            "{phase:?}: no attempt may be left uncleaned"
+        );
+        // A start of its own, so the admission below is decided afresh rather than returned as
+        // the record of the sibling admitted while the restore was unfinished.
+        assert_eq!(
+            db.accept_session(&named("after-end")).unwrap().state,
+            ExecutionState::Accepted,
+            "the finished {phase:?} restore must not fence the checkout"
+        );
+    }
+}
