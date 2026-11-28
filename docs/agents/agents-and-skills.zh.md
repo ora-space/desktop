@@ -12,7 +12,7 @@
 
 ## Skill
 
-Skill 是一条目录行加上磁盘上的包 `<数据根目录>/atoms/skills/<name>/`，包的根目录有带 YAML front matter 的 `SKILL.md`。`Skill.source` 是 `local` 或 `plugin { pluginId }`：插件可以附带 Skill，它们会连同来源一起导入目录。名称是不以 `.` 开头的单个 ASCII slug 片段，描述最多 4096 字节。
+Skill 是一条目录行加上磁盘上的包 `<数据根目录>/atoms/skills/<name>/`，包的根目录有带 YAML front matter 的 `SKILL.md`。`Skill.source` 是 `local` 或 `plugin { pluginId, origin }`：插件可以附带 Skill，它们会连同来源一起导入目录。插件 Skill 继承所属插件的 `origin`（用户 / 本地包 / 官方 / 市场）；市场标签是每次查询现算的展示文本，用于区分同名来源，绝不是用来匹配的标识。名称是不以 `.` 开头的单个 ASCII slug 片段，描述最多 4096 字节。
 
 已安装的 Skill 插件可以为脚本声明公开与敏感字段。声明方式、启动环境快照、重启生效和安全边界见 [Skill 插件配置](skill-configuration.zh.md)。
 
