@@ -41,7 +41,7 @@ pub struct LoopRoundExecutionState {
     pub exit: Option<LoopExitState>,
 }
 
-/// Immutable exit facts survive crashes between cancellation and loop completion.
+/// The exit request and its eventual cleanup receipt belong to the same physical attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoopExitState {
@@ -50,6 +50,9 @@ pub struct LoopExitState {
     /// Physical attempts cancelled by this exit, absent on exits written by older versions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancelled_attempts: Option<std::collections::BTreeSet<String>>,
+    /// Absent while cleanup is pending and on rounds settled by older versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_result: Option<Result<(), String>>,
     pub result: Result<BTreeMap<String, Value>, String>,
 }
 

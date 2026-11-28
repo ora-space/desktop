@@ -34,10 +34,47 @@ pub(super) fn request(
         .collect::<Result<_, _>>()?;
     state.exit = Some(LoopExitState {
         cancelled_attempts: Some(cancelled_attempts),
+        cleanup_result: None,
         node_run_id: node_run_id.to_string(),
         requested_at: now,
         result: result.clone(),
     });
     transaction.execute("UPDATE workflow_execution_scopes SET state = ?2, updated_at = ?3 WHERE id = ?1 AND status = 1", params![scope_id.as_ref(), serde_json::to_string(&state)?, now])?;
     Ok(())
+}
+
+/// Accepts a receipt only while the same exit still owns this round. Its write and the
+/// terminal transition share the caller's transaction, including when an export is missing.
+pub(super) fn acknowledge(
+    transaction: &Transaction<'_>,
+    scope_id: &WorkflowScopeId,
+    node_run_id: &str,
+    cleanup: &Result<(), String>,
+) -> Result<Option<LoopRoundAdvance>, crate::DatabaseError> {
+    let state: String = transaction.query_row(
+        "SELECT state FROM workflow_execution_scopes WHERE id = ?1",
+        [scope_id.as_ref()],
+        |row| row.get(0),
+    )?;
+    let mut state: LoopRoundExecutionState = serde_json::from_str(&state)?;
+    let Some(exit) = state
+        .exit
+        .as_mut()
+        .filter(|exit| exit.node_run_id == node_run_id)
+    else {
+        return Ok(None);
+    };
+    exit.cleanup_result = Some(cleanup.clone());
+    let advance = match cleanup.clone().and_then(|()| exit.result.clone()) {
+        Ok(outputs) => LoopRoundAdvance::Succeed {
+            outputs,
+            reason: ora_application::LoopCompletionReason::LoopExit,
+        },
+        Err(error) => LoopRoundAdvance::Fail { error },
+    };
+    transaction.execute(
+        "UPDATE workflow_execution_scopes SET state = ?2 WHERE id = ?1",
+        params![scope_id.as_ref(), serde_json::to_string(&state)?],
+    )?;
+    Ok(Some(advance))
 }

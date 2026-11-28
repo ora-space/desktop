@@ -49,25 +49,24 @@ pub(in crate::workflow::run) fn plan(
             .iter()
             .find(|scope| scope.id == exit.scope_id)
             .ok_or(DebugRejection::MissingInputEvidence)?;
-        if scope.status != WorkflowScopeStatus::Succeeded {
-            let state: ora_application::LoopRoundExecutionState =
-                serde_json::from_str(&scope.state)
-                    .map_err(|_| DebugRejection::MissingInputEvidence)?;
-            if state
-                .exit
-                .is_some_and(|request| request.node_run_id == exit.id.as_ref())
-            {
-                // A terminal round cannot accept another cleanup acknowledgement.
-                return Err(
-                    if matches!(
-                        scope.status,
-                        WorkflowScopeStatus::Cancelled | WorkflowScopeStatus::Failed
-                    ) {
-                        DebugRejection::LoopExitRecoveryRequired
-                    } else {
-                        DebugRejection::LoopExitCleanupPending
-                    },
-                );
+        let state: ora_application::LoopRoundExecutionState =
+            serde_json::from_str(&scope.state).map_err(|_| DebugRejection::MissingInputEvidence)?;
+        let Some(request) = state
+            .exit
+            .filter(|request| request.node_run_id == exit.id.as_ref())
+        else {
+            continue;
+        };
+        match (request.cleanup_result, scope.status) {
+            (Some(Ok(())), _) => {}
+            // Before receipts were recorded, only successful settlement proved cleanup.
+            (None, WorkflowScopeStatus::Succeeded) => {}
+            (None, WorkflowScopeStatus::Pending | WorkflowScopeStatus::Running) => {
+                return Err(DebugRejection::LoopExitCleanupPending);
+            }
+            (Some(Err(_)), _)
+            | (None, WorkflowScopeStatus::Failed | WorkflowScopeStatus::Cancelled) => {
+                return Err(DebugRejection::LoopExitRecoveryRequired);
             }
         }
     }

@@ -67,16 +67,12 @@ where
         let Some(exit) = state.exit else {
             return Ok(());
         };
-        let advance = match result.and(exit.result) {
-            Ok(outputs) => LoopRoundAdvance::Succeed {
-                outputs,
-                reason: crate::LoopCompletionReason::LoopExit,
-            },
-            Err(error) => LoopRoundAdvance::Fail { error },
-        };
         self.repository.advance_loop_round(
             scope_id,
-            &advance,
+            &LoopRoundAdvance::FinishExit {
+                node_run_id: exit.node_run_id,
+                cleanup: result,
+            },
             self.clock.now_timestamp_millis(),
         )?;
         Ok(())

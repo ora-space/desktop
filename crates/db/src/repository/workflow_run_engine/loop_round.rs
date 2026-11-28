@@ -136,7 +136,18 @@ pub(super) fn advance(
                 return Ok(AdvanceWorkflowRunResult::NotRunning);
             }
 
+            let settlement;
+            let advance = if let LoopRoundAdvance::FinishExit { node_run_id, cleanup } = advance {
+                let Some(outcome) = super::loop_exit::acknowledge(&transaction, scope_id, node_run_id, cleanup)? else {
+                    return Ok(AdvanceWorkflowRunResult::NotRunning);
+                };
+                settlement = outcome;
+                &settlement
+            } else {
+                advance
+            };
             match advance {
+                LoopRoundAdvance::FinishExit { .. } => unreachable!("exit receipt already resolved"),
                 LoopRoundAdvance::RequestExit { node_run_id, result } => {
                     super::loop_exit::request(&transaction, scope_id, node_run_id, result, now)?;
                 }

@@ -11,8 +11,10 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 /// Put a selectable root agent upstream of the Loop so that both planner paths see the same exit.
-fn graph() -> String {
+fn graph(export_node: &str) -> String {
     let mut graph: Value = serde_json::from_str(&loop_exit_tests::graph(true)).unwrap();
+    graph["nodes"][1]["data"]["loopConfig"]["outputs"][0]["variableSelector"] =
+        json!([export_node, "output"]);
     let agent: Value = serde_json::from_str(AGENT_GRAPH).unwrap();
     graph["nodes"]
         .as_array_mut()
@@ -26,11 +28,27 @@ fn graph() -> String {
     graph.to_string()
 }
 
+enum ExitOutcome {
+    Succeeded,
+    MissingExport,
+    CleanupFailed,
+    Cancelled,
+}
+
 /// Drive the real exit and check both the planner refusal and the reason shown by Desktop.
-fn check_exit_rewind(outcome: WorkflowRunStatus) {
+fn check_exit_rewind(outcome: ExitOutcome) {
+    let export_node = if matches!(outcome, ExitOutcome::MissingExport) {
+        "slow"
+    } else {
+        "writer"
+    };
     let (temp, pool) = bootstrap();
-    let (run, initial, engine) =
-        started_run_with(&temp, &pool, &graph(), loop_exit_tests::PendingCleanup);
+    let (run, initial, engine) = started_run_with(
+        &temp,
+        &pool,
+        &graph(export_node),
+        loop_exit_tests::PendingCleanup,
+    );
     let repo = SqliteWorkflowRunRepository::new(pool.clone());
     let store = WorkflowDebugStore::new(pool.clone());
     let upstream = initial.iter().find(|r| r.node_id == "agent").unwrap();
@@ -96,14 +114,14 @@ fn check_exit_rewind(outcome: WorkflowRunStatus) {
         "Wait for it to finish",
     );
     match outcome {
-        WorkflowRunStatus::Cancelled => {
+        ExitOutcome::Cancelled => {
             engine.cancel(&run).unwrap();
             // A late successful receipt cannot establish isolation for a cancelled round.
             engine
                 .finish_loop_exit(&run, &owner.id, &writer.scope_id, Ok(()))
                 .unwrap();
         }
-        WorkflowRunStatus::Failed => engine
+        ExitOutcome::CleanupFailed => engine
             .finish_loop_exit(
                 &run,
                 &owner.id,
@@ -111,38 +129,66 @@ fn check_exit_rewind(outcome: WorkflowRunStatus) {
                 Err("session stop failed".into()),
             )
             .unwrap(),
-        WorkflowRunStatus::Succeeded => engine
+        ExitOutcome::Succeeded | ExitOutcome::MissingExport => engine
             .finish_loop_exit(&run, &owner.id, &writer.scope_id, Ok(()))
             .unwrap(),
-        _ => unreachable!("expected a terminal run"),
     }
-    assert_eq!(repo.find_run(&run).unwrap().unwrap().status, outcome);
-    if outcome == WorkflowRunStatus::Succeeded {
+    let settled = repo.find_run(&run).unwrap().unwrap();
+    let status = match outcome {
+        ExitOutcome::Succeeded => WorkflowRunStatus::Succeeded,
+        ExitOutcome::CleanupFailed | ExitOutcome::MissingExport => WorkflowRunStatus::Failed,
+        ExitOutcome::Cancelled => WorkflowRunStatus::Cancelled,
+    };
+    assert_eq!(settled.status, status);
+    if matches!(outcome, ExitOutcome::MissingExport) {
+        assert!(settled.error.unwrap().contains("slow.output"));
+    }
+    let assert_allowed = || {
         for request in &requests {
             store.preview(request, strategy::plan).unwrap();
         }
-    } else {
-        assert_rejected(
-            DebugRejection::LoopExitRecoveryRequired,
-            "cancelled siblings stopped. Use ordinary failure recovery",
-        );
+    };
+    if matches!(outcome, ExitOutcome::Succeeded | ExitOutcome::MissingExport) {
+        assert_allowed();
+        // Earlier releases stored the frozen export but no independent cleanup receipt.
+        let db = rusqlite::Connection::open(temp.path().join("repository.sqlite3")).unwrap();
+        let changed = db.execute(
+            "UPDATE workflow_execution_scopes SET state=json_remove(state, '$.exit.cleanupResult')
+             WHERE id=?1 AND json_type(state, '$.exit.cleanupResult') IS NOT NULL",
+            [writer.scope_id.as_ref()],
+        ).unwrap();
+        assert_eq!(changed, 1);
+        if matches!(outcome, ExitOutcome::Succeeded) {
+            assert_allowed();
+            return;
+        }
     }
+    assert_rejected(
+        DebugRejection::LoopExitRecoveryRequired,
+        "cancelled siblings stopped. Use ordinary failure recovery",
+    );
 }
 
 /// A successful receipt releases the pending exit.
 #[test]
 fn exit_rewind_waits_for_the_cleanup_acknowledgement() {
-    run_test(async { check_exit_rewind(WorkflowRunStatus::Succeeded) });
+    run_test(async { check_exit_rewind(ExitOutcome::Succeeded) });
+}
+
+/// A missing exit export fails the round after its cancelled siblings have stopped.
+#[test]
+fn exit_rewind_allows_edit_after_missing_export() {
+    run_test(async { check_exit_rewind(ExitOutcome::MissingExport) });
 }
 
 /// Cancelling before the receipt leaves ordinary recovery as the way to resume.
 #[test]
 fn exit_rewind_requires_recovery_after_run_cancellation() {
-    run_test(async { check_exit_rewind(WorkflowRunStatus::Cancelled) });
+    run_test(async { check_exit_rewind(ExitOutcome::Cancelled) });
 }
 
 /// A failed stop cannot be retried by previewing the edit.
 #[test]
 fn exit_rewind_requires_recovery_after_cleanup_failure() {
-    run_test(async { check_exit_rewind(WorkflowRunStatus::Failed) });
+    run_test(async { check_exit_rewind(ExitOutcome::CleanupFailed) });
 }
