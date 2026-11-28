@@ -66,9 +66,9 @@ resolves its stored location against the Desktop path base, see
 ## Reviewing large change sets
 
 The Changes and Files controls stay available when a Git comparison is loading or fails.
-If the complete patch exceeds the preview limit, Changes lists the files in the selected Git
-scope and loads the selected file's diff with nearby context. A file that still exceeds the
-limit remains listed, and other files can still be reviewed.
+When the full-context patch exceeds the read budget, Changes can display a patch with nearby
+context in the same view. If that patch also exceeds its budget, choose **View by file** to
+load one file at a time. A file that exceeds the per-file preview limit remains in the list.
 
 ## Deletion and durable Git cleanup
 

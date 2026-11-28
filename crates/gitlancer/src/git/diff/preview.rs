@@ -1,6 +1,7 @@
 use super::{
-    DiffRequest, DiffResponse, DiffScope, MAX_DIFF_BYTES, MAX_DIFF_STDERR_BYTES,
-    build_tracked_diff_command, build_untracked_command, isolated_git_dir, map_bounded_diff_error,
+    COMPACT_CONTEXT_ARG, DiffRequest, DiffResponse, DiffScope, MAX_DIFF_BYTES,
+    MAX_DIFF_STDERR_BYTES, REVIEW_DIFF_BYTES, build_tracked_diff_command, build_untracked_command,
+    isolated_git_dir, map_bounded_diff_error,
 };
 use crate::domain::refs::CommitId;
 use crate::error::{DomainError, GitlancerError};
@@ -11,8 +12,6 @@ use crate::git::checkpoint::{ChangeStatus, ChangedPath};
 use crate::parse::checkpoint::parse_name_status_z;
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
-
-const PREVIEW_CONTEXT: &str = "--unified=3";
 
 /// One entry in the review list, with the source path for a rename.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,8 +35,10 @@ impl<R: GitRunner> Git<R> {
         request: DiffRequest<'_>,
     ) -> Result<DiffFilesResponse, GitlancerError> {
         let head_commit_id = self.diff_head(request.worktree)?;
-        let tracked =
-            self.review_output(&build_tracked_diff_command(&request, &[], "--name-status"))?;
+        let tracked = self.review_output(
+            &build_tracked_diff_command(&request, &[], "--name-status"),
+            MAX_DIFF_BYTES,
+        )?;
         let mut files = BTreeMap::new();
         for ChangedPath { path, status, .. } in parse_name_status_z(&tracked)? {
             let (status, old_path) = match status {
@@ -57,7 +58,10 @@ impl<R: GitRunner> Git<R> {
             );
         }
         if includes_untracked(request.scope) {
-            let paths = self.review_output(&build_untracked_command(request.worktree, &[]))?;
+            let paths = self.review_output(
+                &build_untracked_command(request.worktree, &[]),
+                MAX_DIFF_BYTES,
+            )?;
             for path in paths.split_terminator('\0') {
                 files.entry(path.to_owned()).or_insert_with(|| DiffFile {
                     path: path.to_owned(),
@@ -79,18 +83,18 @@ impl<R: GitRunner> Git<R> {
         path: &str,
         old_path: Option<&str>,
     ) -> Result<DiffResponse, GitlancerError> {
-        let mut command = build_tracked_diff_command(&request, &[], PREVIEW_CONTEXT);
+        let mut command = build_tracked_diff_command(&request, &[], COMPACT_CONTEXT_ARG);
         let pathspec = review_pathspec(&request, path)?;
         command.args.push(pathspec.clone());
         if let Some(old_path) = old_path {
             command.args.push(review_pathspec(&request, old_path)?);
         }
         let head_commit_id = self.diff_head(request.worktree)?;
-        let mut patch = self.review_output(&command)?;
+        let mut patch = self.review_output(&command, REVIEW_DIFF_BYTES)?;
         if includes_untracked(request.scope) {
             let mut command = build_untracked_command(request.worktree, &[]);
             command.args.extend(["--".to_string(), pathspec]);
-            let paths = self.review_output(&command)?;
+            let paths = self.review_output(&command, MAX_DIFF_BYTES)?;
             // Git's literal pathspec also matches a directory prefix. Only a
             // path returned verbatim by ls-files may reach the no-index reader.
             if paths
@@ -101,7 +105,8 @@ impl<R: GitRunner> Git<R> {
                     request.worktree,
                     path,
                     &isolated_git_dir(),
-                    PREVIEW_CONTEXT,
+                    COMPACT_CONTEXT_ARG,
+                    REVIEW_DIFF_BYTES,
                     &mut patch,
                 )?;
             }
@@ -113,11 +118,15 @@ impl<R: GitRunner> Git<R> {
     }
 
     /// Applies the patch budget and size-error mapping to every review read.
-    fn review_output(&self, command: &GitCommand) -> Result<String, GitlancerError> {
+    fn review_output(
+        &self,
+        command: &GitCommand,
+        max_bytes: usize,
+    ) -> Result<String, GitlancerError> {
         self.runner()
-            .run_bounded(command, MAX_DIFF_BYTES, MAX_DIFF_STDERR_BYTES)
+            .run_bounded(command, max_bytes, MAX_DIFF_STDERR_BYTES)
             .map(|output| output.stdout)
-            .map_err(map_bounded_diff_error)
+            .map_err(|error| map_bounded_diff_error(error, max_bytes))
     }
 }
 

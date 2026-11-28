@@ -231,7 +231,7 @@ fn runtime_builds_complete_task_diff() {
 fn runtime_reviews_a_large_patch_one_file_at_a_time() {
     let scaffold = TestScaffold::new("runtime-diff-preview").expect("create scaffold");
     let root = scaffold.repo_path();
-    let padding = "unchanged content\n".repeat(350_000);
+    let padding = "unchanged content\n".repeat(650_000);
     for name in ["first.txt", "second.txt"] {
         scaffold
             .write_file(root, name, &format!("original\n{padding}"))
@@ -272,6 +272,10 @@ fn runtime_reviews_a_large_patch_one_file_at_a_time() {
         git.diff(request(DiffScope::Branch)),
         Err(GitlancerError::DiffTooLarge { .. })
     ));
+    let compact = git.diff_compact(request(DiffScope::Branch)).unwrap();
+    assert!(compact.patch.len() < 1_024);
+    assert!(compact.patch.contains("+first changed"));
+    assert!(compact.patch.contains("+second changed"));
     let branch = git.diff_files(request(DiffScope::Branch)).unwrap();
     assert_eq!(
         branch.files,
@@ -320,6 +324,20 @@ fn runtime_reviews_a_large_patch_one_file_at_a_time() {
         .write_file(root, "empty [1].txt", "")
         .expect("write an empty untracked file");
     let unstaged = request(DiffScope::Unstaged);
+    // A patch with more than 10 MiB of actual changes fits the review budget.
+    let compact = git.diff_compact(unstaged.clone()).unwrap();
+    assert!(compact.patch.len() > 10 * 1024 * 1024);
+    let large_preview = git
+        .diff_file(unstaged.clone(), "huge.txt", /*old_path*/ None)
+        .unwrap();
+    assert!(large_preview.patch.len() > 10 * 1024 * 1024);
+    scaffold
+        .write_file(root, "huge.txt", &"x".repeat(21 * 1024 * 1024))
+        .expect("write beyond the compact preview budget");
+    assert!(matches!(
+        git.diff_compact(unstaged.clone()),
+        Err(GitlancerError::DiffTooLarge { .. })
+    ));
     let entries = git.diff_files(unstaged.clone()).unwrap().files;
     assert!(entries.iter().any(|entry| entry.path == "huge.txt"));
     assert!(matches!(

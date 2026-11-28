@@ -214,6 +214,7 @@ impl WorkspaceApi {
             base_commit_id,
             head_commit_id: snapshot.head_commit_id,
             patch: snapshot.patch,
+            context_limited: snapshot.context_limited.then_some(true),
             files: snapshot.files.map(|files| {
                 files
                     .into_iter()
@@ -642,6 +643,7 @@ mod tests {
                 base_commit_id: None,
                 head_commit_id: diff.head_commit_id.clone(),
                 patch: String::new(),
+                context_limited: None,
                 files: Some(vec![ora_contracts::WorkspaceDiffFile {
                     path: "project-change.txt".into(),
                     old_path: None,
@@ -724,6 +726,59 @@ mod tests {
             error.public_error().clone(),
             PublicError::WorkspaceDiffBaselineUnavailable(EmptyErrorParams {})
         );
+    }
+
+    /// Verifies oversized context is compacted through the normal workspace operation.
+    #[test]
+    fn keeps_large_context_in_the_workspace_diff_operation() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let scaffold = GitTestScaffold::new("backend-workspace-compact-diff")
+            .expect("create Git test scaffold");
+        let root = scaffold.repo_path();
+        let context = "unchanged content\n".repeat(650_000);
+        scaffold
+            .write_file(root, "large.txt", &format!("before\n{context}"))
+            .unwrap();
+        scaffold
+            .write_file(root, "another.txt", &format!("before\n{context}"))
+            .unwrap();
+        scaffold.stage_all_and_commit("initial").unwrap();
+        scaffold
+            .write_file(root, "large.txt", &format!("after\n{context}"))
+            .unwrap();
+        let backend = open_backend(&temporary);
+        let project_id = create_project(&backend, root);
+        let workspace_id = backend
+            .workspaces()
+            .list(ListWorkspacesRequest {})
+            .unwrap()
+            .workspaces
+            .into_iter()
+            .find(|workspace| workspace.project_id == project_id)
+            .unwrap()
+            .id;
+
+        let request = GetWorkspaceDiffRequest {
+            workspace_id,
+            scope: WorkspaceDiffScope::Unstaged,
+            selection: None,
+        };
+        let full = backend.workspaces().get_diff(request.clone()).unwrap();
+        assert_eq!(full.context_limited, None);
+        assert!(full.patch.len() > 10 * 1024 * 1024);
+
+        scaffold
+            .write_file(root, "another.txt", &format!("also changed\n{context}"))
+            .unwrap();
+        let diff = backend
+            .workspaces()
+            .get_diff(request)
+            .expect("read compact aggregate through the normal operation");
+        assert!(diff.patch.contains("+also changed"));
+
+        assert_eq!(diff.context_limited, Some(true));
+        assert_eq!(diff.files, None);
+        assert!(diff.patch.len() < 1_024 && diff.patch.contains("+after"));
     }
 
     /// Verifies status, per-file staging, unstage, and commit-only-staged behavior end to end.

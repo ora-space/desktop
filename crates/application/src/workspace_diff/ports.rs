@@ -66,6 +66,7 @@ pub struct ReadWorkspaceDiffRequest {
 pub struct WorkspaceDiffSnapshot {
     pub head_commit_id: String,
     pub patch: String,
+    pub context_limited: bool,
     pub files: Option<Vec<WorkspaceDiffFile>>,
 }
 

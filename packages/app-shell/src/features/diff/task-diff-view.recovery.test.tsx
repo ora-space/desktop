@@ -105,6 +105,19 @@ describe("Git diff recovery in the workspace review panel", () => {
     expect(await screen.findByText("small change")).toBeInTheDocument();
   });
 
+  it("renders a compact aggregate in the normal Changes view", async () => {
+    const getWorkspaceDiff = vi.fn(async () => ({
+      ...patch,
+      contextLimited: true,
+    }));
+    mountReview("compact", getWorkspaceDiff);
+    await userEvent.setup().click(screen.getByRole("button", { name: "变更" }));
+    expect(await screen.findByText("small change")).toBeInTheDocument();
+    expect(screen.getByText("仅显示变更附近的上下文。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "返回变更视图" })).toBeNull();
+    expect(getWorkspaceDiff).toHaveBeenCalledTimes(1);
+  });
+
   it("lists oversized changes and isolates a file that exceeds the preview limit", async () => {
     const getWorkspaceDiff = vi.fn<
       NonNullable<TestHandlers["getWorkspaceDiff"]>
@@ -126,6 +139,14 @@ describe("Git diff recovery in the workspace review panel", () => {
     mountReview("large", getWorkspaceDiff);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "变更" }));
+    const viewByFile = await screen.findByRole("button", {
+      name: "按文件查看",
+    });
+    expect(
+      getWorkspaceDiff.mock.calls.map(([request]) => request.selection),
+    ).toEqual([undefined]);
+    expect(screen.queryByRole("group", { name: "变更文件导航" })).toBeNull();
+    await user.click(viewByFile);
     expect(await screen.findByText("该文件的 Diff 过大")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "文件" })).toBeInTheDocument();
     expect(
@@ -138,6 +159,11 @@ describe("Git diff recovery in the workspace review panel", () => {
     await user.click(screen.getByRole("button", { name: /small\.txt/ }));
     expect(await screen.findByText("small change")).toBeInTheDocument();
     expect(screen.queryByText("该文件的 Diff 过大")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "返回变更视图" }));
+    expect(screen.queryByRole("group", { name: "变更文件导航" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "按文件查看" }),
+    ).toBeInTheDocument();
   });
 
   it("refreshes the list when the file preview belongs to a different HEAD", async () => {
@@ -156,6 +182,7 @@ describe("Git diff recovery in the workspace review panel", () => {
     });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "变更" }));
+    await user.click(await screen.findByRole("button", { name: "按文件查看" }));
     expect(await screen.findByText("Git 比较已更新")).toBeInTheDocument();
     expect(screen.queryByText("small change")).toBeNull();
     listHead = patch.headCommitId;

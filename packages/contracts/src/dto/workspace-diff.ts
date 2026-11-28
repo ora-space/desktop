@@ -39,6 +39,7 @@ export type GetWorkspaceDiffResponse = {
   baseCommitId: string | null;
   headCommitId: string;
   patch: string;
+  contextLimited?: boolean;
   files?: Array<WorkspaceDiffFile>;
 };
 

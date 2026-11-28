@@ -171,12 +171,7 @@ export function TaskDiffView({
   // or a chat jump would resolve against an empty patch and bounce to Files.
   const diffPending = diffQuery.isLoading || gitAvailability === "checking";
   const sizeError = isWorkspaceDiffTooLarge(diffQuery.error);
-  const [largeScope, setLargeScope] = useState<WorkspaceDiffScope | null>(null);
-  // Keep the file selection mounted while a refresh retries an oversized aggregate.
-  if (sizeError && largeScope !== scope) setLargeScope(scope);
-  if (diffQuery.isSuccess && largeScope === scope) setLargeScope(null);
-  const diffTooLarge =
-    sizeError || (largeScope === scope && !diffQuery.isSuccess);
+  const [fileMode, setFileMode] = useState(false);
   const stagedByPath = useMemo(() => {
     const staged = new Set<string>();
     for (const entry of statusQuery.data?.entries ?? []) {
@@ -272,7 +267,7 @@ export function TaskDiffView({
    * empty list on the first render and lets the session page paint, then a
    * post-paint macro-task parses. Mount-only — a refetch never re-defers.
    */
-  const patch = diffTooLarge ? "" : (diffQuery.data?.patch ?? "");
+  const patch = fileMode ? "" : (diffQuery.data?.patch ?? "");
   const [parseDeferred, setParseDeferred] = useState(
     () => patch.length > DEFER_PARSE_PATCH_CHARS,
   );
@@ -350,7 +345,7 @@ export function TaskDiffView({
   if (
     fileRequest !== undefined &&
     !diffPending &&
-    !diffTooLarge &&
+    !fileMode &&
     !parseDeferred &&
     fileRequest.requestId !== appliedFileRequestId
   ) {
@@ -451,7 +446,7 @@ export function TaskDiffView({
     if (
       fileRequest === undefined ||
       diffPending ||
-      diffTooLarge ||
+      fileMode ||
       parseDeferred ||
       (diffQuery.error !== null && gitAvailability !== "notRepository")
     ) {
@@ -478,7 +473,7 @@ export function TaskDiffView({
     diffPending,
     onFileNotFound,
     parseDeferred,
-    diffTooLarge,
+    fileMode,
     diffQuery.error,
     gitAvailability,
   ]);
@@ -694,9 +689,13 @@ export function TaskDiffView({
   }
 
   const blockingError =
-    diffQuery.error !== null && diff === undefined && !diffTooLarge;
-  const refreshError =
-    !sizeError && (diff !== undefined || diffTooLarge) ? diffQuery.error : null;
+    diffQuery.error !== null && diff === undefined && !fileMode;
+  const refreshError = !fileMode && diff !== undefined ? diffQuery.error : null;
+  const viewFilesAction = (
+    <Button size="sm" variant="outline" onClick={() => setFileMode(true)}>
+      {t("diff.viewByFile")}
+    </Button>
+  );
   const reviewError =
     refreshError ??
     commitChanges.error ??
@@ -714,7 +713,7 @@ export function TaskDiffView({
       aria-busy={diffPending || diffQuery.isFetching}
     >
       <header className="ora-diff-toolbar flex min-h-12 min-w-0 shrink-0 flex-nowrap items-center gap-2 overflow-hidden border-b border-border px-3 py-2 sm:px-4">
-        {diff !== undefined && !diffTooLarge && (
+        {diff !== undefined && !fileMode && (
           <div className="ora-diff-toolbar__summary flex shrink-0 items-center gap-2 whitespace-nowrap">
             <span className="text-xs font-semibold">{files.length}</span>
             <span className="ora-diff-toolbar__summary-label text-xs font-semibold">
@@ -728,7 +727,7 @@ export function TaskDiffView({
             </span>
           </div>
         )}
-        {gitReadsEnabled && (diff !== undefined || diffTooLarge) && gitActions}
+        {gitReadsEnabled && (diff !== undefined || fileMode) && gitActions}
         <div className="ora-diff-toolbar__scope-group flex h-8 shrink-0 items-center gap-0.5 rounded-lg bg-muted/50 p-0.5">
           <Select
             value={scope}
@@ -788,17 +787,36 @@ export function TaskDiffView({
           <span className="ora-diff-progress absolute inset-x-0 top-0 block h-px w-1/3 bg-primary/70" />
         </div>
       )}
+      {fileMode && (
+        <div className="flex justify-end border-b px-3 py-1">
+          <Button size="sm" variant="ghost" onClick={() => setFileMode(false)}>
+            {t("diff.returnToChanges")}
+          </Button>
+        </div>
+      )}
+      {!fileMode && diff?.contextLimited && (
+        <div className="border-b px-3 py-2 text-xs text-muted-foreground">
+          {t("diff.contextLimited")}
+        </div>
+      )}
       {reviewError !== null && (
         <div
           role="alert"
           className="flex items-center justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive"
         >
           {localizeContractError(reviewError, t)}
-          {refreshError !== null && (
-            <Button size="sm" variant="outline" onClick={() => void refresh()}>
-              {t("diff.retry")}
-            </Button>
-          )}
+          {refreshError !== null &&
+            (sizeError ? (
+              viewFilesAction
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void refresh()}
+              >
+                {t("diff.retry")}
+              </Button>
+            ))}
         </div>
       )}
       {gitNotice !== null && (
@@ -815,9 +833,9 @@ export function TaskDiffView({
           diffQuery.isPlaceholderData ? "opacity-70" : "opacity-100"
         }`}
       >
-        {diffPending && !diffTooLarge ? (
+        {diffPending && !fileMode ? (
           <DiffLoadingState />
-        ) : diffTooLarge ? (
+        ) : fileMode ? (
           <TaskDiffLargeChanges
             key={scope}
             workspaceId={workspaceId}
@@ -832,14 +850,18 @@ export function TaskDiffView({
             title={t("diff.loadError")}
             detail={localizeContractError(diffQuery.error, t)}
             action={
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => void refresh()}
-              >
-                <IconRefresh />
-                {t("diff.retry")}
-              </Button>
+              sizeError ? (
+                viewFilesAction
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void refresh()}
+                >
+                  <IconRefresh />
+                  {t("diff.retry")}
+                </Button>
+              )
             }
           />
         ) : files.length === 0 ? (

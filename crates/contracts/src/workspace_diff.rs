@@ -65,6 +65,9 @@ pub struct GetWorkspaceDiffResponse {
     pub patch: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub context_limited: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub files: Option<Vec<WorkspaceDiffFile>>,
 }
 
@@ -206,6 +209,7 @@ mod tests {
             base_commit_id: Some("base".to_string()),
             head_commit_id: "head".to_string(),
             patch: "patch".to_string(),
+            context_limited: None,
             files: None,
         };
 
@@ -226,6 +230,7 @@ mod tests {
             base_commit_id: None,
             head_commit_id: "head".to_string(),
             patch: "patch".to_string(),
+            context_limited: None,
             files: None,
         };
 

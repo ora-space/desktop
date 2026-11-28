@@ -1,10 +1,12 @@
 // Pure translation data: safe to compose without importing feature implementation.
 export const diffTranslations = {
   "zh-CN": {
+    "diff.contextLimited": "仅显示变更附近的上下文。",
+    "diff.viewByFile": "按文件查看",
+    "diff.returnToChanges": "返回变更视图",
     "diff.comparisonChanged": "Git 比较已更新",
     "diff.comparisonChangedDetail": "刷新变更清单后查看该文件。",
-    "diff.largeChanges":
-      "变更过大，已切换为逐文件查看。仅显示变更附近的上下文。",
+    "diff.largeChanges": "请选择一个文件查看变更及附近的上下文。",
     "diff.fileTooLarge": "该文件的 Diff 过大",
     "diff.fileTooLargeDetail":
       "无法预览 {{path}} 的 Diff。你可以继续查看其他文件的变更。",
@@ -87,11 +89,13 @@ export const diffTranslations = {
     "diff.unchangedLinesHidden": "已隐藏 {{count}} 行未修改内容",
   },
   "en-US": {
+    "diff.contextLimited": "Only nearby lines of context are shown.",
+    "diff.viewByFile": "View by file",
+    "diff.returnToChanges": "Return to Changes",
     "diff.comparisonChanged": "The Git comparison changed",
     "diff.comparisonChangedDetail":
       "Refresh the changed file list to review this file.",
-    "diff.largeChanges":
-      "This change set is large. Select a file to see its changes and nearby context.",
+    "diff.largeChanges": "Select a file to see its changes and nearby context.",
     "diff.fileTooLarge": "This file's diff is too large",
     "diff.fileTooLargeDetail":
       "The diff for {{path}} exceeds the preview limit. Other changed files are still available.",

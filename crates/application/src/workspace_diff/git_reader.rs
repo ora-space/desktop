@@ -60,7 +60,16 @@ impl WorkspaceDiffReader for GitWorkspaceDiffReader {
             scope,
         };
         match request.selection {
-            ReadWorkspaceDiffSelection::Patch => self.git.diff(diff).map(map_diff_response),
+            ReadWorkspaceDiffSelection::Patch => match self.git.diff(diff.clone()) {
+                Err(gitlancer::GitlancerError::DiffTooLarge { .. }) => self
+                    .git
+                    .diff_compact(diff)
+                    .map(|response| WorkspaceDiffSnapshot {
+                        context_limited: true,
+                        ..map_diff_response(response)
+                    }),
+                result => result.map(map_diff_response),
+            },
             ReadWorkspaceDiffSelection::File { path, old_path } => self
                 .git
                 .diff_file(diff, &path, old_path.as_deref())
@@ -71,6 +80,7 @@ impl WorkspaceDiffReader for GitWorkspaceDiffReader {
                     .map(|response| WorkspaceDiffSnapshot {
                         head_commit_id: response.head_commit_id.as_str().to_string(),
                         patch: String::new(),
+                        context_limited: false,
                         files: Some(
                             response
                                 .files
@@ -140,6 +150,7 @@ fn map_diff_response(response: DiffResponse) -> WorkspaceDiffSnapshot {
     WorkspaceDiffSnapshot {
         head_commit_id: response.head_commit_id.as_str().to_string(),
         patch: response.patch,
+        context_limited: false,
         files: None,
     }
 }
