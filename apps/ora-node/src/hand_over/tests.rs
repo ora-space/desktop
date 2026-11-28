@@ -109,3 +109,110 @@ fn every_walk_rereads_protected_hardlinks() {
         ]
     );
 }
+
+/// The descriptor budget a Node document states: the formula the minimum is derived by, then
+/// the `RLIMIT_NOFILE` minimum and recommendation that follow it.
+#[derive(Debug, Eq, PartialEq)]
+struct DocumentedBudget {
+    walks: usize,
+    per_walk: usize,
+    baseline: usize,
+    rounded: usize,
+    minimum: usize,
+    recommended: usize,
+}
+
+/// The number a text ends with, without its thousands separators.
+fn trailing_number(text: &str) -> usize {
+    let digits: String = text
+        .chars()
+        .rev()
+        .take_while(|character| character.is_ascii_digit() || *character == ',')
+        .collect();
+    digits
+        .chars()
+        .rev()
+        .collect::<String>()
+        .replace(',', "")
+        .parse()
+        .expect("a number with thousands separators")
+}
+
+/// The number a text starts with, without its thousands separators, and the text after it.
+fn leading_number(text: &str) -> (usize, &str) {
+    let end = text
+        .find(|character: char| !(character.is_ascii_digit() || character == ','))
+        .unwrap_or(text.len());
+    (
+        text[..end]
+            .replace(',', "")
+            .parse()
+            .expect("a number with thousands separators"),
+        &text[end..],
+    )
+}
+
+/// Reads the budget out of a document's prose. Both language versions state it with the same
+/// numerals: `walks × per-walk + baseline ≈ rounded`, then the minimum after "at least" or
+/// "至少", and the recommendation before "recommended" or after "推荐".
+fn documented_budget(text: &str) -> DocumentedBudget {
+    // Line wrapping must not split the formula, so every run of whitespace counts as one space.
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (before, rest) = text
+        .split_once(" × ")
+        .expect("the document states the per-walk formula");
+    let (per_walk, rest) = leading_number(rest);
+    let rest = rest.strip_prefix(" + ").expect("the formula's baseline");
+    let (baseline, rest) = leading_number(rest);
+    let rest = rest
+        .strip_prefix(" ≈ ")
+        .expect("the formula's rounded total");
+    let (rounded, _) = leading_number(rest);
+    let (_, after_minimum) = text
+        .split_once("at least ")
+        .or_else(|| text.split_once("至少 "))
+        .expect("the document states the minimum");
+    let (minimum, _) = leading_number(after_minimum);
+    let recommended = match (text.split_once(" recommended"), text.split_once("推荐 ")) {
+        (Some((before, _)), _) => trailing_number(before),
+        (None, Some((_, after))) => leading_number(after).0,
+        (None, None) => panic!("the document states the recommendation"),
+    };
+    DocumentedBudget {
+        walks: trailing_number(before),
+        per_walk,
+        baseline,
+        rounded,
+        minimum,
+        recommended,
+    }
+}
+
+/// The documented descriptor minimum is derived from the two bounds this module and the walk
+/// own, so it has to stay consistent with them: both Node documents state the formula with the
+/// constants in force, and their `RLIMIT_NOFILE` minimum covers what it adds up to. No test can
+/// prove a deployment provides the limit, since the Node neither reads nor raises it; a bound
+/// changed without the documents, or a minimum lowered below the derivation, fails here.
+#[test]
+fn the_documented_descriptor_minimum_follows_the_walk_bounds() {
+    let documents = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/node");
+    for document in ["agent-sessions.md", "agent-sessions.zh.md"] {
+        let text = std::fs::read_to_string(documents.join(document)).expect("Node document");
+        let budget = documented_budget(&text);
+        assert_eq!(
+            (budget.walks, budget.per_walk),
+            (MAX_CONCURRENT_WALKS, ora_utils::fs::MAX_OWN_TREE_DEPTH + 3),
+            "{document}: the formula must name the bounds in force"
+        );
+        // Each figure is at least the one before it, so the minimum asked for covers the need.
+        assert!(
+            budget.rounded >= budget.walks * budget.per_walk + budget.baseline,
+            "{document}: {budget:?}"
+        );
+        assert!(budget.minimum >= budget.rounded, "{document}: {budget:?}");
+        assert!(
+            budget.recommended >= budget.minimum,
+            "{document}: {budget:?}"
+        );
+    }
+}
