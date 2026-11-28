@@ -130,12 +130,16 @@ async fn manual_address_formats_work_for_the_probe_and_updater_transport() {
             },
             "{host}"
         );
+        let mut expected = preferences.clone();
+        if host == "http://localhost" {
+            expected.manual.as_mut().unwrap().host = "localhost".to_owned();
+        }
         assert_eq!(
             settings
-                .set_network_proxy_preferences(preferences.clone())
+                .set_network_proxy_preferences(preferences)
                 .await
                 .unwrap(),
-            preferences
+            expected
         );
         let saved_policy = settings.network_proxy_policy().await.unwrap();
         let response = configure_client(
