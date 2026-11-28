@@ -462,6 +462,68 @@ fn manual_proxy_normalizes_on_save_and_preserves_the_old_value_on_invalid_input(
     });
 }
 
+/// Invalid endpoints leave saved settings intact and fail closed when read from storage.
+#[test]
+fn invalid_manual_proxy_endpoints_are_rejected_on_save_and_route_selection() {
+    run_test(async {
+        for host in ["ftp://h", "http://u:p@h", "h/path"] {
+            let temporary = TempDir::new().unwrap();
+            let path = temporary.path().join("ora.sqlite3");
+            let (_pool, settings) = open_settings(&path);
+            let original = NetworkProxyPreferences {
+                mode: NetworkProxyMode::Manual,
+                manual: Some(NetworkProxySettings {
+                    host: "proxy.example".to_owned(),
+                    port: 7890,
+                    username: None,
+                    password: None,
+                }),
+            };
+            settings
+                .set_network_proxy_preferences(original.clone())
+                .await
+                .unwrap();
+
+            let invalid = NetworkProxySettings {
+                host: host.to_owned(),
+                port: 7890,
+                username: None,
+                password: None,
+            };
+            assert!(
+                settings
+                    .set_network_proxy_preferences(NetworkProxyPreferences {
+                        mode: NetworkProxyMode::Manual,
+                        manual: Some(invalid.clone()),
+                    })
+                    .await
+                    .is_err(),
+                "saving {host} should fail"
+            );
+            assert_eq!(
+                settings.network_proxy_preferences().await.unwrap(),
+                original
+            );
+
+            rusqlite::Connection::open(&path)
+                .unwrap()
+                .execute(
+                    "UPDATE user_config SET value = ?1 WHERE key = 'network_proxy_settings'",
+                    [serde_json::to_string(&invalid).unwrap()],
+                )
+                .unwrap();
+            assert_eq!(
+                settings.network_proxy_settings().await.unwrap(),
+                Some(invalid)
+            );
+            assert!(
+                settings.network_proxy_policy().await.is_err(),
+                "routing through {host} should fail"
+            );
+        }
+    });
+}
+
 /// Probe targets persist independently, and invalid input or failed writes preserve the old value.
 #[test]
 fn proxy_check_url_survives_reopen_and_rejects_destructive_fallbacks() {
