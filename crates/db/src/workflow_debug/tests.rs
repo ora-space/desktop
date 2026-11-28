@@ -232,6 +232,47 @@ fn edit(value: &str, revision: u32) -> PreviewWorkflowDebugRequest {
     .unwrap()
 }
 
+/// A retired attempt and a live row from an earlier root are independently ineligible.
+#[test]
+fn editor_and_preview_reject_historical_targets() {
+    for retire_target in [
+        "UPDATE workflow_node_runs SET is_deleted=1 WHERE id='t3'",
+        "INSERT INTO workflow_execution_scopes(id,run_id,created_at,updated_at)
+         VALUES('next-root','F',2,2);
+         UPDATE workflow_run_root_scopes SET scope_id='next-root' WHERE run_id='F'",
+    ] {
+        let (_temp, _, store) = fixture();
+        store
+            .record_agent_dispatch(
+                "F",
+                "t3",
+                &json!({"variablePool":WorkflowVariablePool::default()}),
+            )
+            .unwrap();
+        let request = edit("new", 0);
+        let context = GetWorkflowDebugContextRequest {
+            run_id: request.run_id.clone(),
+            selection: request.selection.clone(),
+        };
+        assert_eq!(
+            store.edit_context(&context).unwrap().target,
+            store.preview(&request, impact).unwrap().target
+        );
+        store
+            .pool
+            .with_connection(|db| Ok(db.execute_batch(retire_target)?))
+            .unwrap();
+        assert!(matches!(
+            store.edit_context(&context),
+            Err(DatabaseError::WorkflowDebug(DebugRejection::InvalidTarget))
+        ));
+        assert!(matches!(
+            store.preview(&request, impact),
+            Err(DatabaseError::WorkflowDebug(DebugRejection::InvalidTarget))
+        ));
+    }
+}
+
 /// Admission and apply must independently reject a stale or unavailable target.
 #[test]
 fn invalid_run_or_replaced_attempt_cannot_apply() {
@@ -763,6 +804,11 @@ fn active_operation_fences_new_confirmations_and_recovery_entries() {
             ))
         )
     }
+    let context = GetWorkflowDebugContextRequest {
+        run_id: "F".into(),
+        selection: WorkflowDebugSelection::NodeRunId("t3".into()),
+    };
+    assert!(active(store.edit_context(&context)));
     assert!(active(store.claim(&commit(&stale, "other"))));
     assert!(active(store.ensure_debug_operation_inactive("F")));
     let repository = crate::SqliteWorkflowRunEngineRepository::new(store.pool.clone());

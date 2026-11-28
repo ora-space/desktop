@@ -24,17 +24,18 @@ a running run with such a node as `AwaitingInput` so the sidebar can show that a
 
 ## Lifecycle
 
-| Operation                                                                                  | Effect                                                               |
-| ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `createWorkflowRun`                                                                        | Validate and persist a `Pending` run                                 |
-| `startWorkflowRun`                                                                         | Validate executability and dependencies, then begin scheduling       |
-| `updateWorkflowRunInput`                                                                   | Fill Start inputs before the run starts                              |
-| `cancelWorkflowRun`, `restartWorkflowRun`                                                  | Cancel; restart from scratch with a fresh root execution             |
-| `previewWorkflowRunResume`, `resumeWorkflowRunFromFailure`                                 | Inspect and perform a resume, see [Resuming](#resuming-a-failed-run) |
-| `completeWorkflowNode`                                                                     | Manually complete an interactive node                                |
-| `diagnoseWorkflowNodeFailure`                                                              | On-demand AI diagnosis of a failed node                              |
-| `getWorkflowRun`, `listWorkflowRuns`, `listWorkflowRunsByWorkflow`, `listWorkflowNodeRuns` | Read runs, project-scoped summaries and node history                 |
-| `renameWorkflowRun`, `deleteWorkflowRun`                                                   | Rename; delete a non-active run                                      |
+| Operation                                                                                  | Effect                                                                              |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `createWorkflowRun`                                                                        | Validate and persist a `Pending` run                                                |
+| `startWorkflowRun`                                                                         | Validate executability and dependencies, then begin scheduling                      |
+| `updateWorkflowRunInput`                                                                   | Fill Start inputs before the run starts                                             |
+| `cancelWorkflowRun`, `restartWorkflowRun`                                                  | Cancel; restart from scratch with a fresh root execution                            |
+| `previewWorkflowRunResume`, `resumeWorkflowRunFromFailure`                                 | Inspect and perform a resume, see [Resuming](#resuming-a-failed-run)                |
+| `completeWorkflowNode`                                                                     | Manually complete an interactive node                                               |
+| `diagnoseWorkflowNodeFailure`                                                              | On-demand AI diagnosis of a failed node                                             |
+| `getWorkflowDebugContext` (`workflowRun.debugContext`)                                     | Read the selected target, effective graph and base revision for editing and preview |
+| `getWorkflowRun`, `listWorkflowRuns`, `listWorkflowRunsByWorkflow`, `listWorkflowNodeRuns` | Read runs, project-scoped summaries and node history                                |
+| `renameWorkflowRun`, `deleteWorkflowRun`                                                   | Rename; delete a non-active run                                                     |
 
 ### Creation
 
@@ -319,6 +320,10 @@ its payload. Resume offers three rollback modes; before rolling back, the Worksp
 A node replaced by automatic retries rolls back as one unit with every attempt of its retry chain
 (`payload.retry_chain`). On-demand AI diagnosis writes `payload.ai_diagnosis`, labelled as a guess and
 never read by scheduling, resume, rollback or snapshot switching.
+
+## Editing and resuming from a selected execution
+
+Select an execution or an undispatched position in the Theater inspector and choose **Edit and resume from here**. Edit the effective configuration, choose **Preview changes**, and review what will be kept, stopped, invalidated and scheduled. Choose **Confirm and resume** to apply the edit. The receipt stays visible until you close the editor. If the reply is lost, retry in the same editor to reuse the original request ID, or check the run’s debug history. If the selection changes before confirmation, close the editor, select a position and preview again. If the server rejects a stale preview, the editor reloads the current configuration for a fresh preview.
 
 ## Querying run-local debug history
 

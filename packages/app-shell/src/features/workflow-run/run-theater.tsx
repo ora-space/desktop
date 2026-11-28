@@ -179,7 +179,7 @@ export function RunTheater({
   const primaryLoopRound =
     primaryLoopId === null
       ? undefined
-      : selectedLoopRound(run.rounds ?? [], primaryLoopId, loopRoundSelection);
+      : selectedLoopRound(run, primaryLoopId, loopRoundSelection);
   /** Entering a container always returns to round one; member focus preserves its scope. */
   function focusPathNode(nodeId: string) {
     if (nodeById.get(nodeId)?.data.kind === "loop") {
@@ -923,11 +923,7 @@ export function RunTheater({
                 }
                 selectedLoopRoundId={
                   primaryNode?.data.kind === "loop"
-                    ? selectedLoopRound(
-                        run.rounds ?? [],
-                        primaryNode.id,
-                        loopRoundSelection,
-                      )?.id
+                    ? primaryLoopRound?.id
                     : undefined
                 }
                 onSelectedLoopRoundChange={

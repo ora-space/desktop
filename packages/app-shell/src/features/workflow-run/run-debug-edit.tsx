@@ -28,23 +28,6 @@ import {
 } from "../workflow-editor/run-node-config-form";
 import { DebugImpact, DebugOperation } from "./run-debug-history";
 
-/** Opens a fresh editing session only for the execution position selected by the inspector. */
-export function RunDebugEdit({
-  target,
-}: {
-  target: GetWorkflowDebugContextRequest;
-}) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  return open ? (
-    <Editor target={target} onClose={() => setOpen(false)} />
-  ) : (
-    <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-      {t("workflowRun.debug.edit")}
-    </Button>
-  );
-}
-
 function formData(context: GetWorkflowDebugContextResponse) {
   const { nodes, edges, globalVariables } = parseWorkflowGraph(context.graph);
   const node = nodes.find(
@@ -93,10 +76,12 @@ function formData(context: GetWorkflowDebugContextResponse) {
   return { effective, variables, memberOutputs };
 }
 
-function Editor({
+export function RunDebugEdit({
+  selectionChanged,
   target,
   onClose,
 }: {
+  selectionChanged: boolean;
   target: GetWorkflowDebugContextRequest;
   onClose: () => void;
 }) {
@@ -113,6 +98,10 @@ function Editor({
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
+  const [needsReselection, setNeedsReselection] = useState(false);
+  if (selectionChanged && !needsReselection) setNeedsReselection(true);
+  const [confirmationSent, setConfirmationSent] = useState(false);
+  const reselect = needsReselection && !confirmationSent;
   const context = useQuery({
     queryKey: ["workflowRun", "debugEditContext", target],
     queryFn: ({ signal }) =>
@@ -151,10 +140,11 @@ function Editor({
     }
   }
   async function confirm() {
-    if (!ticket || lock.current) return;
+    if (!ticket || reselect || lock.current) return;
     lock.current = true;
     setBusy(true);
     setError(undefined);
+    setConfirmationSent(true);
     try {
       setReceipt(
         await client.workflowRun.debugCommit({
@@ -168,6 +158,7 @@ function Editor({
         cause instanceof RemoteContractError &&
         cause.code.startsWith("workflow_debug_")
       ) {
+        setConfirmationSent(false);
         setTicket(undefined);
         setError(localizeContractError(cause, t));
         await context.refetch();
@@ -185,6 +176,8 @@ function Editor({
       {error && !operation && <p role="alert">{error}</p>}
       {operation ? (
         <DebugOperation operation={operation} />
+      ) : reselect ? (
+        <p role="status">{t("workflowRun.debug.reselect")}</p>
       ) : ticket ? (
         <>
           <DebugImpact preview={ticket.preview} />
@@ -227,9 +220,9 @@ function Editor({
       ) : (
         <p role="alert">{t("workflowRun.debug.unrecorded")}</p>
       )}
-      {(ticket || context.error || !input) && (
+      {(reselect || ticket || context.error || !input) && (
         <Button variant="outline" disabled={busy} onClick={onClose}>
-          {t("common.close")}
+          {t("workflowRun.debug.close")}
         </Button>
       )}
     </div>

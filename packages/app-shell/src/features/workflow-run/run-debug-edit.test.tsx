@@ -1,10 +1,17 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { createChatStore } from "@ora/chat";
-import type {
-  GetWorkflowDebugContextRequest,
-  WorkflowDebugTarget,
+import {
+  RemoteContractError,
+  type GetWorkflowDebugContextRequest,
+  type WorkflowDebugTarget,
 } from "@ora/contracts";
 import { appI18n } from "../../i18n/i18n-instance";
 import {
@@ -47,83 +54,109 @@ const logical = {
   pendingTarget: { rootScopeId: "root", scopeId: "root", nodeId: "loop" },
 };
 
-it.each([physical, logical])(
-  "previews only on submit and retries the same confirmation from %j",
-  async (selection: GetWorkflowDebugContextRequest) => {
-    const user = userEvent.setup();
-    const target: WorkflowDebugTarget = {
-      nodeId: "loop",
-      scopeId: "root",
-      round: null,
-      index: null,
-      containerNodeRunId: null,
-      ...("nodeRunId" in selection
-        ? { nodeRunId: selection.nodeRunId }
-        : { rootScopeId: "root" }),
-    };
-    const context = vi
-      .fn<OperationHandler<"getWorkflowDebugContext">>()
-      .mockResolvedValue({ baseRevision: 5, target, graph });
-    const preview = vi
-      .fn<OperationHandler<"previewWorkflowDebug">>()
-      .mockResolvedValue({
-        previewId: "p",
-        baseRevision: 5,
-        target,
-        keep: [],
-        stop: [],
-        invalidate: ["old"],
-        schedule: ["loop"],
-        predictedBranch: null,
-        workspace: "keep",
-        externalActionsMayRepeat: true,
-      });
-    const commit = vi
-      .fn<OperationHandler<"commitWorkflowDebug">>()
-      .mockRejectedValueOnce(new Error("reply lost"))
-      .mockImplementation(async ({ requestId }) => ({
-        operationId: "op",
-        requestId,
-        baseRevision: 5,
-        state: "applied",
-        revision: 6,
-      }));
-    const client = createTestClient({
-      getWorkflowDebugContext: context,
-      previewWorkflowDebug: preview,
-      commitWorkflowDebug: commit,
-      getWorkflowDebugHistory: async () => ({ entries: [] }),
+function setup(selection: GetWorkflowDebugContextRequest) {
+  const user = userEvent.setup();
+  const target: WorkflowDebugTarget = {
+    nodeId: "loop",
+    scopeId: "root",
+    round: null,
+    index: null,
+    containerNodeRunId: null,
+    ...("nodeRunId" in selection
+      ? { nodeRunId: selection.nodeRunId }
+      : { rootScopeId: "root" }),
+  };
+  const context = vi
+    .fn<OperationHandler<"getWorkflowDebugContext">>()
+    .mockResolvedValue({ baseRevision: 5, target, graph });
+  const preview = vi
+    .fn<OperationHandler<"previewWorkflowDebug">>()
+    .mockResolvedValue({
+      previewId: "p",
+      baseRevision: 5,
+      target,
+      keep: [],
+      stop: [],
+      invalidate: ["old"],
+      schedule: ["loop"],
+      predictedBranch: null,
+      workspace: "keep",
+      externalActionsMayRepeat: true,
     });
-    const wrapper = createHookWrapper(
-      client,
-      createTestQueryClient(),
-      createChatStore(client.session),
+  const commit = vi
+    .fn<OperationHandler<"commitWorkflowDebug">>()
+    .mockRejectedValueOnce(new Error("reply lost"))
+    .mockImplementation(async ({ requestId }) => ({
+      operationId: "op",
+      requestId,
+      baseRevision: 5,
+      state: "applied",
+      revision: 6,
+    }));
+  const history = vi
+    .fn<OperationHandler<"getWorkflowDebugHistory">>()
+    .mockResolvedValue({ entries: [] });
+  const client = createTestClient({
+    getWorkflowDebugContext: context,
+    previewWorkflowDebug: preview,
+    commitWorkflowDebug: commit,
+    getWorkflowDebugHistory: history,
+  });
+  const wrapper = createHookWrapper(
+    client,
+    createTestQueryClient(),
+    createChatStore(client.session),
+  );
+  const inspector = (selection: GetWorkflowDebugContextRequest) => (
+    <RunActInspector
+      runId={selection.runId}
+      runStatus="running"
+      nodeId="loop"
+      data={{ kind: "loop", title: "Loop", description: "" }}
+      state={
+        "nodeRunId" in selection
+          ? { status: "succeeded", nodeRunId: selection.nodeRunId }
+          : { status: "inactive" }
+      }
+      pendingPosition={
+        "pendingTarget" in selection ? selection.pendingTarget : undefined
+      }
+      selectedRound={null}
+      onRoundChange={vi.fn()}
+      artifacts={[]}
+      revealedArtifactId={null}
+    />
+  );
+  const view = render(inspector(selection), { wrapper });
+  const open = () =>
+    user.click(
+      screen.getByRole("button", { name: "Edit and resume from here" }),
     );
-    render(
-      <RunActInspector
-        runId={selection.runId}
-        runStatus="running"
-        nodeId="loop"
-        data={{ kind: "loop", title: "Loop", description: "" }}
-        state={
-          "nodeRunId" in selection
-            ? { status: "succeeded", nodeRunId: selection.nodeRunId }
-            : { status: "inactive" }
-        }
-        pendingPosition={
-          "pendingTarget" in selection ? selection.pendingTarget : undefined
-        }
-        selectedRound={null}
-        onRoundChange={vi.fn()}
-        artifacts={[]}
-        revealedArtifactId={null}
-      />,
-      { wrapper },
-    );
-    const open = () =>
-      user.click(
-        screen.getByRole("button", { name: "Edit and resume from here" }),
-      );
+  async function previewEdit() {
+    await open();
+    fireEvent.change(await screen.findByRole("spinbutton"), {
+      target: { value: "9" },
+    });
+    await user.click(screen.getByRole("button", { name: "Preview changes" }));
+    return screen.findByRole("button", { name: "Confirm and resume" });
+  }
+  return {
+    user,
+    history,
+    context,
+    preview,
+    commit,
+    open,
+    previewEdit,
+    select: (next: GetWorkflowDebugContextRequest) =>
+      view.rerender(inspector(next)),
+  };
+}
+
+it.each([physical, logical])(
+  "keeps the retry and receipt across refreshed attempts for %j",
+  async (selection: GetWorkflowDebugContextRequest) => {
+    const { user, context, preview, commit, open, select } = setup(selection);
     await open();
     fireEvent.change(await screen.findByRole("spinbutton"), {
       target: { value: "8" },
@@ -149,12 +182,119 @@ it.each([physical, logical])(
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /Retry this request/,
     );
-    await user.click(confirm);
+    select({ runId: "F", nodeRunId: "new-attempt" });
+    await user.click(
+      screen.getByRole("button", { name: "Confirm and resume" }),
+    );
     await waitFor(() => expect(commit).toHaveBeenCalledTimes(2));
     expect(commit.mock.calls.map(([request]) => request)).toEqual([
       { runId: "F", previewId: "p", requestId: expect.any(String) },
       commit.mock.calls[0]![0],
     ]);
     expect(await screen.findByText(/revision 6/i)).toBeVisible();
+    select({ runId: "F", nodeRunId: "another-attempt" });
+    expect(screen.getByText(/revision 6/i)).toBeVisible();
   },
 );
+
+it("requires a new preview after leaving an unconfirmed target", async () => {
+  const { user, previewEdit, select, commit, context, open } = setup(physical);
+  await previewEdit();
+  const next = { runId: "F", nodeRunId: "other" };
+  select(next);
+  expect(await screen.findByText(/selected execution changed/i)).toBeVisible();
+  select(physical);
+  expect(
+    screen.queryByRole("button", { name: "Confirm and resume" }),
+  ).toBeNull();
+  expect(commit).not.toHaveBeenCalled();
+  select(next);
+  await user.click(screen.getByRole("button", { name: "Close editor" }));
+  await open();
+  await screen.findByRole("spinbutton");
+  expect(context.mock.calls.at(-1)?.[0]).toEqual(next);
+});
+
+it.each([
+  ["workflow_debug_stale_preview", /preview is stale/i],
+  ["workflow_debug_request_conflict", /key already names another preview/i],
+] as const)(
+  "discards a rejected ticket and reloads context for %s",
+  async (code, message) => {
+    const { user, previewEdit, commit, context } = setup(physical);
+    const confirm = await previewEdit();
+    commit
+      .mockReset()
+      .mockRejectedValue(
+        new RemoteContractError({ code, params: {}, requestId: "reject" }, {}),
+      );
+    context.mockResolvedValue({
+      baseRevision: 6,
+      target: {
+        nodeRunId: "attempt",
+        nodeId: "loop",
+        scopeId: "root",
+        round: null,
+        index: null,
+        containerNodeRunId: null,
+      },
+      graph: graph.replace('"maxIterations":5', '"maxIterations":7'),
+    });
+    await user.click(confirm);
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(
+      screen.queryByRole("button", { name: "Confirm and resume" }),
+    ).toBeNull();
+    expect(await screen.findByRole("spinbutton")).toHaveValue(7);
+    expect(context.mock.calls.map(([req]) => req)).toEqual([
+      physical,
+      physical,
+    ]);
+  },
+);
+
+it("recovers a lost confirmation by request ID after first dispatch", async () => {
+  const { user, previewEdit, commit, preview, history, select } =
+    setup(logical);
+  const confirm = await previewEdit();
+  const acceptedPreview = await preview.mock.results[0]!.value;
+  let loseReply!: () => void;
+  commit.mockReset().mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        loseReply = () => reject(new Error("reply lost"));
+      }),
+  );
+  history.mockImplementation(async () => {
+    const operation = {
+      baseRevision: 5,
+      revision: 6,
+      requestId: commit.mock.calls[0]![0].requestId,
+      operationId: "matching",
+      state: "applied" as const,
+    };
+    const entry = {
+      firstNodeRunId: "first",
+      priorError: null,
+      priorRunStatus: "running" as const,
+      operation,
+      preview: acceptedPreview,
+      patch: [],
+    };
+    return {
+      entries: [
+        {
+          ...entry,
+          operation: { ...operation, requestId: "different", revision: 4 },
+        },
+        entry,
+      ],
+    };
+  });
+  await user.click(confirm);
+  select({ runId: "F", nodeRunId: "first" });
+  await act(async () => loseReply());
+  expect(await screen.findByText(/revision 6/i)).toBeVisible();
+  expect(screen.queryByText(/retry this request/i)).toBeNull();
+  expect(commit).toHaveBeenCalledTimes(1);
+});

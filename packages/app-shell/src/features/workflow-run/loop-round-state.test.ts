@@ -5,6 +5,7 @@ import {
   projectLoopRoundNodeStates,
   selectedLoopRound,
 } from "./loop-round-state";
+import { pendingDebugPosition } from "./run-debug-position";
 import { resolveTheaterFocus } from "./run-focus";
 
 function createRun(): GraphWorkflowRun {
@@ -142,7 +143,12 @@ describe("Loop round state projection", () => {
       id: "new-round",
       parentLoopNodeRunId: "rebuilt-loop",
     };
+    expect(selectedLoopRound(run, "loop", {})).toBeUndefined();
     run.rounds!.push(rebuilt);
+    expect(selectedLoopRound(run, "loop", {})).toBe(rebuilt);
+    expect(selectedLoopRound(run, "loop", { loop: "round-1" })).toBe(
+      run.rounds![0],
+    );
     expect(run.rounds!.map((round) => loopRoundOutcome(run, round))).toEqual([
       "workflowRun.loopView.continue",
       "workflowRun.loopView.completed",
@@ -194,8 +200,50 @@ describe("Loop round state projection", () => {
       },
       reviewer: { status: "succeeded" },
     });
-    expect(
-      selectedLoopRound(run.rounds ?? [], "loop", { loop: "round-1" })?.id,
-    ).toBe("round-1");
+    expect(selectedLoopRound(run, "loop", { loop: "round-1" })?.id).toBe(
+      "round-1",
+    );
+  });
+});
+
+describe("undispatched debug positions", () => {
+  it("selects a root node, a zero-based foreach item, and a while round by their durable coordinates", () => {
+    const run = createRun();
+    run.rootScopeId = "root";
+    const [loop, writer] = run.definitionSnapshot.nodes;
+    expect(pendingDebugPosition(run, loop, undefined, null)).toEqual({
+      rootScopeId: "root",
+      scopeId: "root",
+      nodeId: "loop",
+    });
+    expect(pendingDebugPosition(run, writer, run.rounds![1], null)).toEqual({
+      rootScopeId: "root",
+      scopeId: "round-2",
+      nodeId: "writer",
+      containerNodeRunId: "loop-run",
+    });
+    expect(pendingDebugPosition(run, writer, undefined, null)).toBeUndefined();
+    const iteration = {
+      ...loop!,
+      id: "foreach",
+      data: { ...loop!.data, kind: "iteration" as const },
+    };
+    run.definitionSnapshot.nodes.push(iteration);
+    run.nodeStates.foreach = {
+      status: "running",
+      nodeRunId: "foreach-attempt",
+    };
+    const member = {
+      ...writer!,
+      data: { ...writer!.data, containerId: iteration.id },
+    };
+    expect(pendingDebugPosition(run, member, undefined, 0)).toEqual({
+      rootScopeId: "root",
+      scopeId: "root",
+      nodeId: "writer",
+      containerNodeRunId: "foreach-attempt",
+      index: 0,
+    });
+    expect(pendingDebugPosition(run, member, undefined, null)).toBeUndefined();
   });
 });
