@@ -3728,6 +3728,135 @@ it("opens the README page when a marketplace card is clicked", async () => {
   ).toBeInTheDocument();
 });
 
+/** One third-party Weather listing whose origin the host computed against its binding. */
+function thirdPartyWeather(origin: AvailablePlugin["origin"]): AvailablePlugin {
+  return {
+    id: "marketplace.1a2b3c4d/weather",
+    name: "weather",
+    title: "Weather",
+    kind: "agent",
+    namespace: "marketplace.1a2b3c4d",
+    sourceUrl: "https://github.com/obsismc/marketplace",
+    origin,
+    version: "1.2.0",
+    description: "Weather plugin",
+    logo: null,
+    compatibility: "compatible",
+  };
+}
+
+/** The detail info row names the official marketplace without offering a URL to copy. */
+it("shows the official marketplace on an official plugin's detail page", async () => {
+  const user = userEvent.setup();
+  const { client } = clientWithWeather();
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+
+  expect(
+    await screen.findByText(/来源市场|Source marketplace/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/Ora 官方市场|Ora official marketplace/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", {
+      name: /复制来源市场地址|Copy source marketplace URL/,
+    }),
+  ).not.toBeInTheDocument();
+});
+
+/** A third-party detail shows the full canonical URL with its scheme and copies it verbatim. */
+it("shows and copies the full source URL on a third-party plugin's detail page", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  const copied = vi.spyOn(toast, "success").mockImplementation(() => "toast");
+  const state = createFixtureState();
+  state.installedPlugins = [];
+  state.availablePlugins.push(
+    thirdPartyWeather({
+      kind: "marketplace",
+      sourceUrl: "https://github.com/obsismc/marketplace",
+      label: "obsismc/marketplace",
+    }),
+  );
+  renderSettings(createTestClient(createFixtureHandlers(state)));
+
+  await user.click(await screen.findByText("Weather"));
+
+  expect(
+    await screen.findByText("https://github.com/obsismc/marketplace"),
+  ).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", {
+      name: /复制来源市场地址|Copy source marketplace URL/,
+    }),
+  );
+  await waitFor(() =>
+    expect(writeText).toHaveBeenCalledWith(
+      "https://github.com/obsismc/marketplace",
+    ),
+  );
+  expect(copied).toHaveBeenCalled();
+});
+
+/** A clipboard denial surfaces as an error toast instead of an unhandled rejection. */
+it("reports a failed source URL copy on the detail page", async () => {
+  const user = userEvent.setup();
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+  });
+  const failed = vi.spyOn(toast, "error").mockImplementation(() => "toast");
+  const state = createFixtureState();
+  state.installedPlugins = [];
+  state.availablePlugins.push(
+    thirdPartyWeather({
+      kind: "marketplace",
+      sourceUrl: "https://github.com/obsismc/marketplace",
+      label: "obsismc/marketplace",
+    }),
+  );
+  renderSettings(createTestClient(createFixtureHandlers(state)));
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(
+    await screen.findByRole("button", {
+      name: /复制来源市场地址|Copy source marketplace URL/,
+    }),
+  );
+
+  await waitFor(() => expect(failed).toHaveBeenCalled());
+});
+
+/** A listing whose source binding was lost hides the row instead of showing an empty URL. */
+it("hides the source marketplace row when the origin carries no URL", async () => {
+  const user = userEvent.setup();
+  const state = createFixtureState();
+  state.installedPlugins = [];
+  state.availablePlugins.push(
+    thirdPartyWeather({
+      kind: "marketplace",
+      sourceUrl: null,
+      label: "marketplace",
+    }),
+  );
+  renderSettings(createTestClient(createFixtureHandlers(state)));
+
+  await user.click(await screen.findByText("Weather"));
+
+  expect(
+    await screen.findByText(/该插件没有提供 README|does not ship a README/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText(/来源市场|Source marketplace/),
+  ).not.toBeInTheDocument();
+});
+
 /** An uninstalled listing keeps the marketplace install command available on its detail page. */
 it("installs an uninstalled plugin from its detail header", async () => {
   const user = userEvent.setup();
