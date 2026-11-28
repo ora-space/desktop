@@ -6,6 +6,7 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 mod boundaries;
+mod successive;
 mod withdrawals;
 
 /// LOOP_GRAPH with five rounds and an independent root agent `outside`.

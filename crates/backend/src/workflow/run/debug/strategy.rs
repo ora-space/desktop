@@ -250,19 +250,28 @@ pub(in crate::workflow::run) fn settle(
     }
     transaction.execute("UPDATE workflow_node_runs SET is_deleted=1,updated_at=?3 WHERE run_id=?1 AND is_deleted=0 AND id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now))?;
     transaction.execute("UPDATE workflow_execution_scopes SET status=?4,updated_at=?3 WHERE run_id=?1 AND status IN (?5,?6) AND parent_loop_node_run_id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now,WorkflowScopeStatus::Cancelled.database_value(),WorkflowScopeStatus::Pending.database_value(),WorkflowScopeStatus::Running.database_value()))?;
-    if is_foreach || retired.is_empty() {
+    // A foreach member's own replay withdraws (running) or parks (terminal) its writers.
+    if retired.is_empty() || (is_foreach && preview.target.index.is_some()) {
         return Ok(());
     }
     // Terminal-sourced edits have already reopened their run in this transaction. A run that
     // ended independently during quiescence keeps its terminal projection; the withdrawal waits
     // for the entry point that makes the run schedulable again (ordinary recovery or a debug
-    // edit reopening it). A round edit parked the withdrawal with its round reopen instead.
+    // edit reopening it). A round edit parked the withdrawal with its round reopen instead. A
+    // foreach entrance edit already withdrew in `foreach::restore` when the run is running, but
+    // on a terminal run it has no surviving owner to park on, so it parks on the run here.
     let (raw, running): (Option<String>, bool) = transaction.query_row(
         "SELECT payload, run_status=?2 FROM workflow_runs WHERE id=?1",
         (run_id, WorkflowRunStatus::Running.database_value()),
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    let Some(raw) = raw.filter(|_| running || preview.target.round.is_none()) else {
+    let Some(raw) = raw.filter(|_| {
+        if running {
+            !is_foreach
+        } else {
+            preview.target.round.is_none()
+        }
+    }) else {
         return Ok(());
     };
     let mut payload: WorkflowRunPayload = serde_json::from_str(&raw)?;

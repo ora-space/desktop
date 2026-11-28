@@ -183,10 +183,15 @@ fn parked_replays(
 
 impl WhileReplay {
     /// Whether the Loop still stands where this edit left it: the edited round is the owner's
-    /// scope at that index, and every later slot is attributed to this operation. The edit wrote
-    /// a history row for every slot after the edited round, and this build creates no slot
-    /// between apply and consumption, so a later slot without that row means another build
-    /// advanced the Loop. How far the Loop had advanced before the edit does not matter.
+    /// scope at that index, and every later slot either has this edit's history row or is still
+    /// archived, awaiting replay, by an earlier edit. The edit wrote a row for every later slot
+    /// except those (`restore_while_round` leaves an archived slot with its first owner), and this
+    /// build creates no slot between apply and consumption. A later slot with neither marker was
+    /// created or replayed by another build, so the Loop moved on without this reopen.
+    ///
+    /// "Earlier" compares operation ids: they are assigned at acceptance, and the fence admits
+    /// one stopping operation per run at a time, so ids order a run's operations exactly as
+    /// their revisions do. How far the Loop had advanced before the edit does not matter.
     fn is_current(&self, tx: &Transaction<'_>, owner: &str) -> Result<bool, DatabaseError> {
         Ok(tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM workflow_execution_scopes s
@@ -194,7 +199,9 @@ impl WhileReplay {
                    AND NOT EXISTS (SELECT 1 FROM workflow_execution_scopes later
                        WHERE later.parent_loop_node_run_id = ?1 AND later.round_index > ?3
                          AND NOT EXISTS (SELECT 1 FROM workflow_debug_round_history h
-                                         WHERE h.scope_id = later.id AND h.operation_id = ?4)))",
+                                         WHERE h.scope_id = later.id AND (h.operation_id = ?4
+                                           OR (h.operation_id < ?4 AND h.awaiting_replay = 1
+                                               AND later.status = 4)))))",
             params![owner, self.scope_id, self.round, self.operation_id],
             |row| row.get(0),
         )?)
