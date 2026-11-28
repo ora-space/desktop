@@ -117,6 +117,16 @@ export function decodeRemoteError(
   if (known.success) {
     return new RemoteContractError(known.data, value);
   }
+  // Newer servers can add debug detail variants. Keep their actionable fallback
+  // when this client understands the public error but cannot decode that detail.
+  const { code, params } = base.data;
+  if ((code === "workflow_debug_patch_invalid" || code === "workflow_debug_target_rejected") &&
+      params && typeof params === "object" && "detail" in params) {
+    const fallback = contractErrorSchema.safeParse({
+      ...base.data, params: { ...params, detail: undefined },
+    });
+    if (fallback.success) return new RemoteContractError(fallback.data, value);
+  }
   if (knownCodes.has(base.data.code)) {
     return new LocalTransportError(
       "malformed_response",

@@ -84,7 +84,7 @@ fn check_exit_rewind(outcome: WorkflowRunStatus) {
             let error = BackendError::from_debug_store(error);
             assert!(
                 matches!(error.public_error(), PublicError::WorkflowDebugTargetRejected(
-                WorkflowDebugTargetRejectedParams { reason }) if reason.contains(guidance)),
+                WorkflowDebugTargetRejectedParams { reason, .. }) if reason.contains(guidance)),
                 "{error:?}"
             );
         }

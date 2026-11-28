@@ -77,15 +77,6 @@ export const workflowNodeSignalChangedParamsSchema = z.object({
     actual: z.string().nullable()
 });
 
-export const workflowDebugPatchInvalidParamsSchema = z.object({
-    path: z.string(),
-    reason: z.string()
-});
-
-export const workflowDebugTargetRejectedParamsSchema = z.object({
-    reason: z.string()
-});
-
 export const openLocationTargetSchema = z.union([z.literal("explorer"), z.literal("terminal"), z.literal("vscode")]);
 
 export const pluginConfigurationFieldErrorSchema = z.object({
@@ -99,6 +90,82 @@ export const pluginConfigurationValidationParamsSchema = z.object({
 
 export const openLocationFailedParamsSchema = z.object({
     target: openLocationTargetSchema
+});
+
+export const workflowDebugReasonSchema = z.union([z.object({
+        "code": z.literal("input_not_recorded")
+    }), z.object({
+        "code": z.literal("invalid_target")
+    }), z.object({
+        "code": z.literal("prerequisites_not_ready"),
+        node: z.string(),
+        scope: z.string(),
+        prerequisites: z.array(z.string())
+    }), z.object({
+        "code": z.literal("live_round_required"),
+        node: z.string()
+    }), z.object({
+        "code": z.literal("round_exited"),
+        node: z.string(),
+        round: z.number()
+    }), z.object({
+        "code": z.literal("position_field_required"),
+        field: z.string(),
+        node: z.string()
+    }), z.object({
+        "code": z.literal("container_input_missing"),
+        node: z.string()
+    }), z.object({
+        "code": z.literal("item_out_of_range"),
+        node: z.string(),
+        index: z.number()
+    }), z.object({
+        "code": z.literal("before_baseline"),
+        attempt: z.string(),
+        revision: z.number(),
+        baseline: z.number()
+    }), z.object({
+        "code": z.literal("loop_exit_cleanup_pending")
+    }), z.object({
+        "code": z.literal("loop_exit_recovery_required")
+    }), z.object({
+        "code": z.literal("variable_unavailable"),
+        variable: z.string()
+    }), z.object({
+        "code": z.literal("invalid_variable_path"),
+        variable: z.string()
+    }), z.object({
+        "code": z.literal("comparison_type_mismatch"),
+        variable: z.string(),
+        operator: z.string()
+    }), z.object({
+        "code": z.literal("expected_text")
+    }), z.object({
+        "code": z.literal("expected_selector")
+    }), z.object({
+        "code": z.literal("expected_integer")
+    }), z.object({
+        "code": z.literal("expected_object")
+    }), z.object({
+        "code": z.literal("field_not_editable")
+    }), z.object({
+        "code": z.literal("field_missing")
+    }), z.object({
+        "code": z.literal("empty_patch")
+    }), z.object({
+        "code": z.literal("root_array_required")
+    }), z.object({
+        "code": z.literal("expected_array"),
+        variable: z.string()
+    }), z.object({
+        "code": z.literal("array_exceeds_limit"),
+        variable: z.string(),
+        limit: z.number()
+    })]);
+
+export const workflowDebugTargetRejectedParamsSchema = z.object({
+    detail: workflowDebugReasonSchema.optional(),
+    reason: z.string()
 });
 
 export const workflowNodeCompletionBlockerKindSchema = z.union([z.literal("turn_stopped"), z.literal("turn_truncated"), z.literal("turn_refused"), z.literal("turn_unknown"), z.literal("turn_unconfirmed"), z.literal("agent_signal_pending"), z.literal("agent_confirmation_pending"), z.literal("structured_invalid"), z.literal("output_missing"), z.literal("file_missing"), z.literal("file_unchanged")]);
@@ -127,6 +194,12 @@ export const workflowNodeTurnChangedParamsSchema = z.object({
     nodeId: z.string(),
     expected: workflowNodeTurnKeySchema.nullable(),
     actual: workflowNodeTurnKeySchema.nullable()
+});
+
+export const workflowDebugPatchInvalidParamsSchema = z.object({
+    detail: workflowDebugReasonSchema.optional(),
+    path: z.string(),
+    reason: z.string()
 });
 
 export const publicErrorSchema = z.union([z.object({

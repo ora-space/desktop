@@ -1,7 +1,16 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { createChatStore } from "@ora/chat";
+import { decodeRemoteError } from "@ora/contracts";
+import refusals from "./fixtures/debug-refusals.json";
+import { RunDebugEdit } from "./run-debug-edit";
 import type {
   GetWorkflowDebugContextRequest,
   WorkflowDebugTarget,
@@ -156,5 +165,65 @@ it.each([physical, logical])(
       commit.mock.calls[0]![0],
     ]);
     expect(await screen.findByText(/revision 6/i)).toBeVisible();
+  },
+);
+
+// Rust verifies these envelopes against SQLite-backed coordinator.preview calls.
+it.each([
+  [0, "作用域 root:run-1 中的节点 out 尚不能首次派发。请检查其前置节点（x）。"],
+  [1, "请确认变量 absent.value 已声明，且在所选位置有记录值。"],
+  [2, "请选择本次运行的当前尝试或可到达的位置。"],
+  [3, "请输入文本。"],
+] as const)(
+  "renders refusal %i again when the open editor changes language",
+  async (index, chinese) => {
+    const response = refusals[index]!;
+    const user = userEvent.setup();
+    const preview = vi
+      .fn<OperationHandler<"previewWorkflowDebug">>()
+      .mockRejectedValue(decodeRemoteError(response));
+    const client = createTestClient({
+      getWorkflowDebugContext: async () => ({
+        graph,
+        baseRevision: 0,
+        target: {
+          nodeRunId: physical.nodeRunId,
+          nodeId: "loop",
+          scopeId: "root",
+          round: null,
+          index: null,
+          containerNodeRunId: null,
+        },
+      }),
+      getWorkflowDebugHistory: async () => ({ entries: [] }),
+      previewWorkflowDebug: preview,
+    });
+    const wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    render(<RunDebugEdit target={physical} />, { wrapper });
+    await user.click(
+      screen.getByRole("button", { name: "Edit and resume from here" }),
+    );
+    fireEvent.change(await screen.findByRole("spinbutton"), {
+      target: { value: "8" },
+    });
+    await user.click(screen.getByRole("button", { name: "Preview changes" }));
+    const alert = await screen.findByRole("alert");
+    const path = response.params.path;
+    expect(alert).toHaveTextContent(
+      path
+        ? `This edit was rejected at ${path}: ${response.params.reason}`
+        : `The selected execution cannot be debugged: ${response.params.reason}`,
+    );
+    await act(() => appI18n.changeLanguage("zh-CN").then(() => undefined));
+    expect(alert).toHaveTextContent(
+      path
+        ? `这处修改未被接受（${path}）：${chinese}`
+        : `无法调试选中的执行：${chinese}`,
+    );
+    expect(preview).toHaveBeenCalledTimes(1);
   },
 );

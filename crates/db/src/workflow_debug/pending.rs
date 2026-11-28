@@ -20,7 +20,8 @@ pub(super) fn resolve(
     run: &str,
     pos: &PendingWorkflowDebugTarget,
 ) -> Result<Evidence, DatabaseError> {
-    let missing = |reason: &str| DebugRejection::MissingFact(reason.to_owned());
+    use WorkflowDebugReason as Reason;
+    let missing = DebugRejection::MissingFact;
     let (snapshot,raw,payload)=db.query_row(
         "SELECT r.snapshot_id,s.graph,r.payload FROM workflow_runs r JOIN workflow_snapshots s ON s.id=r.snapshot_id
          JOIN workflow_run_root_scopes root ON root.run_id=r.id WHERE r.id=?1 AND root.scope_id=?2",
@@ -71,13 +72,17 @@ pub(super) fn resolve(
             "SELECT n.id,s.round_index,s.state FROM workflow_execution_scopes s JOIN workflow_node_runs n ON n.id=s.parent_loop_node_run_id
              WHERE s.run_id=?1 AND s.id=?2 AND s.status=1 AND n.scope_id=?3 AND n.node_id=?4 AND n.is_deleted=0 AND n.status=1",
             params![run,pos.scope_id,pos.root_scope_id,owner],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u32>(1)?,r.get::<_,String>(2)?)))
-            .optional()?.ok_or_else(||missing("scopeId must identify a live round of the selected Loop"))?;
+            .optional()?.ok_or_else(||missing(Reason::LiveRoundRequired { node: owner.into() }))?;
         if pos.index.is_some() || pos.container_node_run_id.as_ref().is_some_and(|v| v != &id) {
             return Err(DebugRejection::InvalidTarget.into());
         }
         let state: LoopRoundExecutionState = serde_json::from_str(&state)?;
         if state.exit.is_some() {
-            return Err(missing("round has already exited").into());
+            return Err(missing(Reason::RoundExited {
+                node: owner.into(),
+                round: number,
+            })
+            .into());
         }
         let (_, body) = graph
             .loop_body(owner)
@@ -88,13 +93,18 @@ pub(super) fn resolve(
         round = Some(number);
         (state.variable_pool, ready)
     } else if let Some(owner) = graph.region_owner(&pos.node_id) {
-        let id = pos
-            .container_node_run_id
-            .as_ref()
-            .ok_or_else(|| missing("containerNodeRunId is required for a foreach member"))?;
-        let index = pos
-            .index
-            .ok_or_else(|| missing("index is required for a foreach member"))?;
+        let id = pos.container_node_run_id.as_ref().ok_or_else(|| {
+            missing(Reason::PositionFieldRequired {
+                field: "containerNodeRunId".into(),
+                node: pos.node_id.clone(),
+            })
+        })?;
+        let index = pos.index.ok_or_else(|| {
+            missing(Reason::PositionFieldRequired {
+                field: "index".into(),
+                node: pos.node_id.clone(),
+            })
+        })?;
         if pos.scope_id != pos.root_scope_id
             || !scoped.iter().any(|r| {
                 r.id.as_ref() == id
@@ -118,7 +128,7 @@ pub(super) fn resolve(
             .optional()?
             .flatten();
         let frozen: WorkflowRunPayload = serde_json::from_str(
-            &frozen.ok_or_else(|| missing("foreach container entrance has no frozen input"))?,
+            &frozen.ok_or_else(|| missing(Reason::ContainerInputMissing { node: owner.into() }))?,
         )?;
         let source = frozen
             .variable_pool
@@ -139,7 +149,11 @@ pub(super) fn resolve(
                 .iteration_ledger(owner)
                 .is_some_and(|l| l.contains_key(&index))
         {
-            return Err(missing("index must identify the bound, unsettled foreach item").into());
+            return Err(missing(Reason::ItemOutOfRange {
+                node: owner.into(),
+                index,
+            })
+            .into());
         }
         owner_id = Some(id.clone());
         let decisions = payload.iteration_round_decisions(index);
@@ -165,23 +179,22 @@ pub(super) fn resolve(
         (payload.variable_pool.clone(), ready)
     };
     if ready != ProjectedNodeState::Ready {
-        return Err(missing(&format!(
-            "{} in {} is not ready for first dispatch; prerequisites: {}",
-            pos.node_id,
-            pos.scope_id,
-            graph
-                .execution_scopes()
-                .into_iter()
-                .find(|g| g.node(&pos.node_id).is_some())
-                .map(|g| g
-                    .predecessors(&pos.node_id)
+        let prerequisites = graph
+            .execution_scopes()
+            .into_iter()
+            .find(|g| g.node(&pos.node_id).is_some())
+            .map(|g| {
+                g.predecessors(&pos.node_id)
                     .into_iter()
-                    .map(|n| &n.id)
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", "))
-                .unwrap_or_default()
-        ))
+                    .map(|n| n.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Err(missing(Reason::PrerequisitesNotReady {
+            node: pos.node_id.clone(),
+            scope: pos.scope_id.clone(),
+            prerequisites,
+        })
         .into());
     }
     // Only committed producers and the already-bound container entrance can supply inputs.

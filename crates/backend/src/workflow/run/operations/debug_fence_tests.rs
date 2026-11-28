@@ -212,8 +212,8 @@ async fn an_unknown_debug_attempt_is_rejected_with_its_reason() {
         (
             ErrorClassification::InvalidRequest,
             PublicError::WorkflowDebugTargetRejected(WorkflowDebugTargetRejectedParams {
-                reason: "the target is not a selectable attempt or position of this run"
-                    .to_string(),
+                detail: Some(Box::new(ora_contracts::WorkflowDebugReason::InvalidTarget)),
+                reason: ora_contracts::WorkflowDebugReason::InvalidTarget.to_string(),
             }),
         )
     );

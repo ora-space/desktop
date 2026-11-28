@@ -63,19 +63,34 @@ pub enum DebugRejection {
     #[error("debug_operation_active")]
     OperationActive,
     #[error("missing_input_evidence: {0}")]
-    MissingFact(String),
-    #[error(
-        "LoopExit cleanup is still in progress. Wait for it to finish before previewing this edit."
-    )]
+    MissingFact(WorkflowDebugReason),
+    #[error("{}", WorkflowDebugReason::LoopExitCleanupPending)]
     LoopExitCleanupPending,
-    #[error(
-        "The Loop round ended without confirmation that its cancelled siblings stopped. Use ordinary failure recovery to resume the run."
-    )]
+    #[error("{}", WorkflowDebugReason::LoopExitRecoveryRequired)]
     LoopExitRecoveryRequired,
     #[error("invalid_target")]
     InvalidTarget,
     #[error("invalid_patch at {path}: {reason}")]
-    InvalidPatch { path: String, reason: String },
+    InvalidPatch {
+        path: String,
+        reason: DebugPatchReason,
+    },
+}
+
+/// Validation can also originate from the graph parser, which supplies its own diagnostic.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum DebugPatchReason {
+    #[error("{0}")]
+    Detail(WorkflowDebugReason),
+    #[error("{0}")]
+    Validation(String),
+}
+
+impl From<WorkflowDebugReason> for DebugPatchReason {
+    /// Carries the structured detail through validation to the public error boundary.
+    fn from(reason: WorkflowDebugReason) -> Self {
+        Self::Detail(reason)
+    }
 }
 
 /// The immutable attempt inputs and candidate graph supplied to the server's node strategy.

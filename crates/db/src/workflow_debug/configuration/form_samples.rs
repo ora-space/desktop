@@ -42,3 +42,49 @@ fn missing_form_fields_use_the_same_defaults_before_preview() {
         assert_eq!(data.pointer(path), Some(&patch["value"]));
     }
 }
+
+/// A bad replacement identifies the exact edited field before graph parsing.
+#[test]
+fn patch_shape_failures_keep_the_field_and_expected_type() {
+    for (kind, path, value, expected) in [
+        (
+            "agent",
+            "/agentConfig/prompt",
+            json!(false),
+            Reason::ExpectedText,
+        ),
+        (
+            "condition",
+            "/cases/0/conditions/0/variableSelector",
+            json!("start.text"),
+            Reason::ExpectedSelector,
+        ),
+        (
+            "loop",
+            "/loopConfig/maxIterations",
+            json!(2.5),
+            Reason::ExpectedInteger,
+        ),
+        (
+            "loop",
+            "/loopConfig/maxIterations",
+            json!(4294967296_u64),
+            Reason::ExpectedInteger,
+        ),
+        (
+            "loop",
+            "/loopConfig/until",
+            json!("always"),
+            Reason::ExpectedObject,
+        ),
+    ] {
+        let patch = WorkflowDebugPatch::Replace {
+            path: path.into(),
+            value,
+        };
+        pretty_assertions::assert_eq!(
+            replace(&mut json!({}), kind, &[patch]),
+            Err(invalid(path, expected))
+        );
+    }
+}

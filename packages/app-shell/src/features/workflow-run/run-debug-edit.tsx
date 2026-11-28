@@ -110,7 +110,7 @@ function Editor({
     requestId: string;
   }>();
   const [receipt, setReceipt] = useState<WorkflowDebugOperation>();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<{ cause: unknown } | "uncertain">();
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const context = useQuery({
@@ -139,7 +139,7 @@ function Editor({
       const preview = await client.workflowRun.debugPreview(edit);
       setTicket({ preview, requestId: crypto.randomUUID() });
     } catch (cause) {
-      setError(localizeContractError(cause, t));
+      setError({ cause });
       if (
         cause instanceof RemoteContractError &&
         cause.code === "workflow_debug_stale_preview"
@@ -169,10 +169,10 @@ function Editor({
         cause.code.startsWith("workflow_debug_")
       ) {
         setTicket(undefined);
-        setError(localizeContractError(cause, t));
+        setError({ cause });
         await context.refetch();
       } else {
-        setError(t("workflowRun.debug.uncertain"));
+        setError("uncertain");
       }
     } finally {
       invalidateWorkflowRun(cache, target.runId);
@@ -182,7 +182,13 @@ function Editor({
   }
   return (
     <div className="space-y-2">
-      {error && !operation && <p role="alert">{error}</p>}
+      {error && !operation && (
+        <p role="alert">
+          {error === "uncertain"
+            ? t("workflowRun.debug.uncertain")
+            : localizeContractError(error.cause, t)}
+        </p>
+      )}
       {operation ? (
         <DebugOperation operation={operation} />
       ) : ticket ? (
