@@ -121,9 +121,9 @@ pub use workspace_diff::{
     GitWorkspaceGitWriter, PushWorkspaceBranchHandler, PushWorkspaceGitRequest,
     ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope, ReadWorkspaceDiffSelection,
     StageWorkspaceChangesHandler, StageWorkspaceGitRequest, UnstageWorkspaceChangesHandler,
-    UnstageWorkspaceGitRequest, WorkspaceDiffReader, WorkspaceDiffReaderError,
-    WorkspaceDiffSnapshot, WorkspaceGitCommit, WorkspaceGitPush, WorkspaceGitStage,
-    WorkspaceGitUnstage, WorkspaceGitWriter, WorkspaceGitWriterError, WorkspaceStatusFile,
-    WorkspaceStatusSnapshot,
+    UnstageWorkspaceGitRequest, WorkspaceDiffContent, WorkspaceDiffReader,
+    WorkspaceDiffReaderError, WorkspaceDiffSnapshot, WorkspaceDiffStatus, WorkspaceGitCommit,
+    WorkspaceGitPush, WorkspaceGitStage, WorkspaceGitUnstage, WorkspaceGitWriter,
+    WorkspaceGitWriterError, WorkspaceStatusFile, WorkspaceStatusSnapshot,
 };
 pub use worktree::WorktreeRepository;

@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  RemoteContractError,
   type WorkspaceDiffScope,
   type WorkspaceDiffSelection,
-  RemoteContractError,
 } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
 import { diffKeys } from "../data/diff";
@@ -13,13 +13,13 @@ export function useWorkspaceDiff(
   workspaceId: string,
   scope: WorkspaceDiffScope,
   enabled = true,
-  selection?: WorkspaceDiffSelection,
+  selection: WorkspaceDiffSelection = { kind: "patch" },
   headCommitId?: string,
 ) {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   const queryKey =
-    selection === undefined
+    selection.kind === "patch"
       ? diffKeys.workspaceDiff(workspaceId, scope)
       : diffKeys.workspaceDiffSelection(
           workspaceId,
@@ -42,7 +42,7 @@ export function useWorkspaceDiff(
       client.workspace.getDiff({
         workspaceId,
         scope,
-        ...(selection === undefined ? {} : { selection }),
+        selection,
       }),
     enabled: enabled && workspaceId !== "",
   });

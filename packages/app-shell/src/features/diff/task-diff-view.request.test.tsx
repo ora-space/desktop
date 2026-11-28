@@ -51,6 +51,8 @@ function renderRequestedDiff(fileRequest?: {
   const clientHandlers: TestHandlers = {};
   const client = createTestClient(clientHandlers);
   clientHandlers.getWorkspaceDiff = async () => ({
+    kind: "patch",
+    contextLimited: false,
     baseCommitId: "base",
     headCommitId: "head",
     patch: MULTI_FILE_PATCH,
@@ -318,6 +320,8 @@ describe("TaskDiffView file requests", () => {
     const clientHandlers: TestHandlers = {};
     const client = createTestClient(clientHandlers);
     clientHandlers.getWorkspaceDiff = async () => ({
+      kind: "patch",
+      contextLimited: false,
       baseCommitId: "base",
       headCommitId: "head",
       patch,
@@ -377,6 +381,8 @@ describe("TaskDiffView file requests", () => {
     const clientHandlers: TestHandlers = {};
     const client = createTestClient(clientHandlers);
     clientHandlers.getWorkspaceDiff = async () => ({
+      kind: "patch",
+      contextLimited: false,
       baseCommitId: "base",
       headCommitId: "head",
       patch,
@@ -433,6 +439,8 @@ describe("TaskDiffView file requests", () => {
     const clientHandlers: TestHandlers = {};
     const client = createTestClient(clientHandlers);
     clientHandlers.getWorkspaceDiff = async () => ({
+      kind: "patch",
+      contextLimited: false,
       baseCommitId: "base",
       headCommitId: "head",
       patch,
@@ -499,6 +507,8 @@ describe("TaskDiffView file requests", () => {
     const clientHandlers: TestHandlers = {};
     const client = createTestClient(clientHandlers);
     clientHandlers.getWorkspaceDiff = async () => ({
+      kind: "patch",
+      contextLimited: false,
       baseCommitId: "base",
       headCommitId: "head",
       patch,
@@ -578,6 +588,8 @@ describe("TaskDiffView collapsed context", () => {
       "",
     ].join("\n");
     clientHandlers.getWorkspaceDiff = async () => ({
+      kind: "patch",
+      contextLimited: false,
       baseCommitId: "base",
       headCommitId: "head",
       patch: longContextPatch,

@@ -76,6 +76,8 @@ export function workspaceHandlers(state: WorkspaceMemoryState) {
     },
     listWorkspaces: async () => ({ workspaces: visibleWorkspaces(state) }),
     getWorkspaceDiff: async () => ({
+      kind: "patch" as const,
+      contextLimited: false,
       baseCommitId: "base",
       headCommitId: "head",
       patch: "",

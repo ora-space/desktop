@@ -300,7 +300,8 @@ export function TaskDiffView({
 
   // Let the toolbar paint before the first expensive parse, including when the
   // patch arrives asynchronously instead of being available at mount.
-  const patch = fileMode ? "" : (diffQuery.data?.patch ?? "");
+  const diff = diffQuery.data;
+  const patch = !fileMode && diff?.kind === "patch" ? diff.patch : "";
   const [largeParseReady, setLargeParseReady] = useState(false);
   const parseDeferred =
     patch.length > DEFER_PARSE_PATCH_CHARS && !largeParseReady;
@@ -640,7 +641,6 @@ export function TaskDiffView({
       await refreshWorkspaceReview(queryClient, workspaceId);
     },
   });
-  const diff = diffQuery.data;
   // The list probes the folder only when it is fetched, so a `.git` removed while this panel is
   // open first shows up as a refusal here. Re-probing lets the panel switch to its explanation
   // instead of offering a retry that can only fail again.
@@ -827,7 +827,7 @@ export function TaskDiffView({
           </Button>
         </div>
       )}
-      {!fileMode && diff?.contextLimited && (
+      {!fileMode && diff?.kind === "patch" && diff.contextLimited && (
         <div className="border-b px-3 py-2 text-xs text-muted-foreground">
           {t("diff.contextLimited")}
         </div>

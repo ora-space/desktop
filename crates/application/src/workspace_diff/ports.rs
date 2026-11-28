@@ -44,7 +44,20 @@ pub enum ReadWorkspaceDiffSelection {
 pub struct WorkspaceDiffFile {
     pub path: String,
     pub old_path: Option<String>,
-    pub status: String,
+    pub status: WorkspaceDiffStatus,
+}
+
+/// Classifies the Git change displayed for a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceDiffStatus {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    Copied,
+    TypeChanged,
+    Unmerged,
+    Unknown,
 }
 
 /// Carries the backend-owned worktree path and the comparison baseline, when one is recorded.
@@ -61,13 +74,26 @@ pub struct ReadWorkspaceDiffRequest {
     pub selection: ReadWorkspaceDiffSelection,
 }
 
-/// Returns the Git revisions and unified patch used by frontend review components.
+/// Returns the Git revision and requested content used by frontend review components.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceDiffSnapshot {
     pub head_commit_id: String,
-    pub patch: String,
-    pub context_limited: bool,
-    pub files: Option<Vec<WorkspaceDiffFile>>,
+    pub content: WorkspaceDiffContent,
+}
+
+/// Carries the result of one diff selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceDiffContent {
+    Patch {
+        patch: String,
+        context_limited: bool,
+    },
+    Files {
+        files: Vec<WorkspaceDiffFile>,
+    },
+    File {
+        patch: String,
+    },
 }
 
 /// Captures Git-backed diff failures converted into stable application errors by handlers.

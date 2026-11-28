@@ -6,8 +6,8 @@ import {
 } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
 import {
-  createChatStore,
   type ChatStore,
+  createChatStore,
   type SessionConversation,
 } from "@ora/chat";
 import type { Session } from "@ora/contracts";
@@ -184,7 +184,13 @@ describe("useWorkspaceDiffLiveSync", () => {
     const response = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const diff = { baseCommitId: "base", headCommitId: "head", patch: "old" };
+    const diff = {
+      kind: "patch" as const,
+      contextLimited: false,
+      baseCommitId: "base",
+      headCommitId: "head",
+      patch: "old",
+    };
     const status = { entries: [] };
     const getDiff = vi.fn(async () => {
       await response;
@@ -210,7 +216,11 @@ describe("useWorkspaceDiffLiveSync", () => {
         new QueryObserver(queryClient, {
           queryKey: diffKey,
           queryFn: () =>
-            client.workspace.getDiff({ workspaceId, scope: "branch" }),
+            client.workspace.getDiff({
+              workspaceId,
+              scope: "branch",
+              selection: { kind: "patch" },
+            }),
         }).subscribe(() => undefined),
       );
       stops.push(
@@ -235,7 +245,14 @@ describe("useWorkspaceDiffLiveSync", () => {
     );
     expect(queryClient.isFetching()).toBe(2);
     expect(getDiff.mock.calls).toEqual([
-      [{ workspaceId: SESSION.workspaceId, scope: "branch" }, undefined],
+      [
+        {
+          workspaceId: SESSION.workspaceId,
+          scope: "branch",
+          selection: { kind: "patch" },
+        },
+        undefined,
+      ],
     ]);
     expect(getStatus.mock.calls).toEqual([
       [{ workspaceId: SESSION.workspaceId }, undefined],

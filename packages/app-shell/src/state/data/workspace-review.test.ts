@@ -14,6 +14,8 @@ import { workspaceStatusKeys } from "./workspace-status";
 import { refreshWorkspaceReview } from "./workspace-review";
 
 const DIFF: GetWorkspaceDiffResponse = {
+  kind: "patch" as const,
+  contextLimited: false,
   baseCommitId: "base",
   headCommitId: "head",
   patch: "old",
@@ -60,7 +62,12 @@ describe("refreshWorkspaceReview", () => {
           unsubscribe.push(
             new QueryObserver(queryClient, {
               queryKey,
-              queryFn: () => client.workspace.getDiff({ workspaceId, scope }),
+              queryFn: () =>
+                client.workspace.getDiff({
+                  workspaceId,
+                  scope,
+                  selection: { kind: "patch" },
+                }),
             }).subscribe(() => undefined),
           );
         }
@@ -84,7 +91,10 @@ describe("refreshWorkspaceReview", () => {
         expect(getDiff).toHaveBeenCalledTimes(scopes.length),
       );
       expect(getDiff.mock.calls).toEqual(
-        scopes.map((scope) => [{ workspaceId: "A", scope }, undefined]),
+        scopes.map((scope) => [
+          { workspaceId: "A", scope, selection: { kind: "patch" } },
+          undefined,
+        ]),
       );
       expect(getStatus.mock.calls).toEqual([[{ workspaceId: "A" }, undefined]]);
       const failure = new Error("status unavailable");
@@ -99,10 +109,11 @@ describe("refreshWorkspaceReview", () => {
       diffResponse.resolve({ ...DIFF, patch: "new" });
       await refresh;
       expect(done).toHaveBeenCalledOnce();
-      for (const scope of scopes)
+      for (const scope of scopes) {
         expect(
           queryClient.getQueryData(diffKeys.workspaceDiff("A", scope)),
         ).toEqual({ ...DIFF, patch: "new" });
+      }
       expect(
         queryClient.getQueryState(workspaceStatusKeys.workspaceStatus("A"))
           ?.error,

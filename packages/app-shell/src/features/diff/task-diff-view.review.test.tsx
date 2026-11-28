@@ -17,6 +17,8 @@ import {
 import { TaskDiffView } from "./task-diff-view";
 
 const DIFF: GetWorkspaceDiffResponse = {
+  kind: "patch" as const,
+  contextLimited: false,
   baseCommitId: "base",
   headCommitId: "head",
   patch:

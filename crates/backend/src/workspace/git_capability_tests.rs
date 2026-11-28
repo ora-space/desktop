@@ -41,7 +41,7 @@ fn plain_folder_reports_not_git_and_refuses_git_operations_until_initialized() {
             .get_diff(GetWorkspaceDiffRequest {
                 workspace_id: workspace_id.clone(),
                 scope: WorkspaceDiffScope::Unstaged,
-                selection: None,
+                selection: ora_contracts::WorkspaceDiffSelection::Patch,
             })
             .map(drop),
         // `Branch` would otherwise fail on the missing baseline; the folder must explain first.
@@ -49,7 +49,7 @@ fn plain_folder_reports_not_git_and_refuses_git_operations_until_initialized() {
             .get_diff(GetWorkspaceDiffRequest {
                 workspace_id: workspace_id.clone(),
                 scope: WorkspaceDiffScope::Branch,
-                selection: None,
+                selection: ora_contracts::WorkspaceDiffSelection::Patch,
             })
             .map(drop),
         workspaces
@@ -185,10 +185,13 @@ fn folder_nested_in_a_checkout_reports_git_like_the_operations_behave() {
         .get_diff(GetWorkspaceDiffRequest {
             workspace_id: workspace.id,
             scope: WorkspaceDiffScope::Unstaged,
-            selection: None,
+            selection: ora_contracts::WorkspaceDiffSelection::Patch,
         })
         .expect("a nested folder diffs its enclosing checkout");
-    assert!(diff.patch.contains("docs/guide.md"));
+    let ora_contracts::WorkspaceDiffContent::Patch { patch, .. } = diff.content else {
+        panic!("expected aggregate patch");
+    };
+    assert!(patch.contains("docs/guide.md"));
 }
 
 /// Verifies a repository Git refuses for a reason other than "no repository here" (here a `.git`

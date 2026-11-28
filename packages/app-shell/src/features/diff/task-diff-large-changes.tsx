@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { WorkspaceDiffScope } from "@ora/contracts";
+import type { WorkspaceDiffScope, WorkspaceDiffStatus } from "@ora/contracts";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Button } from "@ora/ui";
 import { useTranslation } from "react-i18next";
@@ -20,6 +20,16 @@ import type { TaskDiffFileRequest, TaskDiffViewType } from "./task-diff-view";
 
 const FILE_ROW_HEIGHT = 32;
 const VIRTUALIZE_FILE_COUNT = 50;
+const STATUS_BADGE: Record<WorkspaceDiffStatus, string> = {
+  added: "A",
+  modified: "M",
+  deleted: "D",
+  renamed: "R",
+  copied: "C",
+  typeChanged: "T",
+  unmerged: "U",
+  unknown: "?",
+};
 
 interface TaskDiffLargeChangesProps {
   workspaceId: string;
@@ -43,7 +53,8 @@ export function TaskDiffLargeChanges({
   const overview = useWorkspaceDiff(workspaceId, scope, true, {
     kind: "files",
   });
-  const files = overview.data?.files;
+  const files =
+    overview.data?.kind === "files" ? overview.data.files : undefined;
   const [selection, setSelection] = useState<{
     path: string;
     requestId: number | undefined;
@@ -78,7 +89,10 @@ export function TaskDiffLargeChanges({
   const previewOutdated =
     preview.data !== undefined &&
     preview.data.headCommitId !== overview.data?.headCommitId;
-  const patch = previewOutdated ? undefined : preview.data?.patch;
+  const patch =
+    !previewOutdated && preview.data?.kind === "file"
+      ? preview.data.patch
+      : undefined;
   const activePath = activeFile?.path;
   const originalPath = activeFile?.oldPath;
   const parsed = useMemo(
@@ -167,7 +181,7 @@ export function TaskDiffLargeChanges({
     ? fileList.getVirtualItems()
     : files.map((_, index) => ({ index, start: index * FILE_ROW_HEIGHT }));
   const openFile =
-    onOpenFile === undefined || activeFile.status === "D"
+    onOpenFile === undefined || activeFile.status === "deleted"
       ? undefined
       : () => onOpenFile(activeFile.path);
   return (
@@ -221,7 +235,7 @@ export function TaskDiffLargeChanges({
                   }
                 >
                   <span className="shrink-0 text-muted-foreground">
-                    {file.status}
+                    {STATUS_BADGE[file.status]}
                   </span>
                   <span className="truncate">{file.path}</span>
                 </button>

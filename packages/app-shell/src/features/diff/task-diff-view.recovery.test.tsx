@@ -74,6 +74,8 @@ const tooLarge = () =>
   );
 
 const patch = {
+  kind: "patch" as const,
+  contextLimited: false,
   baseCommitId: null,
   headCommitId: "head",
   patch:
@@ -123,19 +125,25 @@ describe("Git diff recovery in the workspace review panel", () => {
     const getWorkspaceDiff = vi.fn<
       NonNullable<TestHandlers["getWorkspaceDiff"]>
     >(async ({ selection }) => {
-      if (selection === undefined) throw tooLarge();
+      if (selection.kind === "patch") throw tooLarge();
       if (selection.kind === "files") {
         return {
-          ...patch,
-          patch: "",
+          baseCommitId: patch.baseCommitId,
+          headCommitId: patch.headCommitId,
+          kind: "files",
           files: [
-            { path: "huge.txt", oldPath: null, status: "M" },
-            { path: "small.txt", oldPath: null, status: "A" },
+            { path: "huge.txt", oldPath: null, status: "modified" },
+            { path: "small.txt", oldPath: null, status: "added" },
           ],
         };
       }
       if (selection.path === "huge.txt") throw tooLarge();
-      return patch;
+      return {
+        kind: "file",
+        baseCommitId: patch.baseCommitId,
+        headCommitId: patch.headCommitId,
+        patch: patch.patch,
+      };
     });
     mountReview("large", getWorkspaceDiff, 1);
     const user = userEvent.setup();
@@ -145,7 +153,7 @@ describe("Git diff recovery in the workspace review panel", () => {
     });
     expect(
       getWorkspaceDiff.mock.calls.map(([request]) => request.selection),
-    ).toEqual([undefined]);
+    ).toEqual([{ kind: "patch" }]);
     expect(screen.queryByRole("group", { name: "变更文件导航" })).toBeNull();
     await user.click(viewByFile);
     expect(screen.getByRole("button", { name: "返回变更视图" })).toHaveFocus();
@@ -154,7 +162,7 @@ describe("Git diff recovery in the workspace review panel", () => {
     expect(
       getWorkspaceDiff.mock.calls.map(([request]) => request.selection),
     ).toEqual([
-      undefined,
+      { kind: "patch" },
       { kind: "files" },
       { kind: "file", path: "huge.txt", oldPath: null },
     ]);
@@ -171,16 +179,21 @@ describe("Git diff recovery in the workspace review panel", () => {
   it("refreshes the list when the file preview belongs to a different HEAD", async () => {
     let listHead = "old";
     mountReview("moved-head", async ({ selection }) => {
-      if (selection === undefined) throw tooLarge();
+      if (selection.kind === "patch") throw tooLarge();
       if (selection.kind === "files") {
         return {
-          ...patch,
+          baseCommitId: patch.baseCommitId,
           headCommitId: listHead,
-          patch: "",
-          files: [{ path: "small.txt", oldPath: null, status: "A" }],
+          kind: "files",
+          files: [{ path: "small.txt", oldPath: null, status: "added" }],
         };
       }
-      return patch;
+      return {
+        kind: "file",
+        baseCommitId: patch.baseCommitId,
+        headCommitId: patch.headCommitId,
+        patch: patch.patch,
+      };
     });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "变更" }));
