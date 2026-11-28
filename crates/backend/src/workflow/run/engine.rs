@@ -302,7 +302,17 @@ pub(crate) fn reconcile_running_workflow_runs(
             }
             Ok(None) => {}
         }
-        let exiting_loops = match super::recovery::pending_loop_exits(&repository, &node_runs) {
+        // Pending exits resume their cleanup, and a round reopened by an applied debug edit
+        // awaits its first dispatch: neither Loop row is generating work.
+        let exiting_loops = match super::recovery::pending_loop_exits(&repository, &node_runs)
+            .and_then(|mut ids| {
+                ids.extend(
+                    ora_db::workflow_debug::WorkflowDebugStore::new(pool.clone())
+                        .reopened_containers(run_id.as_ref())
+                        .map_err(ora_application::RepositoryError::new)?,
+                );
+                Ok(ids)
+            }) {
             Ok(ids) => ids,
             Err(error) => {
                 ora_error!(run_id = %run_id, error = %error, "failed to inspect pending loop exits");

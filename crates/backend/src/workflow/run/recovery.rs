@@ -30,6 +30,19 @@ use std::sync::Arc;
 /// `Running` runs are then reconciled: stalled ones resume scheduling, and invalid `Pending`
 /// nodes fail closed. The sweep is idempotent and best-effort so a storage failure cannot block
 /// startup.
+///
+/// A debug confirmation left `stopping` by the crash is finished after its run is swept: the
+/// sweep skips the attempts and containers that the confirmation fences, then the confirmation
+/// applies or records a failed stop (ADR "debug from a selected execution" D5.5). An applied
+/// confirmation reopens its round, item or terminal run without dispatching, so it must not be
+/// swept as interrupted work; reconcile then dispatches its unclaimed positions. A container it
+/// reopened stays exempt from the sweep only until something is dispatched in it again.
+///
+/// If out-of-scope work was interrupted too, the sweep fails the run as before
+/// (`interrupted_by_restart`); the confirmation then applies to the failed run, keeps its edit
+/// parked, and ordinary recovery performs it. If sweeping one run fails, its confirmation is
+/// deliberately left `stopping`, so the fence keeps holding and the next boot sweeps first again;
+/// until then that run does nothing in this process and can only be cancelled.
 pub(crate) fn run_workflow_run_boot_sweep(
     pool: &RepositoryPool,
     engine: &Arc<ConcreteWorkflowRunEngine>,
@@ -48,20 +61,34 @@ pub(crate) fn run_workflow_run_boot_sweep(
         let _gate = run_locks.acquire_exclusive(run_id.as_ref());
         let store = ora_db::workflow_debug::WorkflowDebugStore::new(pool.clone());
         let now = clock.now_timestamp_millis();
+        // Sweep while an accepted confirmation still fences its old attempts, and only then
+        // finish it. Its apply reopens the selected round or item (and a terminal run) without
+        // dispatching yet; sweeping afterwards would fail that reopened, never-dispatched work as
+        // interrupted and rewrite the run's outcome to `interrupted_by_restart`.
+        // A round or item reopened by an edit applied before this boot, and not dispatched
+        // since, is not interrupted work either.
         let protected = match store
-            .recover_stopping(run_id.as_ref(), now, |tx, preview| {
-                super::debug::strategy::settle(tx, run_id.as_ref(), now, preview)
-            })
-            .and_then(|()| store.protected_attempts(run_id.as_ref()))
-        {
+            .protected_attempts(run_id.as_ref())
+            .and_then(|mut ids| {
+                ids.extend(store.reopened_containers(run_id.as_ref())?);
+                Ok(ids)
+            }) {
             Ok(ids) => ids,
             Err(error) => {
-                ora_error!(run_id=%run_id,error=%error,"could not recover debug intent before sweep");
+                ora_error!(run_id=%run_id,error=%error,"could not read the debug fence before sweep");
                 continue;
             }
         };
         if let Err(error) = sweep_except(&repository, run_id, now, &protected) {
+            // Leave the confirmation stopping: its fence keeps holding until a later boot can
+            // sweep the run first.
             ora_error!(run_id = %run_id, error = %error, "workflow run boot sweep failed to sweep one run");
+            continue;
+        }
+        if let Err(error) = store.recover_stopping(run_id.as_ref(), now, |tx, preview| {
+            super::debug::strategy::settle(tx, run_id.as_ref(), now, preview)
+        }) {
+            ora_error!(run_id=%run_id,error=%error,"could not recover debug intent after sweep");
         }
     }
     reconcile_running_workflow_runs(engine, run_locks, pool);

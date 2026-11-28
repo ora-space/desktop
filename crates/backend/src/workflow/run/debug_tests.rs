@@ -29,6 +29,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 mod lifecycle;
 mod loop_exit_cleanup;
+mod recovery_races;
 mod while_revisions;
 
 mod foreach;

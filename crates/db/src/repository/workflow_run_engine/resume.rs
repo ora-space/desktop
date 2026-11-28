@@ -112,6 +112,9 @@ pub(super) fn resume_from_failure(
                 .collect::<BTreeSet<_>>();
             let mut payload: WorkflowRunPayload = serde_json::from_str(&serialized_payload)?;
             payload.withdraw_writers(&cleared_writers);
+            // A debug edit that applied while the run was terminal retired these writers'
+            // results; recovery is the point at which they leave the projection.
+            payload.withdraw_parked();
             transaction.execute(
                 "UPDATE workflow_runs SET payload = ?2 WHERE id = ?1 AND is_deleted = 0",
                 params![run_id.as_ref(), serde_json::to_string(&payload)?],
@@ -119,6 +122,7 @@ pub(super) fn resume_from_failure(
         }
 
         crate::workflow_debug::resume_foreach_replays(&transaction, run_id.as_ref(), &[])?;
+        crate::workflow_debug::resume_while_replays(&transaction, run_id.as_ref(), &[])?;
         let state = current_nodes_to_state(&[])?;
         transaction.execute(
             "UPDATE workflow_runs SET run_status = ?2, error = NULL, finished_at = NULL, state = ?3, updated_at = ?4

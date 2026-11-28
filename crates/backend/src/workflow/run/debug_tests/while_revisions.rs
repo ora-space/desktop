@@ -64,9 +64,12 @@ fn sibling_failure_during_member_stop_keeps_the_run_failed_without_redispatch() 
         f.bind_agent(&selected);
         let preview = f.preview(selected.as_ref(), 0);
         let db = rusqlite::Connection::open(f._temp.path().join("repository.sqlite3")).unwrap();
+        // The parked round reopen is recovery bookkeeping on the owner, not part of the terminal
+        // projection; `recovery_races` covers what recovery does with it.
         let projections = || {
             db.query_row(
-            "SELECT json_array(r.run_status, r.state, r.payload, n.status, n.payload, s.status, s.state)
+            "SELECT json_array(r.run_status, r.state, r.payload, n.status,
+                    json_remove(COALESCE(n.payload, '{}'), '$.debugWhileReplays'), s.status, s.state)
              FROM workflow_runs r JOIN workflow_execution_scopes s ON s.run_id = r.id
              JOIN workflow_node_runs n ON n.id = s.parent_loop_node_run_id WHERE s.id = ?1",
             [&preview.target.scope_id], |r| r.get::<_, String>(0),
