@@ -416,6 +416,11 @@ fn manual_proxy_normalizes_on_save_and_preserves_the_old_value_on_invalid_input(
             (" HTTPS://PROXY.EXAMPLE:443/ ", "https://proxy.example"),
             ("socks5://[::1]:1080/", "socks5://[::1]"),
             ("socks5h://proxy.example/", "socks5h://proxy.example"),
+            ("socks5://bücher.example/", "socks5://xn--bcher-kva.example"),
+            (
+                "socks5h://b%C3%BCcher.example/",
+                "socks5h://xn--bcher-kva.example",
+            ),
         ] {
             let mut endpoint = NetworkProxySettings {
                 host: input.to_owned(),
@@ -429,6 +434,19 @@ fn manual_proxy_normalizes_on_save_and_preserves_the_old_value_on_invalid_input(
             };
             let request = manual(endpoint.clone());
             let before_save = Settings::network_proxy_policy_for(&request).unwrap();
+            assert_eq!(
+                before_save
+                    .route(&target)
+                    .unwrap()
+                    .endpoint
+                    .unwrap()
+                    .host_str(),
+                Some(
+                    canonical
+                        .split_once("://")
+                        .map_or(canonical, |(_, host)| host)
+                )
+            );
             endpoint.host = canonical.to_owned();
             let expected = manual(endpoint.clone());
             assert_eq!(
@@ -676,13 +694,14 @@ fn proxy_write_does_not_block_async_progress() {
             username: None,
             password: None,
         };
+        let input = NetworkProxySettings {
+            host: " http://PROXY.EXAMPLE.TEST:80/ ".to_owned(),
+            ..proxy.clone()
+        };
         assert_eq!(
-            while_connection_held(
-                pool.clone(),
-                settings.set_network_proxy_settings(proxy.clone())
-            )
-            .await
-            .expect("write after lock release"),
+            while_connection_held(pool.clone(), settings.set_network_proxy_settings(input))
+                .await
+                .expect("write after lock release"),
             proxy
         );
         assert_eq!(

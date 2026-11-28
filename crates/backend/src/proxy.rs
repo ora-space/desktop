@@ -87,11 +87,11 @@ fn proxy_endpoint(settings: &NetworkProxySettings) -> Result<Url, BackendError> 
             "proxy scheme must be HTTP, HTTPS, SOCKS5, or SOCKS5H".to_owned(),
         ));
     }
-    if endpoint.host().is_none() {
+    let Some(hostname) = endpoint.host_str() else {
         return Err(BackendError::invalid_proxy_settings(
             "proxy address must include a host".to_owned(),
         ));
-    }
+    };
     if endpoint.query().is_some()
         || endpoint.fragment().is_some()
         || !matches!(endpoint.path(), "" | "/")
@@ -104,6 +104,14 @@ fn proxy_endpoint(settings: &NetworkProxySettings) -> Result<Url, BackendError> 
         return Err(BackendError::invalid_proxy_settings(
             "enter proxy credentials in the username and password fields".to_owned(),
         ));
+    }
+    if matches!(endpoint.scheme(), "socks5" | "socks5h") && hostname.contains('%') {
+        // Non-special URLs otherwise serialize internationalized domains as opaque hosts.
+        let host =
+            url::Host::parse(hostname).map_err(|_| proxy_error(HostProxyError::InvalidEndpoint))?;
+        endpoint
+            .set_host(Some(&host.to_string()))
+            .map_err(|_| proxy_error(HostProxyError::InvalidEndpoint))?;
     }
     endpoint
         .set_port(Some(settings.port))
