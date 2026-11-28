@@ -41,7 +41,8 @@ ADR。
 | `shared_checkout_sessions` | 每个 checkout 最多 8 个未结束 Agent 会话，恢复围栏不变 | 拒绝的启动以 `agent_failed{checkout_busy}` 或 `agent_failed{checkout_session_limit}` 结束，不关闭连接 |
 | `model_proxy` | 绑定了模型的会话启动 | `hello_accepted` 中的 `model_adapter`（见下文） |
 | `revision_delivery` | `deliver_revision`、`upload_grant` | `revision_result`、`upload_grant_needed` |
-| `turn_cancel` | `cancel_turn`；会话启动中的 `keep_session_on_cancel` / `keep_session_on_failure` | `turn_cancel_settled`、`session_command_rejected{turn_cancel_unsupported}` |
+| `turn_cancel` | `cancel_turn`；会话启动中的 `keep_session_on_cancel` | `turn_cancel_settled`、`session_command_rejected{turn_cancel_unsupported}` |
+| `turn_failure`（与 `turn_cancel` 同时） | 会话启动中的 `keep_session_on_failure` | `turn_failure_settled` |
 | `revision_restore` | 带 `prior_revision` 的 `start_agent_session` | `agent_session_ended` 中的恢复失败代码 |
 
 始终可用：`hello`、`heartbeat`、`get_execution_status` / `execution_status` 和 `event_ack`。编解码器只校验声明；
@@ -81,14 +82,27 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
   命令带 `command_id`；它们的回复没有序号，不需要确认，丢失的回复靠重发找回。
 - **取消一轮。** Controller 在 `hello` 中以 `turn_cancel: true` 声明；只有这样，Node 才回 `turn_cancel: true` 并
   加上 `turn_cancel` 能力。旧 Controller 把能力当作封闭集合解码，看到的握手与之前相同。在这样的连接上，会话启动
-  可以设置 `keep_session_on_cancel` 和 `keep_session_on_failure`（省略即 `false`，参与输入比较）；在没有协商
-  `turn_cancel` 的连接上设置其中任一项属于协议违规，在受理之前就被拒绝。
+  可以设置 `keep_session_on_cancel`（省略即 `false`，参与输入比较）；在没有协商 `turn_cancel` 的连接上设置它属于
+  协议违规，在受理之前就被拒绝。
   `cancel_turn { node_id, command_id, turn_id }` 与其他会话命令一样受理；会话没有选择 `keep_session_on_cancel` 时以
   `turn_cancel_unsupported` 拒绝。每个受理的取消恰好得到一条带序号、需确认的 `turn_cancel_settled
   { command_id, turn_id, outcome }`，`outcome` 为 `stopped`、`not_started`、`already_ended`、`unknown` 或
   `session_ending`（会话不会保留；不是终态，也不证明 Agent 已停止）。只要还有选择了任一行为、尚未结束或仍有未确认
   事件的会话，没有协商 `turn_cancel` 的 Controller 就在 `hello_accepted` 之前被以 `4403` 拒绝。见
   [Agent 会话](agent-sessions.zh.md#取消一轮)。
+- **一轮失败。** Controller 在 `hello` 中同时声明 `turn_failure: true` 与 `turn_cancel: true`，才在 `hello_accepted`
+  中得到 `turn_failure: true` 和 `turn_failure` 能力；缺少任一项声明时，握手与没有 `turn_failure` 时相同。
+  `hello_accepted` 的校验是对称的：有 `turn_failure: true` 却没有能力、有能力却没有这个标志，或两者之一出现而没有
+  `turn_cancel` 的确认，都是协议错误。只有在这样的连接上，会话启动才可以设置 `keep_session_on_failure`（省略即
+  `false`，参与输入比较）；否则属于协议违规，在受理之前就被拒绝。这类会话中每条带 `failure`、已作为 `thread_event`
+  持久化的 `TurnEnded`，在终态之前恰好得到一条带序号、需确认的 `turn_failure_settled { turn_id, outcome }`：会话
+  保留、可以执行下一轮时为 `kept`（与并入这次停止的各个取消的 `already_ended` 在同一个账本事务中写入，早于下一轮），
+  否则为 `session_ending`（与结束决定一起写入，早于并入的取消的 `session_ending`）。它不带原因，原因在
+  `TurnEnded.failure` 中。Node 的账本在持久化这条失败 `thread_event` 的同一事务里记下待结算的结论，所以 Controller
+  确认这条事件、Node 重启都不会让它丢失：重启时 `interrupted` 结束决定写出 `session_ending`。`TurnEnded` 从未作为
+  Thread 事件持久化的失败没有结论；没有选择 `keep_session_on_failure` 的会话也从不收到它。只要还有选择了
+  `keep_session_on_failure`、尚未结束或仍有未确认事件的会话，没有协商 `turn_failure` 的 Controller 就在
+  `hello_accepted` 之前被以 `4403` 拒绝。见 [Agent 会话](agent-sessions.zh.md#取消一轮)。
 - **Revision。** 交付指明已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的一个 ref、Git Server 的
   `git_repository_url`、`refs/ora/deliveries/` 下的 `delivery_ref`、`workspace_ref` 和一个会话历史对象 key。
   `revision_delivered` 要求最终 commit 与基础 commit 不同；`revision_unchanged` 允许等于基础 commit，或在有
