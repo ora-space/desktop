@@ -68,13 +68,15 @@ pub(crate) async fn complete_launch<RuntimeLauncher, StatusPublisher, Notificati
     };
     // The log directory is the plugin's slot in the host-managed logs tree and the generation
     // is this attempt within this host session, so a restarted plugin keeps writing to the same
-    // file under a distinguishable identity; the level is the live per-plugin setting.
+    // file under a distinguishable identity; the level is the live per-plugin setting and the
+    // redactions are the fresh, empty per-generation matcher.
     let log = PluginLogSetup {
         root: inner.log_directories.root().to_path_buf(),
         directory: inner.log_directories.path_for(&plugin_id),
         host_session_id: inner.host_session_id.clone(),
         generation: attempt,
         level: inner.log_levels.subscribe(&plugin_id),
+        redactions: inner.redactions.begin_generation(&plugin_id),
     };
     let launch = inner
         .launcher

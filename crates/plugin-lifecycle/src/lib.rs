@@ -7,6 +7,7 @@ mod launch;
 mod log_levels;
 mod permissions;
 mod ports;
+mod redactions;
 mod registration;
 mod runtime;
 mod scan;
@@ -28,7 +29,7 @@ pub use log_levels::{
 };
 pub use ora_plugin_runtime::{
     ACTIVE_LOG_FILE_NAME, PLUGIN_LOG_ENVELOPE_V1_PREFIX, PluginLogSetup, PluginLogSinkError,
-    PluginLogStats, PluginNotification, PluginRegistration,
+    PluginLogStats, PluginNotification, PluginRegistration, Redactions,
 };
 pub use permissions::{
     DenoPermission, PermissionFlagError, ReadScope, agent_permissions, permissions_for,
@@ -38,6 +39,7 @@ pub use ports::{
     PluginNotificationSink, PluginRuntime, PluginRuntimeExit, PluginRuntimeFailure,
     PluginRuntimeLauncher, PluginStatusPublisher,
 };
+pub use redactions::RedactionRegistry;
 pub use registration::validate_registration;
 pub use runtime::{DenoPluginRuntime, DenoPluginRuntimeLauncher, PluginRuntimeTimeouts};
 pub use storage::{
@@ -149,6 +151,8 @@ where
     pub(crate) configuration: ConfigurationService,
     /// Per-plugin persisted log levels, published live to every running generation.
     pub(crate) log_levels: PluginLogLevels,
+    /// Per-plugin redaction registry, reset at each generation and published as live matchers.
+    pub(crate) redactions: RedactionRegistry,
     /// Identity of this host run, stamped on every plugin log record beside the generation.
     ///
     /// Generations restart from one whenever the host does; without a session id two records
@@ -200,6 +204,7 @@ where
                 log_directories: PluginLogDirectories::new(&config.data_directory),
                 configuration: ConfigurationService::new(config.data_directory.clone()),
                 log_levels: PluginLogLevels::open(&config.data_directory),
+                redactions: RedactionRegistry::default(),
                 host_session_id: uuid::Uuid::new_v4().to_string(),
                 surface_closer: SurfaceCloserSlot::default(),
                 config,
