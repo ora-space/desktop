@@ -11,6 +11,7 @@
 mod envelope;
 mod pipeline;
 mod record;
+mod redact;
 mod sink;
 
 pub use envelope::{MAX_IDENTIFIER_BYTES, MAX_NESTING_DEPTH, PLUGIN_LOG_ENVELOPE_V1_PREFIX};
@@ -19,6 +20,10 @@ pub use pipeline::{
     QUEUE_CAPACITY,
 };
 pub use record::{DEFAULT_PLUGIN_TARGET, RAW_STDERR_TARGET, RESERVED_CONTEXT_KEYS};
+pub use redact::{
+    MAX_REDACTION_BYTES, MAX_REDACTION_VALUES, MIN_REDACTION_BYTES, REDACTION_PLACEHOLDER,
+    Redactions,
+};
 pub use sink::{
     ACTIVE_LOG_FILE_NAME, SinkOpenError as PluginLogSinkError, WRITER_LOCK_FILE_NAME,
     confirm_writer_released as confirm_plugin_log_writer_released,

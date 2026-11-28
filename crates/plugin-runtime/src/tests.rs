@@ -577,6 +577,7 @@ impl ManagedProcess for ControllableProcess {
 /// care about process exit ordering.
 fn closed_stderr_pipeline(directory: &std::path::Path) -> crate::plugin_log::PluginLogPipeline {
     let (_level_tx, level) = watch::channel(ora_logging::LogLevel::Info);
+    let (_redactions_tx, redactions) = watch::channel(crate::Redactions::default());
     crate::plugin_log::start(
         tokio::io::empty(),
         "example".to_string(),
@@ -586,6 +587,7 @@ fn closed_stderr_pipeline(directory: &std::path::Path) -> crate::plugin_log::Plu
             host_session_id: "session".to_string(),
             generation: 1,
             level,
+            redactions,
         },
     )
 }
@@ -766,6 +768,7 @@ async fn launch_applies_permissions_cwd_and_environment_to_the_process_spec() {
     };
 
     let (_level_tx, level) = watch::channel(ora_logging::LogLevel::Info);
+    let (_redactions_tx, redactions) = watch::channel(crate::Redactions::default());
     let error = PluginRuntime::launch(
         &spawner,
         crate::PluginRuntimeConfig {
@@ -793,6 +796,7 @@ async fn launch_applies_permissions_cwd_and_environment_to_the_process_spec() {
             host_session_id: "session".to_string(),
             generation: 1,
             level,
+            redactions,
         },
     )
     .await

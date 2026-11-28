@@ -143,6 +143,12 @@ where
 {
     type Runtime = DenoPluginRuntime;
 
+    /// Exposes the environment provider's secret values so the host can register them before the
+    /// process is handed them (ADR D4).
+    fn environment_secrets(&self, plugin_id: &str) -> Vec<String> {
+        self.environment_provider.secret_values(plugin_id)
+    }
+
     /// Renders permissions, starts Deno in the package root with the storage handler bound to
     /// the plugin's data directory, and waits for the handshake.
     fn launch(

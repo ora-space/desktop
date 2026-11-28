@@ -18,6 +18,7 @@ use ora_acp::{AcpClient, AcpInboundEvent, ReadEvent, ReadOrder};
 use ora_contracts::PublicError;
 use ora_domain::{AgentRef, PluginId, SessionStatus};
 use ora_logging::{ora_error, ora_info, ora_warn};
+use ora_plugin_lifecycle::RedactionRegistry;
 use ora_plugin_runtime::{PluginProcessExit, PluginRuntime};
 use startup::{SharedProcess, StartFailure, spawn_initialized_process};
 use std::collections::{BTreeMap, BTreeSet};
@@ -91,6 +92,8 @@ struct SupervisorContext<H: AgentRuntimeHost> {
     plugin_id: PluginId,
     /// Starts and stops the processes behind plugin-provided agents.
     plugin_host: Arc<H::Attach>,
+    /// Shared redaction registry, registered into before delivery (ADR D2).
+    redactions: RedactionRegistry,
     store: H::Store,
     home_directory: PathBuf,
     clock: SystemClock,
@@ -125,6 +128,9 @@ pub(super) struct ConnectionSupervisors<H: AgentRuntimeHost> {
     suspended: SuspendedAgents,
     /// Retained so a package installed after startup can be supervised without restarting Ora.
     plugin_host: Arc<H::Attach>,
+    /// Shared with the plugin-lifecycle so delivery sites register sensitive values before they
+    /// reach a plugin (ADR D2).
+    redactions: RedactionRegistry,
     store: H::Store,
     home_directory: PathBuf,
     clock: SystemClock,
@@ -136,6 +142,7 @@ impl<H: AgentRuntimeHost> Clone for ConnectionSupervisors<H> {
             supervisors: Arc::clone(&self.supervisors),
             suspended: Arc::clone(&self.suspended),
             plugin_host: Arc::clone(&self.plugin_host),
+            redactions: self.redactions.clone(),
             store: self.store.clone(),
             home_directory: self.home_directory.clone(),
             clock: self.clock,
@@ -152,6 +159,7 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
     /// Every installed agent plugin is supervised; the lifecycle starts its process on demand.
     pub fn start(
         plugin_host: Arc<H::Attach>,
+        redactions: RedactionRegistry,
         store: H::Store,
         home_directory: PathBuf,
         clock: SystemClock,
@@ -160,6 +168,7 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
             supervisors: Arc::new(RwLock::new(BTreeMap::new())),
             suspended: Arc::new(Mutex::new(BTreeSet::new())),
             plugin_host,
+            redactions,
             store,
             home_directory,
             clock,
@@ -279,6 +288,7 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
                 plugin_id,
                 Arc::clone(&self.suspended),
                 self.plugin_host.clone(),
+                self.redactions.clone(),
                 self.store.clone(),
                 self.home_directory.clone(),
                 self.clock,
@@ -298,6 +308,11 @@ impl<H: AgentRuntimeHost> ConnectionSupervisors<H> {
             .get(agent_ref)
             .cloned()
             .ok_or_else(|| runtime_unavailable_because(format!("{agent_ref} is not installed")))
+    }
+
+    /// Shared redaction registry delivery sites register into before handing values to a plugin.
+    pub(super) fn redactions(&self) -> RedactionRegistry {
+        self.redactions.clone()
     }
 
     /// Reports every supervised agent with its live status, in stable identity order.
@@ -321,11 +336,13 @@ impl ConnectionSupervisor {
     }
 
     /// Starts one application-scoped agent supervisor independently of the caller's runtime.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn start<H: AgentRuntimeHost>(
         agent_ref: AgentRef,
         plugin_id: PluginId,
         suspended: SuspendedAgents,
         plugin_host: Arc<H::Attach>,
+        redactions: RedactionRegistry,
         store: H::Store,
         home_directory: PathBuf,
         clock: SystemClock,
@@ -343,6 +360,7 @@ impl ConnectionSupervisor {
                 plugin_id,
                 suspended,
                 plugin_host,
+                redactions,
                 store,
                 home_directory,
                 clock,
@@ -519,6 +537,7 @@ async fn run_supervisor<H: AgentRuntimeHost>(context: SupervisorContext<H>) {
         plugin_id,
         suspended,
         plugin_host,
+        redactions,
         store,
         home_directory,
         clock,
@@ -539,7 +558,9 @@ async fn run_supervisor<H: AgentRuntimeHost>(context: SupervisorContext<H>) {
             return;
         }
         let _ = state.send(ConnectionState::Starting);
-        match spawn_initialized_process(&plugin_id, &plugin_host, &home_directory).await {
+        match spawn_initialized_process(&plugin_id, &plugin_host, &redactions, &home_directory)
+            .await
+        {
             Ok(mut process) => {
                 generation += 1;
                 retry_delay = INITIAL_RETRY_DELAY;
@@ -742,7 +763,7 @@ mod tests {
     use crate::test_host::{InstalledAgents, TestHost};
     use ora_contracts::{EmptyErrorParams, PublicError};
     use ora_domain::{AgentRef, PluginId};
-    use ora_plugin_lifecycle::ConnectionError;
+    use ora_plugin_lifecycle::{ConnectionError, RedactionRegistry};
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
     use std::time::Duration;
@@ -860,6 +881,7 @@ mod tests {
         let plugin_host = Arc::new(InstalledAgents::default());
         let supervisors = ConnectionSupervisors::<TestHost>::start(
             plugin_host.clone(),
+            RedactionRegistry::default(),
             MemorySessionStore::default(),
             temporary.path().to_path_buf(),
             SystemClock,

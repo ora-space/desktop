@@ -403,6 +403,7 @@ mod tests {
     use ora_domain::{
         AgentRef, AuditFields, PluginId, SessionId, SessionStatus, SessionTitle, WorkspaceId,
     };
+    use ora_plugin_lifecycle::RedactionRegistry;
     use ora_scheduler::Scheduler;
     use std::collections::BTreeSet;
     use std::sync::{Arc, Mutex};
@@ -437,6 +438,7 @@ mod tests {
         let plugin_host = test_plugin_host();
         let connections = ConnectionSupervisors::<TestHost>::start(
             plugin_host.clone(),
+            RedactionRegistry::default(),
             store.clone(),
             temporary.path().to_path_buf(),
             SystemClock,
@@ -446,6 +448,7 @@ mod tests {
             agent_source,
             Arc::new(Mutex::new(BTreeSet::new())),
             plugin_host.clone(),
+            RedactionRegistry::default(),
             store.clone(),
             temporary.path().to_path_buf(),
             SystemClock,
@@ -524,6 +527,7 @@ mod tests {
         let plugin_host = test_plugin_host();
         let connections = ConnectionSupervisors::<TestHost>::start(
             plugin_host.clone(),
+            RedactionRegistry::default(),
             store.clone(),
             temporary.path().to_path_buf(),
             SystemClock,
@@ -533,6 +537,7 @@ mod tests {
             agent_source,
             Arc::new(Mutex::new(BTreeSet::new())),
             plugin_host.clone(),
+            RedactionRegistry::default(),
             store.clone(),
             temporary.path().to_path_buf(),
             SystemClock,
@@ -610,6 +615,7 @@ mod tests {
         let plugin_host = test_plugin_host();
         let connections = ConnectionSupervisors::<TestHost>::start(
             plugin_host.clone(),
+            RedactionRegistry::default(),
             store.clone(),
             temporary.path().to_path_buf(),
             SystemClock,
@@ -619,6 +625,7 @@ mod tests {
             agent_source,
             Arc::new(Mutex::new(BTreeSet::new())),
             plugin_host.clone(),
+            RedactionRegistry::default(),
             store.clone(),
             temporary.path().to_path_buf(),
             SystemClock,

@@ -130,6 +130,7 @@ ora-utils = { path = "crates/utils" }
 ora-user-config = { path = "crates/user-config" }
 
 # External
+aho-corasick = "1"
 agent-client-protocol-schema = { version = "=1.6.0", features = ["unstable_end_turn_token_usage"] }
 chrono = "0.4"
 chrono-tz = "0.10"

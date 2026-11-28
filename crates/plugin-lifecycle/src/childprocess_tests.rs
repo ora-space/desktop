@@ -865,6 +865,7 @@ async fn pushes_stdout_before_exit_even_when_the_process_exits_immediately_after
             host_session_id: "session".to_string(),
             generation: 1,
             level: watch::channel(ora_logging::LogLevel::Info).1,
+            redactions: watch::channel(ora_plugin_runtime::Redactions::default()).1,
         },
     )
     .await

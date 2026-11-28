@@ -15,9 +15,10 @@ pub use host_requests::{
 pub use ora_plugin_protocol::PluginRegistration;
 pub use plugin_log::{
     ACTIVE_LOG_FILE_NAME, DEFAULT_PLUGIN_TARGET, MAX_IDENTIFIER_BYTES, MAX_NESTING_DEPTH,
-    MAX_QUEUE_BYTES, MAX_RECORD_BYTES, PLUGIN_LOG_ENVELOPE_V1_PREFIX, PluginLogSetup,
-    PluginLogSinkError, PluginLogStats, PluginLogTeardown, QUEUE_CAPACITY, RAW_STDERR_TARGET,
-    RESERVED_CONTEXT_KEYS, WRITER_LOCK_FILE_NAME, confirm_plugin_log_writer_released,
+    MAX_QUEUE_BYTES, MAX_RECORD_BYTES, MAX_REDACTION_BYTES, MAX_REDACTION_VALUES,
+    MIN_REDACTION_BYTES, PLUGIN_LOG_ENVELOPE_V1_PREFIX, PluginLogSetup, PluginLogSinkError,
+    PluginLogStats, PluginLogTeardown, QUEUE_CAPACITY, RAW_STDERR_TARGET, REDACTION_PLACEHOLDER,
+    RESERVED_CONTEXT_KEYS, Redactions, WRITER_LOCK_FILE_NAME, confirm_plugin_log_writer_released,
 };
 pub use protocol::PluginNotification;
 

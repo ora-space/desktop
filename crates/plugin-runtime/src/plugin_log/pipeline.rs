@@ -19,6 +19,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout_at};
 
 use crate::plugin_log::record::{RecordOrigin, decode_frame};
+use crate::plugin_log::redact::{Redactions, redact_record};
 use crate::plugin_log::sink::{LineSink, PluginLogSink, SinkOpenError};
 
 /// Longest logical record kept in memory before it is flushed as fragments.
@@ -44,7 +45,9 @@ pub const MAX_QUEUE_BYTES: usize = 8 * 1024 * 1024;
 /// this host run and `generation` the launch count within it; both are stamped on every record.
 /// `level` is a live subscription rather than a value: the lifecycle publishes changes to the
 /// plugin's persisted setting and the reader applies them to the next record it filters, so a
-/// user never has to restart a plugin to see more (or less) of its diagnostics.
+/// user never has to restart a plugin to see more (or less) of its diagnostics. `redactions` is
+/// likewise a live matcher, published before a sensitive value is delivered to the plugin (ADR
+/// D2); the reader redacts the next record it renders with the matcher in force at that moment.
 #[derive(Debug)]
 pub struct PluginLogSetup {
     pub root: PathBuf,
@@ -52,6 +55,7 @@ pub struct PluginLogSetup {
     pub host_session_id: String,
     pub generation: u64,
     pub level: watch::Receiver<LogLevel>,
+    pub redactions: watch::Receiver<Redactions>,
 }
 
 /// Point-in-time loss accounting of one process generation, queryable while the host runs.
@@ -153,9 +157,14 @@ where
     let root = setup.root;
     let directory = setup.directory;
     let opener_plugin_id = plugin_id.clone();
-    start_with_sink(stderr, plugin_id, origin, setup.level, move || {
-        open_file_sink(&root, &directory, &opener_plugin_id)
-    })
+    start_with_sink(
+        stderr,
+        plugin_id,
+        origin,
+        setup.level,
+        setup.redactions,
+        move || open_file_sink(&root, &directory, &opener_plugin_id),
+    )
 }
 
 /// Starts the reader and writer with an injected sink opener, which is how tests substitute a
@@ -165,6 +174,7 @@ pub(super) fn start_with_sink<R, S>(
     plugin_id: String,
     origin: RecordOrigin,
     level: watch::Receiver<LogLevel>,
+    redactions: watch::Receiver<Redactions>,
     open: impl FnOnce() -> Result<S, SinkOpenError> + Send + 'static,
 ) -> PluginLogPipeline
 where
@@ -185,6 +195,7 @@ where
         stderr,
         origin,
         level,
+        redactions,
         queue_tx,
         Arc::clone(&counters),
     ));
@@ -283,6 +294,7 @@ async fn run_reader<R>(
     mut stderr: R,
     origin: RecordOrigin,
     level: watch::Receiver<LogLevel>,
+    redactions: watch::Receiver<Redactions>,
     queue: mpsc::Sender<String>,
     counters: Arc<PluginLogCounters>,
 ) where
@@ -295,7 +307,7 @@ async fn run_reader<R>(
             Ok(0) => break,
             Ok(length) => {
                 for frame in framer.push(&buffer[..length]) {
-                    submit(frame, &origin, &level, &queue, &counters);
+                    submit(frame, &origin, &level, &redactions, &queue, &counters);
                 }
             }
             Err(error) => {
@@ -310,20 +322,21 @@ async fn run_reader<R>(
         }
     }
     if let Some(frame) = framer.finish() {
-        submit(frame, &origin, &level, &queue, &counters);
+        submit(frame, &origin, &level, &redactions, &queue, &counters);
     }
 }
 
-/// Decodes one frame, applies the threshold in force right now, renders the line, and offers
-/// it to the queue under both the count and the byte bound.
+/// Decodes one frame, applies the threshold in force right now, redacts known values, renders
+/// the line, and offers it to the queue under both the count and the byte bound.
 pub(super) fn submit(
     frame: ora_utils::text::LineFrame,
     origin: &RecordOrigin,
     level: &watch::Receiver<LogLevel>,
+    redactions: &watch::Receiver<Redactions>,
     queue: &mpsc::Sender<String>,
     counters: &PluginLogCounters,
 ) {
-    let decoded = decode_frame(frame, origin, ora_logging::clock::now_local());
+    let mut decoded = decode_frame(frame, origin, ora_logging::clock::now_local());
     if decoded.format_failure.is_some() {
         counters.format_failures.fetch_add(1, Ordering::Relaxed);
     }
@@ -332,6 +345,9 @@ pub(super) fn submit(
     if decoded.record.level < *level.borrow() {
         return;
     }
+    // Redaction runs after filtering but before rendering, so both the byte-accounted length and
+    // the persisted line reflect the redacted text (ADR D1, invariant 3).
+    redact_record(&mut decoded.record, &redactions.borrow());
     let line = decoded.record.to_json_line();
     let bytes = line.len();
     // Reserve the bytes before offering the line so two views of "full" cannot both admit it.

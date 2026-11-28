@@ -135,7 +135,8 @@ pub(crate) fn open_agent_runtime(
         ora_agent_runtime::AgentRuntimeSetup {
             session_setup: SessionMcpHost::from_plugin_api(plugin_host.clone())
                 .with_host_servers(host_mcp_servers),
-            attach: plugin_host,
+            attach: plugin_host.clone(),
+            redactions: plugin_host.lifecycle().redaction_registry(),
             store: DesktopSessionStore { pool: pool.clone() },
             skill_catalog,
             directory: DesktopWorkspaceDirectory {

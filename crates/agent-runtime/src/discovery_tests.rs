@@ -9,6 +9,7 @@ use ora_plugin_protocol::{
 };
 use ora_plugin_runtime::{
     NoHostRequests, PluginLogSetup, PluginRuntime, PluginRuntimeConfig, PluginRuntimeError,
+    Redactions,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -63,6 +64,7 @@ async fn discovery(
         exited.send_replace(true);
     });
     let (_level, level) = watch::channel(ora_logging::LogLevel::Info);
+    let (_redactions, redactions) = watch::channel(Redactions::default());
     let (runtime, _notifications) = PluginRuntime::launch(
         &spawner,
         PluginRuntimeConfig {
@@ -83,6 +85,7 @@ async fn discovery(
             host_session_id: "test".to_string(),
             generation: 1,
             level,
+            redactions,
         },
     )
     .await
