@@ -16,6 +16,7 @@ function agentPackage(name: string, displayName: string): InstalledPlugin {
     description: `${displayName} agent`,
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     kind: "agent",
     agentDisplayName: displayName,
     logo: null,

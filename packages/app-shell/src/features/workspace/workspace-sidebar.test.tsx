@@ -1378,6 +1378,7 @@ describe("WorkspaceSidebar", () => {
       description: "Deploy workflows",
       homepage: null,
       license: null,
+      origin: { kind: "official" },
       kind: "workflow",
       logo: null,
       installationValidity: { validity: "valid" },

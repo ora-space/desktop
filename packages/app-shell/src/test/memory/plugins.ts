@@ -158,6 +158,7 @@ function installedFromAvailable(available: AvailablePlugin): InstalledPlugin {
     description: available.description,
     homepage: null,
     license: null,
+    origin: { kind: "official" as const },
     logo: available.logo,
     installationValidity: { validity: "valid" as const },
     configuration: { state: "not_declared" as const },

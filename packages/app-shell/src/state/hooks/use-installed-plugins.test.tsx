@@ -16,6 +16,7 @@ describe("useInstalledPlugins", () => {
       description: "ora.reviewer plugin",
       homepage: null,
       license: null,
+      origin: { kind: "official" },
       displayName: "Reviewer",
       version: "0.1.0",
       kind: "agent",

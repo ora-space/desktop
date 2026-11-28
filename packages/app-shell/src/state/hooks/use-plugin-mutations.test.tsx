@@ -58,6 +58,7 @@ describe("usePluginMutations", () => {
         description: "OpenCode agent",
         homepage: null,
         license: null,
+        origin: { kind: "official" },
         kind: "agent",
         agentDisplayName: "OpenCode",
         logo: null,

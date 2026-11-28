@@ -37,6 +37,7 @@ function mcpPlugin(
     description: `${name} MCP server`,
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     logo: null,
     installationValidity: { validity: "valid" },
     configuration,

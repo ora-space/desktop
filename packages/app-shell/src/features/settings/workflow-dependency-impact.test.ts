@@ -18,6 +18,7 @@ function mcpPlugin(id: string): InstalledPlugin {
     description: "",
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     kind: "mcp",
     logo: null,
     installationValidity: { validity: "valid" },
@@ -42,7 +43,11 @@ function skillOwnedBy(name: string, pluginId: string): Skill {
     namespace: "local",
     name,
     description: "",
-    source: { kind: "plugin", pluginId },
+    source: {
+      kind: "plugin",
+      pluginId,
+      origin: { kind: "official" },
+    },
     availability: "available",
   };
 }
@@ -641,7 +646,11 @@ it("does not add uninstall impact when a bare Skill remains ambiguous after remo
   const remaining = {
     ...removed,
     id: "plugin:other/review:review",
-    source: { kind: "plugin" as const, pluginId: "other/review" },
+    source: {
+      kind: "plugin" as const,
+      pluginId: "other/review",
+      origin: { kind: "official" as const },
+    },
   };
   expect(
     findWorkflowDependents({

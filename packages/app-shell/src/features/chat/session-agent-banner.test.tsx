@@ -59,6 +59,7 @@ function agentPlugin(
     description: "ora-space.reviewer plugin",
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     displayName: "Code Reviewer",
     version: "0.1.0",
     kind: "agent",

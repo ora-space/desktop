@@ -32,6 +32,7 @@ function plugin(
     description: "Project tools",
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     logo: null,
     installationValidity: { validity: "valid" },
     configuration: { state: "not_declared" },

@@ -16,7 +16,11 @@ const skills: Skill[] = fixtures.skills.map((skill) => ({
   source:
     skill.namespace === "local"
       ? { kind: "local" }
-      : { kind: "plugin", pluginId: skill.namespace },
+      : {
+          kind: "plugin",
+          pluginId: skill.namespace,
+          origin: { kind: "official" },
+        },
 }));
 
 describe("workflow Skill references (shared with launch preflight)", () => {
