@@ -640,6 +640,58 @@ async fn stops_running_plugin() {
     );
 }
 
+/// Activate and stop of a derived-namespace plugin carry its marketplace origin, not just official.
+#[tokio::test]
+async fn activate_and_stop_carry_the_derived_namespace_origin() {
+    let _logging = trace_logging_guard();
+    let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
+    write_plugin_package(temp_dir.path(), "ora.example");
+    relocate_skill_package(temp_dir.path(), "ora.example", "tools.1a2b3c4d");
+    let (runtime, mut stop_started, release_stop) = ControllableStopRuntime::new();
+    let lifecycle = PluginLifecycle::open(
+        PluginLifecycleConfig {
+            data_directory: temp_dir.path().to_path_buf(),
+            deno_path: PathBuf::from("deno"),
+        },
+        ImmediateRuntimeLauncher { runtime },
+        NoopStatusPublisher,
+        NoopNotificationSink,
+        PluginOriginCatalog::from_bindings([(
+            "tools.1a2b3c4d".to_string(),
+            "https://github.com/acme/tools".to_string(),
+        )]),
+    )
+    .expect("open plugin lifecycle");
+    let plugin_id = "tools.1a2b3c4d/ora.example".to_string();
+    let origin = PluginOrigin::Marketplace {
+        source_url: Some("https://github.com/acme/tools".to_string()),
+        label: "tools".to_string(),
+    };
+
+    let activated = lifecycle
+        .activate_plugin(ActivatePluginRequest {
+            plugin_id: plugin_id.clone(),
+        })
+        .await
+        .expect("activate plugin");
+    assert_eq!(activated.plugin.origin, origin);
+
+    let stop_lifecycle = lifecycle.clone();
+    let stop_id = plugin_id.clone();
+    let stop_task = tokio::spawn(async move {
+        stop_lifecycle
+            .stop_plugin(StopPluginRequest { plugin_id: stop_id })
+            .await
+    });
+    assert_eq!(stop_started.recv().await, Some(()));
+    release_stop.send(()).expect("release runtime stop");
+    let stopped = stop_task
+        .await
+        .expect("join stop task")
+        .expect("stop plugin");
+    assert_eq!(stopped.plugin.origin, origin);
+}
+
 /// Verifies stop queues behind an in-flight launch and waits for the resulting runtime stop.
 #[tokio::test]
 async fn queues_stop_behind_an_in_flight_launch() {
