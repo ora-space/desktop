@@ -165,7 +165,7 @@ function ProxySettingsEditor({
       : {
           host: address.host,
           port: parsedPort,
-          username: credentials.username || null,
+          username: credentials.username.trim() || null,
           password: credentials.password || null,
         };
   const invalidAddress =

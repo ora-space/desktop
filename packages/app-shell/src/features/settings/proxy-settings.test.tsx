@@ -121,7 +121,7 @@ it("defaults to system and keeps the saved endpoint when switching modes", async
   expect(screen.getByLabelText(/主机|Host/)).toHaveValue("proxy.example");
 });
 
-it("saves proxy settings through the backend", async () => {
+it("saves proxy settings with a whitespace-only username as null", async () => {
   const state = createFixtureState();
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
   const client = createTestClient(clientHandlers);
@@ -135,6 +135,7 @@ it("saves proxy settings through the backend", async () => {
   );
   await user.type(await screen.findByLabelText(/主机|Host/), "127.0.0.1");
   await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.type(screen.getByLabelText(/用户名|Username/), "   ");
   await user.click(screen.getByRole("button", { name: /保存|Save/ }));
 
   await waitFor(() =>
@@ -191,7 +192,7 @@ it("extracts credentials on blur and keeps the proxy scheme and separately enter
   expect(screen.getByLabelText(/密码|Password/)).toHaveValue("pass@word%40");
 
   await user.clear(host);
-  await user.paste("ftp://proxy.example:7890/path");
+  await user.paste("ftp://proxy.example:7890");
   expect(host).toBeInvalid();
   expect(screen.getByRole("button", { name: /^保存$|^Save$/ })).toBeDisabled();
   expect(state.proxySettings).toBeNull();
@@ -439,7 +440,7 @@ it("keeps the saved mode when an older background read completes", async () => {
   expect(screen.getByLabelText(modeLabel)).toHaveValue("direct");
 });
 
-it("checks a prefixed proxy against a URL and saves the same endpoint separately", async () => {
+it("checks and saves the same normalized proxy while preserving password whitespace", async () => {
   const state = createFixtureState();
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
   const client = createTestClient(clientHandlers);
@@ -457,6 +458,8 @@ it("checks a prefixed proxy against a URL and saves the same endpoint separately
     "http://127.0.0.1",
   );
   await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.type(screen.getByLabelText(/用户名|Username/), "  alice ");
+  await user.type(screen.getByLabelText(/密码|Password/), " secret ");
   await user.click(
     screen.getByRole("button", { name: /验证代理|Check connection/ }),
   );
@@ -475,8 +478,8 @@ it("checks a prefixed proxy against a URL and saves the same endpoint separately
       settings: {
         host: "127.0.0.1",
         port: 7890,
-        username: null,
-        password: null,
+        username: "alice",
+        password: " secret ",
       },
     }),
   );
