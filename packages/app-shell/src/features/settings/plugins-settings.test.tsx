@@ -3785,7 +3785,10 @@ it("shows and copies the full source URL on a third-party plugin's detail page",
     configurable: true,
     value: { writeText },
   });
-  const copied = vi.spyOn(toast, "success").mockImplementation(() => "toast");
+  const copied = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
   const state = createFixtureState();
   state.installedPlugins = [];
   state.availablePlugins.push(
@@ -3812,7 +3815,11 @@ it("shows and copies the full source URL on a third-party plugin's detail page",
       "https://github.com/obsismc/marketplace",
     ),
   );
-  expect(copied).toHaveBeenCalled();
+  await waitFor(() =>
+    expect(copied).toHaveBeenCalledWith(
+      expect.stringMatching(/已复制来源市场地址|Copied the source marketplace URL/),
+    ),
+  );
 });
 
 /** A clipboard denial surfaces as an error toast instead of an unhandled rejection. */
@@ -3822,7 +3829,10 @@ it("reports a failed source URL copy on the detail page", async () => {
     configurable: true,
     value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
   });
-  const failed = vi.spyOn(toast, "error").mockImplementation(() => "toast");
+  const failed = vi
+    .spyOn(toast, "error")
+    .mockClear()
+    .mockImplementation(() => "toast");
   const state = createFixtureState();
   state.installedPlugins = [];
   state.availablePlugins.push(
@@ -3841,7 +3851,11 @@ it("reports a failed source URL copy on the detail page", async () => {
     }),
   );
 
-  await waitFor(() => expect(failed).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(failed).toHaveBeenCalledWith(
+      expect.stringMatching(/复制来源市场地址失败|Failed to copy the source marketplace URL/),
+    ),
+  );
 });
 
 /** A listing whose source binding was lost hides the row instead of showing an empty URL. */
