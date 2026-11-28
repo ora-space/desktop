@@ -5,9 +5,12 @@ use ora_application::render_variable_template;
 mod form_samples;
 
 /// Joins the row to its immutable snapshot and rejects superseded attempts and prior root executions.
+/// Apply uses the source already verified by preview and claim: quiescence has cancelled the retry
+/// wait by then. The snapshot, revision, container and coordinates must still match its predecessor.
 pub(super) fn prepare(
     db: &Connection,
     request: &PreviewWorkflowDebugRequest,
+    confirmed_retry_source: Option<&str>,
 ) -> Result<DebugPlanningInput, DatabaseError> {
     let super::context::SelectedContext {
         target,
@@ -22,6 +25,7 @@ pub(super) fn prepare(
         &request.run_id,
         &request.selection,
         request.base_revision,
+        confirmed_retry_source,
     )?;
     let previous =
         WorkflowGraph::parse(&graph.to_string()).map_err(|e| invalid("", &e.to_string()))?;

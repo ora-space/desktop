@@ -51,6 +51,7 @@ test("loads provider history and reconstructs turns from message boundaries", as
       ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -63,6 +64,8 @@ test("loads provider history and reconstructs turns from message boundaries", as
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: [],
+    // The load brought no options, so the store asked and was told the session has none.
+    providerLost: true,
     modelChanges: [],
     historyNotices: [],
     turns: [
@@ -144,6 +147,7 @@ test("a follower timeout preserves replay and fails only the ended live turn", a
       },
       prompt: () => events<PromptSessionEvent>([]),
       respondToPermission: async () => ({}),
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
     },
     { describeError: () => "turn timed out" },
@@ -189,6 +193,7 @@ test("a timeout during historical replay still fails the load", async () => {
     },
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   });
   await assert.rejects(
@@ -213,6 +218,7 @@ test("restores bubble times from recordedAt instead of the load clock", async ()
       ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -254,6 +260,7 @@ test("publishes an active prompt incrementally while its session loads", async (
     }),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -367,6 +374,14 @@ for (const ending of ["completed", "failed"] as const) {
           yield textEvent("user_message_chunk", "prompt", "user-1");
           yield textEvent("agent_message_chunk", "partial", "agent-1");
           await chosen.promise;
+          // The answer to the choice reaches the view through the stream it follows.
+          yield {
+            type: "session_update",
+            update: {
+              sessionUpdate: "config_option_update",
+              configOptions: on("b"),
+            },
+          } as const;
           yield textEvent("agent_message_chunk", " rest", "agent-1");
           await checked.promise;
           if (ending === "failed") throw new Error("stream lost");
@@ -376,8 +391,8 @@ for (const ending of ["completed", "failed"] as const) {
       }),
       prompt: () => events<PromptSessionEvent>([]),
       respondToPermission: async () => ({}),
-      // This agent reports the change only here.
-      setConfig: async () => ({ configOptions: on("b") }),
+      getOptions: async () => ({ configOptions: null }),
+      setConfig: async () => ({}),
     };
     const store = createChatStore(client);
     const current = () =>
@@ -387,9 +402,11 @@ for (const ending of ["completed", "failed"] as const) {
     await conversationReaches(store, (state) => said(state) === "partial");
     assert.deepEqual(current(), on("a"));
 
-    await store.getState().setSessionConfig("ora-1", "model", "b");
-    assert.deepEqual(current(), on("b"));
+    const choosing = store.getState().setSessionConfig("ora-1", "model", "b");
     chosen.resolve();
+    // In progress until the stream brings the options the change left the session on.
+    assert.equal(await choosing, "made");
+    assert.deepEqual(current(), on("b"));
     await conversationReaches(store, (state) => said(state) === "partial rest");
     assert.deepEqual(current(), on("b"));
 
@@ -431,13 +448,15 @@ test("an option change the agent reports while following a turn wins over an ear
     }),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
-    setConfig: async () => ({ configOptions: on("b") }),
+    getOptions: async () => ({ configOptions: null }),
+    setConfig: async () => ({}),
   };
   const store = createChatStore(client);
   const loading = store.getState().loadSession("ora-1");
   await following.promise;
-  await store.getState().setSessionConfig("ora-1", "model", "b");
+  const choosing = store.getState().setSessionConfig("ora-1", "model", "b");
   chosen.resolve();
+  await choosing;
   await loading;
 
   assert.deepEqual(
@@ -471,6 +490,7 @@ test("clears isResponding at each turn_ended during history replay", async () =>
     }),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -521,6 +541,7 @@ test("flushes batched replay text together with a following tool boundary", asyn
     }),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -584,6 +605,7 @@ test("restores explicit turn and tool timing without receipt-time fallbacks", as
       ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { now: () => 99_999 });
@@ -642,6 +664,7 @@ test("keeps concurrent session timing isolated even when tool ids match", async 
       },
     }),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -718,6 +741,7 @@ test("retains durable-history notices after a successful replay", async () => {
       ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client);
@@ -749,6 +773,7 @@ test("restores a cancelled turn and its unfinished tools from the recorded bound
       ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -824,6 +849,7 @@ test("keeps text that resumed after a tool call below it", async () => {
         { type: "completed", stopReason: "end_turn" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -879,6 +905,7 @@ test("settles a live tool call the agent never reported finishing", async () => 
         { type: "completed", stopReason: "end_turn" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -944,6 +971,7 @@ test("marks the turn as retrying and interrupts the stalled attempt's tools", as
         yield { type: "completed", stopReason: "end_turn" } as const;
       },
       respondToPermission: async () => ({}),
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
     },
     {
@@ -1031,6 +1059,7 @@ test("marks the retry exhausted when the backend times out after re-sending", as
         );
       },
       respondToPermission: async () => ({}),
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
     },
     { createId: () => "local", now: () => 42 },
@@ -1070,6 +1099,7 @@ test("keeps a retried turn's failure generic when it was not the agent timing ou
         throw new Error("connection lost");
       },
       respondToPermission: async () => ({}),
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
     },
     { createId: () => "local", now: () => 42 },
@@ -1107,6 +1137,7 @@ test("shows an unsettled tool call as interrupted when the turn was cut short", 
           { type: "completed", stopReason },
         ]),
       respondToPermission: async () => ({}),
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
     };
     let nextId = 0;
@@ -1147,6 +1178,7 @@ test("settles an unfinished tool call as interrupted when the stream fails", asy
       throw new Error("connection lost");
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -1195,6 +1227,7 @@ test("never reinterprets a tool failure the agent did report", async () => {
         { type: "completed", stopReason: "end_turn" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -1234,6 +1267,7 @@ test("restores an unfinished tool call as settled when the recorded turn complet
       ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -1275,6 +1309,7 @@ test("keeps consecutive prompts apart when neither produced agent output", async
       ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1352,6 +1387,7 @@ test("loads commands, session metadata, and structured content without creating 
       ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -1364,6 +1400,8 @@ test("loads commands, session metadata, and structured content without creating 
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: [],
+    // The load brought no options, so the store asked and was told the session has none.
+    providerLost: true,
     modelChanges: [],
     historyNotices: [],
     turns: [
@@ -1424,6 +1462,7 @@ for (const { stopReason, expected } of [
       prompt: () =>
         events<PromptSessionEvent>([{ type: "completed", stopReason }]),
       respondToPermission: async () => ({}),
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
     };
     const store = createChatStore(client, { createId: () => "local" });
@@ -1446,6 +1485,7 @@ test("a new session that collected no commands during setup stays unknown until 
         { type: "completed", stopReason: "end_turn" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "local" });
@@ -1487,6 +1527,7 @@ test("applies live command and partial session-info updates outside the response
         { type: "completed", stopReason: "end_turn" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1564,6 +1605,7 @@ test("keeps tool timing while completing context and token usage", async () => {
         },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1639,6 +1681,7 @@ test("clears an older token report when the next turn omits usage", async () => 
       );
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1683,6 +1726,7 @@ test("drops volatile usage when a historical conversation is reloaded", async ()
         },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1720,6 +1764,7 @@ test("clears all reported usage when the answering agent changes", async () => {
         },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1747,6 +1792,7 @@ test("sends structured image prompts", async () => {
       ]);
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1798,6 +1844,7 @@ test("records the displayed prompt separately when the agent receives injected t
       ]);
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1862,6 +1909,7 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
       },
     }),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1947,6 +1995,7 @@ test("a transport-level cancelled error is treated as a graceful cancel, not a f
       },
     }),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -1984,6 +2033,7 @@ test("settles active tools when the provider completes with a cancelled stop rea
         { type: "completed", stopReason: "cancelled" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -2038,6 +2088,7 @@ test("shows the user turn before the session is persisted", async () => {
       ]);
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -2102,6 +2153,7 @@ test("omits response duration when session preparation fails", async () => {
     load: () => events<LoadSessionEvent>([]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -2152,6 +2204,7 @@ test("omits response duration when startup is stopped during preparation", async
       return events<PromptSessionEvent>([]);
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -2213,6 +2266,7 @@ for (const { reported, expected } of [
           { type: "completed", stopReason: "end_turn" },
         ]),
       respondToPermission: async () => ({}),
+      getOptions: async () => ({ configOptions: null }),
       setConfig: async () => ({ configOptions: [] }),
     };
     const store = createChatStore(client);
@@ -2258,6 +2312,7 @@ test("a live empty report replaces the commands the agent offered before", async
         { type: "completed", stopReason: "cancelled" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client);
@@ -2281,6 +2336,7 @@ test("starts response duration after successful session preparation", async () =
       },
     }),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -2316,6 +2372,7 @@ test("rolls back staged load updates when replay fails before completion", async
     }),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
@@ -2349,6 +2406,7 @@ test("rolls back staged load updates when replay fails before completion", async
     conversations: {
       "ora-1": {
         configOptions: [],
+        providerLost: false,
         modelChanges: [],
         historyNotices: [
           { type: "unrecorded_content", reason: "earlier write failure" },
@@ -2374,6 +2432,8 @@ test("rolls back staged load updates when replay fails before completion", async
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: [],
+    // The load brought no options, so the store asked and was told the session has none.
+    providerLost: true,
     modelChanges: [],
     historyNotices: [
       { type: "unrecorded_content", reason: "earlier write failure" },
@@ -2416,8 +2476,9 @@ test("adopts the agent's answer to a model selection over the requested value", 
     load: () => events<LoadSessionEvent>([]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
-    // The agent declined the switch and reported that it stayed on "fast".
-    setConfig: async () => ({ configOptions: modelOptions("fast") }),
+    // The agent declined the switch: the session is still on "fast" when it is read after.
+    getOptions: async () => ({ configOptions: modelOptions("fast") }),
+    setConfig: async () => ({}),
   };
   const store = createChatStore(client, {
     createId: () => "local",
@@ -2428,6 +2489,7 @@ test("adopts the agent's answer to a model selection over the requested value", 
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: modelOptions("fast"),
+    providerLost: false,
     modelChanges: [],
     historyNotices: [],
     turns: [],
@@ -2451,6 +2513,7 @@ test("reports an unreachable model selection instead of silently keeping the old
     load: () => events<LoadSessionEvent>([]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => {
       throw new Error("session is gone");
     },
@@ -2468,6 +2531,7 @@ test("reports an unreachable model selection instead of silently keeping the old
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: modelOptions("fast"),
+    providerLost: false,
     modelChanges: [],
     historyNotices: [],
     turns: [],
@@ -2494,6 +2558,7 @@ test("marks the thread where the answering model changed", async () => {
         { type: "completed", stopReason: "end_turn" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -2520,6 +2585,7 @@ test("marks an agent move before the message that carried it", async () => {
         { type: "completed", stopReason: "end_turn" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -2555,6 +2621,7 @@ test("leaves an agent move unmarked when nothing has been exchanged yet", async 
         { type: "completed", stopReason: "end_turn" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -2584,6 +2651,7 @@ test("keeps one marker per point in the thread while the model is cycled", async
         { type: "completed", stopReason: "end_turn" },
       ]),
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -2637,6 +2705,7 @@ test("re-attaches and retries once when the route died before the prompt was acc
       ]);
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -2682,6 +2751,7 @@ test("does not retry a stopped session once the prompt has streamed anything", a
       throw sessionStoppedError();
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -2717,6 +2787,7 @@ test("does not re-attach for a failure that is not a stopped session", async () 
       throw new Error("agent runtime is unavailable");
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
@@ -2749,6 +2820,7 @@ test("describes a failed prompt through the host's error describer", async () =>
       throw refusal;
     },
     respondToPermission: async () => ({}),
+    getOptions: async () => ({ configOptions: null }),
     setConfig: async () => ({ configOptions: [] }),
   };
   const described: unknown[] = [];

@@ -14,13 +14,19 @@ pub use rusqlite::Transaction;
 mod attempts;
 mod configuration;
 mod context;
+mod foreach_replay;
+pub use foreach_replay::ForeachReplay;
+pub(crate) use foreach_replay::resume_foreach_replays;
 pub(crate) mod fence;
 mod normalize;
 mod operations;
 mod pending;
 mod read_set;
+mod while_round;
+pub use while_round::restore_while_round;
 mod recovery;
 pub use operations::DebugClaim;
+pub(crate) use operations::attempt_fenced;
 #[cfg(test)]
 mod tests;
 
@@ -58,6 +64,14 @@ pub enum DebugRejection {
     OperationActive,
     #[error("missing_input_evidence: {0}")]
     MissingFact(String),
+    #[error(
+        "LoopExit cleanup is still in progress. Wait for it to finish before previewing this edit."
+    )]
+    LoopExitCleanupPending,
+    #[error(
+        "The Loop round ended without confirmation that its cancelled siblings stopped. Use ordinary failure recovery to resume the run."
+    )]
+    LoopExitRecoveryRequired,
     #[error("invalid_target")]
     InvalidTarget,
     #[error("invalid_patch at {path}: {reason}")]
@@ -87,6 +101,44 @@ pub struct WorkflowDebugStore {
 }
 
 impl WorkflowDebugStore {
+    /// Resolves the confirmed foreach position under the apply transaction, before its old
+    /// rows are retired. The patch and selection come from the server-issued receipt.
+    pub fn confirmed_foreach_input(
+        tx: &Transaction<'_>,
+        preview: &WorkflowDebugPreview,
+    ) -> Result<(String, DebugPlanningInput), DatabaseError> {
+        let (run_id, patch): (String, String) = tx.query_row(
+            "SELECT run_id, patch FROM workflow_debug_previews WHERE id=?1",
+            [&preview.preview_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let target = &preview.target;
+        let selection = match &target.node_run_id {
+            Some(id) => WorkflowDebugSelection::NodeRunId(id.clone()),
+            None => WorkflowDebugSelection::PendingTarget(PendingWorkflowDebugTarget {
+                root_scope_id: target
+                    .root_scope_id
+                    .clone()
+                    .ok_or(DebugRejection::InvalidTarget)?,
+                scope_id: target.scope_id.clone(),
+                node_id: target.node_id.clone(),
+                container_node_run_id: target.container_node_run_id.clone(),
+                index: target.index,
+            }),
+        };
+        let input = configuration::prepare(
+            tx,
+            &PreviewWorkflowDebugRequest {
+                run_id: run_id.clone(),
+                selection,
+                base_revision: preview.base_revision,
+                patch: serde_json::from_str(&patch)?,
+            },
+            preview.input_source_node_run_id.as_deref(),
+        )?;
+        Ok((run_id, input))
+    }
+
     /// Uses the same database pool as workflow scheduling.
     pub fn new(pool: RepositoryPool) -> Self {
         Self { pool }
@@ -94,10 +146,13 @@ impl WorkflowDebugStore {
 
     /// Creates a receipt only for a target and patch accepted by the server-side planning strategy.
     /// The callback performs pure planning with facts from the same read transaction.
+    /// The strategy supplies both the authorized schedule and the transient dispatch fence.
     pub fn preview(
         &self,
         request: &PreviewWorkflowDebugRequest,
-        plan: impl FnOnce(&DebugPlanningInput) -> Result<WorkflowDebugImpact, DebugRejection>,
+        plan: impl FnOnce(
+            &DebugPlanningInput,
+        ) -> Result<(WorkflowDebugImpact, Vec<String>), DebugRejection>,
     ) -> Result<WorkflowDebugPreview, DatabaseError> {
         self.pool.with_connection_mut(|connection| {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -106,8 +161,9 @@ impl WorkflowDebugStore {
             if revision != request.base_revision {
                 return Err(DebugRejection::StalePreview.into());
             }
-            let input = configuration::prepare(&tx, request)?;
-            let impact = plan(&input)?;
+            let mut input = configuration::prepare(&tx, request, /*confirmed_retry_source*/ None)?;
+            let (mut impact, fence_nodes) = plan(&input)?;
+            foreach_replay::include_parked_schedule(&tx, &request.run_id, &mut impact, &mut input.read_nodes)?;
             let nodes = serde_json::to_string(&input.read_nodes)?;
             let facts = read_set::facts(&tx, &request.run_id, &nodes)?;
             let kind = input.candidate.execution_node(&input.target.node_id).ok_or(DebugRejection::InvalidTarget)?.node_type.as_str();
@@ -121,12 +177,14 @@ impl WorkflowDebugStore {
                 workspace: WorkflowDebugWorkspace::Keep,
                 external_actions_may_repeat: true,
             };
+            let mut stored = serde_json::to_value(&preview)?;
+            stored["fenceNodes"] = serde_json::to_value(fence_nodes)?;
             tx.execute(
                 "INSERT INTO workflow_debug_previews(id,run_id,base_revision,patch,plan,snapshot_id,root_scope,node_type,read_nodes,read_facts)
                  SELECT ?1,r.id,?3,?4,?5,r.snapshot_id,root.scope_id,?6,?7,?8 FROM workflow_runs r
                  JOIN workflow_run_root_scopes root ON root.run_id=r.id WHERE r.id=?2",
                 params![preview.preview_id,request.run_id,revision,
-                    serde_json::to_string(&request.patch)?,serde_json::to_string(&preview)?,kind,nodes,serde_json::to_string(&facts)?],
+                    serde_json::to_string(&request.patch)?,serde_json::to_string(&stored)?,kind,nodes,serde_json::to_string(&facts)?],
             )?;
             tx.commit()?;
             Ok(preview)

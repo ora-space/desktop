@@ -63,6 +63,7 @@ commands.allow = [
     "get_scheduled_task",
     "get_session",
     "get_session_bindings",
+    "get_session_options",
     "get_skill",
     "get_skill_import",
     "get_task",

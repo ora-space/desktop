@@ -4,6 +4,7 @@
 use crate::command::ConfigChangeRequest;
 use crate::events::settle_idle_event;
 use crate::routing::{SessionChannel, SessionEvent};
+use crate::support::session_stopped;
 use crate::support::{agent_timed_out, map_acp_error, runtime_unavailable};
 use crate::{AgentRuntimeHost, RuntimeActor, RuntimeError, SESSION_SETUP_TIMEOUT};
 use agent_client_protocol_schema::v1::{
@@ -18,21 +19,13 @@ use tokio::sync::oneshot::{self, error::TryRecvError};
 use tokio::time::timeout;
 
 /// What a caller waiting for a configuration change is told.
-pub(crate) type ConfigChangeOutcome = Result<Vec<SessionConfigOption>, RuntimeError>;
+pub(crate) type ConfigChangeOutcome = Result<(), RuntimeError>;
 
 /// Writes one request the actor did not wait for.
 pub(crate) type ConfigChangeWrite = Pin<Box<dyn Future<Output = Result<(), RuntimeError>> + Send>>;
 
 /// How a configuration change is on its way to the agent.
 pub(crate) enum ConfigChangeRoute {
-    /// The session holds no provider, so the caller asks the agent itself.
-    ///
-    /// Attaching waits until `_finished` is dropped: an answer that raced it could not be placed
-    /// among the frames of the session being attached.
-    Direct {
-        agent_session_id: String,
-        _finished: Option<oneshot::Sender<()>>,
-    },
     /// The actor waits for the answer, and tells the caller what came of it.
     Asked {
         /// What is left of writing the request, when the agent was not reading.
@@ -63,9 +56,9 @@ impl ConfigChanges {
     ///
     /// For a provider session the host gave up: the agent was asked, and nothing suggests that it
     /// refused. A session lost to its agent must not come here.
-    pub(crate) fn accept(&mut self, options: &[SessionConfigOption]) {
+    pub(crate) fn accept(&mut self) {
         for change in self.unanswered.drain(..) {
-            change.tell(Ok(options.to_vec()));
+            change.tell(Ok(()));
         }
     }
 
@@ -140,7 +133,7 @@ pub(crate) async fn ask_during_setup(
     config_id: &SessionConfigId,
     value: &SessionConfigOptionValue,
     mut observe: impl FnMut(&mut SessionChannel, SessionNotification),
-) -> ConfigChangeOutcome {
+) -> Result<Vec<SessionConfigOption>, RuntimeError> {
     let (pending, write) = prepare(channel, agent_session_id, config_id, value);
     let read = timeout(SESSION_SETUP_TIMEOUT, async {
         write.await?;
@@ -193,13 +186,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         if accepted.is_closed() {
             return;
         }
+        // Without a provider there are no current options to change: the choice is the view's
+        // intent for the next attach.
         let Some(channel) = channel else {
-            let (finished, done) = oneshot::channel();
-            self.direct_config_changes.push(done);
-            let _ = accepted.send(Ok(ConfigChangeRoute::Direct {
-                agent_session_id: self.provider_session_id().to_string(),
-                _finished: Some(finished),
-            }));
+            let _ = accepted.send(Err(session_stopped()));
             return;
         };
         let (pending, mut write) = prepare(channel, self.provider_session_id(), &config_id, &value);
@@ -238,15 +228,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let _ = accepted.send(Ok(ConfigChangeRoute::Asked { write, outcome }));
     }
 
-    /// Waits for the changes whose callers are asking a session that holds no provider.
-    ///
-    /// Each caller gives up after its own timeout.
-    pub(crate) async fn finish_direct_changes(&mut self) {
-        for finished in std::mem::take(&mut self.direct_config_changes) {
-            let _ = finished.await;
-        }
-    }
-
     /// Settles the change this response answers, if it answers one.
     ///
     /// Called from every place that reads a session's frames, at the answer's turn among them. Returns
@@ -262,18 +243,21 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         let outcome = match pending.finish(response) {
             Ok(answer) => {
                 self.adopt_config_options(answer.config_options);
-                Ok(self.reported_config_options.clone())
+                Ok(())
             }
             Err(error) => Err(map_acp_error(error)),
         };
-        let untold = match caller {
-            Some(caller) => caller.send(outcome).err()?,
-            None => outcome,
-        };
-        let options = untold.ok()?;
-        Some(SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
-            options,
-        )))
+        let made = outcome.is_ok();
+        if let Some(caller) = caller {
+            let _ = caller.send(outcome);
+        }
+        // The caller learns only that the change was made; every view, the caller's included,
+        // learns what it left the session on from the streams this goes to.
+        made.then(|| {
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(
+                self.reported_config_options.clone(),
+            ))
+        })
     }
 
     /// Takes the options one answer carries, as if the agent had reported them.
@@ -283,9 +267,31 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         )));
     }
 
+    /// Ends a turn on its channel, keeping it only when the session can go on and the turn's
+    /// receiver was told how it ended.
+    ///
+    /// Otherwise the channel goes. Its unanswered changes are made when the session could have gone
+    /// on, because a receiver that gave up is no failure of the agent; they fail when the agent
+    /// itself left the session unusable.
+    pub(crate) async fn end_on_channel(
+        &mut self,
+        mut channel: SessionChannel,
+        usable: bool,
+        told: bool,
+    ) {
+        if usable && told {
+            self.channel = Some(channel);
+            return;
+        }
+        if usable {
+            self.accept_changes_on(&mut channel);
+        }
+        self.isolate_channel(channel).await;
+    }
+
     /// Reports the unanswered changes of a session the host gives up as made.
     pub(crate) fn accept_changes_on(&self, channel: &mut SessionChannel) {
-        channel.config_changes.accept(&self.reported_config_options);
+        channel.config_changes.accept();
     }
 }
 

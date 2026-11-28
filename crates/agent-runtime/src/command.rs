@@ -6,7 +6,7 @@ use crate::end_cause::PromptEndReport;
 use crate::prompt::RecordedTurn;
 use crate::title_acquisition::PollAttempt;
 use agent_client_protocol_schema::v1::{
-    ContentBlock, SessionConfigId, SessionConfigOptionValue, SessionUpdate,
+    ContentBlock, SessionConfigId, SessionConfigOption, SessionConfigOptionValue, SessionUpdate,
 };
 use ora_contracts::{
     LoadSessionEvent, PromptSessionEvent, RespondToPermissionRequest, RespondToPermissionResponse,
@@ -53,6 +53,13 @@ pub(crate) enum RuntimeCommand {
         response: oneshot::Sender<Result<StopSessionResponse, RuntimeError>>,
     },
     CancelActivePrompt,
+    /// Answers the options the session is on, or `None` when it holds no provider.
+    ///
+    /// Read-only and answered wherever commands are read, so a view asking during a turn, a title
+    /// poll or an MCP refresh is not kept waiting for it.
+    ReadOptions {
+        response: oneshot::Sender<Option<Vec<SessionConfigOption>>>,
+    },
     /// Drains idle traffic and answers whether any of it belonged to a turn.
     TakeIdleTurnTraffic {
         response: oneshot::Sender<bool>,

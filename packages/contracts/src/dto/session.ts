@@ -94,6 +94,21 @@ export type GetAgentRuntimeStatusResponse = {
 };
 
 /**
+ * Asks which options a session is on, without asking its agent.
+ */
+export type GetSessionOptionsRequest = { sessionId: string };
+
+/**
+ * The options a session is on, or `null` when it has no provider and a choice is an intent for
+ * its next attach.
+ */
+export type GetSessionOptionsResponse = {
+  configOptions:
+    | Array<import("@agentclientprotocol/sdk").SessionConfigOption>
+    | null;
+};
+
+/**
  * Identifies which session to fetch.
  */
 export type GetSessionRequest = { sessionId: string };
@@ -315,11 +330,10 @@ export type SetSessionConfigRequest = {
 };
 
 /**
- * Returns the full option set after the agent applies the change.
+ * Says the agent made the change; the options it left the session on reach views through the
+ * session's streams and `getSessionOptions`, never through this answer.
  */
-export type SetSessionConfigResponse = {
-  configOptions: Array<import("@agentclientprotocol/sdk").SessionConfigOption>;
-};
+export type SetSessionConfigResponse = Record<symbol, never>;
 
 /**
  * Creates and persists one provider-backed session when the user first sends.

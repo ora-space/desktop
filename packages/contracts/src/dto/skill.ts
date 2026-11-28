@@ -42,7 +42,17 @@ export type ListSkillsRequest = Record<symbol, never>;
 /**
  * Returns every visible skill.
  */
-export type ListSkillsResponse = { skills: Array<Skill> };
+export type ListSkillsResponse = {
+  skills: Array<Skill>;
+  /**
+   * Portable names for local catalog IDs, including soft-deleted records, used only on export.
+   */
+  localSkillNamesForExport?: { [key in string]: string };
+  /**
+   * Retired exact identities must never resolve through a same-named visible entry.
+   */
+  retiredSkillIds?: Array<string>;
+};
 
 /**
  * Describes a public skill payload without persistence audit metadata.

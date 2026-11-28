@@ -2,8 +2,8 @@
 
 use crate::command::{ConfigChangeRequest, RuntimeCommand};
 use crate::config_changes::{ConfigChangeOutcome, ConfigChangeRoute, ConfigChangeWrite};
-use crate::support::{agent_timed_out, runtime_unavailable};
-use crate::{AgentRuntimeHost, AgentRuntimeManager, RuntimeError, SESSION_SETUP_TIMEOUT, start};
+use crate::support::{agent_timed_out, runtime_unavailable, session_stopped};
+use crate::{AgentRuntimeHost, AgentRuntimeManager, RuntimeError, SESSION_SETUP_TIMEOUT};
 use agent_client_protocol_schema::v1::{SessionConfigId, SessionConfigOptionValue};
 use ora_contracts::{SetSessionConfigRequest, SetSessionConfigResponse};
 use tokio::sync::oneshot;
@@ -11,6 +11,9 @@ use tokio::time::timeout;
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     /// Applies one configuration option to a persisted session.
+    ///
+    /// Says only whether the agent made the change: its options reach every view through the
+    /// session's streams and `getSessionOptions`, the one source of them.
     pub async fn set_session_config(
         &self,
         request: SetSessionConfigRequest,
@@ -19,10 +22,13 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         let value = SessionConfigOptionValue::value_id(request.value);
         let session = self.find_session(&request.session_id)?;
         // The live actor asks, so that the answer takes its turn among the session's other frames,
-        // and addresses the session it rebuilt rather than the one still in the row. A session with
-        // no actor holds no rebuilt binding, so its row is authoritative.
-        let route = match self.lookup_actor(&session.id)? {
-            Some(handle) => {
+        // and addresses the session it rebuilt rather than the one still in the row.
+        let Some(handle) = self.lookup_actor(&session.id)? else {
+            // No actor holds a provider for it, so there are no options to change.
+            return Err(session_stopped());
+        };
+        let route = {
+            {
                 let (accepted, route) = oneshot::channel();
                 let request = ConfigChangeRequest {
                     config_id: config_id.clone(),
@@ -35,25 +41,8 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                     .map_err(|_error| runtime_unavailable())?;
                 route.await.map_err(|_error| runtime_unavailable())??
             }
-            None => ConfigChangeRoute::Direct {
-                agent_session_id: session.agent_session_id.clone(),
-                _finished: None,
-            },
         };
-        let config_options = match route {
-            ConfigChangeRoute::Direct {
-                agent_session_id,
-                _finished,
-            } => {
-                start::request_config_option(
-                    &self.inner.connections,
-                    &session.agent_ref,
-                    &agent_session_id,
-                    &config_id,
-                    &value,
-                )
-                .await?
-            }
+        match route {
             // Giving up here does not withdraw the change: the agent may still make it, and the
             // actor adopts its answer then.
             ConfigChangeRoute::Asked { write, outcome } => {
@@ -62,7 +51,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                     .map_err(|_elapsed| agent_timed_out("agent configuration timed out"))??
             }
         };
-        Ok(SetSessionConfigResponse { config_options })
+        Ok(SetSessionConfigResponse {})
     }
 }
 
@@ -74,8 +63,9 @@ async fn answered(
     if let Some(write) = write {
         tokio::select! {
             biased;
-            // Its session went first, so the agent was never asked and is not asked any more.
-            _ = &mut outcome => return Err(runtime_unavailable()),
+            // Its provider session went first, so the agent was never asked and is not asked any
+            // more: as for a session with no provider, the choice is the next attach's intent.
+            _ = &mut outcome => return Err(session_stopped()),
             written = write => written?,
         }
     }
@@ -93,7 +83,7 @@ mod tests {
     #[tokio::test]
     async fn a_settled_change_is_not_written() {
         let (caller, outcome) = oneshot::channel();
-        caller.send(Ok(Vec::new())).unwrap();
+        caller.send(Ok(())).unwrap();
         let written = Arc::new(AtomicBool::new(false));
         let report = written.clone();
         let write = Box::pin(async move {

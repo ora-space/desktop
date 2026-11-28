@@ -129,10 +129,18 @@ process is reused (after re-verifying it against the configured public key) inst
 again. Development builds keep the commands for tests but register no network work.
 
 - A package already downloaded stays installable when a later check fails; `Failed` is reported only
-  when nothing was installable, and a failed installation restores `Ready`. `Failed` names whether
-  the check or the installation failed (with the version for an installation), and the shell titles
-  it from that. The settings sidebar and the release notes page show the failure; the page also
-  shows its reason and a failed installation, and lets the user retry.
+  when nothing was installable. `Failed` names whether the check or the installation failed (with
+  the version for an installation), and the shell titles it from that. The settings sidebar and the
+  release notes page show the failure; the page also shows its reason and a failed installation,
+  and lets the user retry.
+- A confirmed installation fails in one of two ways. When the platform installer refuses the
+  package, the release returns to `Ready` with its package so the user can retry, and the shell
+  reports the rejected command. When the package no longer passes its last verification before the
+  installer, it is removed and `Failed` names the installation.
+- A confirmation whose release a background check replaced before the installation started is
+  refused with the public `Conflict` error `desktop_update_release_replaced` and logged at WARN. The
+  replacement is already `Ready`, so the shell does not report a failure. The shell accepts no
+  second confirmation until the host has answered the first.
 - Linux releases ship an AppImage, so a `deb`/`rpm` installation or a bare executable reports
   `ManualUpdate` with a reason before any download, and the shell points the user to the release
   instead of offering an install.

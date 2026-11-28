@@ -5,10 +5,12 @@ import { useChatStore } from "../../chat-store-context";
 /**
  * Applies one configuration selection — in practice the model — to a session.
  *
- * The request is owned by the chat store, which records both the agent's
- * authoritative answer and any failure to reach it. This wrapper exists for the
- * pending flag the picker shows while the round trip is in flight; the rejection
- * it re-raises is already on screen through the conversation's error.
+ * The request is owned by the chat store, which settles it once the options the
+ * agent left the session on are known, and records any failure to reach it. This
+ * wrapper exists for the pending flag the picker shows until then; the rejection
+ * it re-raises is already on screen through the conversation's error. It resolves
+ * to `noProvider` when the session had none, leaving the choice to the picker as
+ * an intent.
  */
 export function useSetSessionConfig() {
   const chatStore = useChatStore();

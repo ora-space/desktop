@@ -47,6 +47,9 @@ pub struct LoopRoundExecutionState {
 pub struct LoopExitState {
     pub node_run_id: String,
     pub requested_at: i64,
+    /// Physical attempts cancelled by this exit, absent on exits written by older versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancelled_attempts: Option<std::collections::BTreeSet<String>>,
     pub result: Result<BTreeMap<String, Value>, String>,
 }
 

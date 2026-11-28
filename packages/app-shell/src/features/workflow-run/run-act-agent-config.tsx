@@ -1,3 +1,7 @@
+import {
+  resolveWorkflowSkill,
+  workflowSkillLabel,
+} from "../workflow-editor/workflow-skill-reference";
 import { useTranslation } from "react-i18next";
 import { cn } from "@ora/ui";
 import type { WorkflowAgentConfig } from "@ora/workflow-runtime";
@@ -43,12 +47,9 @@ export function RunActAgentConfig({
       .filter((plugin) => plugin.kind === "mcp")
       .map((plugin) => [plugin.id, plugin]),
   );
-  // The workflow JSON stores role/skill by name, so resolve catalog descriptions by name.
+  // Roles remain name-based; Skills resolve catalog identities and legacy references separately.
   const agentByName = new Map(
     (agentsQuery.data ?? []).map((agent) => [agent.name, agent]),
-  );
-  const skillByName = new Map(
-    (skillsQuery.data ?? []).map((skill) => [skill.name, skill]),
   );
   const roleId = config.roleId ?? "";
   const role = roleId ? agentByName.get(roleId) : undefined;
@@ -151,8 +152,19 @@ export function RunActAgentConfig({
             aria-label={t("settings.workflow.field.skills")}
           >
             {enabledSkills.map((binding) => {
-              const skill = skillByName.get(binding.skillId);
-              const name = skill?.name ?? binding.skillId;
+              const resolved = resolveWorkflowSkill(
+                binding.skillId,
+                skillsQuery.data ?? [],
+                skillsQuery.retiredSkillIds,
+              );
+              const skill = "skill" in resolved ? resolved.skill : undefined;
+              const name = skill
+                ? workflowSkillLabel(
+                    skill,
+                    pluginsQuery.data ?? [],
+                    t("settings.workflow.skillLocal"),
+                  )
+                : `${binding.skillId} · ${t(`settings.workflow.transfer.status.${resolved.status}`)}`;
               const description = skill?.description?.trim() ?? "";
               return (
                 <li key={binding.skillId}>

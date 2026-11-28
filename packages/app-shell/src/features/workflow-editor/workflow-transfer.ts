@@ -1,4 +1,5 @@
 import type { InstalledPlugin, Skill } from "@ora/contracts";
+import { resolveWorkflowSkill } from "./workflow-skill-reference";
 import {
   WORKFLOW_NODE_KINDS,
   isWorkflowPromptInactivity,
@@ -43,7 +44,8 @@ export type WorkflowDependencyKind = "mcp" | "skill";
  * Local readiness of one referenced plugin.
  * `unavailable` means installed but not usable (invalid package or incomplete configuration).
  */
-export type WorkflowDependencyStatus = "installed" | "unavailable" | "missing";
+export type WorkflowDependencyStatus =
+  "installed" | "unavailable" | "missing" | "ambiguous";
 
 /**
  * The action that resolves a non-ready dependency: install a missing MCP or Skill from the
@@ -56,7 +58,7 @@ export type WorkflowDependencyFix =
 /** One plugin reference aggregated across every Agent node that binds it. */
 export interface WorkflowDependency {
   kind: WorkflowDependencyKind;
-  /** Graph identity: the full plugin ID for MCP, the skill name for Skill. */
+  /** Graph identity: the full plugin ID for MCP, the stored reference for Skill (catalog ID, plugin ID, or legacy name). */
   id: string;
   /** Catalog display name when installed, otherwise the stored identity. */
   label: string;
@@ -262,13 +264,13 @@ export function collectWorkflowDependencies(
   nodes: readonly WorkflowTransferNode[],
   plugins: readonly InstalledPlugin[],
   skills: readonly Skill[],
+  retiredSkillIds: readonly string[] = [],
 ): WorkflowDependency[] {
   const pluginsById = new Map(
     plugins
       .filter((plugin) => plugin.kind === "mcp")
       .map((plugin) => [plugin.id, plugin]),
   );
-  const skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
   const dependencies = new Map<string, WorkflowDependency>();
 
   /** Adds one reference, merging node titles for repeated bindings. */
@@ -316,21 +318,32 @@ export function collectWorkflowDependencies(
     }
     for (const binding of config.skills ?? []) {
       add("skill", binding.skillId, node.data.title, binding.enabled, () => {
-        const skill = skillsByName.get(binding.skillId);
-        if (skill === undefined) {
-          return { label: binding.skillId, status: "missing", fix: "install" };
+        const resolved = resolveWorkflowSkill(
+          binding.skillId,
+          skills,
+          retiredSkillIds,
+        );
+        if (resolved.status === "missing" || resolved.status === "ambiguous") {
+          return {
+            label: binding.skillId,
+            status: resolved.status,
+            fix: resolved.status === "missing" ? "install" : null,
+          };
         }
-        return skill.availability === "available"
-          ? { label: skill.name, status: "installed", fix: null }
-          : { label: skill.name, status: "unavailable", fix: "reviewSkill" };
+        return {
+          label: resolved.skill.name,
+          status: resolved.status,
+          fix: resolved.status === "installed" ? null : "reviewSkill",
+        };
       });
     }
   }
 
   const rank: Record<WorkflowDependencyStatus, number> = {
-    missing: 0,
-    unavailable: 1,
-    installed: 2,
+    ambiguous: 0,
+    missing: 1,
+    unavailable: 2,
+    installed: 3,
   };
   return [...dependencies.values()].sort(
     (left, right) => rank[left.status] - rank[right.status],
@@ -415,20 +428,43 @@ interface WorkflowExportEnvelope {
 export function workflowExportDocument(
   workflow: DemoWorkflow,
   snapshot: WorkflowExportEnvelope | null,
+  localSkillNames: Readonly<Record<string, string>> = {},
 ): DemoWorkflow {
-  if (snapshot === null) {
-    return workflow;
-  }
+  const source =
+    snapshot === null
+      ? workflow
+      : {
+          id: workflow.id,
+          name: workflow.name,
+          description: snapshot.description ?? workflow.description,
+          updatedAt: workflow.updatedAt,
+          viewport: snapshot.viewport,
+          nodes: snapshot.nodes as DemoWorkflow["nodes"],
+          edges: snapshot.edges as DemoWorkflow["edges"],
+          annotations: snapshot.annotations as DemoWorkflow["annotations"],
+          globalVariables: snapshot.globalVariables,
+        };
   return {
-    id: workflow.id,
-    name: workflow.name,
-    description: snapshot.description ?? workflow.description,
-    updatedAt: workflow.updatedAt,
-    viewport: snapshot.viewport,
-    nodes: snapshot.nodes as DemoWorkflow["nodes"],
-    edges: snapshot.edges as DemoWorkflow["edges"],
-    annotations: snapshot.annotations as DemoWorkflow["annotations"],
-    globalVariables: snapshot.globalVariables,
+    ...source,
+    nodes: source.nodes.map((node) =>
+      node.data.kind !== "agent" || node.data.agentConfig == null
+        ? node
+        : {
+            ...node,
+            data: {
+              ...node.data,
+              agentConfig: {
+                ...node.data.agentConfig,
+                skills: node.data.agentConfig.skills?.map((binding) => ({
+                  ...binding,
+                  skillId: Object.hasOwn(localSkillNames, binding.skillId)
+                    ? localSkillNames[binding.skillId]!
+                    : binding.skillId,
+                })),
+              },
+            },
+          },
+    ),
   };
 }
 

@@ -3,10 +3,11 @@
 //! These judgments live outside `engine.rs` so the scheduling core stays free of extra
 //! region-bookkeeping bulk; they still answer from persisted rows and graph topology only.
 
+use super::skill_delivery::WorkflowRunPayload;
 use crate::workflow_run::engine::graph::WorkflowGraph;
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::FailurePropagation;
-use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus};
+use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus, WorkflowScopeId};
 use std::collections::BTreeSet;
 
 /// Whether a `Running` row of this wire node type stands for work in flight outside the
@@ -91,8 +92,54 @@ pub fn resume_unit_member_ids(graph: &WorkflowGraph, owner: &str) -> Vec<String>
 /// row the failed run left `Running` (its round held a wait the run abandoned) is cleared the
 /// same way; the repository closes its round scopes with it.
 pub fn resume_clear_node_ids(graph: &WorkflowGraph, node_runs: &[WorkflowNodeRun]) -> Vec<String> {
+    clear_resume_triggers(graph, node_runs.iter())
+}
+
+/// Preserve settled items only for foreach owners carrying a pending debug replay.
+/// All other containers retain the ordinary whole-container recovery boundary.
+pub(super) fn resume_with_parked_foreach(
+    graph: &WorkflowGraph,
+    rows: &[WorkflowNodeRun],
+    payload: &WorkflowRunPayload,
+    root_scope: &WorkflowScopeId,
+) -> Vec<String> {
+    let parked: BTreeSet<&str> = rows
+        .iter()
+        .filter(|row| &row.scope_id == root_scope && row.node_type == NodeType::Iteration.as_str())
+        .filter(|row| {
+            row.payload
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .is_some_and(|doc| doc["debugForeachReplay"].is_object())
+        })
+        .map(|row| row.node_id.as_str())
+        .collect();
+    if parked.is_empty() {
+        return resume_clear_node_ids(graph, rows);
+    }
+    // A replay's retained ledger prefix is history. The owner itself and any
+    // unsettled member can still trigger a full restart.
+    let triggers = rows.iter().filter(|row| {
+        if &row.scope_id != root_scope {
+            return true;
+        }
+        let Some((index, owner)) = row.iteration.zip(graph.region_owner(&row.node_id)) else {
+            return true;
+        };
+        !(parked.contains(owner)
+            && payload
+                .iteration_ledger(owner)
+                .is_some_and(|ledger| ledger.contains_key(&index)))
+    });
+    clear_resume_triggers(graph, triggers)
+}
+
+fn clear_resume_triggers<'a>(
+    graph: &WorkflowGraph,
+    rows: impl Iterator<Item = &'a WorkflowNodeRun>,
+) -> Vec<String> {
     let mut failed = BTreeSet::new();
-    for node_run in node_runs {
+    for node_run in rows {
         if matches!(
             node_run.status,
             WorkflowNodeStatus::Failed | WorkflowNodeStatus::Cancelled

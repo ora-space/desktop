@@ -88,6 +88,8 @@ pub(crate) struct RecordingExecutor {
 /// The immutable facts a background executor receives for one dispatch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DispatchRecord {
+    pub(crate) prompt: Option<String>,
+    pub(crate) variable_pool: WorkflowVariablePool,
     pub(crate) node_run_id: String,
     pub(crate) node_id: String,
     pub(crate) payload: Option<String>,
@@ -108,9 +110,11 @@ impl NodeExecutor for RecordingExecutor {
         _graph: &WorkflowGraph,
         context: &ExecutionContext,
         _scope_id: &ora_domain::WorkflowScopeId,
-        _variable_pool: &WorkflowVariablePool,
+        variable_pool: &WorkflowVariablePool,
     ) {
         self.records.lock().unwrap().push(DispatchRecord {
+            prompt: node.agent_config.as_ref().map(|c| c.prompt.clone()),
+            variable_pool: variable_pool.clone(),
             node_run_id: node_run_id.to_string(),
             node_id: node.id.clone(),
             payload: context.run.payload.clone(),
@@ -353,6 +357,57 @@ pub(crate) fn started_run_with<E: NodeExecutor + 'static>(
         .list_node_runs(&run_id)
         .unwrap();
     (run_id, node_runs, engine)
+}
+
+/// Starts an upstream agent followed by a while loop and parks its interactive first-round writer.
+pub(super) fn parked_writer_after_upstream(
+    temp: &TempDir,
+    pool: &RepositoryPool,
+) -> (WorkflowNodeRunId, WorkflowNodeRun) {
+    let mut graph: serde_json::Value =
+        serde_json::from_str(super::loop_resume_tests::LOOP_GRAPH).unwrap();
+    let agent: serde_json::Value = serde_json::from_str(AGENT_GRAPH).unwrap();
+    let mut upstream = agent["nodes"][1].clone();
+    upstream["id"] = serde_json::json!("a");
+    graph["nodes"][3]["data"]["agentConfig"]["interactive"] = serde_json::json!(true);
+    graph["nodes"].as_array_mut().unwrap().push(upstream);
+    graph["edges"][0]["target"] = serde_json::json!("a");
+    graph["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"source":"a", "target":"loop"}));
+    let executor = RecordingExecutor::default();
+    let (run, nodes, engine) = started_run_with(temp, pool, &graph.to_string(), executor.clone());
+    let upstream = nodes.iter().find(|row| row.node_id == "a").unwrap();
+    let dispatch = executor
+        .records()
+        .into_iter()
+        .find(|r| r.node_id == "a")
+        .unwrap();
+    assert!(
+        ora_db::workflow_debug::WorkflowDebugStore::new(pool.clone())
+            .record_agent_dispatch(
+                run.as_ref(),
+                upstream.id.as_ref(),
+                &serde_json::json!({"variablePool": dispatch.variable_pool})
+            )
+            .unwrap()
+    );
+    engine
+        .complete_node(&run, &upstream.id, Some("ready".into()), None, None, vec![])
+        .unwrap();
+    let repo = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let nodes = repo.list_node_runs(&run).unwrap();
+    let writer = nodes.iter().find(|row| row.node_id == "writer").unwrap();
+    let owner = nodes.iter().find(|row| row.node_id == "loop").unwrap();
+    let round = repo.find_active_loop_round(&owner.id).unwrap().unwrap();
+    assert_eq!(round.round_index, 1);
+    assert_eq!(round.id, writer.scope_id);
+    bind_and_park(pool, writer);
+    (
+        upstream.id.clone(),
+        repo.find_node_run_by_id(&writer.id).unwrap().unwrap(),
+    )
 }
 
 /// Creates isolated coordination state for tests of the internal turn-policy interface.

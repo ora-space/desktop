@@ -32,6 +32,13 @@ async_backend_command!(
     "Executes start_session through the session-owned interface."
 );
 async_backend_command!(
+    get_session_options,
+    GetSessionOptionsRequest,
+    GetSessionOptionsResponse,
+    sessions.get_options,
+    "Executes get_session_options through the session-owned interface."
+);
+async_backend_command!(
     set_session_config,
     SetSessionConfigRequest,
     SetSessionConfigResponse,

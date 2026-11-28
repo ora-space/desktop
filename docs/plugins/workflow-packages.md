@@ -115,7 +115,8 @@ record, copy liveness, and the operation (`install`, `update`, or card `retry`),
   was read, and copy creation commits with its draft, initial published snapshot, and `imported`
   record in one transaction. A concurrent name collision during commit rolls back and reports
   `skipped_conflict` rather than `failed`. Installs (including packs, naming each member and linking
-  to its installed card) and card retries open the import report whenever any conflict occurs;
+  to its installed card, where the manager shows exactly that one card by canonical id until the
+  search box is edited or cleared) and card retries open the import report whenever any conflict occurs;
   upgrades open the report for first-time conflicts (listing sibling known conflicts as "still
   unresolved") and keep known conflicts and deleted copies as neutral summary counts—even when the
   upgrade report opens for another reason, deleted copies stay out of the "not imported" list. When

@@ -1,4 +1,3 @@
-use super::condition::ELSE_BRANCH_ID;
 use super::graph::{WorkflowGraph, WorkflowGraphEdge, WorkflowGraphNode};
 use super::iteration::CompositeRegion;
 use super::node_type::NodeType;
@@ -69,19 +68,30 @@ impl<'a> BranchProjection<'a> {
         node_runs: &[WorkflowNodeRun],
         condition_decisions: &'a BTreeMap<String, String>,
     ) -> Self {
-        let mut states = HashMap::new();
-        for node_run in node_runs
+        let statuses = node_runs
             .iter()
-            .filter(|node_run| node_run.iteration.is_none())
-        {
-            let state = match node_run.status {
+            .filter(|row| row.iteration.is_none())
+            .map(|row| (row.node_id.as_str(), row.status));
+        Self::from_outer_statuses(graph, statuses, condition_decisions)
+    }
+
+    /// Projects the outer DAG from logical positions, including a predicted Condition
+    /// completion when a debug preview has no physical replacement attempt yet.
+    pub fn from_outer_statuses<'n>(
+        graph: &'a WorkflowGraph,
+        statuses: impl IntoIterator<Item = (&'n str, WorkflowNodeStatus)>,
+        condition_decisions: &'a BTreeMap<String, String>,
+    ) -> Self {
+        let mut states = HashMap::new();
+        for (node_id, status) in statuses {
+            let state = match status {
                 WorkflowNodeStatus::Succeeded => ProjectedNodeState::Succeeded,
                 WorkflowNodeStatus::Failed => ProjectedNodeState::Failed,
                 WorkflowNodeStatus::Cancelled => ProjectedNodeState::Cancelled,
                 WorkflowNodeStatus::Running => ProjectedNodeState::Running,
                 WorkflowNodeStatus::Pending => ProjectedNodeState::AwaitingInput,
             };
-            states.insert(node_run.node_id.clone(), state);
+            states.insert(node_id.to_owned(), state);
         }
         let mut projection = Self {
             graph,
@@ -262,12 +272,7 @@ fn condition_edge_active(
     let Some(selected) = condition_decisions.get(condition_id) else {
         return false;
     };
-    match edge.source_handle.as_deref() {
-        // An unlabeled condition edge defaults to the else branch so graphs that predate source
-        // handles still route somewhere safe instead of dead-ending the downstream node.
-        None => selected == ELSE_BRANCH_ID,
-        Some(handle) => handle == selected,
-    }
+    edge.condition_branch() == selected
 }
 
 #[cfg(test)]

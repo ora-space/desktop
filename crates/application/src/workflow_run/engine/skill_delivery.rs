@@ -84,6 +84,28 @@ impl Default for WorkflowRunPayload {
 }
 
 impl WorkflowRunPayload {
+    /// Withdraws committed projections together, so resuming and debugging a container
+    /// cannot leave behind an old round decision or a settled item ledger.
+    pub fn withdraw_writers(&mut self, writers: &std::collections::BTreeSet<String>) {
+        let pool = &mut self.variable_pool;
+        pool.values.retain(|key, _| {
+            !pool
+                .catalog
+                .get(key)
+                .is_some_and(|d| writers.contains(&d.writer))
+                && !key
+                    .strip_suffix(".selected_branch_id")
+                    .is_some_and(|id| writers.contains(id))
+        });
+        pool.revision = pool.revision.saturating_add(1);
+        self.condition_decisions
+            .retain(|id, _| !writers.contains(id));
+        self.iteration_ledger.retain(|id, _| !writers.contains(id));
+        self.iteration_condition_decisions.retain(|key, _| {
+            !writers.contains(key.rsplit_once('#').map_or(key.as_str(), |(id, _)| id))
+        });
+    }
+
     /// Creates the immutable execution metadata captured while the run is initialized.
     pub fn new(locale: WorkflowRunLocale, skill_receipt: WorkflowSkillReceipt) -> Self {
         Self {
@@ -163,8 +185,33 @@ impl WorkflowRunPayload {
         format!("{condition_node_id}#{round}")
     }
 
-    /// Records one round's settled outcome for an iteration node. Entries are append-only per
-    /// run: recording an already-settled round is rejected so ledger history stays immutable.
+    /// Rewinds only this container's effective ledger before a debug redispatch. Index zero
+    /// starts a fresh batch. Missing prefix evidence must not silently shorten the result.
+    pub fn rewind_iteration_ledger(
+        &mut self,
+        owner: &str,
+        first_index: u32,
+    ) -> Result<(), WorkflowRunPayloadError> {
+        let ledger = self.iteration_ledger.get(owner);
+        let prefix = ledger
+            .into_iter()
+            .flat_map(|rows| rows.range(..first_index));
+        if !prefix.map(|(index, _)| *index).eq(0..first_index) {
+            return Err(WorkflowRunPayloadError::MissingIterationPrefix {
+                iteration_node_id: owner.to_owned(),
+                first_index,
+            });
+        }
+        if first_index == 0 {
+            self.iteration_ledger.remove(owner);
+        } else if let Some(rows) = self.iteration_ledger.get_mut(owner) {
+            rows.split_off(&first_index);
+        }
+        Ok(())
+    }
+
+    /// Records one round's outcome once in the current effective ledger. An ordinary
+    /// settlement replay cannot overwrite it; only an explicit rewind reopens the suffix.
     pub fn record_round_outcome(
         &mut self,
         iteration_node_id: &str,
@@ -189,6 +236,11 @@ impl WorkflowRunPayload {
 /// Failures raised while mutating private run payload state.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum WorkflowRunPayloadError {
+    #[error("iteration {iteration_node_id} lacks a complete ledger prefix before {first_index}")]
+    MissingIterationPrefix {
+        iteration_node_id: String,
+        first_index: u32,
+    },
     #[error("iteration {iteration_node_id} round {round} is already settled")]
     RoundAlreadySettled {
         iteration_node_id: String,
@@ -200,6 +252,60 @@ pub enum WorkflowRunPayloadError {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    /// Recomputing a failed item replaces its contribution without dropping a sibling ledger.
+    #[test]
+    fn rewind_iteration_ledger_preserves_verified_prefix_and_isolates_owner() {
+        use super::super::iteration::project_exposed_values;
+        use serde_json::json;
+
+        let mut payload = WorkflowRunPayload::default();
+        for index in 0..5 {
+            let entry = RoundOutcome::Failed {
+                item: json!(index),
+                error: format!("old {index}"),
+            };
+            payload
+                .record_round_outcome("batch", index, entry.clone())
+                .unwrap();
+            payload.record_round_outcome("other", index, entry).unwrap();
+        }
+        let before = payload.clone();
+        for _ in 0..2 {
+            payload.rewind_iteration_ledger("batch", 2).unwrap();
+            for index in 2..5 {
+                payload
+                    .record_round_outcome(
+                        "batch",
+                        index,
+                        RoundOutcome::Succeeded {
+                            item: json!(index),
+                            output: json!(index * 10),
+                        },
+                    )
+                    .unwrap();
+            }
+            let (output, entries, failures) =
+                project_exposed_values(&payload.iteration_ledger["batch"]);
+            assert_eq!(output, json!([20, 30, 40]));
+            assert_eq!(entries.as_array().unwrap().len(), 5);
+            assert_eq!(failures, json!(2));
+        }
+        payload
+            .iteration_ledger
+            .get_mut("batch")
+            .unwrap()
+            .remove(&1);
+        let incomplete = payload.clone();
+        assert!(payload.rewind_iteration_ledger("batch", 2).is_err());
+        assert_eq!(payload, incomplete);
+        payload.rewind_iteration_ledger("batch", 0).unwrap();
+        assert!(payload.iteration_ledger("batch").is_none());
+        assert_eq!(
+            payload.iteration_ledger("other"),
+            before.iteration_ledger("other")
+        );
+    }
 
     /// Persisted skill bindings round-trip with catalog id and invocation name.
     #[test]

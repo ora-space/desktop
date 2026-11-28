@@ -189,13 +189,29 @@ pub struct SetSessionConfigRequest {
     pub value: String,
 }
 
-/// Returns the full option set after the agent applies the change.
+/// Says the agent made the change; the options it left the session on reach views through the
+/// session's streams and `getSessionOptions`, never through this answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct SetSessionConfigResponse {
-    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").SessionConfigOption>")]
-    pub config_options: Vec<SessionConfigOption>,
+pub struct SetSessionConfigResponse {}
+
+/// Asks which options a session is on, without asking its agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct GetSessionOptionsRequest {
+    pub session_id: String,
+}
+
+/// The options a session is on, or `null` when it has no provider and a choice is an intent for
+/// its next attach.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct GetSessionOptionsResponse {
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").SessionConfigOption> | null")]
+    pub config_options: Option<Vec<SessionConfigOption>>,
 }
 
 /// Creates and persists one provider-backed session when the user first sends.
@@ -619,6 +635,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ResumeSessionHistoryResponse::export(config)?;
     SetSessionConfigRequest::export(config)?;
     SetSessionConfigResponse::export(config)?;
+    GetSessionOptionsRequest::export(config)?;
+    GetSessionOptionsResponse::export(config)?;
     StartSessionRequest::export(config)?;
     StartSessionResponse::export(config)?;
     GetSessionRequest::export(config)?;

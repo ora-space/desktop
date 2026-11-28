@@ -1,3 +1,4 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import {
   act,
   cleanup,
@@ -95,6 +96,7 @@ function renderModelSelector(
   seed: (state: FixtureState) => void = () => {},
   sessionId?: string,
   discoveryScope: AgentDiscoveryScope = "modelsAndCommands",
+  disabled = false,
 ) {
   const state = createFixtureState();
   state.tasks = [
@@ -134,6 +136,7 @@ function renderModelSelector(
             <ModelSelector
               discoveryScope={discoveryScope}
               sessionId={sessionId}
+              disabled={disabled}
             />
           </TooltipProvider>
         </PlatformProvider>
@@ -269,9 +272,11 @@ describe("ModelSelector for a session that has not attached", () => {
    * or shown — it lists what the agent can serve, not what this conversation is running.
    */
   it("configures the live session once it reports options of its own", async () => {
-    const { discover, setConfig, chatStore } = renderModelSelector(
-      selectPersistedSession,
-    );
+    const { discover, setConfig, chatStore } = renderModelSelector((state) => {
+      selectPersistedSession(state);
+      // Live: the read after the change finds its provider.
+      state.sessions[0]!.status = "running";
+    });
     act(() => {
       chatStore.getState().setConfigOptions("s1", [
         {
@@ -298,6 +303,116 @@ describe("ModelSelector for a session that has not attached", () => {
         expect.objectContaining({ sessionId: "s1", value: "session/other" }),
       ),
     );
+    expect(discover).not.toHaveBeenCalled();
+  });
+});
+
+/** The options a session reported while it had a provider. */
+function sessionOptions(): acp.SessionConfigOption[] {
+  return [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "session/current",
+      options: [
+        { value: "session/current", name: "Session Current" },
+        { value: "session/other", name: "Session Other" },
+      ],
+    },
+  ];
+}
+
+/** Has the conversation learn that its session has no provider now, keeping its last options. */
+function loseProvider(chatStore: ReturnType<typeof createChatStore>) {
+  act(() => {
+    chatStore.getState().setConfigOptions("s1", sessionOptions());
+    chatStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        s1: { ...state.conversations.s1!, providerLost: true },
+      },
+    }));
+  });
+}
+
+describe("ModelSelector for a session that lost its provider", () => {
+  /**
+   * The last options still say which model the session was on, but nothing is behind them to
+   * configure: asking would fail, so the pick waits for the message that attaches again.
+   */
+  it("records a pick as an intent although the session kept its last options", async () => {
+    const { setConfig, chatStore } = renderModelSelector(
+      selectPersistedSession,
+    );
+    loseProvider(chatStore);
+    const user = userEvent.setup();
+
+    await user.click(picker());
+    const menu = await screen.findByRole("menu");
+    await user.click(within(menu).getByText(/Small Pickle/));
+
+    await waitFor(() =>
+      expect(
+        usePendingAgentStore.getState().models[
+          `session:s1|agent:${AGENT_REF.opencode}`
+        ],
+      ).toEqual("opencode/small-pickle"),
+    );
+    expect(setConfig).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The provider can go between the pick and its arrival. The pick is then what the next attach
+   * applies, as if it had been made a moment later, and nothing is reported as failed.
+   */
+  it("records a pick that finds the provider gone as an intent", async () => {
+    const { setConfig, chatStore } = renderModelSelector(
+      selectPersistedSession,
+    );
+    act(() => {
+      chatStore.getState().setConfigOptions("s1", sessionOptions());
+    });
+    setConfig.mockRejectedValueOnce(
+      new RemoteContractError(
+        {
+          code: "session_stopped",
+          params: {},
+          requestId: "00000000-0000-4000-8000-000000000000",
+        },
+        null,
+      ),
+    );
+    const user = userEvent.setup();
+
+    await user.click(picker());
+    const menu = await screen.findByRole("menu");
+    await user.click(within(menu).getByText(/Session Other/));
+
+    await waitFor(() =>
+      expect(
+        usePendingAgentStore.getState().models[
+          `session:s1|agent:${AGENT_REF.opencode}`
+        ],
+      ).toEqual("session/other"),
+    );
+    expect(chatStore.getState().conversations.s1).toMatchObject({
+      providerLost: true,
+      error: null,
+    });
+  });
+
+  it("keeps naming the last model in a read-only picker", async () => {
+    const { discover, chatStore } = renderModelSelector(
+      selectPersistedSession,
+      "s1",
+      "models",
+      /*disabled*/ true,
+    );
+    loseProvider(chatStore);
+
+    await waitFor(() => expect(picker()).toHaveTextContent(/Session Current/));
     expect(discover).not.toHaveBeenCalled();
   });
 });

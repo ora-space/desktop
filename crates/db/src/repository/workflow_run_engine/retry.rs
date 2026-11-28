@@ -18,6 +18,23 @@ pub(super) const RETRY_WAIT_PATH: &str = "$.retry_wait";
 /// Error recorded on a waiting attempt the run gave up on before it could start.
 pub(super) const RETRY_ABANDONED: &str = r#"{"reason":"retry_abandoned"}"#;
 
+impl SqliteWorkflowRunEngineRepository {
+    /// Abandons pending backoffs atomically with a run failure, allowing immediate manual recovery.
+    pub(crate) fn abandon_retry_waits(
+        tx: &Transaction<'_>,
+        run: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        settle_retry_waits(
+            tx,
+            run,
+            WorkflowNodeStatus::Cancelled,
+            Some(RETRY_ABANDONED),
+            now,
+        )
+    }
+}
+
 impl WorkflowRetryRepository for SqliteWorkflowRunEngineRepository {
     fn schedule_node_retry(
         &self,
@@ -29,6 +46,9 @@ impl WorkflowRetryRepository for SqliteWorkflowRunEngineRepository {
         self.pool
             .with_connection_mut(|connection| {
                 let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
+                if crate::workflow_debug::attempt_fenced(&transaction, failed_node_run_id.as_ref())? {
+                    return Ok(ScheduleNodeRetryResult::NotRunning);
+                }
                 let Some((run_id, node_id, node_type, status, scope_id, input, iteration, payload, run_status)) = transaction
                     .query_row(
                         "SELECT nr.run_id, nr.node_id, nr.node_type, nr.status, nr.scope_id, nr.input,
@@ -136,6 +156,9 @@ impl WorkflowRetryRepository for SqliteWorkflowRunEngineRepository {
         self.pool
             .with_connection_mut(|connection| {
                 let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
+                if crate::workflow_debug::attempt_fenced(&transaction, node_run_id.as_ref())? {
+                    return Ok(BeginNodeRetryResult::NotWaiting);
+                }
                 let Some((status, payload, run_status)) = transaction
                     .query_row(
                         "SELECT nr.status, nr.payload, wr.run_status

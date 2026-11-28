@@ -138,10 +138,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         }
         while let Some(notification) = channel.pending_updates.pop_front() {
             let update = match notification.update {
-                // What was queued may have been replaced since, and is not to be taken again.
-                SessionUpdate::ConfigOptionUpdate(_) => SessionUpdate::ConfigOptionUpdate(
-                    ConfigOptionUpdate::new(self.reported_config_options.clone()),
-                ),
+                // Never taken again: the stream already started from the options the session is on.
+                SessionUpdate::ConfigOptionUpdate(_) => continue,
                 update => {
                     self.observe_session_update(&update);
                     update
@@ -159,8 +157,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 .is_err()
             {
                 end_report.record(PromptEndCause::StreamDropped);
-                self.accept_changes_on(&mut channel);
-                self.isolate_channel(channel).await;
+                self.end_on_channel(channel, /*usable*/ true, /*told*/ false)
+                    .await;
                 if attempt.skip_record {
                     self.end_turn(StopReason::Cancelled);
                 }
@@ -400,21 +398,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         followers.finish(StopReason::Cancelled);
                         if reusable {
                             self.record_cleanup(operation_id, Ok(()));
-                            if events
+                            let told = events
                                 .try_send(Ok(PromptSessionEvent::Completed {
                                     stop_reason: StopReason::Cancelled,
                                     token_usage: None,
                                 }))
-                                .is_ok()
-                                && !session_invalid
-                            {
-                                self.channel = Some(channel);
-                            } else {
-                                if !session_invalid {
-                                    self.accept_changes_on(&mut channel);
-                                }
-                                self.isolate_channel(channel).await;
-                            }
+                                .is_ok();
+                            self.end_on_channel(channel, !session_invalid, told).await;
                         } else {
                             let _ = events.try_send(Err(RuntimeError::turn_cancel_unanswered()));
                             self.isolate_channel(channel).await;
@@ -612,19 +602,21 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                                 failure
                             };
                             let delivered = events.try_send(Err(failure)).is_ok();
-                            if reusable && delivered && !session_invalid {
-                                self.channel = Some(channel);
-                            } else {
-                                if reusable && !session_invalid {
-                                    self.accept_changes_on(&mut channel);
-                                }
-                                self.isolate_channel(channel).await;
-                            }
+                            self.end_on_channel(channel, reusable && !session_invalid, delivered)
+                                .await;
                         }
                     }
                     return;
                 }
-                ActiveInput::Control(SessionControl::ConnectionLost(error)) => {
+                // A lost connection both reports itself and closes the queue, and either may be read
+                // first, so both end the turn the same way.
+                lost @ (ActiveInput::Control(SessionControl::ConnectionLost(_))
+                | ActiveInput::EventsClosed
+                | ActiveInput::ControlsClosed) => {
+                    let error = match lost {
+                        ActiveInput::Control(SessionControl::ConnectionLost(error)) => error,
+                        _ => runtime_unavailable(),
+                    };
                     end_report.record(PromptEndCause::SessionCrashed);
                     self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                     followers.finish(StopReason::Cancelled);
@@ -640,13 +632,6 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         "session event queue overflowed",
                     )));
                     self.isolate_channel(channel).await;
-                    return;
-                }
-                ActiveInput::EventsClosed | ActiveInput::ControlsClosed => {
-                    end_report.record(PromptEndCause::SessionCrashed);
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                    followers.finish(StopReason::Cancelled);
-                    self.fail_prompt(&events, runtime_unavailable());
                     return;
                 }
                 ActiveInput::Command(RuntimeCommand::RespondToPermission { request, response }) => {
@@ -751,6 +736,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 // A running prompt is not quiet; the question is only asked between turns.
                 ActiveInput::Command(RuntimeCommand::TakeIdleTurnTraffic { response }) => {
                     let _ = response.send(true);
+                }
+                // The channel is borrowed, not gone: the session still has its provider.
+                ActiveInput::Command(RuntimeCommand::ReadOptions { response }) => {
+                    let _ = response.send(Some(self.reported_config_options.clone()));
                 }
                 ActiveInput::Command(RuntimeCommand::McpDesiredMaybeChanged) => {
                     self.note_desired_mcp();

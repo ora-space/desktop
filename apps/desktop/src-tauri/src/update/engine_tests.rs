@@ -28,6 +28,8 @@ struct FakeRelease {
     signature: String,
     downloads: Arc<Mutex<usize>>,
     installed: Arc<Mutex<Vec<Vec<u8>>>>,
+    /// Makes the platform installer refuse the package instead of accepting it.
+    refuses: bool,
 }
 
 impl FakeRelease {
@@ -42,6 +44,15 @@ impl FakeRelease {
             download_url: Url::parse("https://updates.example/ora.AppImage").expect("source URL"),
             downloads: Arc::default(),
             installed: Arc::default(),
+            refuses: false,
+        }
+    }
+
+    /// Offers `version` like `new`, but its installer refuses every package.
+    fn refused(version: &str, raw_json: Value) -> Self {
+        Self {
+            refuses: true,
+            ..Self::new(version, raw_json)
         }
     }
 }
@@ -82,14 +93,27 @@ impl OfferedPackage for FakeRelease {
             .lock()
             .expect("installed packages")
             .push(bytes);
+        if self.refuses {
+            return Err(UpdateError::Updater(
+                tauri_plugin_updater::Error::PackageInstallFailed,
+            ));
+        }
         Ok(())
     }
 }
 
-/// A host whose checks return scripted results in order.
+/// A host whose checks return scripted results in order, recording every status it publishes.
 struct FakeHost {
     running: Version,
     checks: Mutex<VecDeque<Result<Option<FakeRelease>, UpdateError>>>,
+    published: Mutex<Vec<DesktopUpdateStatus>>,
+}
+
+impl FakeHost {
+    /// Returns and forgets the statuses published since the last call.
+    fn take_published(&self) -> Vec<DesktopUpdateStatus> {
+        std::mem::take(&mut *self.published.lock().expect("published statuses"))
+    }
 }
 
 impl UpdateHost for FakeHost {
@@ -113,7 +137,12 @@ impl UpdateHost for FakeHost {
         async move { next }
     }
 
-    fn publish(&self, _status: DesktopUpdateStatus) {}
+    fn publish(&self, status: DesktopUpdateStatus) {
+        self.published
+            .lock()
+            .expect("published statuses")
+            .push(status);
+    }
 }
 
 /// Builds an engine over a fresh store in `home` that answers checks in order.
@@ -126,6 +155,7 @@ fn engine(
         FakeHost {
             running: Version::parse(running).expect("running version"),
             checks: Mutex::new(checks.into()),
+            published: Mutex::default(),
         },
         open_store(home),
         TestVerifier,
@@ -256,6 +286,52 @@ async fn a_failed_check_keeps_a_ready_release_only_while_its_package_verifies() 
     );
 }
 
+/// The webview hears every transition of a fresh download, and a later check that fails while a
+/// package is ready never tells it the ready release went away, not even for a moment.
+#[tokio::test]
+async fn the_webview_is_told_each_transition_and_never_loses_a_ready_release() {
+    let home = TempDir::new().expect("temp home");
+    let engine = engine(
+        home.path(),
+        "0.2.0",
+        vec![
+            Ok(Some(FakeRelease::new("0.3.0", manifest()))),
+            Err(unreachable()),
+        ],
+    );
+    let ready = DesktopUpdateStatus::Ready {
+        version: "0.3.0".to_owned(),
+        notes: vec![note("0.3.0")],
+    };
+    let size = "package 0.3.0".len() as u64;
+
+    engine.check_and_download().await;
+    let downloaded = engine.host().take_published();
+    engine.check_and_download().await;
+    let failed_again = engine.host().take_published();
+
+    assert_eq!(
+        (downloaded, failed_again),
+        (
+            vec![
+                DesktopUpdateStatus::Checking,
+                DesktopUpdateStatus::Downloading {
+                    version: "0.3.0".to_owned(),
+                    downloaded: 0,
+                    total: None,
+                },
+                DesktopUpdateStatus::Downloading {
+                    version: "0.3.0".to_owned(),
+                    downloaded: size,
+                    total: Some(size),
+                },
+                ready.clone(),
+            ],
+            vec![ready],
+        )
+    );
+}
+
 /// Installation reaches the state only for the version the user confirmed.
 #[tokio::test]
 async fn installation_is_for_the_confirmed_version_only() {
@@ -318,6 +394,45 @@ async fn a_package_that_fails_its_last_verification_is_an_install_failure() {
                 message: "cached update digest changed".to_owned(),
             },
             0,
+        )
+    );
+}
+
+/// A package the platform installer refuses stays ready with its bytes, so the user can retry.
+#[tokio::test]
+async fn a_refused_installation_leaves_the_release_ready_to_retry() {
+    let home = TempDir::new().expect("temp home");
+    let release = FakeRelease::refused("0.3.0", manifest());
+    let installed = release.installed.clone();
+    let engine = engine(home.path(), "0.2.0", vec![Ok(Some(release))]);
+    engine.check_and_download().await;
+    engine.host().take_published();
+
+    let first = engine.install("0.3.0").await;
+    let published = engine.host().take_published();
+    let retry = engine.install("0.3.0").await;
+
+    let ready = DesktopUpdateStatus::Ready {
+        version: "0.3.0".to_owned(),
+        notes: vec![note("0.3.0")],
+    };
+    let installing = DesktopUpdateStatus::Installing {
+        version: "0.3.0".to_owned(),
+    };
+    assert_eq!(
+        (
+            matches!(first, Err(UpdateError::Updater(_))),
+            published,
+            matches!(retry, Err(UpdateError::Updater(_))),
+            engine.status(),
+            installed.lock().expect("installed").clone(),
+        ),
+        (
+            true,
+            vec![installing, ready.clone()],
+            true,
+            ready,
+            vec![b"package 0.3.0".to_vec(), b"package 0.3.0".to_vec()],
         )
     );
 }

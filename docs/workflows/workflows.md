@@ -130,6 +130,15 @@ The Agent inspector edits the node's executor and model, role, prompt, Skill and
 structured output, interactivity, retry and prompt inactivity. The runtime meaning of each is in
 [Workflow runs](workflow-runs.md#agent-nodes); the stored shapes are:
 
+- **Skill bindings**: new selections store the catalog ID in `skills: [{ skillId, enabled }]` and show
+  the Skill name and source. Existing bare names and legacy `ns:name` references stay unchanged until
+  reselected. Exact IDs never fall back to another source; bare names with multiple candidates
+  (including unavailable packages) are ambiguous. A plugin ID `namespace/identifier` resolves only
+  when that plugin supplies exactly one Skill. Dependency reports and uninstall checks follow the
+  same resolution rules as launch preflight; only enabled references count toward launch warnings.
+  Unavailable Skills block launch. Unavailable MCPs remain informational and do not block launch,
+  but nodes using them fail when reached; check their status or configuration.
+  Reports check Ora's global library, so import project-local Skills on the Skills page first.
 - **MCP bindings**: `mcps: [{ mcpId, enabled }]`, where `mcpId` is the installed plugin id. Only
   enabled ids form the node Session's allowlist; no selection (including graphs without `mcps`) means
   no MCP servers. The inspector lists installed `kind: "mcp"` plugins; missing plugins stay visible by
@@ -148,6 +157,8 @@ structured output, interactivity, retry and prompt inactivity. The runtime meani
 - **Structured output**: an object-rooted JSON Schema edited visually or as raw JSON in a dialog that
   updates the node only on save.
 
-Save, publish, duplicate and import/export keep these values verbatim, including disabled bindings.
+Save, publish, duplicate and import keep these values verbatim, including disabled bindings. Export
+replaces this machine’s local Skill IDs (including deleted records) with their names, retaining
+`plugin:<plugin-id>:<skill-name>` references and leaving the saved graph unchanged.
 None of them needs a schema-version or database migration, and editing a draft affects later runs
 only.

@@ -1,3 +1,4 @@
+import { useWorkflowEditorStore } from "../workflow-editor/workflow-editor-store";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -1301,7 +1302,7 @@ it("reports the workflow documents and their plugin readiness after importing a 
   );
   expect(within(report).getByText(/用于：编写发布说明/)).toBeVisible();
   expect(
-    within(report).getByText(/1 个插件未安装|1 referenced plugin/),
+    within(report).getByText(/1 项启用依赖尚未就绪|1 enabled dependenc/),
   ).toBeVisible();
   expect(
     within(report).getByRole("button", { name: /去安装|Install/ }),
@@ -1406,7 +1407,7 @@ it("reports an unreadable plugin catalog instead of a dependency verdict", async
     ),
   ).toBeVisible();
   expect(
-    within(report).queryByText(/个插件未安装|referenced plugin/),
+    within(report).queryByText(/项启用依赖尚未就绪|enabled dependenc/),
   ).toBeNull();
 });
 
@@ -1513,7 +1514,7 @@ it("reports only the refused documents when the package created no workflow", as
     within(report).queryByText(/已导入 \d+ 个工作流|Imported \d+ workflow/),
   ).toBeNull();
   expect(
-    within(report).queryByText(/没有引用任何|reference no MCP/),
+    within(report).queryByText(/没有启用的|have no enabled MCP/),
   ).toBeNull();
   expect(listSkills).not.toHaveBeenCalled();
 });
@@ -1566,7 +1567,7 @@ it.each(["listSkills", "listInstalledPlugins"] as const)(
       within(report).queryByText(/可以直接运行|can run right away/),
     ).toBeNull();
     expect(
-      within(report).queryByText(/没有引用任何|reference no MCP/),
+      within(report).queryByText(/没有启用的|have no enabled MCP/),
     ).toBeNull();
   },
 );
@@ -1611,12 +1612,12 @@ it("preserves import outcomes while the Skills catalog is pending", async () => 
   ).toBeVisible();
   expect(within(report).getByText("document is not valid JSON")).toBeVisible();
   expect(
-    within(report).queryByText(/没有引用任何|reference no MCP/),
+    within(report).queryByText(/没有启用的|have no enabled MCP/),
   ).toBeNull();
 
   await act(async () => completeCatalog());
   expect(
-    await within(report).findByText(/没有引用任何|reference no MCP/),
+    await within(report).findByText(/没有启用的|have no enabled MCP/),
   ).toBeVisible();
   expect(
     within(report).getByText("assets/workflows/broken.json"),
@@ -1654,7 +1655,7 @@ it("withholds the readiness verdict when no imported graph could be read", async
     within(report).getByText(/1 个工作流的图无法读取|graph of 1 workflow/),
   ).toBeVisible();
   expect(
-    within(report).queryByText(/没有引用任何|reference no MCP/),
+    within(report).queryByText(/没有启用的|have no enabled MCP/),
   ).toBeNull();
   expect(
     within(report).queryByText(/可以直接运行|can run right away/),
@@ -1702,7 +1703,7 @@ it("keeps a partly unreadable package from claiming the workflows can run", asyn
     within(report).queryByText(/可以直接运行|can run right away/),
   ).toBeNull();
   expect(
-    within(report).queryByText(/没有引用任何|reference no MCP/),
+    within(report).queryByText(/没有启用的|have no enabled MCP/),
   ).toBeNull();
 });
 
@@ -1819,6 +1820,14 @@ it("reveals an invalid MCP from the report despite an existing manager search", 
   );
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("Broken MCP")).toBeVisible();
+  expect(
+    within(report).getByText(
+      "1 个 MCP 已安装但当前不可用。启动不受影响，但运行到使用它的节点时会失败，请检查其状态或配置。",
+    ),
+  ).toBeVisible();
+  expect(within(report).getByRole("status")).toHaveClass("bg-blue-500/10");
+  expect(within(report).getByText("不可用")).toHaveClass("bg-muted");
+  expect(within(report).queryByText(/项启用依赖尚未就绪/)).toBeNull();
   await user.click(
     within(report).getByRole("button", { name: /去查看|Review/ }),
   );
@@ -1831,6 +1840,65 @@ it("reveals an invalid MCP from the report despite an existing manager search", 
   expect(
     screen.getByRole("textbox", { name: /搜索插件|Search plugins/ }),
   ).toHaveValue("official/mcp-broken");
+});
+
+/**
+ * The dependency jump names one MCP by id, so an installed package whose id merely extends it
+ * stays out of the list, exactly like a member link from the report.
+ */
+it("locates an invalid MCP by id from the report while another installed id extends it as a prefix", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  const BROKEN_MCP_ID = "official/mcp-broken";
+  state.importTarget = weatherInstalled();
+  state.installedPlugins.push(
+    {
+      ...weatherInstalled(),
+      id: BROKEN_MCP_ID,
+      name: "mcp-broken",
+      displayName: "Broken MCP",
+      kind: "mcp",
+      installationValidity: {
+        validity: "invalid_declaration",
+        errorCode: "invalid_manifest",
+      },
+    },
+    {
+      ...weatherInstalled(),
+      id: `${BROKEN_MCP_ID}-v2`,
+      name: "mcp-broken-v2",
+      displayName: "Broken MCP v2",
+      kind: "mcp",
+    },
+  );
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "assets/workflows/1.0.0.json",
+      workflowId: "workflow-1",
+      name: "发布流程",
+      version: "1.0.0",
+    },
+  ];
+  seedImportedWorkflow(
+    state,
+    "workflow-1",
+    "发布流程",
+    agentGraph({ mcps: [BROKEN_MCP_ID] }),
+  );
+  renderSettings(client, platformPickingWorkflowPackage());
+
+  const report = await openImportReport(user);
+  await user.click(
+    within(report).getByRole("button", { name: /去查看|Review/ }),
+  );
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(
+    screen.getByRole("textbox", { name: /搜索插件|Search plugins/ }),
+  ).toHaveValue(BROKEN_MCP_ID);
+  expect(screen.getByText(BROKEN_MCP_ID)).toBeVisible();
+  expect(screen.queryByText(`${BROKEN_MCP_ID}-v2`)).not.toBeInTheDocument();
 });
 
 /** An unusable Skill is reviewed on the Skills page, which this pane opens through Settings. */
@@ -1867,6 +1935,13 @@ it("sends an unavailable Skill to the Skills settings page", async () => {
   renderSettings(client, platformPickingWorkflowPackage());
 
   const report = await openImportReport(user);
+  expect(within(report).getByText("1 项启用依赖尚未就绪。")).toBeVisible();
+  expect(within(report).getByRole("status")).toHaveClass("bg-amber-500/10");
+  expect(within(report).getByText("不可用")).toHaveClass("bg-amber-500/10");
+  expect(
+    within(report).getByText(/启动前请补齐缺失依赖、修复不可用 Skill/),
+  ).toBeVisible();
+  expect(within(report).queryByText(/个 MCP 已安装但当前不可用/)).toBeNull();
   expect(within(report).getAllByText("release-notes").length).toBeGreaterThan(
     0,
   );
@@ -1918,7 +1993,7 @@ it("reports workflow dependencies after a marketplace install", async () => {
     0,
   );
   expect(within(report).getByText(/用于：编写发布说明/)).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
   expect(within(report).getByRole("button", { name: /去安装/ })).toBeVisible();
 });
 
@@ -1972,7 +2047,7 @@ it("reports a marketplace install whose Agent node has a null agent config", asy
   expect(within(report).getByText("发布流程")).toBeVisible();
   // A null binding is an empty binding list, not an unreadable graph.
   expect(
-    within(report).getByText(/没有引用任何 MCP 或 Skill 插件/),
+    within(report).getByText(/没有启用的 MCP 或 Skill 依赖/),
   ).toBeVisible();
   expect(within(report).queryByText(/无法读取「发布流程」的图/)).toBeNull();
 });
@@ -2005,7 +2080,7 @@ it("reports workflow dependencies after a marketplace update", async () => {
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText(/工作流导入结果/)).toBeVisible();
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 });
 
 /** The detail page is the same install entry, so it reports the same dependency result. */
@@ -2036,7 +2111,7 @@ it("reports workflow dependencies after installing from the detail page", async 
 
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 
   // The fix link resolves in the marketplace list the detail page came from, not a later mount.
   await user.click(within(report).getByRole("button", { name: /去安装/ }));
@@ -2075,7 +2150,7 @@ it("reports workflow dependencies after upgrading from the detail page", async (
 
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 });
 
 /**
@@ -2109,7 +2184,7 @@ it("resolves dependencies in-pane when upgrading from the plugin manager", async
 
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 
   await user.click(within(report).getByRole("button", { name: /去安装/ }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -2689,7 +2764,7 @@ it("reports workflow dependencies after a Pack install", async () => {
 
   const report = await screen.findByRole("dialog");
   expect(within(report).getByText("发布流程")).toBeVisible();
-  expect(within(report).getByText(/1 个插件未安装/)).toBeVisible();
+  expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
 });
 
 /** A Pack uninstall names the workflows its removable members still serve. */
@@ -4097,6 +4172,145 @@ it("opens the member conflict report after installing a Pack from its detail pag
 });
 
 /**
+ * Installs the Pack from its detail page and follows the report's link for `targetMemberId` into
+ * the installed manager. Every other id is a Pack member too, so the list behind the jump holds
+ * them all. Returns the manager's search box.
+ */
+async function jumpFromPackReport(
+  user: ReturnType<typeof userEvent.setup>,
+  targetMemberId: string,
+  ...otherMemberIds: string[]
+) {
+  const { state, client } = packClientWithWorkflowPackage();
+  state.pluginReadmes.set(PACK_ID, "# Python Extension Pack");
+  state.packMemberPlugins.set(PACK_ID, [
+    { ...packMember(targetMemberId), kind: "workflow" },
+    ...otherMemberIds.map((id) => packMember(id)),
+  ]);
+  state.installedWorkflows = [
+    {
+      state: "skipped_conflict",
+      pluginId: targetMemberId,
+      sourceFile: "assets/workflows/1.0.0.json",
+      name: "发布流程",
+      knownConflict: false,
+    },
+  ];
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Python Extension Pack"));
+  await user.click(await screen.findByRole("button", { name: "安装" }));
+
+  const report = await screen.findByRole("dialog");
+  await user.click(
+    within(report).getByRole("button", {
+      name: `查看 ${targetMemberId} 的已安装卡片`,
+    }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  return screen.getByRole("textbox", { name: "搜索插件" });
+}
+
+/** The sibling fixture: one installed member whose id extends the target as a prefix. */
+const PREFIX_MEMBER_ID = "official/ora-space.review";
+const SIBLING_MEMBER_ID = `${PREFIX_MEMBER_ID}-v2`;
+
+/**
+ * A report jump names one canonical id, so the manager must not also reveal an installed sibling
+ * whose id merely extends it as a prefix; clearing the box is the one action back to the full list.
+ */
+it("reveals only the target member's installed card when a sibling id extends it as a prefix", async () => {
+  const user = userEvent.setup();
+  const search = await jumpFromPackReport(
+    user,
+    PREFIX_MEMBER_ID,
+    SIBLING_MEMBER_ID,
+  );
+
+  expect(search).toHaveValue(PREFIX_MEMBER_ID);
+  expect(await screen.findByText(PREFIX_MEMBER_ID)).toBeVisible();
+  expect(screen.queryByText(SIBLING_MEMBER_ID)).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "重试导入未导入的文档" }),
+  ).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "清除搜索" }));
+  expect(search).toHaveValue("");
+  expect(await screen.findByText(SIBLING_MEMBER_ID)).toBeVisible();
+  expect(screen.getByText(PREFIX_MEMBER_ID)).toBeVisible();
+});
+
+/**
+ * Editing the box after a jump abandons the exact locate for an ordinary search: retyping the
+ * shared prefix lists both siblings again, and only them, because the list follows the typed text.
+ */
+it("returns to fuzzy search once the box is edited after a report jump", async () => {
+  const user = userEvent.setup();
+  const UNRELATED_MEMBER_ID = "official/ora-space.unrelated";
+  const search = await jumpFromPackReport(
+    user,
+    PREFIX_MEMBER_ID,
+    SIBLING_MEMBER_ID,
+    UNRELATED_MEMBER_ID,
+  );
+  expect(screen.queryByText(SIBLING_MEMBER_ID)).toBeNull();
+
+  await user.clear(search);
+  expect(await screen.findByText(UNRELATED_MEMBER_ID)).toBeVisible();
+  await user.type(search, PREFIX_MEMBER_ID);
+
+  expect(search).toHaveValue(PREFIX_MEMBER_ID);
+  expect(screen.getByText(PREFIX_MEMBER_ID)).toBeVisible();
+  expect(screen.getByText(SIBLING_MEMBER_ID)).toBeVisible();
+  expect(screen.queryByText(UNRELATED_MEMBER_ID)).not.toBeInTheDocument();
+});
+
+/**
+ * Typing the prefix by hand keeps the fuzzy multi-field search: both siblings stay listed while a
+ * member that does not match the text leaves the list.
+ */
+it("keeps fuzzy search when the prefix is typed into the installed-plugin search box", async () => {
+  const user = userEvent.setup();
+  const UNRELATED_MEMBER_ID = "official/ora-space.unrelated";
+  const { state, client } = packClientWithWorkflowPackage();
+  state.installedPlugins = [
+    packMember(PREFIX_MEMBER_ID),
+    packMember(SIBLING_MEMBER_ID),
+    packMember(UNRELATED_MEMBER_ID),
+  ];
+  renderSettings(client);
+
+  await openManagePlugins(user);
+  expect(await screen.findByText(UNRELATED_MEMBER_ID)).toBeVisible();
+  await user.type(
+    screen.getByRole("textbox", { name: "搜索插件" }),
+    PREFIX_MEMBER_ID,
+  );
+
+  expect(screen.getByText(PREFIX_MEMBER_ID)).toBeVisible();
+  expect(screen.getByText(SIBLING_MEMBER_ID)).toBeVisible();
+  expect(screen.queryByText(UNRELATED_MEMBER_ID)).not.toBeInTheDocument();
+});
+
+/** The clear button leaves with the text it cleared, so focus goes back to the box, not the body. */
+it("returns focus to the search box when the clear button is used from the keyboard", async () => {
+  const user = userEvent.setup();
+  const search = await jumpFromPackReport(
+    user,
+    PREFIX_MEMBER_ID,
+    SIBLING_MEMBER_ID,
+  );
+
+  const clear = screen.getByRole("button", { name: "清除搜索" });
+  clear.focus();
+  await user.keyboard("{Enter}");
+
+  expect(search).toHaveValue("");
+  expect(search).toHaveFocus();
+  expect(await screen.findByText(SIBLING_MEMBER_ID)).toBeVisible();
+});
+
+/**
  * When an upgrade opens the report for a first conflict, sibling known conflicts are listed as
  * still unresolved while deleted copies stay out of the "not imported" section and its count.
  */
@@ -4198,3 +4412,122 @@ it("lists deleted copies with reinstall guidance in a card retry report", async 
     within(report).getByText("副本已删除，卸载后重装可恢复"),
   ).toBeVisible();
 });
+
+it("lists disabled missing Skills without a launch warning", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWorkflowPackage();
+  state.importTarget = weatherInstalled();
+  state.importedWorkflows = [
+    {
+      state: "imported",
+      sourceFile: "workflow.json",
+      workflowId: "wf-disabled",
+      name: "禁用依赖",
+      version: "1.0.0",
+    },
+  ];
+  const graph = JSON.parse(agentGraph({ skills: ["missing"] }));
+  graph.nodes[0].data.agentConfig.skills[0].enabled = false;
+  seedImportedWorkflow(state, "wf-disabled", "禁用依赖", JSON.stringify(graph));
+  renderSettings(client, platformPickingWorkflowPackage());
+  const report = await openImportReport(user);
+  expect(await within(report).findByText("已停用")).toBeVisible();
+  expect(within(report).queryByText(/项启用依赖尚未就绪/)).toBeNull();
+  expect(within(report).getByText(/仅检查 Ora 全局技能库/)).toBeVisible();
+});
+
+it.each(["closed", "saved", "failed"] as const)(
+  "marks an ambiguous Skill and handles editor navigation (%s)",
+  async (editorState) => {
+    const user = userEvent.setup();
+    const { state, client } = clientWithWorkflowPackage();
+    state.importTarget = weatherInstalled();
+    state.importedWorkflows = [
+      {
+        state: "imported",
+        sourceFile: "workflow.json",
+        workflowId: "wf-ambiguous",
+        name: "同名依赖",
+        version: "1.0.0",
+      },
+    ];
+    state.skills.skills = [
+      {
+        id: "local-review",
+        namespace: "local",
+        name: "review",
+        description: "",
+        source: { kind: "local" },
+        availability: "available",
+      },
+      {
+        id: "plugin:official/review:review",
+        namespace: "official/review",
+        name: "review",
+        description: "",
+        source: { kind: "plugin", pluginId: "official/review" },
+        availability: "unavailable",
+      },
+    ];
+    seedImportedWorkflow(
+      state,
+      "wf-ambiguous",
+      "同名依赖",
+      agentGraph({ skills: ["review"] }),
+    );
+    renderSettings(client, platformPickingWorkflowPackage());
+    const report = await openImportReport(user);
+    expect(await within(report).findByText("来源有歧义")).toBeVisible();
+    expect(within(report).getByText(/1 项启用依赖尚未就绪/)).toBeVisible();
+    const select = vi.fn(async (workflowId: string) => {
+      if (editorState === "saved")
+        useWorkflowEditorStore.getState().setSelectedWorkflowId(workflowId);
+    });
+    const unsupported = () => {
+      throw new Error("Unexpected editor operation");
+    };
+    act(() => {
+      useUiStore.setState({ settingsOpen: true, workflowEditorOpen: false });
+      useWorkflowEditorStore.setState({
+        selectedWorkflowId: editorState === "closed" ? null : "old-workflow",
+      });
+      useWorkflowEditorStore.getState().registerActions(
+        editorState === "closed"
+          ? null
+          : {
+              select,
+              create: unsupported,
+              copy: unsupported,
+              rename: unsupported,
+              delete: unsupported,
+              openImport: unsupported,
+              exportFile: unsupported,
+              leave: unsupported,
+            },
+      );
+    });
+    await user.click(
+      within(report).getByRole("button", { name: "去编辑器指定来源" }),
+    );
+    if (editorState === "failed") {
+      expect(select).toHaveBeenCalledWith("wf-ambiguous");
+      expect(useUiStore.getState().settingsOpen).toBe(true);
+      expect(useUiStore.getState().workflowEditorOpen).toBe(false);
+      expect(useWorkflowEditorStore.getState().selectedWorkflowId).toBe(
+        "old-workflow",
+      );
+      expect(report).toBeVisible();
+    } else {
+      expect(useUiStore.getState().settingsOpen).toBe(false);
+      expect(useUiStore.getState().workflowEditorOpen).toBe(true);
+      expect(useWorkflowEditorStore.getState().selectedWorkflowId).toBe(
+        "wf-ambiguous",
+      );
+    }
+    act(() => {
+      useUiStore.getState().setWorkflowEditorOpen(false);
+      useWorkflowEditorStore.getState().setSelectedWorkflowId(null);
+      useWorkflowEditorStore.getState().registerActions(null);
+    });
+  },
+);

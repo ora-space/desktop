@@ -1,3 +1,7 @@
+import {
+  resolveWorkflowSkill,
+  workflowSkillLabel,
+} from "../workflow-skill-reference";
 import { useTranslation } from "react-i18next";
 import { type WorkflowNodeData } from "@ora/workflow-mock";
 import {
@@ -27,12 +31,28 @@ export function WorkflowNodeParameterSummary({
   const agentsQuery = useAgents();
   const skillsQuery = useSkills();
   const pluginsQuery = useInstalledPlugins();
-  // The workflow JSON stores role/skill by name, so name-keyed lookups resolve directly.
+  // Roles remain name-based; Skill references resolve through the shared catalog rules.
   const agentNameById = new Map(
     (agentsQuery.data ?? []).map((agent) => [agent.name, agent.name]),
   );
   const skillNameById = new Map(
-    (skillsQuery.data ?? []).map((skill) => [skill.name, skill.name]),
+    (data.agentConfig?.skills ?? []).map((binding) => {
+      const resolved = resolveWorkflowSkill(
+        binding.skillId,
+        skillsQuery.data ?? [],
+        skillsQuery.retiredSkillIds,
+      );
+      return [
+        binding.skillId,
+        resolved.status === "missing" || resolved.status === "ambiguous"
+          ? `${binding.skillId} · ${t(`settings.workflow.transfer.status.${resolved.status}`)}`
+          : workflowSkillLabel(
+              resolved.skill,
+              pluginsQuery.data ?? [],
+              t("settings.workflow.skillLocal"),
+            ),
+      ];
+    }),
   );
   const mcpNameById = new Map(
     (pluginsQuery.data ?? [])

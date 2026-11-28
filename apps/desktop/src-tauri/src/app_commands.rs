@@ -60,6 +60,7 @@ desktop_command_registry! {
     commands::scheduled_task::get_scheduled_task,
     commands::session::get_session,
     commands::session::get_session_bindings,
+    commands::session::get_session_options,
     commands::skill::get_skill,
     commands::skill::get_skill_import,
     commands::task::get_task,

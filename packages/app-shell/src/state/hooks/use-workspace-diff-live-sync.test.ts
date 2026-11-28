@@ -36,6 +36,7 @@ function conversation(
 ): SessionConversation {
   return {
     configOptions: [],
+    providerLost: false,
     modelChanges: [],
     historyNotices: [],
     turns:

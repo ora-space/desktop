@@ -113,6 +113,7 @@ describe("buildWorkflowImportReport", () => {
       ["mcp", "official/weather", "installed", ["编写发布说明"]],
     ]);
     expect(report.counts).toEqual({
+      ambiguous: 0,
       installed: 1,
       unavailable: 0,
       missing: 1,
@@ -134,6 +135,7 @@ describe("buildWorkflowImportReport", () => {
 
     expect(report.workflows).toHaveLength(2);
     expect(report.counts).toEqual({
+      ambiguous: 0,
       installed: 1,
       unavailable: 0,
       missing: 0,
@@ -151,6 +153,7 @@ describe("buildWorkflowImportReport", () => {
 
     expect(report.workflows[0]?.dependencies).toBeNull();
     expect(report.counts).toEqual({
+      ambiguous: 0,
       installed: 0,
       unavailable: 0,
       missing: 0,
@@ -354,5 +357,59 @@ describe("marketplaceWorkflowReportInput", () => {
       ],
       deletedCopies: [],
     });
+  });
+});
+
+it("keeps disabled missing references in details without counting them as blockers", () => {
+  const disabled = JSON.parse(
+    agentGraph({ skills: ["absent"], mcps: ["official/absent"] }),
+  );
+  disabled.nodes[0].data.agentConfig.skills[0].enabled = false;
+  disabled.nodes[0].data.agentConfig.mcps[0].enabled = false;
+  const report = buildWorkflowImportReport({
+    fileName: "disabled.orax",
+    outcomes: [imported("wf", "disabled")],
+    graphs: new Map([["wf", JSON.stringify(disabled)]]),
+    plugins: [],
+    skills: [],
+  });
+  expect(report.counts).toEqual({
+    installed: 0,
+    missing: 0,
+    unavailable: 0,
+    ambiguous: 0,
+  });
+  expect(
+    report.workflows[0]?.dependencies?.map(({ status, enabled }) => ({
+      status,
+      enabled,
+    })),
+  ).toEqual([
+    { status: "missing", enabled: false },
+    { status: "missing", enabled: false },
+  ]);
+});
+
+it("counts unavailable and ambiguous enabled Skill references independently", () => {
+  const local = availableSkill("review");
+  const plugin: Skill = {
+    ...local,
+    id: "plugin:official/review:review",
+    namespace: "official/review",
+    source: { kind: "plugin", pluginId: "official/review" },
+    availability: "unavailable",
+  };
+  const report = buildWorkflowImportReport({
+    fileName: "skills.orax",
+    outcomes: [imported("wf", "skills")],
+    graphs: new Map([["wf", agentGraph({ skills: ["review", plugin.id] })]]),
+    plugins: [],
+    skills: [local, plugin],
+  });
+  expect(report.counts).toEqual({
+    installed: 0,
+    missing: 0,
+    unavailable: 1,
+    ambiguous: 1,
   });
 });

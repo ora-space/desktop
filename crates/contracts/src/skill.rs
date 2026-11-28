@@ -97,6 +97,14 @@ pub struct ListSkillsRequest {}
 #[ts(export_to = "skill.ts")]
 pub struct ListSkillsResponse {
     pub skills: Vec<Skill>,
+    /// Portable names for local catalog IDs, including soft-deleted records, used only on export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub local_skill_names_for_export: Option<std::collections::BTreeMap<String, String>>,
+    /// Retired exact identities must never resolve through a same-named visible entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub retired_skill_ids: Option<Vec<String>>,
 }
 
 /// Replaces one skill located by its stable identifier.
@@ -240,6 +248,8 @@ mod tests {
         assert_serialized_json(
             &ListSkillsResponse {
                 skills: vec![skill],
+                local_skill_names_for_export: Default::default(),
+                retired_skill_ids: None,
             },
             json!({ "skills": [{ "id": "skill-1", "namespace": "local", "name": "review", "description": "Reviews implementation changes", "source": { "kind": "local" }, "availability": "available" }] }),
         );

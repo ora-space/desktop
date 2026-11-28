@@ -441,6 +441,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 ActiveInput::Command(RuntimeCommand::TakeIdleTurnTraffic { response }) => {
                     let _ = response.send(true);
                 }
+                // The channel is borrowed, not gone: the session still has its provider.
+                ActiveInput::Command(RuntimeCommand::ReadOptions { response }) => {
+                    let _ = response.send(Some(self.reported_config_options.clone()));
+                }
                 ActiveInput::Command(RuntimeCommand::TitleUpdate { update }) => {
                     self.observe_session_update(&update);
                 }

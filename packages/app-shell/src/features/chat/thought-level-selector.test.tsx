@@ -138,6 +138,7 @@ beforeEach(() => {
 function renderThoughtLevelSelector(
   seed: (state: FixtureState) => void = () => {},
   handlers: Partial<TestHandlers> = {},
+  props: { disabled?: boolean; sessionId?: string } = {},
 ) {
   const state = createFixtureState();
   state.tasks = [
@@ -166,7 +167,7 @@ function renderThoughtLevelSelector(
       <AppI18nProvider>
         <PlatformProvider adapter={createStubPlatform()}>
           <TooltipProvider>
-            <ThoughtLevelSelector />
+            <ThoughtLevelSelector {...props} />
           </TooltipProvider>
         </PlatformProvider>
       </AppI18nProvider>
@@ -210,25 +211,27 @@ async function sliderThumb() {
 function deferredProvider() {
   const pending: Array<{
     value: string;
-    resolve: (response: { configOptions: acp.SessionConfigOption[] }) => void;
+    resolve: (response: Record<string, never>) => void;
     reject: (error: Error) => void;
   }> = [];
+  // What the agent is on, which a view reads once a change is made.
+  let applied = "high";
   return {
     handlers: {
       setSessionConfig: (request) =>
         new Promise((resolve, reject) => {
           pending.push({ value: request.value, resolve, reject });
         }),
+      getSessionOptions: async () => ({
+        configOptions: [MODEL_OPTION, thoughtLevelOption(LEVELS, applied)],
+      }),
     } satisfies Partial<TestHandlers>,
     pending: () => [...pending],
     answer: async () => {
       const next = pending.shift();
       if (next === undefined) throw new Error("no request to answer");
-      await act(async () =>
-        next.resolve({
-          configOptions: [MODEL_OPTION, thoughtLevelOption(LEVELS, next.value)],
-        }),
-      );
+      applied = next.value;
+      await act(async () => next.resolve({}));
     },
     fail: async () => {
       const next = pending.shift();
@@ -389,6 +392,54 @@ describe("ThoughtLevelSelector visibility", () => {
 
     act(() =>
       usePendingAgentStore.getState().setPendingSwitch("s1", AGENT_REF.claude),
+    );
+    await waitFor(() => expect(picker()).toBeNull());
+  });
+
+  /** A read-only control has nothing to set, so it keeps naming the level the session was on. */
+  it("keeps showing a read-only level once the session is known to have no provider", async () => {
+    const { chatStore } = renderThoughtLevelSelector(
+      selectPersistedSession,
+      {},
+      { disabled: true, sessionId: "s1" },
+    );
+    act(() => {
+      chatStore
+        .getState()
+        .setConfigOptions("s1", [MODEL_OPTION, THOUGHT_LEVEL_OPTION]);
+      chatStore.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          s1: { ...state.conversations.s1!, providerLost: true },
+        },
+      }));
+    });
+
+    const trigger = await screen.findByRole("button", {
+      name: /选择思考强度|Select thought level/,
+    });
+    expect(within(trigger).getByText("High")).toBeInTheDocument();
+  });
+
+  /** No effort is set on a session without a provider, and no intent carries one to its next attach. */
+  it("withdraws once the session is known to have no provider", async () => {
+    const { chatStore } = renderThoughtLevelSelector(selectPersistedSession);
+    act(() =>
+      chatStore
+        .getState()
+        .setConfigOptions("s1", [MODEL_OPTION, THOUGHT_LEVEL_OPTION]),
+    );
+    await screen.findByRole("button", {
+      name: /选择思考强度|Select thought level/,
+    });
+
+    act(() =>
+      chatStore.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          s1: { ...state.conversations.s1!, providerLost: true },
+        },
+      })),
     );
     await waitFor(() => expect(picker()).toBeNull());
   });
@@ -611,8 +662,11 @@ describe("ThoughtLevelSelector selection", () => {
 
   /** Releasing on the level already in effect is not a change and sends nothing. */
   it("sends nothing when released on the current level", async () => {
+    // The first change is still in progress when the thumb comes back.
+    const provider = deferredProvider();
     const { chatStore, setConfig } = renderThoughtLevelSelector(
       selectPersistedSession,
+      provider.handlers,
     );
     act(() =>
       chatStore

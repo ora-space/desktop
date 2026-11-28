@@ -916,3 +916,140 @@ it.each([createAgentNode, createConditionNode])(
     ).not.toBeInTheDocument();
   },
 );
+
+it("offers same-named Skill sources separately and preserves legacy references until reselected", async () => {
+  await appI18n.changeLanguage("zh-CN");
+  const user = userEvent.setup();
+  const capabilities = createMockWorkflowCapabilities("zh-CN");
+  const local = { value: "local-review", label: "review · 本地" };
+  const plugin = {
+    value: "plugin:official/review:review",
+    label: "review · Review Pack",
+  };
+  capabilities.skills = [local, plugin];
+  capabilities.resolveSkill = (ref) => ({
+    ...(ref === "legacy:review" || ref === local.value ? local : plugin),
+    status: "installed",
+    catalogId: ref === "legacy:review" ? local.value : ref,
+  });
+  const node = createAgentNode();
+  node.data.agentConfig!.skills = [{ skillId: "legacy:review", enabled: true }];
+  let saved = node;
+  render(
+    <AppI18nProvider>
+      <WorkflowInspector
+        node={node}
+        capabilities={capabilities}
+        variableCatalog={[]}
+        onUpdate={(value) => {
+          saved = value;
+        }}
+        onDelete={() => undefined}
+        onCloseNode={() => undefined}
+      />
+    </AppI18nProvider>,
+  );
+  expect(
+    screen.getByRole("switch", { name: "启用或禁用 review · 本地" }),
+  ).toBeChecked();
+  await user.click(screen.getByRole("button", { name: "添加 Skill" }));
+  expect(
+    screen.queryByRole("option", { name: local.label }),
+  ).not.toBeInTheDocument();
+  await user.click(await screen.findByRole("option", { name: plugin.label }));
+  expect(saved.data.agentConfig!.skills).toEqual([
+    { skillId: "legacy:review", enabled: true },
+    { skillId: plugin.value, enabled: true },
+  ]);
+});
+
+it("warns about different graph Skills sharing an invocation without blocking edits", async () => {
+  await appI18n.changeLanguage("zh-CN");
+  const user = userEvent.setup();
+  const capabilities = createMockWorkflowCapabilities("zh-CN");
+  capabilities.resolveSkill = (reference) => ({
+    value: reference,
+    label: reference,
+    catalogId: reference,
+    invocationName: "review",
+    status: "installed",
+  });
+  const node = createAgentNode();
+  node.data.agentConfig!.skills = [{ skillId: "skill-a", enabled: true }];
+  const other = {
+    ...node,
+    id: "agent-2",
+    data: {
+      ...node.data,
+      agentConfig: {
+        ...node.data.agentConfig!,
+        skills: [{ skillId: "skill-b", enabled: true }],
+      },
+    },
+  };
+  let saved = node;
+  render(
+    <AppI18nProvider>
+      <WorkflowInspector
+        node={node}
+        executionNodes={[node, other]}
+        capabilities={capabilities}
+        variableCatalog={[]}
+        onUpdate={(value) => {
+          saved = value;
+        }}
+        onDelete={() => undefined}
+        onCloseNode={() => undefined}
+      />
+    </AppI18nProvider>,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "不同 Skill 使用了相同调用名 /review",
+  );
+  await user.click(screen.getByRole("switch", { name: "启用或禁用 skill-a" }));
+  expect(saved.data.agentConfig!.skills).toEqual([
+    { skillId: "skill-a", enabled: false },
+  ]);
+});
+
+it("does not scan unused canvas nodes for invocation conflicts", async () => {
+  await appI18n.changeLanguage("zh-CN");
+  const capabilities = createMockWorkflowCapabilities("zh-CN");
+  capabilities.resolveSkill = (reference) => ({
+    value: reference,
+    label: reference,
+    catalogId: reference,
+    invocationName: "review",
+    status: "installed",
+  });
+  const node = createAgentNode();
+  node.data.agentConfig!.skills = [{ skillId: "local-review", enabled: true }];
+  const unused = {
+    ...node,
+    id: "unused",
+    data: {
+      ...node.data,
+      agentConfig: {
+        ...node.data.agentConfig!,
+        skills: [{ skillId: "plugin-review", enabled: true }],
+      },
+    },
+  };
+  render(
+    <AppI18nProvider>
+      <WorkflowInspector
+        node={node}
+        graphNodes={[node, unused]}
+        executionNodes={[node]}
+        capabilities={capabilities}
+        variableCatalog={[]}
+        onUpdate={() => undefined}
+        onDelete={() => undefined}
+        onCloseNode={() => undefined}
+      />
+    </AppI18nProvider>,
+  );
+  expect(
+    screen.queryByText(/不同 Skill 使用了相同调用名/),
+  ).not.toBeInTheDocument();
+});

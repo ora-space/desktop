@@ -187,18 +187,23 @@ export function ModelSelector({
       ? false
       : state.conversations[optionsSessionId]?.isLoaded === true,
   );
-  // Reporting options is what says a session has a provider to configure. Reading a conversation
-  // does not attach it, so a persisted session can exist with none — and is then in exactly the
-  // position of a chat that has not started: it offers the agent's own catalog and records the
-  // pick as an intent for the message that will attach. The backend answers a load with the live
-  // options whenever there is a provider behind it, so once that load has finished, an empty list
-  // means unattached.
+  const providerLost = useStore(chatStore, (state) =>
+    optionsSessionId === null
+      ? false
+      : state.conversations[optionsSessionId]?.providerLost === true,
+  );
+  // Whether the session has a provider to configure. A session told it has none keeps its last
+  // options for what they showed, but there is nothing to set: like a chat that has not started,
+  // it offers the agent's own catalog and records the pick as an intent for the message that will
+  // attach. A read-only picker has nothing to record and keeps naming the last model.
   //
-  // Until it finishes, the session stays the source. "Not answered yet" is not "has no provider",
-  // and offering the catalog on it would record an intent for a session that turns out to be
-  // attached — where the next message ignores it, because there is no attach left to apply it.
+  // Every stream of a session with a provider starts from its options, so an empty list after a
+  // finished load means unattached too, until the session's answer says so. Before the load ends
+  // the session stays the source: "not answered yet" is not "has no provider", and an intent
+  // recorded for a session that turns out to be attached would be ignored by the next message.
   const usesSessionOptions =
     optionsSessionId !== null &&
+    (disabled || !providerLost) &&
     (!conversationLoaded || (liveOptions?.length ?? 0) > 0);
   const discovered = useAgentDiscovery(
     usesSessionOptions || directoryMissing ? null : agentCli,
@@ -343,11 +348,17 @@ export function ModelSelector({
       return;
     }
     if (activeSessionId !== null && modelOption !== null) {
-      setSessionConfig.mutate({
-        sessionId: activeSessionId,
-        configId: modelOption.id,
-        value,
-      });
+      setSessionConfig.mutate(
+        { sessionId: activeSessionId, configId: modelOption.id, value },
+        {
+          // The session lost its provider just before the pick reached it, so the pick is
+          // what the next attach applies, as if it had been made a moment later.
+          onSuccess: (outcome) => {
+            if (outcome === "noProvider" && intentKey !== null)
+              setPendingModel(intentKey, value);
+          },
+        },
+      );
     }
   };
 

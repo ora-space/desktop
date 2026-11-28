@@ -201,7 +201,13 @@ describe("PendingUpdate", () => {
       );
     };
 
-    install.mockRejectedValueOnce(new Error("rejected"));
+    // A refusing installer reaches the shell as the host's decoded internal error.
+    const payload = {
+      code: "internal_error",
+      params: {},
+      requestId: "00000000-0000-4000-8000-000000000002",
+    } as const;
+    install.mockRejectedValueOnce(new RemoteContractError(payload, payload));
     await confirm();
     expect((await screen.findByRole("alert")).textContent).toContain(
       "安装 Ora 0.3.0 失败",
@@ -210,6 +216,33 @@ describe("PendingUpdate", () => {
     await confirm();
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(install).toHaveBeenCalledTimes(2);
+  });
+
+  it("cannot be confirmed again until the host answers the installation", async () => {
+    const user = userEvent.setup();
+    const { install } = renderPending({
+      kind: "ready",
+      version: "0.3.0",
+      notes: NOTES,
+    });
+    let refuse: (error: unknown) => void = () => undefined;
+    install.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+    const update = await screen.findByRole("button", { name: "立即更新" });
+    await user.click(update);
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "立即更新" }));
+
+    // The host has not left `ready` yet, for example while a check holds its lock.
+    expect(update.hasAttribute("disabled")).toBe(true);
+
+    await act(async () => refuse(new Error("rejected")));
+    expect(update.hasAttribute("disabled")).toBe(false);
+    expect(install).toHaveBeenCalledTimes(1);
   });
 
   it("reports an installation whose package had to be discarded", async () => {

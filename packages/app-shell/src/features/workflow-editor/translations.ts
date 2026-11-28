@@ -89,11 +89,11 @@ export const workflowEditorTranslations = {
     "settings.workflow.transfer.summaryGlobals": "全局变量",
     "settings.workflow.transfer.summaryDependencies": "插件依赖",
     "settings.workflow.transfer.missingWarningTitle":
-      "{{total}} 个插件未安装。",
+      "{{total}} 项启用依赖尚未就绪。",
     "settings.workflow.transfer.missingWarning":
-      "仍可导入并编辑，但运行到引用它们的节点时会失败。建议先到插件市场安装。",
+      "仍可导入并编辑；启动前请补齐缺失依赖、修复不可用 Skill，或为歧义 Skill 指定来源。",
     "settings.workflow.transfer.unavailableWarning":
-      "{{total}} 个插件已安装但当前不可用，运行前需要检查插件状态或配置。",
+      "{{total}} 个 MCP 已安装但当前不可用。启动不受影响，但运行到使用它的节点时会失败，请检查其状态或配置。",
     "settings.workflow.transfer.allInstalled":
       "所有引用的插件都已安装，导入后可以直接运行。",
     "settings.workflow.transfer.dependencies": "插件依赖",
@@ -107,6 +107,15 @@ export const workflowEditorTranslations = {
     "settings.workflow.transfer.status.installed": "已安装",
     "settings.workflow.transfer.status.unavailable": "不可用",
     "settings.workflow.transfer.status.missing": "未安装",
+    "settings.workflow.transfer.status.ambiguous": "来源有歧义",
+    "settings.workflow.transfer.chooseSkillSource":
+      "导入后请到工作流编辑器移除该绑定，并选择具体 Skill 来源。",
+    "settings.workflow.transfer.globalSkillScope":
+      "仅检查 Ora 全局技能库。项目目录中的 Skill 需先在 Skills 页导入，或由插件提供。",
+    "settings.workflow.skillLocal": "本地",
+    "settings.workflow.transfer.chooseSkillSourceAction": "去编辑器指定来源",
+    "settings.workflow.skillInvocationConflict":
+      "不同 Skill 使用了相同调用名 /{{names}}，启动将被拒绝；请统一来源。",
     "settings.workflow.transfer.goInstall": "去安装",
     "settings.workflow.transfer.goConfigure": "去配置",
     "settings.workflow.transfer.goReview": "去查看",
@@ -702,11 +711,11 @@ export const workflowEditorTranslations = {
     "settings.workflow.transfer.summaryGlobals": "Global variables",
     "settings.workflow.transfer.summaryDependencies": "Plugin dependencies",
     "settings.workflow.transfer.missingWarningTitle":
-      "{{total}} referenced plugins aren’t installed. ",
+      "{{total}} enabled dependencies are not ready. ",
     "settings.workflow.transfer.missingWarning":
-      "You can still import and edit, but runs fail at the nodes that use them. Install them from the plugin marketplace first.",
+      "You can still import and edit. Before starting, install missing dependencies, fix unavailable Skills, or select a source for ambiguous Skills.",
     "settings.workflow.transfer.unavailableWarning":
-      "{{total}} referenced plugins are installed but unavailable. Check their status or configuration before running.",
+      "{{total}} MCP plugins are installed but unavailable. Launch is unaffected, but nodes using them will fail when reached. Check their status or configuration.",
     "settings.workflow.transfer.allInstalled":
       "Every referenced plugin is installed, so the workflow can run right after import.",
     "settings.workflow.transfer.dependencies": "Plugin dependencies",
@@ -722,6 +731,16 @@ export const workflowEditorTranslations = {
     "settings.workflow.transfer.status.installed": "Installed",
     "settings.workflow.transfer.status.unavailable": "Unavailable",
     "settings.workflow.transfer.status.missing": "Not installed",
+    "settings.workflow.transfer.status.ambiguous": "Ambiguous source",
+    "settings.workflow.transfer.chooseSkillSource":
+      "After importing, remove this binding in the workflow editor and select a specific Skill source.",
+    "settings.workflow.transfer.globalSkillScope":
+      "Only the Ora global Skill library is checked. Import project Skills on the Skills page, or install a plugin that provides them.",
+    "settings.workflow.skillLocal": "Local",
+    "settings.workflow.transfer.chooseSkillSourceAction":
+      "Choose source in editor",
+    "settings.workflow.skillInvocationConflict":
+      "Different Skills use the same invocation /{{names}}. Choose one source before starting.",
     "settings.workflow.transfer.goInstall": "Install",
     "settings.workflow.transfer.goConfigure": "Configure",
     "settings.workflow.transfer.goReview": "Review",

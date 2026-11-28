@@ -1,3 +1,4 @@
+import { resolveWorkflowSkill } from "../workflow-editor/workflow-skill-reference";
 import type { InstalledPlugin, Skill, WorkflowSummary } from "@ora/contracts";
 import { parseWorkflowGraph } from "@ora/workflow-runtime";
 import { collectWorkflowDependencies } from "../workflow-editor/workflow-transfer";
@@ -5,11 +6,10 @@ import { collectWorkflowDependencies } from "../workflow-editor/workflow-transfe
 /**
  * The identity a workflow graph binds when it references a plugin that is about to leave.
  *
- * MCP bindings carry the plugin id while Skill bindings carry the Skill name, so an uninstall
- * check has to match each family by the identity the graph actually stores.
+ * MCP targets are plugin IDs; Skill targets are the exact catalog IDs removed from resolution.
  */
 export type WorkflowDependencyTarget =
-  { kind: "mcp"; id: string } | { kind: "skill"; name: string };
+  { kind: "mcp"; id: string } | { kind: "skill"; id: string };
 
 /** One workflow whose graph references a plugin the user is about to uninstall. */
 export interface WorkflowDependent {
@@ -71,10 +71,8 @@ export function findImportedWorkflowsFromPlugins(
 /**
  * Resolves the plugins an uninstall would remove to the identities workflows reference.
  *
- * A Skill plugin owns catalog entries by plugin id, but a graph binds the Skill by name, so the
- * entry names are the targets. An MCP plugin is bound by its own id. An id the installed catalog
- * no longer describes (a pack member the journal still owns) is kept as an MCP identity so a
- * binding is never dismissed just because the package record is already gone.
+ * Skill targets remove catalog IDs before resolving the graph again; MCP references keep their
+ * plugin ID identity. Missing package records still retain their known MCP and Skill targets.
  */
 export function uninstallDependencyTargets(
   pluginIds: readonly string[],
@@ -83,10 +81,9 @@ export function uninstallDependencyTargets(
 ): WorkflowDependencyTarget[] {
   const targets: WorkflowDependencyTarget[] = [];
   const seen = new Set<string>();
-  /** Keeps the same reference reachable by either an MCP id or a Skill name only once. */
+  /** Keeps the same reference reachable by either an MCP id or a Skill catalog ID only once. */
   function add(target: WorkflowDependencyTarget): void {
-    const key =
-      target.kind === "mcp" ? `mcp:${target.id}` : `skill:${target.name}`;
+    const key = `${target.kind}:${target.id}`;
     if (seen.has(key)) return;
     seen.add(key);
     targets.push(target);
@@ -105,7 +102,7 @@ export function uninstallDependencyTargets(
           skill.source.kind === "plugin" &&
           skill.source.pluginId === pluginId
         ) {
-          add({ kind: "skill", name: skill.name });
+          add({ kind: "skill", id: skill.id });
         }
       }
     }
@@ -129,18 +126,6 @@ function isReadableGraph(graph: string): boolean {
   }
 }
 
-/** Reports whether one resolved graph dependency is an identity the uninstall removes. */
-function referencesTarget(
-  dependency: { kind: "mcp" | "skill"; id: string },
-  targets: readonly WorkflowDependencyTarget[],
-): boolean {
-  return targets.some((target) =>
-    target.kind === "mcp"
-      ? dependency.kind === "mcp" && target.id === dependency.id
-      : dependency.kind === "skill" && target.name === dependency.id,
-  );
-}
-
 /**
  * Finds every workflow whose draft or published snapshot binds a plugin the user is about to
  * uninstall.
@@ -162,6 +147,7 @@ export function findWorkflowDependents(input: {
   }[];
   plugins: readonly InstalledPlugin[];
   skills: readonly Skill[];
+  retiredSkillIds?: readonly string[];
   targets: readonly WorkflowDependencyTarget[];
 }): WorkflowDependencyImpact {
   const dependents: WorkflowDependent[] = [];
@@ -180,6 +166,12 @@ export function findWorkflowDependents(input: {
       graphs.push(workflow.publishedGraph);
     }
 
+    const remainingSkills = input.skills.filter(
+      (skill) =>
+        !input.targets.some(
+          (target) => target.kind === "skill" && target.id === skill.id,
+        ),
+    );
     let workflowUnreadable = false;
     const nodeTitles: string[] = [];
     for (const rawGraph of graphs) {
@@ -190,16 +182,54 @@ export function findWorkflowDependents(input: {
       let dependencies: ReturnType<typeof collectWorkflowDependencies>;
       try {
         dependencies = collectWorkflowDependencies(
-          parseWorkflowGraph(rawGraph).nodes,
+          // Disabled Skill bindings do not affect launch, including their node titles when the
+          // same reference is enabled on another node. MCP warnings retain their existing scope.
+          parseWorkflowGraph(rawGraph).nodes.map((node) => ({
+            ...node,
+            data: {
+              ...node.data,
+              agentConfig:
+                node.data.kind !== "agent" || node.data.agentConfig == null
+                  ? node.data.agentConfig
+                  : {
+                      ...node.data.agentConfig,
+                      skills: node.data.agentConfig.skills?.filter(
+                        (binding) => binding.enabled,
+                      ),
+                    },
+            },
+          })),
           input.plugins,
           input.skills,
+          input.retiredSkillIds,
         );
       } catch {
         workflowUnreadable = true;
         continue;
       }
       for (const dependency of dependencies) {
-        if (!referencesTarget(dependency, input.targets)) continue;
+        if (dependency.kind === "mcp") {
+          if (
+            !input.targets.some(
+              (target) => target.kind === "mcp" && target.id === dependency.id,
+            )
+          )
+            continue;
+        } else {
+          const before = resolveWorkflowSkill(
+            dependency.id,
+            input.skills,
+            input.retiredSkillIds,
+          );
+          const after = resolveWorkflowSkill(dependency.id, remainingSkills, [
+            ...(input.retiredSkillIds ?? []),
+            ...input.skills
+              .filter((skill) => !remainingSkills.includes(skill))
+              .map((skill) => skill.id),
+          ]);
+          if (before.status === "missing" || after.status !== "missing")
+            continue;
+        }
         for (const title of dependency.nodeTitles) {
           if (!nodeTitles.includes(title)) nodeTitles.push(title);
         }

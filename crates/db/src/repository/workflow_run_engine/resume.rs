@@ -108,32 +108,17 @@ pub(super) fn resume_from_failure(
         if let Some(serialized_payload) = serialized_payload {
             let cleared_writers = node_ids_to_clear
                 .iter()
-                .map(String::as_str)
+                .cloned()
                 .collect::<BTreeSet<_>>();
             let mut payload: WorkflowRunPayload = serde_json::from_str(&serialized_payload)?;
-            let pool = &mut payload.variable_pool;
-            pool.values.retain(|selector, _| {
-                pool.catalog
-                    .get(selector)
-                    .is_none_or(|definition| !cleared_writers.contains(definition.writer.as_str()))
-            });
-            pool.revision = pool.revision.saturating_add(1);
-            payload
-                .condition_decisions
-                .retain(|node_id, _| !cleared_writers.contains(node_id.as_str()));
-            payload
-                .iteration_ledger
-                .retain(|owner, _| !cleared_writers.contains(owner.as_str()));
-            payload.iteration_condition_decisions.retain(|key, _| {
-                let node_id = key.split('#').next().unwrap_or(key);
-                !cleared_writers.contains(node_id)
-            });
+            payload.withdraw_writers(&cleared_writers);
             transaction.execute(
                 "UPDATE workflow_runs SET payload = ?2 WHERE id = ?1 AND is_deleted = 0",
                 params![run_id.as_ref(), serde_json::to_string(&payload)?],
             )?;
         }
 
+        crate::workflow_debug::resume_foreach_replays(&transaction, run_id.as_ref(), &[])?;
         let state = current_nodes_to_state(&[])?;
         transaction.execute(
             "UPDATE workflow_runs SET run_status = ?2, error = NULL, finished_at = NULL, state = ?3, updated_at = ?4
