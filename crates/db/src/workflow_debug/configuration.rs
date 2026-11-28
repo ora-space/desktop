@@ -1,5 +1,6 @@
 use super::*;
-use ora_application::render_variable_template;
+use WorkflowDebugReason as Reason;
+use ora_application::{ConditionError, VariableTemplateError, render_variable_template};
 
 #[cfg(test)]
 mod form_samples;
@@ -27,8 +28,8 @@ pub(super) fn prepare(
         request.base_revision,
         confirmed_retry_source,
     )?;
-    let previous =
-        WorkflowGraph::parse(&graph.to_string()).map_err(|e| invalid("", &e.to_string()))?;
+    let previous = WorkflowGraph::parse(&graph.to_string())
+        .map_err(|e| invalid("", DebugPatchReason::Validation(e.to_string())))?;
     let data = graph["nodes"]
         .as_array_mut()
         .and_then(|nodes| {
@@ -49,16 +50,12 @@ pub(super) fn prepare(
                     && variable.as_str().is_some_and(|variable| !variable.is_empty())
         );
         if path == "/iterationConfig/iteratorSelector" && !root_variable {
-            return Err(invalid(
-                path,
-                "expected the selector of a variable declared as an array at the root",
-            )
-            .into());
+            return Err(invalid(path, Reason::RootArrayRequired).into());
         }
     }
     replace(data, &kind, &request.patch)?;
-    let candidate =
-        WorkflowGraph::parse(&graph.to_string()).map_err(|e| invalid("", &e.to_string()))?;
+    let candidate = WorkflowGraph::parse(&graph.to_string())
+        .map_err(|e| invalid("", DebugPatchReason::Validation(e.to_string())))?;
     // Foreach reuses root-pool selector names. A value left by a skipped producer in a
     // preceding item cannot satisfy a newly edited prompt or condition in this item.
     if let Some(index) = target.index {
@@ -87,29 +84,41 @@ pub(super) fn prepare(
         .ok_or(DebugRejection::InvalidTarget)?;
     if let Some(agent) = &node.agent_config {
         render_variable_template(&agent.prompt, &pool)
-            .map_err(|e| invalid("/agentConfig/prompt", &e.to_string()))?;
+            .map_err(|e| invalid("/agentConfig/prompt", e))?;
     }
     let predicted_branch = node
         .condition_config
         .as_ref()
         .map(|condition| condition.preview_branch(&pool))
         .transpose()
-        .map_err(|e| invalid("/cases", &e.to_string()))?;
+        .map_err(|e| invalid("/cases", e))?;
     if let Some(iteration) = &node.iteration_config {
         let items = pool
             .resolve(&iteration.iterator_selector)
-            .map_err(|e| invalid("/iterationConfig/iteratorSelector", &e.to_string()))?
+            .map_err(|_| {
+                invalid(
+                    "/iterationConfig/iteratorSelector",
+                    Reason::InvalidVariablePath {
+                        variable: iteration.iterator_selector.qualified(),
+                    },
+                )
+            })?
             .and_then(Value::as_array)
             .ok_or_else(|| {
                 invalid(
                     "/iterationConfig/iteratorSelector",
-                    "expected assigned array",
+                    Reason::ExpectedArray {
+                        variable: iteration.iterator_selector.qualified(),
+                    },
                 )
             })?;
         if items.len() > iteration.max_iterations as usize {
             return Err(invalid(
                 "/iterationConfig/iteratorSelector",
-                "array exceeds the container limit",
+                Reason::ArrayExceedsLimit {
+                    variable: iteration.iterator_selector.qualified(),
+                    limit: iteration.max_iterations,
+                },
             )
             .into());
         }
@@ -209,7 +218,7 @@ fn replace(
     patches: &[WorkflowDebugPatch],
 ) -> Result<(), DebugRejection> {
     if patches.is_empty() {
-        return Err(invalid("", "empty patch"));
+        return Err(invalid("", Reason::EmptyPatch));
     }
     for WorkflowDebugPatch::Replace { path, value } in patches {
         let parts: Vec<_> = path.split('/').collect();
@@ -218,7 +227,7 @@ fn replace(
             (
                 "agent",
                 ["", "agentConfig", "prompt"] | ["", "agentConfig", "executor", "modelId"],
-            ) => value.is_string(),
+            ) => true,
             ("condition", ["", "cases", i, "logic"]) => index(i),
             (
                 "condition",
@@ -244,19 +253,95 @@ fn replace(
             _ => false,
         };
         if !allowed {
-            return Err(invalid(path, "field is not editable"));
+            return Err(invalid(path, Reason::FieldNotEditable));
+        }
+        // Validate field shapes before graph parsing loses the edited JSON pointer. Condition
+        // comparison values deliberately accept arbitrary JSON, including null.
+        let wrong_type = match parts.last().copied() {
+            Some("prompt" | "modelId") if !value.is_string() => Some(Reason::ExpectedText),
+            Some("logic" | "operator" | "errorStrategy")
+                if !value.is_null() && !value.is_string() =>
+            {
+                Some(Reason::ExpectedText)
+            }
+            Some("variableSelector" | "feedback" | "collectSelector")
+                if !value
+                    .as_array()
+                    .is_some_and(|parts| parts.iter().all(Value::is_string)) =>
+            {
+                Some(Reason::ExpectedSelector)
+            }
+            Some("maxIterations") if !value.as_u64().is_some_and(|n| u32::try_from(n).is_ok()) => {
+                Some(Reason::ExpectedInteger)
+            }
+            Some("until") if !value.is_object() => Some(Reason::ExpectedObject),
+            _ => None,
+        };
+        if let Some(reason) = wrong_type {
+            return Err(invalid(path, reason));
         }
         *data
             .pointer_mut(path)
-            .ok_or_else(|| invalid(path, "field does not exist"))? = value.clone();
+            .ok_or_else(|| invalid(path, Reason::FieldMissing))? = value.clone();
     }
     Ok(())
 }
 
 /// Reports the precise data-relative path to the editing surface.
-fn invalid(path: &str, reason: &str) -> DebugRejection {
+fn invalid(path: &str, reason: impl Into<DebugPatchReason>) -> DebugRejection {
     DebugRejection::InvalidPatch {
         path: path.into(),
         reason: reason.into(),
+    }
+}
+
+impl From<VariableTemplateError> for DebugPatchReason {
+    /// Preserves the variable identity while adapting evaluator errors for the run editor.
+    fn from(e: VariableTemplateError) -> Self {
+        match e {
+            VariableTemplateError::Undeclared { selector }
+            | VariableTemplateError::UnsetVariable { selector } => {
+                Reason::VariableUnavailable { variable: selector }.into()
+            }
+            VariableTemplateError::InvalidPath { selector, segment } => {
+                Reason::InvalidVariablePath {
+                    variable: format!("{selector}.{segment}"),
+                }
+                .into()
+            }
+            VariableTemplateError::InvalidSelector { selector }
+            | VariableTemplateError::PathNotObject { selector } => {
+                Reason::InvalidVariablePath { variable: selector }.into()
+            }
+            VariableTemplateError::Unterminated => DebugPatchReason::Validation(e.to_string()),
+        }
+    }
+}
+
+impl From<ConditionError> for DebugPatchReason {
+    /// Preserves the variable identity while adapting evaluator errors for the run editor.
+    fn from(e: ConditionError) -> Self {
+        match e {
+            ConditionError::Undeclared { selector }
+            | ConditionError::UnsetVariable { selector } => {
+                Reason::VariableUnavailable { variable: selector }.into()
+            }
+            ConditionError::InvalidPath { selector, segment } => Reason::InvalidVariablePath {
+                variable: format!("{selector}.{segment}"),
+            }
+            .into(),
+            ConditionError::InvalidSelector { selector } => Reason::InvalidVariablePath {
+                variable: selector.join("."),
+            }
+            .into(),
+            ConditionError::TypeMismatch {
+                selector, operator, ..
+            } => Reason::ComparisonTypeMismatch {
+                variable: selector,
+                operator: operator.to_string(),
+            }
+            .into(),
+            other => DebugPatchReason::Validation(other.to_string()),
+        }
     }
 }

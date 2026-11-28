@@ -543,6 +543,10 @@ export type TaskBaseBranchNotFoundParams = { branchName: string };
  */
 export type WorkflowDebugPatchInvalidParams = {
   /**
+   * Older servers supply only the fallback reason.
+   */
+  detail?: WorkflowDebugReason;
+  /**
    * Path relative to the normalized data of the edited node, such as `/agentConfig/prompt`.
    */
   path: string;
@@ -550,10 +554,55 @@ export type WorkflowDebugPatchInvalidParams = {
 };
 
 /**
+ * Stable details for run-local debug refusals. Display supplies guidance for older clients.
+ */
+export type WorkflowDebugReason =
+  | { "code": "input_not_recorded" }
+  | { "code": "invalid_target" }
+  | {
+    "code": "prerequisites_not_ready";
+    node: string;
+    scope: string;
+    prerequisites: Array<string>;
+  }
+  | { "code": "live_round_required"; node: string }
+  | { "code": "round_exited"; node: string; round: number }
+  | { "code": "position_field_required"; field: string; node: string }
+  | { "code": "container_input_missing"; node: string }
+  | { "code": "item_out_of_range"; node: string; index: number }
+  | {
+    "code": "before_baseline";
+    attempt: string;
+    revision: number;
+    baseline: number;
+  }
+  | { "code": "loop_exit_cleanup_pending" }
+  | { "code": "loop_exit_recovery_required" }
+  | { "code": "variable_unavailable"; variable: string }
+  | { "code": "invalid_variable_path"; variable: string }
+  | { "code": "comparison_type_mismatch"; variable: string; operator: string }
+  | { "code": "expected_text" }
+  | { "code": "expected_selector" }
+  | { "code": "expected_integer" }
+  | { "code": "expected_object" }
+  | { "code": "field_not_editable" }
+  | { "code": "field_missing" }
+  | { "code": "empty_patch" }
+  | { "code": "root_array_required" }
+  | { "code": "expected_array"; variable: string }
+  | { "code": "array_exceeds_limit"; variable: string; limit: number };
+
+/**
  * Explains why a run-local debug target cannot be previewed, such as which recorded input is
  * missing or which position field the page still has to supply.
  */
-export type WorkflowDebugTargetRejectedParams = { reason: string };
+export type WorkflowDebugTargetRejectedParams = {
+  /**
+   * Older servers supply only the fallback reason.
+   */
+  detail?: WorkflowDebugReason;
+  reason: string;
+};
 
 /**
  * Names the workflow node and the MCP plugin its frozen graph declares, for a run that cannot

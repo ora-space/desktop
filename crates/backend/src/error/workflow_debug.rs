@@ -8,17 +8,18 @@
 use super::{BackendError, ErrorClassification};
 use ora_application::{ApplicationError, RepositoryError};
 use ora_contracts::{
-    EmptyErrorParams, PublicError, WorkflowDebugPatchInvalidParams,
+    EmptyErrorParams, PublicError, WorkflowDebugPatchInvalidParams, WorkflowDebugReason as Reason,
     WorkflowDebugTargetRejectedParams,
 };
-use ora_db::workflow_debug::DebugRejection;
+use ora_db::workflow_debug::{DebugPatchReason, DebugRejection};
 
 impl From<DebugRejection> for BackendError {
     /// Projects each refusal onto its public code and class and keeps the refusal as the source.
     fn from(rejection: DebugRejection) -> Self {
-        let target_rejected = |reason: &str| {
+        let target_rejected = |detail: Reason| {
             PublicError::WorkflowDebugTargetRejected(WorkflowDebugTargetRejectedParams {
-                reason: reason.to_string(),
+                reason: detail.to_string(),
+                detail: Some(Box::new(detail)),
             })
         };
         let (classification, public_error, context) = match &rejection {
@@ -44,29 +45,38 @@ impl From<DebugRejection> for BackendError {
             ),
             DebugRejection::MissingInputEvidence => (
                 ErrorClassification::InvalidRequest,
-                target_rejected("the input this attempt ran with was not recorded"),
+                target_rejected(Reason::InputNotRecorded),
                 "workflow debug target is rejected",
             ),
             DebugRejection::MissingFact(reason) => (
                 ErrorClassification::InvalidRequest,
-                target_rejected(reason),
+                target_rejected(reason.clone()),
                 "workflow debug target is rejected",
             ),
-            DebugRejection::LoopExitCleanupPending | DebugRejection::LoopExitRecoveryRequired => (
+            DebugRejection::LoopExitCleanupPending => (
                 ErrorClassification::InvalidRequest,
-                target_rejected(&rejection.to_string()),
+                target_rejected(Reason::LoopExitCleanupPending),
+                "workflow debug target is rejected",
+            ),
+            DebugRejection::LoopExitRecoveryRequired => (
+                ErrorClassification::InvalidRequest,
+                target_rejected(Reason::LoopExitRecoveryRequired),
                 "workflow debug target is rejected",
             ),
             DebugRejection::InvalidTarget => (
                 ErrorClassification::InvalidRequest,
-                target_rejected("the target is not a selectable attempt or position of this run"),
+                target_rejected(Reason::InvalidTarget),
                 "workflow debug target is rejected",
             ),
             DebugRejection::InvalidPatch { path, reason } => (
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowDebugPatchInvalid(WorkflowDebugPatchInvalidParams {
                     path: path.clone(),
-                    reason: reason.clone(),
+                    reason: reason.to_string(),
+                    detail: match reason {
+                        DebugPatchReason::Detail(detail) => Some(Box::new(detail.clone())),
+                        DebugPatchReason::Validation(_) => None,
+                    },
                 }),
                 "workflow debug patch is invalid",
             ),
@@ -112,7 +122,7 @@ mod tests {
     use ora_application::{ApplicationError, RepositoryError};
     use ora_contracts::{
         EmptyErrorParams, PublicError, WorkflowDebugPatchInvalidParams,
-        WorkflowDebugTargetRejectedParams,
+        WorkflowDebugReason as Reason, WorkflowDebugTargetRejectedParams,
     };
     use ora_db::workflow_debug::DebugRejection;
     use pretty_assertions::assert_eq;
@@ -146,25 +156,35 @@ mod tests {
                 DebugRejection::MissingInputEvidence,
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowDebugTargetRejected(WorkflowDebugTargetRejectedParams {
-                    reason: "the input this attempt ran with was not recorded".to_string(),
+                    reason: Reason::InputNotRecorded.to_string(),
+                    detail: Some(Box::new(Reason::InputNotRecorded)),
                 }),
             ),
             (
-                DebugRejection::MissingFact("start.text".to_string()),
+                DebugRejection::MissingFact(Reason::VariableUnavailable {
+                    variable: "start.text".into(),
+                }),
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowDebugTargetRejected(WorkflowDebugTargetRejectedParams {
-                    reason: "start.text".to_string(),
+                    reason: Reason::VariableUnavailable {
+                        variable: "start.text".into(),
+                    }
+                    .to_string(),
+                    detail: Some(Box::new(Reason::VariableUnavailable {
+                        variable: "start.text".into(),
+                    })),
                 }),
             ),
             (
                 DebugRejection::InvalidPatch {
                     path: "/cases/0/id".to_string(),
-                    reason: "field is not editable".to_string(),
+                    reason: Reason::FieldNotEditable.into(),
                 },
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowDebugPatchInvalid(WorkflowDebugPatchInvalidParams {
                     path: "/cases/0/id".to_string(),
-                    reason: "field is not editable".to_string(),
+                    reason: Reason::FieldNotEditable.to_string(),
+                    detail: Some(Box::new(Reason::FieldNotEditable)),
                 }),
             ),
         ];

@@ -1,0 +1,48 @@
+[
+  {
+    "code": "workflow_debug_target_rejected",
+    "params": {
+      "reason": "Node out in root:run-1 is not ready for its first dispatch. Check its prerequisites (x).",
+      "detail": {
+        "code": "prerequisites_not_ready",
+        "node": "out",
+        "scope": "root:run-1",
+        "prerequisites": ["x"]
+      }
+    },
+    "requestId": "00000000-0000-4000-8000-000000000001"
+  },
+  {
+    "code": "workflow_debug_patch_invalid",
+    "params": {
+      "path": "/agentConfig/prompt",
+      "reason": "Check that absent.value is declared and has a recorded value at this position.",
+      "detail": {
+        "code": "variable_unavailable",
+        "variable": "absent.value"
+      }
+    },
+    "requestId": "00000000-0000-4000-8000-000000000001"
+  },
+  {
+    "code": "workflow_debug_target_rejected",
+    "params": {
+      "reason": "Select a current attempt or a reachable position in this run.",
+      "detail": {
+        "code": "invalid_target"
+      }
+    },
+    "requestId": "00000000-0000-4000-8000-000000000001"
+  },
+  {
+    "code": "workflow_debug_patch_invalid",
+    "params": {
+      "path": "/agentConfig/prompt",
+      "reason": "Enter a text value.",
+      "detail": {
+        "code": "expected_text"
+      }
+    },
+    "requestId": "00000000-0000-4000-8000-000000000001"
+  }
+]

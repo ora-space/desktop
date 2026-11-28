@@ -1,3 +1,6 @@
+mod workflow_debug_reason;
+pub use workflow_debug_reason::WorkflowDebugReason;
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use ts_rs::{Config, ExportError, TS};
@@ -86,6 +89,10 @@ pub struct WorkflowSnapshotIncompatibleWithResumeParams {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "error.ts")]
 pub struct WorkflowDebugPatchInvalidParams {
+    /// Older servers supply only the fallback reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub detail: Option<Box<WorkflowDebugReason>>,
     /// Path relative to the normalized data of the edited node, such as `/agentConfig/prompt`.
     pub path: String,
     pub reason: String,
@@ -97,6 +104,10 @@ pub struct WorkflowDebugPatchInvalidParams {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "error.ts")]
 pub struct WorkflowDebugTargetRejectedParams {
+    /// Older servers supply only the fallback reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub detail: Option<Box<WorkflowDebugReason>>,
     pub reason: String,
 }
 
@@ -938,10 +949,12 @@ mod tests {
             PublicError::WorkflowDebugOperationActive(EmptyErrorParams {}),
             PublicError::WorkflowDebugRequestConflict(EmptyErrorParams {}),
             PublicError::WorkflowDebugPatchInvalid(WorkflowDebugPatchInvalidParams {
+                detail: None,
                 path: "/agentConfig/prompt".to_string(),
                 reason: "field is not editable".to_string(),
             }),
             PublicError::WorkflowDebugTargetRejected(WorkflowDebugTargetRejectedParams {
+                detail: None,
                 reason: "missing_input_evidence: start.text".to_string(),
             }),
         ];

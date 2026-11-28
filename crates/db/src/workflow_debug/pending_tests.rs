@@ -19,7 +19,7 @@ fn pending_edit_binds_first_dispatch_without_allocating_an_attempt() {
         .with_connection(|db| bind_graph(db, graph))
         .unwrap();
     assert!(
-        matches!(store.preview(&request,impact),Err(DatabaseError::WorkflowDebug(DebugRejection::MissingFact(reason))) if reason.contains("start"))
+        matches!(store.preview(&request,impact),Err(DatabaseError::WorkflowDebug(DebugRejection::MissingFact(WorkflowDebugReason::PrerequisitesNotReady {node, scope, prerequisites}))) if node == "agent" && scope == "root:other" && prerequisites == ["start"])
     );
     let mut payload = ora_application::WorkflowRunPayload::default();
     payload
@@ -287,13 +287,14 @@ fn pending_foreach_member_requires_owner_and_exact_bound_item() {
         req
     };
     assert!(
-        matches!(store.preview(&request(None,Some(2)),impact), Err(DatabaseError::WorkflowDebug(DebugRejection::MissingFact(reason))) if reason.contains("containerNodeRunId"))
+        matches!(store.preview(&request(None,Some(2)),impact), Err(DatabaseError::WorkflowDebug(DebugRejection::MissingFact(WorkflowDebugReason::PositionFieldRequired { field, node }))) if field == "containerNodeRunId" && node == "agent")
     );
-    assert!(
-        store
-            .preview(&request(Some("it"), Some(1)), impact)
-            .is_err()
-    );
+    assert!(matches!(
+        store.preview(&request(Some("it"), Some(1)), impact),
+        Err(DatabaseError::WorkflowDebug(DebugRejection::MissingFact(
+            WorkflowDebugReason::ItemOutOfRange { node, index: 1 }
+        ))) if node == "iter"
+    ));
     let preview = store
         .preview(&request(Some("it"), Some(2)), |input| {
             assert_eq!(input.pool.values["iter.item"], "c");

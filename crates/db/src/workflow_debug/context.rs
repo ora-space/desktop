@@ -35,10 +35,14 @@ pub(super) fn load(
         if let Some((revision, baseline)) = recorded
             && revision < baseline
         {
-            return Err(DebugRejection::MissingFact(format!(
-                "{id} was recorded under revision {revision}, before the current snapshot baseline {baseline}"
-            ))
-            .into());
+            return Err(
+                DebugRejection::MissingFact(WorkflowDebugReason::BeforeBaseline {
+                    attempt: id.clone(),
+                    revision,
+                    baseline,
+                })
+                .into(),
+            );
         }
     }
     let (target, snapshot, entry, dispatch, kind, graph_json, evidence_source) = match selection {

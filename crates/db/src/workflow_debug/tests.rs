@@ -1180,8 +1180,8 @@ fn snapshot_switch_starts_a_new_configuration_baseline() {
     // Attempts recorded before the new baseline are no longer targets.
     assert!(matches!(
         store.preview(&edit_on("a4", "four", 4), impact),
-        Err(DatabaseError::WorkflowDebug(DebugRejection::MissingFact(reason)))
-            if reason.contains("a4") && reason.contains("baseline 4")
+        Err(DatabaseError::WorkflowDebug(DebugRejection::MissingFact(WorkflowDebugReason::BeforeBaseline { attempt, baseline: 4, .. })))
+            if attempt == "a4"
     ));
     admit("a5");
     assert_eq!(
