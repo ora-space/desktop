@@ -62,6 +62,8 @@ export const settingsTranslations = {
       "请输入主机名、IP 地址或 HTTP、HTTPS、SOCKS5、SOCKS5H 代理地址。地址不能包含路径、查询参数或片段。",
     "settings.proxy.port": "端口",
     "settings.proxy.portPlaceholder": "7890",
+    "settings.proxy.invalidPort": "请输入 1 至 65535 之间的整数端口。",
+    "settings.proxy.keptPort": "已保留当前端口。地址中的端口是 {{port}}。",
     "settings.proxy.username": "用户名",
     "settings.proxy.password": "密码",
     "settings.proxy.optional": "可选",
@@ -259,6 +261,9 @@ export const settingsTranslations = {
       "Enter a hostname, IP address, or HTTP, HTTPS, SOCKS5, or SOCKS5H proxy address without a path, query, or fragment.",
     "settings.proxy.port": "Port",
     "settings.proxy.portPlaceholder": "7890",
+    "settings.proxy.invalidPort": "Enter a whole-number port from 1 to 65535.",
+    "settings.proxy.keptPort":
+      "Kept the current port. The address included port {{port}}.",
     "settings.proxy.username": "Username",
     "settings.proxy.password": "Password",
     "settings.proxy.optional": "Optional",

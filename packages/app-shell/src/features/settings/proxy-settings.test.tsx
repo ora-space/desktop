@@ -182,18 +182,75 @@ it("extracts credentials on blur and keeps the proxy scheme and separately enter
   const port = await screen.findByLabelText(/端口|Port/);
   const host = screen.getByLabelText(/主机|Host/);
   await user.type(port, "3128");
-  await user.type(host, "https://alice:pass%40word@proxy.example:443/");
+  await user.type(host, "https://alice:pass%40word%2540@proxy.example:443/");
   await user.tab();
   expect(host).toHaveValue("https://proxy.example");
   expect(port).toHaveValue("3128");
+  expect(port).toHaveAccessibleDescription(/端口是 443|included port 443/);
   expect(screen.getByLabelText(/用户名|Username/)).toHaveValue("alice");
-  expect(screen.getByLabelText(/密码|Password/)).toHaveValue("pass@word");
+  expect(screen.getByLabelText(/密码|Password/)).toHaveValue("pass@word%40");
 
   await user.clear(host);
   await user.paste("ftp://proxy.example:7890/path");
   expect(host).toBeInvalid();
   expect(screen.getByRole("button", { name: /^保存$|^Save$/ })).toBeDisabled();
   expect(state.proxySettings).toBeNull();
+});
+
+it("explains an invalid port and accepts a corrected IPv6 endpoint", async () => {
+  const state = createFixtureState();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
+  const host = await screen.findByLabelText(/主机|Host/);
+  const port = screen.getByLabelText(/端口|Port/);
+  const save = screen.getByRole("button", { name: /^保存$|^Save$/ });
+  await user.click(host);
+  await user.paste("socks5h://[::1]:1080/");
+  expect(host).toHaveValue("socks5h://[::1]");
+  expect(port).toHaveValue("1080");
+  await user.clear(port);
+  await user.type(port, "1e3");
+  expect(port).toBeInvalid();
+  expect(port).toHaveAccessibleDescription(/1 至 65535|1 to 65535/);
+  expect(save).toBeDisabled();
+  expect(state.proxySettings).toBeNull();
+  await user.clear(port);
+  await user.type(port, "1081");
+  expect(port).toBeValid();
+  await user.click(save);
+  await waitFor(() =>
+    expect(state.proxySettings).toEqual({
+      host: "socks5h://[::1]",
+      port: 1081,
+      username: null,
+      password: null,
+    }),
+  );
+});
+
+it("keeps the independent port on a legacy address with an embedded zero", async () => {
+  const state = createFixtureState();
+  state.proxyMode = "manual";
+  state.proxySettings = {
+    host: "http://proxy.example:0",
+    port: 7890,
+    username: null,
+    password: null,
+  };
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  const host = await screen.findByLabelText(/主机|Host/);
+  const save = screen.getByRole("button", { name: /^保存$|^Save$/ });
+  await user.click(host);
+  await user.tab();
+  expect(host).toHaveValue("proxy.example");
+  expect(screen.getByLabelText(/端口|Port/)).toHaveValue("7890");
+  await user.click(save);
+  await waitFor(() => expect(state.proxySettings?.host).toBe("proxy.example"));
 });
 
 it("restores every saved proxy field with a fresh query cache after remount", async () => {
@@ -382,7 +439,7 @@ it("keeps the saved mode when an older background read completes", async () => {
   expect(screen.getByLabelText(modeLabel)).toHaveValue("direct");
 });
 
-it("checks the current form proxy against a URL", async () => {
+it("checks a prefixed proxy against a URL and saves the same endpoint separately", async () => {
   const state = createFixtureState();
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
   const client = createTestClient(clientHandlers);
@@ -395,7 +452,10 @@ it("checks the current form proxy against a URL", async () => {
     await screen.findByLabelText(/代理模式|Proxy mode/),
     "manual",
   );
-  await user.type(await screen.findByLabelText(/主机|Host/), "127.0.0.1");
+  await user.type(
+    await screen.findByLabelText(/主机|Host/),
+    "http://127.0.0.1",
+  );
   await user.type(screen.getByLabelText(/端口|Port/), "7890");
   await user.click(
     screen.getByRole("button", { name: /验证代理|Check connection/ }),
@@ -419,6 +479,17 @@ it("checks the current form proxy against a URL", async () => {
         password: null,
       },
     }),
+  );
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+    ).toBeEnabled(),
+  );
+  expect(state.proxySettings).toBeNull();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: /^保存$|^Save$/ }));
+  await waitFor(() =>
+    expect(state.proxySettings).toEqual(check.mock.calls[0][0].settings),
   );
 });
 it("retains the draft and blocks actions during a production reconnect read failure", async () => {

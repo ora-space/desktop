@@ -101,51 +101,30 @@ function splitProxyAddress(input: string) {
     );
     const hostAndPort = authority.slice(authority.lastIndexOf("@") + 1);
     // URL.port omits explicit defaults such as :80 and :443.
-    const port = /:(\d+)$/.exec(hostAndPort)?.[1] ?? "";
-    if (
-      url.hostname === "" ||
-      hostAndPort.endsWith(":") ||
-      (port !== "" && Number(port) === 0)
-    ) {
-      return null;
-    }
+    const rawPort = /:(\d+)$/.exec(hostAndPort)?.[1];
+    if (url.hostname === "") return null;
+    const username = decodeURIComponent(url.username);
+    const password = decodeURIComponent(url.password);
+    // Single-line inputs cannot display line breaks from encoded URL credentials.
+    if (/[\r\n]/.test(username) || /[\r\n]/.test(password)) return null;
     return {
       host:
         url.protocol === "http:"
           ? url.hostname
           : url.protocol + "//" + url.hostname,
-      port: port === "" ? "" : String(Number(port)),
-      credentials: authority.includes("@")
-        ? {
-            username: decodeURIComponent(url.username),
-            password: decodeURIComponent(url.password),
-          }
-        : null,
+      port: rawPort === undefined ? "" : String(Number(rawPort)),
+      credentials: authority.includes("@") ? { username, password } : null,
     };
   } catch {
     return null;
   }
 }
 
-/** Reads the current form into a validated proxy value, or null when host/port are unusable. */
-function parsedProxySettings(
-  address: ReturnType<typeof splitProxyAddress>,
-  port: string,
-  username: string,
-  password: string,
-): ProxySettings | null {
-  if (address === null) return null;
-  const parsedPort = Number(port.trim() || address.port);
-  if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
-    return null;
-  }
-  const credentials = address.credentials ?? { username, password };
-  return {
-    host: address.host,
-    port: parsedPort,
-    username: credentials.username === "" ? null : credentials.username,
-    password: credentials.password === "" ? null : credentials.password,
-  };
+/** Accepts the decimal TCP port expected by the proxy settings contract. */
+function parseProxyPort(input: string): number | null {
+  const value = input.trim();
+  const port = Number(value);
+  return /^\d+$/.test(value) && port >= 1 && port <= 65535 ? port : null;
 }
 
 function ProxySettingsEditor({
@@ -167,12 +146,31 @@ function ProxySettingsEditor({
   const [manualLoadError, setManualLoadError] = useState(false);
   const [checkOpen, setCheckOpen] = useState(false);
   const [checkUrl, setCheckUrl] = useState(controller.checkUrl);
+  const [unusedAddressPort, setUnusedAddressPort] = useState<string | null>(
+    null,
+  );
   const addressHintId = useId();
+  const portHintId = useId();
 
   const address = mode === "manual" ? splitProxyAddress(host) : null;
-  const parsed = parsedProxySettings(address, port, username, password);
+  const portEntered = port.trim() !== "";
+  const fieldPort = parseProxyPort(port);
+  const parsedPort = portEntered
+    ? fieldPort
+    : parseProxyPort(address?.port ?? "");
+  const credentials = address?.credentials ?? { username, password };
+  const parsed: ProxySettings | null =
+    address === null || parsedPort === null
+      ? null
+      : {
+          host: address.host,
+          port: parsedPort,
+          username: credentials.username || null,
+          password: credentials.password || null,
+        };
   const invalidAddress =
     mode === "manual" && host.trim() !== "" && address === null;
+  const invalidPort = portEntered && fieldPort === null;
   const invalid = mode === "manual" && parsed === null;
   const usingDraft =
     mode !== controller.mode ||
@@ -195,7 +193,11 @@ function ProxySettingsEditor({
 
   const applyAddress = (value: NonNullable<typeof address>) => {
     setHost(value.host);
-    setPort((current) => (current.trim() === "" ? value.port : current));
+    if (!portEntered) {
+      setPort(value.port);
+    } else if (value.port !== "" && fieldPort !== Number(value.port)) {
+      setUnusedAddressPort(value.port);
+    }
     if (value.credentials !== null) {
       setUsername(value.credentials.username);
       setPassword(value.credentials.password);
@@ -241,6 +243,7 @@ function ProxySettingsEditor({
       setMode("system");
       setHost("");
       setPort("");
+      setUnusedAddressPort(null);
       setUsername("");
       setPassword("");
       setManualLoadError(false);
@@ -299,7 +302,10 @@ function ProxySettingsEditor({
                   </span>
                   <Input
                     value={host}
-                    onChange={(event) => setHost(event.target.value)}
+                    onChange={(event) => {
+                      setHost(event.target.value);
+                      setUnusedAddressPort(null);
+                    }}
                     onBlur={() => {
                       if (address !== null) applyAddress(address);
                     }}
@@ -308,13 +314,14 @@ function ProxySettingsEditor({
                       const text = event.clipboardData.getData("text");
                       const start = input.selectionStart ?? input.value.length;
                       const end = input.selectionEnd ?? start;
-                      const pasted = splitProxyAddress(
+                      const next =
                         input.value.slice(0, start) +
-                          text +
-                          input.value.slice(end),
-                      );
-                      if (pasted === null) return;
+                        text +
+                        input.value.slice(end);
+                      const pasted = splitProxyAddress(next);
+                      if (pasted === null || pasted.host === next) return;
                       event.preventDefault();
+                      setUnusedAddressPort(null);
                       applyAddress(pasted);
                     }}
                     placeholder={t("settings.proxy.hostPlaceholder")}
@@ -324,18 +331,45 @@ function ProxySettingsEditor({
                     autoComplete="off"
                   />
                 </label>
-                <label className="space-y-1.5">
-                  <span className="text-sm font-medium">
-                    {t("settings.proxy.port")}
-                  </span>
-                  <Input
-                    value={port}
-                    onChange={(event) => setPort(event.target.value)}
-                    placeholder={t("settings.proxy.portPlaceholder")}
-                    aria-label={t("settings.proxy.port")}
-                    inputMode="numeric"
-                  />
-                </label>
+                <div className="space-y-1.5">
+                  <label className="block space-y-1.5">
+                    <span className="text-sm font-medium">
+                      {t("settings.proxy.port")}
+                    </span>
+                    <Input
+                      value={port}
+                      onChange={(event) => {
+                        setPort(event.target.value);
+                        setUnusedAddressPort(null);
+                      }}
+                      placeholder={t("settings.proxy.portPlaceholder")}
+                      aria-label={t("settings.proxy.port")}
+                      aria-invalid={invalidPort}
+                      aria-describedby={
+                        invalidPort || unusedAddressPort !== null
+                          ? portHintId
+                          : undefined
+                      }
+                      inputMode="numeric"
+                    />
+                  </label>
+                  {(invalidPort || unusedAddressPort !== null) && (
+                    <p
+                      id={portHintId}
+                      className={
+                        invalidPort
+                          ? "text-xs text-destructive"
+                          : "text-xs text-muted-foreground"
+                      }
+                    >
+                      {invalidPort
+                        ? t("settings.proxy.invalidPort")
+                        : t("settings.proxy.keptPort", {
+                            port: unusedAddressPort,
+                          })}
+                    </p>
+                  )}
+                </div>
               </div>
               <p
                 id={addressHintId}
