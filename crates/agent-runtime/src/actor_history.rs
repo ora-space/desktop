@@ -1,17 +1,36 @@
 use super::*;
 use crate::AgentRuntimeHost;
+use ora_history::{TurnEndedBy, TurnFailure};
 
 impl<H: AgentRuntimeHost> RuntimeActor<H> {
-    /// Closes the recorded turn after the ordered event consumer has settled its events.
-    pub(crate) fn end_turn(&mut self, stop_reason: StopReason) {
-        let outcome = self.recorder.record_turn_end(stop_reason);
+    /// Closes the recorded turn and records why a turn that did not complete ended.
+    pub(crate) fn end_turn_with(
+        &mut self,
+        stop_reason: StopReason,
+        ended_by: Option<TurnEndedBy>,
+        failure: Option<TurnFailure>,
+    ) {
+        let outcome = self
+            .recorder
+            .record_turn_end_with(stop_reason, ended_by, failure);
         self.settle_record(outcome);
     }
 
     /// Freezes this prompt's tool durations before history settles its open snapshots.
     pub(crate) fn end_timed_turn(&mut self, stop_reason: StopReason, timings: &ToolTimings) {
+        self.end_timed_turn_with(stop_reason, timings, None, None);
+    }
+
+    /// Freezes this prompt's tool durations and records why a turn that did not complete ended.
+    pub(crate) fn end_timed_turn_with(
+        &mut self,
+        stop_reason: StopReason,
+        timings: &ToolTimings,
+        ended_by: Option<TurnEndedBy>,
+        failure: Option<TurnFailure>,
+    ) {
         self.recorder.finish_tool_timings(timings.finish_all());
-        self.end_turn(stop_reason);
+        self.end_turn_with(stop_reason, ended_by, failure);
         // Any terminal prompt consumes the restored channel's one automatic-retry eligibility,
         // including a user cancellation the agent confirmed.
         self.load_restoration = Default::default();

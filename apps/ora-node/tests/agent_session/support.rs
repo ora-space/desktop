@@ -10,7 +10,7 @@ use ora_node_protocol::{
     AgentSessionEnded, AgentSessionSpec, BoundModel, CommandId, ContentBlock, ExecutionId,
     FrozenAgentConfiguration, GitIdentity, ModelBindingId, ModelProtocol, NodeId,
     NodeIncarnationId, NodeRuntimeIdentity, OperationId, PluginId, PluginVersion, PriorRevision,
-    Sequence, Sha256Digest, ThreadEvent, TurnCancelOutcome, TurnId, UserTurn,
+    Sequence, Sha256Digest, ThreadEvent, TurnCancelOutcome, TurnFailureOutcome, TurnId, UserTurn,
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -75,6 +75,9 @@ struct LedgerState {
     on_executed: Option<(CommandId, Box<dyn FnOnce() + Send>)>,
     /// Runs when the end decision is recorded, before the Agent is signalled.
     on_decision: Option<Box<dyn FnOnce() + Send>>,
+    /// The session was started by a helper that did not choose `keep_session_on_failure`, so its
+    /// failed turns get no conclusion. Sessions started directly default to concluding them.
+    ignores_failures: bool,
 }
 
 /// The keep choices a session starts with.
@@ -90,6 +93,8 @@ pub enum Entry {
     /// A Thread event, named by its record type.
     Thread(String),
     Cancel(String, TurnCancelOutcome),
+    /// A failed turn's conclusion, then the cancels merged into its stop.
+    Failure(String, TurnFailureOutcome),
 }
 
 /// A ledger for one execution that keeps everything in memory.
@@ -155,9 +160,26 @@ impl MemoryLedger {
             .iter()
             .filter_map(|entry| match entry {
                 Entry::Cancel(command, outcome) => Some((command.clone(), *outcome)),
-                Entry::Thread(_) => None,
+                Entry::Thread(_) | Entry::Failure(_, _) => None,
             })
             .collect()
+    }
+
+    /// Returns the settlement of each failed turn, in settlement order.
+    pub fn failures(&self) -> Vec<(String, TurnFailureOutcome)> {
+        self.state()
+            .journal
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Failure(turn, outcome) => Some((turn.clone(), *outcome)),
+                Entry::Thread(_) | Entry::Cancel(_, _) => None,
+            })
+            .collect()
+    }
+
+    /// Records the session's failure-keeping choice, which decides whether failures get concluded.
+    fn choose_keep(&self, keep: Keep) {
+        self.state().ignores_failures = !keep.on_failure;
     }
 
     /// Returns every Thread event appended so far.
@@ -219,6 +241,41 @@ impl LedgerState {
             }
         }
     }
+
+    /// The turns whose failed `turnEnded` was persisted as a Thread event, in order: the Node
+    /// ledger's pending settlements, which no acknowledgement removes (D6).
+    fn failed_turns(&self) -> Vec<String> {
+        if self.ignores_failures {
+            return Vec::new();
+        }
+        self.events
+            .iter()
+            .filter(|event| {
+                event.record.get("type").and_then(Value::as_str) == Some("turnEnded")
+                    && event
+                        .record
+                        .get("failure")
+                        .is_some_and(|failure| !failure.is_null())
+            })
+            .filter_map(|event| event.turn_id.as_ref().map(ToString::to_string))
+            .collect()
+    }
+
+    /// Back-fills `session_ending` for every failed turn without a conclusion yet, as the Node
+    /// ledger's end decision does before it settles the pending cancels (D6).
+    fn settle_failure_as_ending(&mut self) {
+        for turn in self.failed_turns() {
+            if self
+                .journal
+                .iter()
+                .any(|entry| matches!(entry, Entry::Failure(turn_id, _) if *turn_id == turn))
+            {
+                continue;
+            }
+            self.journal
+                .push(Entry::Failure(turn, TurnFailureOutcome::SessionEnding));
+        }
+    }
 }
 
 impl SessionLedger for MemoryLedger {
@@ -275,6 +332,60 @@ impl SessionLedger for MemoryLedger {
             .journal
             .push(Entry::Cancel(command_id.to_string(), outcome));
         Ok(outcome)
+    }
+    fn settle_turn_failure(
+        &self,
+        _execution: &ExecutionId,
+        turn: &TurnId,
+        outcome: TurnFailureOutcome,
+        merged: &[CommandId],
+    ) -> Result<(), Self::Error> {
+        let mut state = self.state();
+        // Only a failure the Controller saw as a Thread event can be concluded.
+        if !state
+            .failed_turns()
+            .iter()
+            .any(|failed| failed == turn.as_str())
+        {
+            return Err(LedgerError("no persisted failure".into()));
+        }
+        if outcome == TurnFailureOutcome::Kept
+            && state
+                .commands
+                .iter()
+                .any(|command| matches!(command.command, SessionCommand::EndSession(_)))
+        {
+            return Err(LedgerError("ending".into()));
+        }
+        if state
+            .journal
+            .iter()
+            .any(|entry| matches!(entry, Entry::Failure(turn_id, _) if turn_id == turn.as_str()))
+        {
+            return Err(LedgerError("already settled".into()));
+        }
+        state
+            .journal
+            .push(Entry::Failure(turn.to_string(), outcome));
+        let cancel_outcome = match outcome {
+            TurnFailureOutcome::Kept => TurnCancelOutcome::AlreadyEnded,
+            TurnFailureOutcome::SessionEnding => TurnCancelOutcome::SessionEnding,
+        };
+        for command in merged {
+            if let Some(index) = state
+                .commands
+                .iter()
+                .position(|stored| &stored.command_id == command)
+            {
+                state.commands[index]
+                    .settlements
+                    .push(CommandSettlement::Executed);
+            }
+            state
+                .journal
+                .push(Entry::Cancel(command.to_string(), cancel_outcome));
+        }
+        Ok(())
     }
     fn fail_session_turn(
         &self,
@@ -341,6 +452,7 @@ impl SessionLedger for MemoryLedger {
         self.stops
             .decide(execution, ended, at_ms, bound_at_ms)
             .map_err(|e| LedgerError(e.to_string()))?;
+        self.state().settle_failure_as_ending();
         self.state().settle_pending_cancels();
         Ok(())
     }
@@ -391,6 +503,7 @@ impl SessionLedger for MemoryLedger {
         if state.ended.is_some() {
             return Err(LedgerError("the session already ended".to_string()));
         }
+        state.settle_failure_as_ending();
         state.settle_pending_cancels();
         state.ended = Some(ended);
         Ok(Sequence::new(state.events.len() as u64 + 1))
@@ -788,6 +901,7 @@ impl Fixture {
         keep: Keep,
         prior: Option<PriorRevision>,
     ) {
+        self.ledger.choose_keep(keep);
         sessions.start(
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
@@ -832,6 +946,10 @@ impl Fixture {
         initial: &str,
         prior: Option<PriorRevision>,
     ) {
+        self.ledger.choose_keep(Keep {
+            on_cancel: false,
+            on_failure: false,
+        });
         sessions.start(
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
@@ -877,6 +995,7 @@ impl Fixture {
         settings_json: &str,
         keep: Keep,
     ) {
+        self.ledger.choose_keep(keep);
         sessions.start(
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),

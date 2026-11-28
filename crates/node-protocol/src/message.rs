@@ -14,12 +14,14 @@ mod scheduled_artifacts;
 mod session;
 mod thread_preview;
 mod turn_cancel;
+mod turn_failure;
 mod validation;
 mod worktree;
 pub use thread_preview::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
 pub use turn_cancel::{
     CancelTurn, CancelTurnMessage, TurnCancelOutcome, TurnCancelSettled, TurnCancelSettledMessage,
 };
+pub use turn_failure::{TurnFailureOutcome, TurnFailureSettled, TurnFailureSettledMessage};
 
 pub use agent_session::{
     AgentSessionEndedMessage, EndSession, EndSessionMessage, EndSessionReason,
@@ -160,6 +162,7 @@ pub enum NodeToControllerMessage {
     SessionMcpReply(SessionMcpReplyMessage),
     SessionTurnFailed(SessionTurnFailedMessage),
     TurnCancelSettled(TurnCancelSettledMessage),
+    TurnFailureSettled(TurnFailureSettledMessage),
     RevisionResult(RevisionResultMessage),
     ScheduledArtifactsResult(ScheduledArtifactsResultMessage),
     ScheduledArtifactGrantNeeded(ScheduledArtifactGrantNeededMessage),
@@ -188,6 +191,7 @@ impl ValidateMessage for NodeToControllerMessage {
             Self::SessionMcpReply(message) => message.validate(),
             Self::SessionTurnFailed(message) => message.validate(),
             Self::TurnCancelSettled(message) => message.validate(),
+            Self::TurnFailureSettled(message) => message.validate(),
             Self::RevisionResult(message) => message.validate(),
             Self::ScheduledArtifactsResult(message) => message.validate(),
             Self::ScheduledArtifactGrantNeeded(message) => message.validate(),

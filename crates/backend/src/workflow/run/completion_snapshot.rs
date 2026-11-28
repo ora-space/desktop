@@ -593,7 +593,11 @@ mod tests {
         HistoryLine::new(
             "2026-10-22T10:00:00+08:00",
             seq,
-            HistoryRecord::TurnEnded { stop_reason },
+            HistoryRecord::TurnEnded {
+                stop_reason,
+                ended_by: None,
+                failure: None,
+            },
         )
     }
 
@@ -1537,6 +1541,8 @@ mod tests {
             4,
             HistoryRecord::TurnEnded {
                 stop_reason: StopReason::EndTurn,
+                ended_by: None,
+                failure: None,
             },
         );
         let hist = history(

@@ -86,7 +86,7 @@ fn record_conversation(sessions_root: &Path, session: &Session) {
     recorder.record_update(&SessionUpdate::AgentMessageChunk(ContentChunk::new(
         ContentBlock::Text(TextContent::new("hi")),
     )));
-    recorder.record_turn_end(StopReason::EndTurn);
+    recorder.record_turn_end_with(StopReason::EndTurn, None, None);
 }
 
 /// Collects a finite load stream, failing the test on the first error it carries.

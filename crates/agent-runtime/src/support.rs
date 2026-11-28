@@ -279,35 +279,58 @@ pub(super) fn map_acp_error(error: ora_acp::AcpError) -> RuntimeError {
     )
 }
 
-/// Maps a prompt rejection that has one known authentication meaning onto a stable public error.
+/// Maps a failed `session/prompt` (its send, or its answer) onto a stable public error carrying the
+/// turn's failure: the Agent's own ACP error, a lost Agent, or an Ora-side protocol failure.
 ///
-/// ACP request errors otherwise contain provider-authored free text, so only the exact observed
-/// login refusal is classified. Every other message stays on the generic protocol failure path and
-/// never becomes user-visible text.
+/// Authentication is recognized by the ACP code `-32000` or the two known texts; the text match is
+/// kept for Agents that do not use the code. The failure's sanitized, bounded reason is carried so
+/// the turn records it, while only the code and `acp_code` reach logs.
 pub(super) fn map_prompt_error(error: ora_acp::AcpError) -> RuntimeError {
-    if matches!(
-        &error,
-        ora_acp::AcpError::RequestFailed(message)
-            if matches!(message.trim(), "Authentication required" | "Not logged in")
-    ) {
-        return RuntimeError::with_source(
-            ErrorClassification::Unprocessable,
-            PublicError::AgentAuthenticationRequired(EmptyErrorParams {}),
-            "agent authentication is required",
-            error,
-        );
+    match &error {
+        ora_acp::AcpError::RequestFailed(request) => {
+            let auth = request.code == -32000
+                || matches!(
+                    request.message.trim(),
+                    "Authentication required" | "Not logged in"
+                );
+            let failure = crate::turn_failure::acp_failure(
+                request.code,
+                &request.message,
+                &request.data,
+                auth,
+            );
+            crate::turn_failure::log_turn_failure("prompt_failed", &failure);
+            let runtime_error = if auth {
+                RuntimeError::with_source(
+                    ErrorClassification::Unprocessable,
+                    PublicError::AgentAuthenticationRequired(EmptyErrorParams {}),
+                    "agent authentication is required",
+                    error,
+                )
+            } else {
+                map_acp_error(error)
+            };
+            runtime_error.with_turn_failure(failure)
+        }
+        // The prompt's transport broke, on the send or before its answer: the Agent is gone (D2).
+        ora_acp::AcpError::StreamClosed | ora_acp::AcpError::Io(_) => {
+            map_acp_error(error).with_turn_failure(crate::turn_failure::agent_unavailable_failure())
+        }
+        // The Agent broke the ACP frame or response format, which Ora cannot follow (D2).
+        ora_acp::AcpError::InvalidFrame(_) | ora_acp::AcpError::InvalidResponse(_) => {
+            map_acp_error(error).with_turn_failure(crate::turn_failure::internal_failure())
+        }
     }
-    map_acp_error(error)
 }
 
 /// A provider can reject a prompt after dropping its session while keeping the ACP transport
 /// alive. Detach that registration so the next turn restores it before sending another prompt.
 /// Ordinary request failures (rate limits, model errors, authentication) keep the live channel.
 pub(super) fn provider_session_invalid(error: &ora_acp::AcpError) -> bool {
-    let ora_acp::AcpError::RequestFailed(message) = error else {
+    let ora_acp::AcpError::RequestFailed(request) = error else {
         return false;
     };
-    let message = message.trim().to_ascii_lowercase();
+    let message = request.message.trim().to_ascii_lowercase();
     matches!(
         message.as_str(),
         "session is closed"
@@ -406,15 +429,24 @@ mod tests {
     /// Classifies only the observed login refusal and keeps arbitrary request text generic.
     #[test]
     fn classifies_known_authentication_refusal_without_exposing_other_request_errors() {
-        let authentication = map_prompt_error(ora_acp::AcpError::RequestFailed(
-            "Authentication required".to_string(),
-        ));
-        let not_logged_in = map_prompt_error(ora_acp::AcpError::RequestFailed(
-            "Not logged in".to_string(),
-        ));
-        let unknown = map_prompt_error(ora_acp::AcpError::RequestFailed(
-            "provider diagnostic".to_string(),
-        ));
+        let authentication =
+            map_prompt_error(ora_acp::AcpError::RequestFailed(ora_acp::AcpRequestError {
+                code: -32001,
+                message: "Authentication required".to_string(),
+                data: None,
+            }));
+        let not_logged_in =
+            map_prompt_error(ora_acp::AcpError::RequestFailed(ora_acp::AcpRequestError {
+                code: -32001,
+                message: "Not logged in".to_string(),
+                data: None,
+            }));
+        let unknown =
+            map_prompt_error(ora_acp::AcpError::RequestFailed(ora_acp::AcpRequestError {
+                code: -32001,
+                message: "provider diagnostic".to_string(),
+                data: None,
+            }));
 
         assert_eq!(
             authentication.public_error(),

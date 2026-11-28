@@ -29,6 +29,7 @@ fn hello() -> ControllerToNodeMessage {
         payload: Hello {
             thread_previews: false,
             turn_cancel: false,
+            turn_failure: false,
             controller_id: ControllerId::new("owner"),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
         },

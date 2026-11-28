@@ -125,9 +125,21 @@ Completed 状态。actor、插件和恢复都不会启动，也不存在会话�
    然后把自己结算为 `executed`。
 7. 结束时，会话停止，释放运行时，停止插件并等待进程树退出，释放租约，丢弃排队的命令，写入终止结果，然后忘掉这个会话。
 
-除非会话另有选择（见下文），只有 ACP 成功完成才允许下一个轮次。prompt 出错或流意外关闭时，会话以 `agent_failed`
-结束，带 `agent_turn_failed` 或 `agent_stream_closed`；原始的服务商诊断信息从不进入历史或日志，已经排队的
-`EndSession` 保留它显式的原因。
+除非会话另有选择（见下文），只有 ACP 成功完成才允许下一个轮次。没有完成的一轮，`TurnEnded` 仍是
+`stop_reason: cancelled`，并记下原因：取消作用到它时为 `ended_by: caller_cancel`；它执行期间会话结束、或宿主不再读取
+它的事件时为 `ended_by: session_end`；运行时先观察到失败时为 `failure`。`failure.code` 为
+`agent_authentication_required`（ACP 错误码 `-32000`，或文字恰为两句已知的登录文字之一）或 `agent_error`（其他 ACP
+错误回应），两者都带 `acp_code`，`message` 是 Agent 清洗后的文字（删去控制字符与格式字符，至多 1 KiB，截断时带
+`message_truncated`）；无进展看门狗放弃时为 `no_progress`，带 `attempts` 和 Agent 对最后一次取消的回应 `answer`
+（没有回应时为 `none`）；还没有写出取消时 Agent 进程或 ACP 连接丢失、或这次 prompt 的传输出错，为
+`agent_unavailable`；Ora 一侧的错误（ACP 帧或回应格式不合法、事件队列溢出、权限请求无法应答）为 `internal`。Agent
+以自己的停止原因结束的一轮，以及这两个字段出现之前写下的记录，两者都没有。
+
+随后会话以 `agent_failed` 结束。不论会话作何选择、Controller 协商了什么，detail 都跟随失败：需要认证时为
+`agent_authentication_required`，Agent 丢失或 prompt 无法发出时为 `agent_unavailable`，看门狗的取消在宽限期内没有
+回应时为 `turn_cancel_unanswered`，其他 prompt 失败（包括 Agent 回应了的看门狗放弃）为 `agent_turn_failed`。事件流
+在这一轮的终点之前关闭时为 `agent_stream_closed`。Agent 的文字只出现在 `TurnEnded` 记录里：终态 detail、结论事件
+和日志都不带它，已经排队的 `EndSession` 保留它显式的原因。
 
 ## 取消一轮
 
@@ -146,6 +158,11 @@ Controller 的 `EndSession` 时，待结算的取消把这段等待限制在它�
   （暂定 15 秒）。之后的取消和正在进行的看门狗停止并入同一次停止和截止时刻，看门狗不再重发。`session/cancel`
   写出之后的任何回应（即使是 `end_turn`）都是对取消的回应：写 `TurnEnded{cancelled}`，再判定这次停止；没有回应时以 `turn_cancel_unanswered` 结束会话。
 - **已结束、已被丢弃、已超时失败或不存在**：`already_ended` 或 `unknown`，不做其他事。
+
+选择了 `keep_session_on_failure` 的会话，一轮失败时如果 Agent 回应了这次 prompt（ACP 错误回应，或回应了看门狗的
+取消），就像停下的一轮一样判定；Agent 丢失、内部错误或看门狗取消没有回应则结束会话。Controller 从
+`turn_failure_settled` 得知结果：下一轮之前的 `kept`，或与结束决定一起、早于并入的取消结论的 `session_ending`
+（见[协议](protocol.zh.md#消息契约)）。
 
 停下的一轮只有以下条件全部成立才保留会话，按顺序检查：
 
@@ -215,7 +232,8 @@ ORA_PROBE_PACKAGE=/path/to/extracted-agent-package ORA_PROBE_AGENT=opencode \
 它通过 `apps/ora-node/tests/turn_boundary/serve.py` 提供同一个本地模型，依次运行一轮普通对话、被取消（或失败）
 的目标轮次和又一轮普通对话，把 Node 日志和 `summary.json` 写到输出目录。只有以下条件都成立才通过：停止结算为
 `stopped`；那一刻这一轮在 Agent 更早进程的会话之外启动的进程都已不在；六秒内没有写出标记文件；下一轮正常完成。
-失败的一轮没有取消结算，所以 `error` 场景在下一轮的第一个事件时采样，Node 要判定完失败的一轮才会写出它。这个测试
+失败的一轮没有取消结算，所以 `error` 场景在下一轮的第一个事件时采样，Node 要判定完失败的一轮才会写出它；`error`
+场景协商 `turn_failure`，还要求失败的一轮得到 `kept` 的 `turn_failure_settled`。这个测试
 和 Node 一样靠尝试标记找本轮进程，所以盲区也相同：清空或改写了环境的孤儿进程两者都看不到，只有在观察时间内写出
 探针标记文件时才会被发现。
 有限时间内没有观察到违约，不自动登记版本：每个场景重复运行，实测数据写入 circus 运行 issue，再提交清单条目，并在

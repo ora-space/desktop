@@ -36,6 +36,9 @@ pub enum NodeCapability {
     /// `CancelTurn`, `TurnCancelSettled` and the per-session keep choices. Declared only to a
     /// Controller whose `Hello` asked for it, because older Controllers decode this enum closed.
     TurnCancel,
+    /// `TurnFailureSettled`, the outcome of a kept-on-failure session's failed turn. Declared only
+    /// to a Controller whose `Hello` asked for it, alongside `turn_cancel`.
+    TurnFailure,
 }
 
 /// Controller greeting used to negotiate a protocol version for a new session.
@@ -49,6 +52,9 @@ pub struct Hello {
     /// rejection reason and terminal details; omitted by older Controllers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub turn_cancel: bool,
+    /// Declares that this Controller understands `TurnFailureSettled`; omitted by older Controllers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub turn_failure: bool,
     pub controller_id: ControllerId,
     pub supported_versions: Vec<ProtocolVersion>,
 }
@@ -64,6 +70,10 @@ pub struct HelloAccepted {
     /// together with the `turn_cancel` capability.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub turn_cancel: bool,
+    /// True only when the Controller declared `turn_cancel` and `turn_failure` and this Node
+    /// supports both; always sent together with the `turn_failure` capability.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub turn_failure: bool,
     pub selected_version: ProtocolVersion,
     pub node: NodeRuntimeIdentity,
     pub capabilities: Vec<NodeCapability>,
@@ -180,6 +190,14 @@ impl ValidateMessage for HelloAcceptedMessage {
             || (payload.turn_cancel && !capabilities.contains(&NodeCapability::AgentSession))
         {
             return Err(MessageValidationError::InvalidTurnCancelNegotiation);
+        }
+        // `turn_failure` builds on `turn_cancel`: a peer only sees the confirmation with its
+        // capability, and only when `turn_cancel` is confirmed as well.
+        if payload.turn_failure != capabilities.contains(&NodeCapability::TurnFailure)
+            || (payload.turn_failure
+                && (!payload.turn_cancel || !capabilities.contains(&NodeCapability::TurnCancel)))
+        {
+            return Err(MessageValidationError::InvalidTurnFailureNegotiation);
         }
         if capabilities.is_empty() {
             return Err(MessageValidationError::NoExecutionCapabilities);

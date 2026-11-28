@@ -62,13 +62,15 @@ fn merges_chunks_sharing_one_message_identity_into_a_single_record() {
     );
 
     assert_eq!(
-        assembler.end_turn(StopReason::EndTurn),
+        assembler.end_turn(StopReason::EndTurn, None, None),
         vec![
             message_at(0, "Hello there", Some("m1")),
             AssembledRecord {
                 seq: 1,
                 record: HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             },
         ],
@@ -88,13 +90,15 @@ fn settles_the_open_message_when_the_protocol_starts_a_new_one() {
         vec![message_at(0, "first", Some("m1"))],
     );
     assert_eq!(
-        assembler.end_turn(StopReason::EndTurn),
+        assembler.end_turn(StopReason::EndTurn, None, None),
         vec![
             message_at(1, "second", Some("m2")),
             AssembledRecord {
                 seq: 2,
                 record: HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             },
         ],
@@ -111,7 +115,7 @@ fn keeps_messages_and_thoughts_on_independent_streams() {
     assembler.push_update(&thought_text("continues", None));
 
     assert_eq!(
-        assembler.end_turn(StopReason::EndTurn),
+        assembler.end_turn(StopReason::EndTurn, None, None),
         vec![
             message_at(0, "answer continues", None),
             AssembledRecord {
@@ -125,6 +129,8 @@ fn keeps_messages_and_thoughts_on_independent_streams() {
                 seq: 2,
                 record: HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             },
         ],
@@ -162,13 +168,15 @@ fn keeps_text_that_resumed_after_a_tool_call_behind_it() {
         ],
     );
     assert_eq!(
-        assembler.end_turn(StopReason::EndTurn),
+        assembler.end_turn(StopReason::EndTurn, None, None),
         vec![
             message_at(2, "here is what I found", None),
             AssembledRecord {
                 seq: 3,
                 record: HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             },
         ],
@@ -189,13 +197,15 @@ fn keeps_an_identified_message_whole_across_a_tool_call_it_spans() {
     assembler.push_update(&agent_text("done", Some("m1")));
 
     assert_eq!(
-        assembler.end_turn(StopReason::EndTurn),
+        assembler.end_turn(StopReason::EndTurn, None, None),
         vec![
             message_at(0, "reading, done", Some("m1")),
             AssembledRecord {
                 seq: 2,
                 record: HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             },
         ],
@@ -303,7 +313,7 @@ fn settles_a_tool_call_the_provider_never_reported_finishing() {
         .unwrap(),
     );
     assert_eq!(
-        assembler.end_turn(StopReason::EndTurn),
+        assembler.end_turn(StopReason::EndTurn, None, None),
         vec![
             AssembledRecord {
                 seq: 0,
@@ -317,6 +327,8 @@ fn settles_a_tool_call_the_provider_never_reported_finishing() {
                 seq: 2,
                 record: HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             },
         ],
@@ -341,7 +353,7 @@ fn keeps_an_unfinished_tool_call_unfinished_when_the_turn_was_cut_short() {
         ));
 
         assert_eq!(
-            assembler.end_turn(stop_reason),
+            assembler.end_turn(stop_reason, None, None),
             vec![
                 AssembledRecord {
                     seq: 0,
@@ -354,7 +366,11 @@ fn keeps_an_unfinished_tool_call_unfinished_when_the_turn_was_cut_short() {
                 },
                 AssembledRecord {
                     seq: 1,
-                    record: HistoryRecord::TurnEnded { stop_reason },
+                    record: HistoryRecord::TurnEnded {
+                        stop_reason,
+                        ended_by: None,
+                        failure: None,
+                    },
                 },
             ],
             "{stop_reason:?} must not record an outcome the provider never gave",
@@ -372,11 +388,13 @@ fn never_reinterprets_a_failure_the_provider_did_report() {
 
     // The turn ending cleanly says nothing about a call that already failed.
     assert_eq!(
-        assembler.end_turn(StopReason::EndTurn),
+        assembler.end_turn(StopReason::EndTurn, None, None),
         vec![AssembledRecord {
             seq: 1,
             record: HistoryRecord::TurnEnded {
                 stop_reason: StopReason::EndTurn,
+                ended_by: None,
+                failure: None,
             },
         }],
     );
@@ -425,7 +443,7 @@ fn keeps_only_the_final_plan_snapshot() {
     );
 
     assert_eq!(
-        assembler.end_turn(StopReason::EndTurn),
+        assembler.end_turn(StopReason::EndTurn, None, None),
         vec![
             AssembledRecord {
                 seq: 0,
@@ -438,6 +456,8 @@ fn keeps_only_the_final_plan_snapshot() {
                 seq: 1,
                 record: HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             },
         ],
@@ -554,7 +574,7 @@ fn turn_end_flushes_the_latest_timing_for_an_open_tool() {
     };
     assembler.update_tool_timing(&ToolCallId::new("timed"), finished.clone());
 
-    let records = assembler.end_turn(StopReason::Cancelled);
+    let records = assembler.end_turn(StopReason::Cancelled, None, None);
     let HistoryRecord::Update { tool_timing, .. } = &records[0].record else {
         panic!("expected tool update");
     };
@@ -578,13 +598,15 @@ fn retry_flushes_text_without_closing_the_user_turn() {
     );
     assembler.push_update(&agent_text("new", Some("m1")));
     assert_eq!(
-        assembler.end_turn(StopReason::EndTurn),
+        assembler.end_turn(StopReason::EndTurn, None, None),
         vec![
             message_at(2, "new", Some("m1")),
             AssembledRecord {
                 seq: 3,
                 record: HistoryRecord::TurnEnded {
-                    stop_reason: StopReason::EndTurn
+                    stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 }
             },
         ]
@@ -621,7 +643,7 @@ fn retry_attributes_late_tool_deltas_to_the_opening_attempt() {
     )));
     let fresh = assembler.push_update(&done);
     assert_eq!(fresh[0].seq, 3);
-    assert_eq!(assembler.end_turn(StopReason::EndTurn).len(), 1);
+    assert_eq!(assembler.end_turn(StopReason::EndTurn, None, None).len(), 1);
 }
 
 /// An unscoped delta uses the new opening once a retry has reopened the same ID.
@@ -666,7 +688,7 @@ fn only_an_unretried_turn_can_imply_success_for_an_open_parent_tool() {
         assert_eq!(assembler.retry_prompt()[0], record_at(0, tool.clone()));
         assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
         assert_eq!(
-            assembler.end_turn(StopReason::EndTurn)[0],
+            assembler.end_turn(StopReason::EndTurn, None, None)[0],
             record_at(2, tool.clone())
         );
         assembler.push_update(&SessionUpdate::ToolCall(tool.clone()));
@@ -678,7 +700,7 @@ fn only_an_unretried_turn_can_imply_success_for_an_open_parent_tool() {
             .unwrap(),
         );
         assert_eq!(
-            assembler.end_turn(StopReason::EndTurn)[0],
+            assembler.end_turn(StopReason::EndTurn, None, None)[0],
             record_at(4, settled)
         );
     }

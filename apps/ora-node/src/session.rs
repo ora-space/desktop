@@ -90,6 +90,9 @@ pub(crate) struct Shared<L, C, P: PluginCatalog, R> {
     retained: Mutex<HashMap<ExecutionId, stop::Retained<P::Lease>>>,
     controls: Mutex<HashMap<ExecutionId, mcp::control::Control>>,
     probes: mcp::probes::Scheduler,
+    /// Shortened prompt inactivity windows for sessions started from now on (tests only).
+    #[cfg(feature = "test-support")]
+    prompt_inactivity_windows: std::sync::OnceLock<&'static [std::time::Duration]>,
 }
 
 impl<L, C, P: PluginCatalog, R> Shared<L, C, P, R> {
@@ -210,8 +213,17 @@ where
                 retained: Mutex::new(HashMap::new()),
                 controls: Mutex::new(HashMap::new()),
                 probes,
+                #[cfg(feature = "test-support")]
+                prompt_inactivity_windows: std::sync::OnceLock::new(),
             }),
         }
+    }
+
+    /// Makes the runtime's inactivity watchdog observable within a test's deadline for every
+    /// session started after this call; the watchdog's retry and give-up paths stay the same.
+    #[cfg(feature = "test-support")]
+    pub fn set_test_prompt_inactivity_windows(&self, windows: &'static [std::time::Duration]) {
+        let _ = self.shared.prompt_inactivity_windows.set(windows);
     }
 
     /// Prior-incarnation probes stop consuming permits only after recovery proves them stopped.

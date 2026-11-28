@@ -1,0 +1,237 @@
+//! Unit coverage of the failure builder: sanitizing and bounding the Agent's text (case 3),
+//! extracting the `data` supplement (case 1), and shaping `acp_failure` / `no_progress_failure`.
+//!
+//! Evidence for specs/test-cases/node/protocol/turn-failure-reason.md cases 1, 3, 4, 5 and 6.
+use crate::prompt_retry::no_progress_from_settled;
+use crate::turn_failure::{acp_failure, no_progress_failure, sanitize_agent_text};
+use agent_client_protocol_schema::v1::PromptResponse;
+use ora_acp::{AcpError, AcpRequestError};
+use ora_history::{TurnFailureAnswer, TurnFailureCode};
+use pretty_assertions::assert_eq;
+use serde_json::json;
+
+/// Case 3: newlines, carriage returns, tabs and the `Zl`/`Zp` separators become spaces.
+#[test]
+fn sanitize_replaces_newlines_and_separators_with_spaces() {
+    let (text, truncated) = sanitize_agent_text("a\nb\r\tc\u{2028}d\u{2029}e", &None).unwrap();
+    assert_eq!((text.as_str(), truncated), ("a b  c d e", false));
+}
+
+/// Case 3: remaining `Cc` controls and every `Cf` format character are deleted.
+#[test]
+fn sanitize_deletes_format_and_control_characters() {
+    let (text, truncated) = sanitize_agent_text(
+        "a\u{200B}b\u{200D}c\u{FEFF}d\u{E0000}e\u{0001}f\u{0008}g",
+        &None,
+    )
+    .unwrap();
+    assert_eq!((text.as_str(), truncated), ("abcdefg", false));
+}
+
+/// Case 3: surrounding Unicode whitespace is trimmed, and text that cleans to nothing is omitted.
+#[test]
+fn sanitize_trims_whitespace_and_drops_empty_text() {
+    let (text, truncated) = sanitize_agent_text("\u{3000}  ok \u{00A0}", &None).unwrap();
+    assert_eq!((text.as_str(), truncated), ("ok", false));
+    assert_eq!(sanitize_agent_text("\n\t\u{200B}\u{3000}", &None), None);
+}
+
+/// Case 3: text over 1024 bytes is cut at a code point boundary and stays valid UTF-8.
+#[test]
+fn sanitize_truncates_at_the_byte_limit_on_a_code_point_boundary() {
+    // 1023 ASCII bytes plus a 3-byte character crosses the limit inside the character.
+    let primary = format!("{}中", "a".repeat(1023));
+    let (text, truncated) = sanitize_agent_text(&primary, &None).unwrap();
+    assert!(truncated);
+    assert_eq!(text, "a".repeat(1023));
+    assert!(std::str::from_utf8(text.as_bytes()).is_ok());
+}
+
+/// Case 1: the `data` supplement is appended after `: ` and not repeated when it equals the text.
+#[test]
+fn data_supplement_is_appended_and_deduplicated() {
+    let cases: &[(&str, Option<serde_json::Value>, &str)] = &[
+        ("err", None, "err"),
+        ("err", Some(json!("detail")), "err: detail"),
+        ("err", Some(json!({"message": "detail"})), "err: detail"),
+        ("err", Some(json!("err")), "err"),
+        ("err", Some(json!(42)), "err"),
+        ("err", Some(json!([1, 2])), "err"),
+        ("err", Some(json!({"other": "x"})), "err"),
+    ];
+    for (primary, data, expected) in cases {
+        let (text, _) = sanitize_agent_text(primary, &data.clone()).unwrap();
+        assert_eq!(&text, expected);
+    }
+}
+
+/// Case 1: an ACP error becomes `agent_error` with its code and sanitized text; a text-based
+/// authentication classification becomes `agent_authentication_required`.
+#[test]
+fn acp_failure_carries_the_code_and_sanitized_text() {
+    let failure = acp_failure(
+        -32603,
+        "upstream \n diagnostic",
+        &Some(json!("detail")),
+        /*auth*/ false,
+    );
+    assert_eq!(failure.code, TurnFailureCode::AgentError);
+    assert_eq!(failure.acp_code, Some(-32603));
+    assert_eq!(
+        failure.message.as_deref(),
+        Some("upstream   diagnostic: detail")
+    );
+    assert_eq!(failure.attempts, None);
+    assert_eq!(failure.answer, None);
+
+    let auth = acp_failure(-32000, "Authentication required", &None, /*auth*/ true);
+    assert_eq!(auth.code, TurnFailureCode::AgentAuthenticationRequired);
+    assert_eq!(auth.acp_code, Some(-32000));
+}
+
+/// Cases 4, 5 and 6: a watchdog failure records its attempts, the answer and an optional ACP error.
+#[test]
+fn no_progress_failure_records_attempts_answer_and_acp_error() {
+    let failure = no_progress_failure(
+        /*attempts*/ 4,
+        TurnFailureAnswer::Cancelled,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(failure.code, TurnFailureCode::NoProgress);
+    assert_eq!(failure.attempts, Some(4));
+    assert_eq!(failure.answer, Some(TurnFailureAnswer::Cancelled));
+    assert_eq!(failure.acp_code, None);
+
+    let answered = no_progress_failure(
+        /*attempts*/ 2,
+        TurnFailureAnswer::Error,
+        Some(-32800),
+        Some("cancelled".into()),
+        None,
+    );
+    assert_eq!(answered.attempts, Some(2));
+    assert_eq!(answered.answer, Some(TurnFailureAnswer::Error));
+    assert_eq!(answered.acp_code, Some(-32800));
+    assert_eq!(answered.message.as_deref(), Some("cancelled"));
+}
+
+/// Case 4: the watchdog's answer is mapped to the bounded `no_progress` fields, and an ACP error
+/// (including `-32800`) keeps its code and text rather than triggering another send.
+#[test]
+fn no_progress_maps_the_agents_answer() {
+    let respond = |stop_reason: &str| -> PromptResponse {
+        serde_json::from_value(json!({"stopReason": stop_reason})).unwrap()
+    };
+    let end_turn =
+        no_progress_from_settled::<()>(/*attempts*/ 1, &Ok(Some(Ok(respond("end_turn")))));
+    assert_eq!(end_turn.answer, Some(TurnFailureAnswer::EndTurn));
+    assert_eq!(end_turn.attempts, Some(1));
+
+    let max_tokens =
+        no_progress_from_settled::<()>(/*attempts*/ 2, &Ok(Some(Ok(respond("max_tokens")))));
+    assert_eq!(max_tokens.answer, Some(TurnFailureAnswer::MaxTokens));
+
+    let error = no_progress_from_settled::<()>(
+        /*attempts*/ 2,
+        &Ok(Some(Err(AcpError::RequestFailed(AcpRequestError {
+            code: -32800,
+            message: "cancelled".into(),
+            data: None,
+        })))),
+    );
+    assert_eq!(error.answer, Some(TurnFailureAnswer::Error));
+    assert_eq!(error.acp_code, Some(-32800));
+    assert_eq!(error.message.as_deref(), Some("cancelled"));
+    assert_eq!(error.attempts, Some(2));
+
+    let unanswered = no_progress_from_settled::<()>(/*attempts*/ 1, &Ok(None));
+    assert_eq!(unanswered.answer, Some(TurnFailureAnswer::None));
+    assert_eq!(unanswered.acp_code, None);
+}
+
+/// Case 3: a cut that lands right after a space leaves no trailing whitespace behind.
+#[test]
+fn sanitize_trims_whitespace_left_by_truncation() {
+    let primary = format!("{} {}", "a".repeat(1023), "b".repeat(8));
+    let (text, truncated) = sanitize_agent_text(&primary, &None).unwrap();
+    assert_eq!((text, truncated), ("a".repeat(1023), true));
+}
+
+/// Case 1: a supplement standing alone, after an empty main text, gets no `: ` separator.
+#[test]
+fn a_supplement_without_main_text_has_no_separator() {
+    for primary in ["", " \n\u{200B} "] {
+        assert_eq!(
+            sanitize_agent_text(primary, &Some(json!({"message": "detail"}))),
+            Some(("detail".to_string(), false))
+        );
+    }
+}
+
+/// Case 2: ACP's `AuthRequired` code needs authentication whatever the Agent wrote, and the
+/// public error the Node maps to its terminal detail agrees with the recorded code.
+#[test]
+fn the_auth_required_code_maps_to_authentication_whatever_the_text() {
+    let error = crate::support::map_prompt_error(AcpError::RequestFailed(AcpRequestError {
+        code: -32000,
+        message: "upstream refused the request".into(),
+        data: None,
+    }));
+    assert_eq!(
+        (
+            error.public_error().clone(),
+            error.turn_failure().map(|failure| failure.code.clone())
+        ),
+        (
+            ora_contracts::PublicError::AgentAuthenticationRequired(
+                ora_contracts::EmptyErrorParams {}
+            ),
+            Some(TurnFailureCode::AgentAuthenticationRequired)
+        )
+    );
+    let other = crate::support::map_prompt_error(AcpError::RequestFailed(AcpRequestError {
+        code: -32001,
+        message: "upstream refused the request".into(),
+        data: None,
+    }));
+    assert_eq!(
+        other.turn_failure().map(|failure| failure.code.clone()),
+        Some(TurnFailureCode::AgentError)
+    );
+}
+
+/// Case 7: a broken prompt transport is the Agent's absence, and a frame or answer Ora cannot
+/// read is Ora's own failure; neither carries Agent text.
+#[test]
+fn transport_and_protocol_errors_map_to_their_failure_codes() {
+    let cases = [
+        (AcpError::StreamClosed, TurnFailureCode::AgentUnavailable),
+        (
+            AcpError::Io(std::io::Error::other("broken pipe")),
+            TurnFailureCode::AgentUnavailable,
+        ),
+        (
+            AcpError::InvalidFrame("not json".into()),
+            TurnFailureCode::Internal,
+        ),
+        (
+            AcpError::InvalidResponse("missing stopReason".into()),
+            TurnFailureCode::Internal,
+        ),
+    ];
+    for (error, code) in cases {
+        assert_eq!(
+            crate::support::map_prompt_error(error).turn_failure(),
+            Some(&ora_history::TurnFailure {
+                code,
+                acp_code: None,
+                message: None,
+                message_truncated: None,
+                attempts: None,
+                answer: None,
+            })
+        );
+    }
+}

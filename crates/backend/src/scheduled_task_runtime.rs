@@ -984,6 +984,8 @@ mod tests {
                 1,
                 HistoryRecord::TurnEnded {
                     stop_reason: StopReason::EndTurn,
+                    ended_by: None,
+                    failure: None,
                 },
             )
             .expect("append turn end");

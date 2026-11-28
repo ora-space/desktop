@@ -249,14 +249,35 @@ impl<L: SessionLedger> Conversation<'_, L> {
                         break TurnOutcome::Finished;
                     }
                     Some(Err(error)) => {
-                        if !merged.is_empty() && error.is_turn_cancel_unanswered() {
+                        // A cancel nobody answered, the caller's or the watchdog's own, leaves the
+                        // Agent possibly running: `turn_cancel_unanswered` for every session (D7).
+                        let watchdog_unanswered = error.turn_failure().is_some_and(|failure| {
+                            failure.code == ora_history::TurnFailureCode::NoProgress
+                                && failure.answer == Some(ora_history::TurnFailureAnswer::None)
+                        });
+                        if (!merged.is_empty() && error.is_turn_cancel_unanswered())
+                            || watchdog_unanswered
+                        {
                             break TurnOutcome::Unanswered;
                         }
-                        let code = match error.public_error() {
-                            PublicError::AgentAuthenticationRequired(_) => {
+                        // The terminal detail follows the failure's code when the runtime recorded
+                        // one: authentication and a lost Agent get their own details, and every
+                        // other failure stays `agent_turn_failed` (D7). Older errors without a
+                        // recorded reason fall back to the public classification.
+                        let code = match error.turn_failure().map(|failure| &failure.code) {
+                            Some(ora_history::TurnFailureCode::AgentAuthenticationRequired) => {
                                 "agent_authentication_required"
                             }
-                            _ => "agent_turn_failed",
+                            Some(ora_history::TurnFailureCode::AgentUnavailable) => {
+                                "agent_unavailable"
+                            }
+                            _ => match error.public_error() {
+                                PublicError::AgentAuthenticationRequired(_) => {
+                                    "agent_authentication_required"
+                                }
+                                PublicError::AgentRuntimeUnavailable(_) => "agent_unavailable",
+                                _ => "agent_turn_failed",
+                            },
                         };
                         if error.agent_answered() {
                             break TurnOutcome::Stopped(cancel::StoppedTurn {

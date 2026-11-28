@@ -48,6 +48,7 @@ mod suspend;
 mod title_acquisition;
 mod tool_timing;
 mod turn_cancel;
+mod turn_failure;
 
 #[cfg(feature = "test-support")]
 mod test_support;
@@ -60,6 +61,8 @@ mod host_start_tests;
 mod load_tests;
 #[cfg(test)]
 mod test_host;
+#[cfg(test)]
+mod turn_failure_tests;
 
 pub use end_cause::{PromptEndCause, PromptEndReport};
 pub use error::{ErrorClassification, RuntimeError, SharedError};

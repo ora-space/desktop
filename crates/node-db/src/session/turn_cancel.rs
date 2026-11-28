@@ -105,25 +105,41 @@ impl<G: WriteGuard> SessionJournal<G> {
     /// Controller acknowledged. While one exists, a connection that did not negotiate
     /// `turn_cancel` must not take the sessions over (D5).
     pub fn has_undrained_keep_sessions(&self) -> Result<bool, Error> {
-        let db = self.lock()?;
-        let sessions = db.connection.prepare("SELECT input,state,result,last_sequence FROM node_executions n WHERE kind='agent_session' AND (state<>'completed' OR EXISTS(SELECT 1 FROM execution_events e WHERE e.execution=n.execution)) ORDER BY rowid")?
-            .query_map([], row)?
-            .map(|r| decode(r?))
-            .collect::<Result<Vec<_>, Error>>()?;
-        Ok(sessions.iter().any(|session| {
+        Ok(self.undrained_keep_sessions()?.iter().any(|session| {
             let spec = &session.command.payload.spec;
             spec.keep_session_on_cancel || spec.keep_session_on_failure
         }))
     }
+
+    /// Whether any session that chose `keep_session_on_failure` is still unfinished or still has
+    /// events no Controller acknowledged. While one exists, a connection that did not negotiate
+    /// `turn_failure` must not take the sessions over (D6).
+    pub fn has_undrained_failure_sessions(&self) -> Result<bool, Error> {
+        Ok(self
+            .undrained_keep_sessions()?
+            .iter()
+            .any(|session| session.command.payload.spec.keep_session_on_failure))
+    }
+
+    /// All still-unfinished agent sessions, or agent sessions with unacknowledged events.
+    fn undrained_keep_sessions(&self) -> Result<Vec<SessionExecution>, Error> {
+        let db = self.lock()?;
+        db.connection.prepare("SELECT input,state,result,last_sequence FROM node_executions n WHERE kind='agent_session' AND (state<>'completed' OR EXISTS(SELECT 1 FROM execution_events e WHERE e.execution=n.execution)) ORDER BY rowid")?
+            .query_map([], row)?
+            .map(|r| decode(r?))
+            .collect()
+    }
 }
 
 /// Settles every still-queued `CancelTurn` as `session_ending` in acceptance order, inside the
-/// caller's transaction, and returns the execution's new last sequence. Called wherever the
-/// session's end is decided, so no `session_ending` can be visible without the decision.
+/// caller's transaction after the sequence `last`, and returns the execution's new last sequence.
+/// Called wherever the session's end is decided, so no `session_ending` can be visible without
+/// the decision.
 pub(crate) fn settle_pending_as_ending<G: WriteGuard>(
     tx: &rusqlite::Transaction<'_>,
     guard: &Arc<G>,
     current: &SessionExecution,
+    last: u64,
 ) -> Result<u64, Error> {
     let pending = tx
         .prepare("SELECT command_id,input FROM session_commands WHERE execution=?1 AND state='queued' ORDER BY acceptance_order")?
@@ -131,7 +147,7 @@ pub(crate) fn settle_pending_as_ending<G: WriteGuard>(
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut last = current.last_sequence;
+    let mut last = last;
     for (command, input) in pending {
         let SessionCommandInput::CancelTurn(cancel) = serde_json::from_str(&input)? else {
             continue;
@@ -167,7 +183,7 @@ pub(crate) fn end_decided(
 }
 
 /// Writes one settlement after `last`, marks its command executed and queues the event.
-fn write_settlement<G: WriteGuard>(
+pub(crate) fn write_settlement<G: WriteGuard>(
     tx: &rusqlite::Transaction<'_>,
     guard: &Arc<G>,
     current: &SessionExecution,
@@ -260,7 +276,7 @@ fn settled(
 }
 
 /// Whether an `EndSession` was ever accepted for the session.
-fn end_requested(
+pub(crate) fn end_requested(
     connection: &rusqlite::Connection,
     execution: &ExecutionId,
 ) -> Result<bool, Error> {

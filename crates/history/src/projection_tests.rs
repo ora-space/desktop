@@ -45,7 +45,7 @@ fn projected_text_keeps_sources_and_annotations_with_same_or_missing_message_ids
         pending.extend(assembler.pending_records());
         let expected = vec![first, text(id, "right", "BC")];
         assert_eq!(payloads(&pending), expected);
-        emitted.extend(assembler.end_turn(StopReason::EndTurn));
+        emitted.extend(assembler.end_turn(StopReason::EndTurn, None, None));
         assert_eq!(payloads(&emitted), expected);
         // A serialized roundtrip exercises the existing schema rather than a parallel DTO.
         for record in emitted {
@@ -104,7 +104,7 @@ fn parent_end_does_not_complete_unsettled_projected_tools() {
     );
     assembler.push_update(&child);
     assert_eq!(
-        payloads(&assembler.end_turn(StopReason::EndTurn)),
+        payloads(&assembler.end_turn(StopReason::EndTurn, None, None)),
         vec![child]
     );
 }
@@ -123,7 +123,7 @@ fn plans_from_distinct_sources_do_not_overwrite_each_other() {
         vec![parent.clone(), child.clone()]
     );
     assert_eq!(
-        payloads(&assembler.end_turn(StopReason::EndTurn)),
+        payloads(&assembler.end_turn(StopReason::EndTurn, None, None)),
         vec![parent, child]
     );
 }
@@ -157,7 +157,7 @@ fn cleared_or_invalid_child_sources_settle_as_parent_tools() {
             "sessionUpdate":"tool_call","toolCallId":"tool","title":"Work",
             "status":"completed","_meta":{"opencode/child-session":source,"ora/turn-end-settled":true}
         }));
-        let records = assembler.end_turn(StopReason::EndTurn);
+        let records = assembler.end_turn(StopReason::EndTurn, None, None);
         assert_eq!(payloads(&records), vec![expected.clone()]);
         assert_eq!(reload_payloads(&records), vec![expected]);
     }
@@ -172,7 +172,7 @@ fn integral_float_depth_keeps_the_same_child_source_as_live_projection() {
         "_meta":{"opencode/child-session":{"id":"child","parentID":"root","depth":1.0}}
     }));
     assembler.push_update(&child);
-    let records = assembler.end_turn(StopReason::EndTurn);
+    let records = assembler.end_turn(StopReason::EndTurn, None, None);
     assert_eq!(payloads(&records), vec![child.clone()]);
     assert_eq!(reload_payloads(&records), vec![child]);
 }
@@ -226,7 +226,7 @@ fn plans_replace_by_source_despite_changing_metadata_through_reload() {
     assembler.push_update(&latest_parent);
     let expected = vec![latest_parent, latest_child, sibling];
     assert_eq!(payloads(&assembler.pending_records()), expected);
-    let records = assembler.end_turn(StopReason::EndTurn);
+    let records = assembler.end_turn(StopReason::EndTurn, None, None);
     assert_eq!(payloads(&records), expected);
     assert_eq!(reload_payloads(&records), expected);
 }
@@ -251,7 +251,7 @@ fn unidentified_source_switches_preserve_order_through_disk_reload() {
         writer.append(&assembler.push_update(event)).unwrap();
     }
     writer
-        .append(&assembler.end_turn(StopReason::EndTurn))
+        .append(&assembler.end_turn(StopReason::EndTurn, None, None))
         .unwrap();
     let history = crate::read_session_history(root.path(), id).unwrap();
     let records = history
@@ -291,7 +291,7 @@ fn delegation_results_survive_a_late_snapshot_and_reload() {
     assert_eq!(payloads(&late), expected);
     assert_eq!(reload_payloads(&late), expected);
     // The settled snapshot was written already, so ending the turn must not add another copy.
-    assert!(payloads(&assembler.end_turn(StopReason::EndTurn)).is_empty());
+    assert!(payloads(&assembler.end_turn(StopReason::EndTurn, None, None)).is_empty());
 }
 
 #[test]
@@ -342,7 +342,7 @@ fn subagent_update_sources_isolate_messages_tools_and_plans_through_reload() {
     }))));
     emitted.extend(assembler.push_update(&other_task_chunk));
     emitted.extend(assembler.push_update(&unfinished_tool));
-    emitted.extend(assembler.end_turn(StopReason::EndTurn));
+    emitted.extend(assembler.end_turn(StopReason::EndTurn, None, None));
 
     let expected = vec![
         update(json!({
@@ -393,7 +393,7 @@ fn invalid_or_cleared_subagent_update_sources_settle_as_parent_tools() {
             "status": "completed",
             "_meta": { "_subagent/update": invalid, "ora/turn-end-settled": true },
         }));
-        let records = assembler.end_turn(StopReason::EndTurn);
+        let records = assembler.end_turn(StopReason::EndTurn, None, None);
         assert_eq!(payloads(&records), vec![expected.clone()]);
         assert_eq!(reload_payloads(&records), vec![expected]);
     }
@@ -420,7 +420,7 @@ fn turn_end_settled_parent_tool_carries_implied_marker_while_provider_completion
         "status": "in_progress",
         "rawOutput": "partial output",
     }))));
-    records.extend(assembler.end_turn(StopReason::EndTurn));
+    records.extend(assembler.end_turn(StopReason::EndTurn, None, None));
     let expected = vec![
         update(json!({
             "sessionUpdate": "tool_call",
@@ -466,7 +466,7 @@ fn subagent_update_plans_replace_per_task_despite_extra_metadata_through_reload(
     assembler.push_update(&latest_a);
     let expected = vec![latest_a, sibling];
     assert_eq!(payloads(&assembler.pending_records()), expected);
-    let records = assembler.end_turn(StopReason::EndTurn);
+    let records = assembler.end_turn(StopReason::EndTurn, None, None);
     assert_eq!(payloads(&records), expected);
     assert_eq!(reload_payloads(&records), expected);
 }

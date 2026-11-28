@@ -336,15 +336,34 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             "sessions that chose turn_cancel need a Controller that negotiates it",
         ));
     }
+    // `turn_failure` builds on `turn_cancel`, so it is only confirmed beside it. A Controller that
+    // cannot read `TurnFailureSettled` must not take over sessions that chose
+    // `keep_session_on_failure`; refusing before any event changes no execution (D6).
+    let turn_failure = hello.payload.turn_failure && turn_cancel;
+    if !turn_failure
+        && let Some(journal) = &info.keep_sessions
+        && journal
+            .has_undrained_failure_sessions()
+            .map_err(|_| Failure::local(CloseReason::InternalError, "ledger unavailable"))?
+    {
+        return Err(Failure::local(
+            CloseReason::IdentityMismatch,
+            "sessions that chose keep_session_on_failure need a Controller that negotiates turn_failure",
+        ));
+    }
     let mut capabilities = info.capabilities.clone();
     if turn_cancel {
         capabilities.push(NodeCapability::TurnCancel);
+    }
+    if turn_failure {
+        capabilities.push(NodeCapability::TurnFailure);
     }
     let response = NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: HelloAccepted {
             thread_previews: hello.payload.thread_previews && info.agents.is_some(),
             turn_cancel,
+            turn_failure,
             selected_version: CURRENT_PROTOCOL_VERSION,
             node: info.identity.clone(),
             capabilities,
@@ -466,13 +485,16 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                     "Controller exceeded unanswered request limit",
                 ));
             };
-            // A keep choice is only valid over a connection that negotiated `turn_cancel`: this
-            // Controller could neither read the events it causes nor take the session over
-            // again. It is refused before durable admission, like an unknown field would be.
-            if needs_turn_cancel(&message) && !turn_cancel {
+            // A keep choice is only valid over a connection that negotiated the capability it
+            // needs: `keep_session_on_cancel` needs `turn_cancel`, `keep_session_on_failure` needs
+            // both. This Controller could neither read the events they cause nor take the session
+            // over again, so it is refused before durable admission, like an unknown field.
+            if (needs_turn_cancel(&message) && !turn_cancel)
+                || (needs_turn_failure(&message) && !turn_failure)
+            {
                 return Err(Failure::local(
                     CloseReason::ProtocolViolation,
-                    "a turn_cancel message or keep choice without negotiating turn_cancel",
+                    "a turn_cancel or turn_failure message or keep choice without negotiating it",
                 ));
             }
             // Enqueueing in read order keeps the worker's FIFO equal to the Controller's order.
@@ -607,4 +629,15 @@ pub(super) fn needs_turn_cancel(message: &ControllerToNodeMessage) -> bool {
         _ => return false,
     };
     spec.keep_session_on_cancel || spec.keep_session_on_failure
+}
+
+/// Whether a message is only valid over a connection that negotiated `turn_failure`: a session
+/// start that chose `keep_session_on_failure`. `turn_failure` also implies `turn_cancel`.
+pub(super) fn needs_turn_failure(message: &ControllerToNodeMessage) -> bool {
+    let spec = match message {
+        ControllerToNodeMessage::StartAgentSession(start) => &start.payload.spec,
+        ControllerToNodeMessage::ControlledStartAgentSession(start) => &start.command.payload.spec,
+        _ => return false,
+    };
+    spec.keep_session_on_failure
 }

@@ -56,10 +56,16 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         running_tools = snapshot.running_tools, pending_tools = snapshot.pending_tools,
                         end_cause = "inactivity_timeout", cancellation_result,
                         "workflow prompt exceeded its silence limit");
+        let failure = if matches!(settled, Ok(None)) {
+            crate::turn_failure::agent_unavailable_failure()
+        } else {
+            super::prompt_retry::no_progress_from_settled(snapshot.attempt, &settled)
+        };
         let mut error = agent_timed_out(format!(
             "workflow agent reported no progress for {} minutes",
             snapshot.window.as_secs() / 60
-        ));
+        ))
+        .with_turn_failure(failure);
         if cancellation_result == "confirmed" {
             self.record_cleanup(operation_id, Ok(()));
             self.channel = Some(channel);
@@ -79,7 +85,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             .await;
             self.isolate_channel(channel).await;
         }
-        self.end_timed_turn(StopReason::Cancelled, tool_timings);
+        let turn_failure = error.turn_failure().cloned();
+        self.end_timed_turn_with(StopReason::Cancelled, tool_timings, None, turn_failure);
         followers.finish_with_result(StopReason::Cancelled, Err(error.clone()));
         let _ = events.try_send(Err(error));
     }

@@ -445,7 +445,7 @@ fn startup_recovery_ends_a_restore_proven_by_the_sequence_the_controller_acked()
     let connection = rusqlite::Connection::open(home.join("ora-node.sqlite3"))?;
     connection.execute_batch(&format!(
         "PRAGMA foreign_keys=OFF;
-        DROP TABLE session_turn_cancels; DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
+        DROP TABLE session_turn_cancels; DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures; DROP TABLE session_turn_failure_settlements;
 DROP INDEX queued_session_commands;
 ALTER TABLE session_commands RENAME TO new_session_commands;
 CREATE TABLE session_commands (

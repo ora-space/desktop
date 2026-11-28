@@ -118,6 +118,8 @@ impl<G: WriteGuard> SessionJournal<G> {
                     return Err(Error::InvalidTransition);
                 }
                 guard.before_write(WritePoint::Progress)?;
+                // The pending conclusion of a failed turn outlives the event's acknowledgement (D6).
+                super::turn_failure::record_pending_failure(&tx, &current, &payload, sequence)?;
                 NodeToControllerMessage::ThreadEvent(ThreadEventMessage {
                     protocol_version: CURRENT_PROTOCOL_VERSION,
                     operation_id: current.command.operation_id,
@@ -154,7 +156,14 @@ impl<G: WriteGuard> SessionJournal<G> {
                 }
                 // Every accepted cancel is settled before any terminal (invariant 2), including
                 // ends that never went through a deferred decision, such as restart settlement.
-                let last = super::settle_pending_as_ending(&tx, &guard, &current)?;
+                // A failed turn's conclusion precedes the cancels merged into its stop (D6).
+                let last = super::settle_failure_as_ending_if_due(
+                    &tx,
+                    &guard,
+                    &current,
+                    current.last_sequence,
+                )?;
+                let last = super::settle_pending_as_ending(&tx, &guard, &current, last)?;
                 sequence = last
                     .checked_add(1)
                     .filter(|s| *s <= i64::MAX as u64)

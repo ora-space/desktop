@@ -1,5 +1,5 @@
 use crate::metadata::{TURN_END_SETTLED_META_KEY, child_source_id, retain_tool_metadata};
-use crate::record::{HistoryRecord, ToolCallTiming};
+use crate::record::{HistoryRecord, ToolCallTiming, TurnEndedBy, TurnFailure};
 use agent_client_protocol_schema::v1::ContentBlock;
 use agent_client_protocol_schema::v1::Meta;
 use agent_client_protocol_schema::v1::Plan;
@@ -164,13 +164,26 @@ impl HistoryAssembler {
     ///
     /// Parent tools may settle here; projected child tools retain their reported
     /// state because the parent ending does not prove child completion.
-    pub fn end_turn(&mut self, stop_reason: StopReason) -> Vec<AssembledRecord> {
+    ///
+    /// `ended_by` records a caller cancel or session end; `failure` records a failed turn. A turn
+    /// the Agent ended on its own has neither, which is also what records written before this
+    /// change look like.
+    pub fn end_turn(
+        &mut self,
+        stop_reason: StopReason,
+        ended_by: Option<TurnEndedBy>,
+        failure: Option<TurnFailure>,
+    ) -> Vec<AssembledRecord> {
         let retried = self.last_retry_seq.take().is_some();
         let mut records = self.flush_attempt(stop_reason, retried);
         self.tools.clear();
         records.push(AssembledRecord {
             seq: self.take_seq(),
-            record: HistoryRecord::TurnEnded { stop_reason },
+            record: HistoryRecord::TurnEnded {
+                stop_reason,
+                ended_by,
+                failure,
+            },
         });
         records
     }

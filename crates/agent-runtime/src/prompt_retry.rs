@@ -1,9 +1,10 @@
 use super::RuntimeActor;
+use super::agent_timed_out;
 use super::events::{drain_queued_prompt_events, settle_cancelled_prompt};
 use super::limits::CANCELLATION_GRACE;
 use super::prompt_liveness::PromptLiveness;
 use super::routing::SessionChannel;
-use super::{agent_timed_out, map_acp_error};
+use super::support::map_prompt_error;
 use crate::AgentRuntimeHost;
 use crate::RuntimeError;
 use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
@@ -11,6 +12,7 @@ use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{PromptRequest, PromptResponse, RequestId, StopReason};
 use ora_contracts::PromptSessionEvent;
 use ora_domain::PromptInactivityPolicy;
+use ora_history::{TurnFailure, TurnFailureAnswer};
 use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -138,7 +140,14 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
             drain_queued_prompt_events(actor, channel, &client, events, saw_output, followers)
                 .await;
         }
-        let failure = agent_timed_out("agent prompt made no progress");
+        // A closed channel while waiting is a lost Agent, not a stalled one (D2/D5), so it is
+        // `agent_unavailable`. Otherwise the watchdog gave up on a stalled turn: `no_progress`.
+        let failure = if matches!(settled, Ok(None)) {
+            crate::turn_failure::agent_unavailable_failure()
+        } else {
+            no_progress_from_settled(snapshot.attempt, &settled)
+        };
+        let failure = agent_timed_out("agent prompt made no progress").with_turn_failure(failure);
         return StalledPrompt::Failed(if answered {
             failure.answered()
         } else {
@@ -196,6 +205,44 @@ pub(super) async fn retry_stalled_prompt<H: AgentRuntimeHost>(
         .await
     {
         Ok(pending) => StalledPrompt::Resent(pending),
-        Err(error) => StalledPrompt::Failed(map_acp_error(error)),
+        // A transport failure on the resend is the Agent's absence, as on the first send (D2/D7).
+        Err(error) => StalledPrompt::Failed(map_prompt_error(error)),
     }
+}
+
+/// Builds the `no_progress` failure the watchdog records when it gives up: how many
+/// `session/prompt` writes the turn made, and how the Agent answered the last cancel.
+pub(super) fn no_progress_from_settled<E>(
+    attempts: usize,
+    settled: &Result<Option<Result<PromptResponse, ora_acp::AcpError>>, E>,
+) -> TurnFailure {
+    let attempts = u32::try_from(attempts).unwrap_or(u32::MAX);
+    let (answer, acp_code, message, message_truncated) = match settled {
+        Ok(Some(Ok(response))) => {
+            let answer = match response.stop_reason {
+                StopReason::Cancelled => TurnFailureAnswer::Cancelled,
+                StopReason::EndTurn => TurnFailureAnswer::EndTurn,
+                StopReason::MaxTokens => TurnFailureAnswer::MaxTokens,
+                StopReason::MaxTurnRequests => TurnFailureAnswer::MaxTurnRequests,
+                StopReason::Refusal => TurnFailureAnswer::Refusal,
+                _ => TurnFailureAnswer::None,
+            };
+            (answer, None, None, None)
+        }
+        Ok(Some(Err(ora_acp::AcpError::RequestFailed(request)))) => {
+            let sanitized =
+                crate::turn_failure::sanitize_agent_text(&request.message, &request.data);
+            (
+                TurnFailureAnswer::Error,
+                Some(request.code),
+                sanitized.as_ref().map(|(text, _)| text.clone()),
+                sanitized
+                    .as_ref()
+                    .and_then(|(_, truncated)| (*truncated).then_some(true)),
+            )
+        }
+        Ok(Some(Err(_))) => (TurnFailureAnswer::Error, None, None, None),
+        Ok(None) | Err(_) => (TurnFailureAnswer::None, None, None, None),
+    };
+    crate::turn_failure::no_progress_failure(attempts, answer, acp_code, message, message_truncated)
 }

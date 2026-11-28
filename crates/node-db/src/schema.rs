@@ -5,12 +5,16 @@ use rusqlite::Connection;
 const APPLICATION_ID: i64 = 0x4f52414e;
 
 /// The newest schema this program writes; files beyond it are refused, never misread.
-pub(crate) const LATEST_VERSION: i64 = STOP_MARKS_VERSION;
+pub(crate) const LATEST_VERSION: i64 = TURN_FAILURE_SETTLEMENTS_VERSION;
 
 /// The schema whose migration admits attempt-mark stop evidence: the `lock_processes_and_marks`
 /// proof and the per-attempt `mark_scope` flag, in one table rebuild after v15's cancel
 /// settlements.
 pub(crate) const STOP_MARKS_VERSION: i64 = 16;
+
+/// The schema whose migration records the settlement of a kept-on-failure session's failed turn,
+/// pending from the moment its failed `turnEnded` is persisted until it is concluded.
+pub(crate) const TURN_FAILURE_SETTLEMENTS_VERSION: i64 = 17;
 const METADATA: &str = "CREATE TABLE node_metadata (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), node_id TEXT NOT NULL CHECK(length(node_id) > 0));";
 
 /// Checks identity before any persistent pragma or migration touches an existing database.
@@ -108,6 +112,9 @@ pub(super) fn initialize(
     }
     if version >= STOP_MARKS_VERSION {
         expected.execute_batch(include_str!("session_stop_marks.sql"))?;
+    }
+    if version >= TURN_FAILURE_SETTLEMENTS_VERSION {
+        expected.execute_batch(include_str!("turn_failure.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
@@ -305,6 +312,20 @@ pub(super) fn initialize(
             /*schema_name*/ None,
             "user_version",
             /*pragma_value*/ STOP_MARKS_VERSION,
+        )?;
+        tx.commit()?;
+    }
+    if version < TURN_FAILURE_SETTLEMENTS_VERSION {
+        // v17 records the one settlement a kept-on-failure session's failed turn receives, first as
+        // pending (no outcome) and then concluded, so the conclusion stays due after the failed
+        // Thread event is acknowledged. It only adds a table; older programs reject a v17 file
+        // rather than replay events they cannot read.
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("turn_failure.sql"))?;
+        tx.pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            /*pragma_value*/ TURN_FAILURE_SETTLEMENTS_VERSION,
         )?;
         tx.commit()?;
     }

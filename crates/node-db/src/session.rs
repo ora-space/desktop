@@ -6,6 +6,7 @@ mod journal;
 mod model;
 mod restore;
 mod turn_cancel;
+mod turn_failure;
 pub use admission::{MAX_SESSIONS_PER_CHECKOUT, RefusedSession, SessionRefusal};
 pub use model::{
     CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,
@@ -13,6 +14,7 @@ pub use model::{
 };
 pub use restore::{RestoreAttempt, RestorePhase};
 pub(crate) use turn_cancel::{end_decided, settle_pending_as_ending};
+pub(crate) use turn_failure::settle_failure_as_ending_if_due;
 
 use crate::*;
 use ora_node_protocol::*;

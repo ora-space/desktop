@@ -364,7 +364,8 @@ fn remove_direct_git_schema(connection: &Connection) {
 /// Reconstructs the stop table as it was just before the stop-marks schema: no
 /// `lock_processes_and_marks` proof and no `mark_scope` flag.
 fn remove_session_stop_marks_schema(connection: &Connection) {
-    connection.execute_batch("DROP INDEX session_stop_execution;
+    connection.execute_batch("DROP TABLE IF EXISTS session_turn_failure_settlements;
+DROP INDEX session_stop_execution;
 DROP INDEX session_stop_checkout;
 ALTER TABLE session_stop_attempts RENAME TO new_session_stop_attempts;
 CREATE TABLE session_stop_attempts (
@@ -399,7 +400,7 @@ CREATE INDEX session_stop_checkout ON session_stop_attempts(checkout,state);").u
 
 /// Reconstructs an exact pre-v14 schema; production has no downgrade path.
 fn remove_session_stop_schema(connection: &Connection) {
-    connection.execute_batch("DROP TABLE session_turn_cancels; DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
+    connection.execute_batch("DROP TABLE IF EXISTS session_turn_failure_settlements; DROP TABLE session_turn_cancels; DROP TABLE session_stop_attempts; DROP TABLE session_stop_ends; DROP TABLE session_stop_audit; DROP TABLE session_stop_summary; DROP TABLE session_turn_failures;
 DROP INDEX queued_session_commands;
 ALTER TABLE session_commands RENAME TO new_session_commands;
 CREATE TABLE session_commands (

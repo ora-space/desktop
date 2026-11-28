@@ -333,7 +333,7 @@ mod tests {
             assert_eq!(translated.session_id.0.as_ref(), "ses-main");
             records.extend(assembler.push_update(&translated.update));
         }
-        records.extend(assembler.end_turn(StopReason::EndTurn));
+        records.extend(assembler.end_turn(StopReason::EndTurn, None, None));
 
         let updates = records
             .into_iter()
@@ -733,7 +733,7 @@ mod tests {
                     "parent completion must rearm parent deadline"
                 );
                 records.extend(assembler.push_update(&parent_completed));
-                records.extend(assembler.end_turn(StopReason::EndTurn));
+records.extend(assembler.end_turn(StopReason::EndTurn, None, None));
 
                 let mut seen_parent = None;
                 let mut seen_child_tool = None;

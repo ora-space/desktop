@@ -171,9 +171,27 @@ directory is removed once the plugin stopped, and leftovers are removed when the
    releases the lease, discards any queued command, writes the terminal result and forgets the session.
 
 Unless the session chose otherwise (below), only a successful ACP completion admits another turn. A
-prompt error or unexpected stream closure ends the session as `agent_failed` with `agent_turn_failed`
-or `agent_stream_closed`; no raw provider diagnostic enters history or logs, and an `EndSession`
-already queued keeps its explicit reason.
+turn that did not complete keeps `stop_reason: cancelled` on its `TurnEnded` and records why:
+`ended_by: caller_cancel` when a cancel acted on it, `ended_by: session_end` when the session ended
+while it ran or the host stopped reading its events, or `failure` when the runtime observed a
+failure first. `failure.code` is `agent_authentication_required` (ACP code `-32000`, or exactly one
+of the two known login texts) or `agent_error` for any other ACP error answer, both with `acp_code`
+and the Agent's sanitized text in `message` (controls and format characters removed, at most 1 KiB,
+`message_truncated` when cut); `no_progress` when the inactivity watchdog gave up, with `attempts`
+and the Agent's `answer` to its last cancel (`none` when there was no answer); `agent_unavailable`
+when the Agent process or its ACP connection was lost, or the prompt's transport failed, before any
+cancel was written; and `internal` for an Ora-side failure (a malformed ACP frame or answer, an
+event queue overflow, a permission request that cannot be answered). A turn the Agent ended with its
+own stop reason, and every record written before these fields existed, has neither.
+
+The session then ends as `agent_failed`. For every session, whatever it chose and whatever the
+Controller negotiated, the detail follows the failure: `agent_authentication_required` for an
+authentication failure, `agent_unavailable` when the Agent was lost or the prompt could not be
+sent, `turn_cancel_unanswered` when the watchdog's cancel got no answer within its grace, and
+`agent_turn_failed` for every other prompt failure, a watchdog give-up the Agent answered included.
+An event stream that closes before the turn's end is `agent_stream_closed`. The Agent's text appears
+only in the `TurnEnded` record: no terminal detail, settlement or log carries it, and an
+`EndSession` already queued keeps its explicit reason.
 
 ## Cancelling one turn
 
@@ -204,6 +222,12 @@ cancels before it waits for stop evidence.
   `turn_cancel_unanswered`.
 - **Finished, already dropped, failed by timeout, or unknown**: `already_ended` or `unknown`, nothing
   else changes.
+
+A failed turn of a session that chose `keep_session_on_failure` is judged like a stopped turn when
+the Agent answered the prompt (an ACP error, or a watchdog cancel the Agent answered); a lost Agent,
+an internal failure or an unanswered watchdog cancel ends the session. The Controller learns the
+outcome from `turn_failure_settled`: `kept` before the next turn, or `session_ending` with the end
+decision, ahead of the merged cancels' settlements (see [Protocol](protocol.md#message-contracts)).
 
 A stopped turn keeps the session only when all of these hold, checked in this order:
 
@@ -297,7 +321,8 @@ and `summary.json` to the output directory. It passes only when the stop settled
 the turn started outside the sessions of the Agent's earlier processes was alive then, no marker
 was written within six seconds, and the next turn completed. A failed turn settles no cancel, so for
 `error` the processes are sampled at the next turn's first event, which the Node writes only after
-it judged the failed turn. The test finds the turn's processes by the attempt mark, as the Node
+it judged the failed turn; `error` negotiates `turn_failure` and also needs the failed turn's
+`turn_failure_settled` to be `kept`. The test finds the turn's processes by the attempt mark, as the Node
 does, so it shares the mark's blind spot: an orphan that cleared or rewrote its environment is
 invisible to both, and only the probe's marker files catch such a job, when it writes within the
 observation. A finite observation does not register

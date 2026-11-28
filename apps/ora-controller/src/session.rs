@@ -266,8 +266,9 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         payload: Hello {
             thread_previews: store.supports_thread_previews(),
             // This Controller still stops a turn with `EndSession`; it never opts sessions into
-            // the keep choices, so it does not ask for `turn_cancel`.
+            // the keep choices, so it asks for neither `turn_cancel` nor `turn_failure`.
             turn_cancel: false,
+            turn_failure: false,
             controller_id: id.clone(),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
         },

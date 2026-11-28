@@ -476,7 +476,11 @@ pub(crate) fn end_fixture_turn(sessions_root: &Path, session_id: &str, stop_reas
     append_history_record(
         sessions_root,
         session_id,
-        HistoryRecord::TurnEnded { stop_reason },
+        HistoryRecord::TurnEnded {
+            stop_reason,
+            ended_by: None,
+            failure: None,
+        },
     );
 }
 

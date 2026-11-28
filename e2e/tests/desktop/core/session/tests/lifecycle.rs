@@ -72,7 +72,8 @@ async fn cancelled_history(root: &Path, session_id: &str) -> TestResult {
                 matches!(
                     line.record,
                     HistoryRecord::TurnEnded {
-                        stop_reason: StopReason::Cancelled
+                        stop_reason: StopReason::Cancelled,
+                        ..
                     }
                 )
             })

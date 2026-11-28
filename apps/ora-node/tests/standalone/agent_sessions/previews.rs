@@ -30,6 +30,7 @@ fn negotiated_preview_streams_before_the_agent_turn_finishes() {
                             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
                             thread_previews: true,
                             turn_cancel: false,
+                            turn_failure: false,
                         },
                     }),
                 )

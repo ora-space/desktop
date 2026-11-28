@@ -17,6 +17,7 @@ use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, PromptRequest, PromptResponse, StopReason,
 };
+use ora_history::TurnEndedBy;
 use ora_logging::{ora_debug, ora_warn};
 use stale_load::{describes_provider, stale_load_retry_allowed};
 
@@ -119,8 +120,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         "session event queue overflowed",
                     )));
                     self.isolate_channel(channel).await;
+                    // A rebuild resend continues a recorded turn, which fails on Ora's side (D2).
                     if attempt.skip_record {
-                        self.end_turn(StopReason::Cancelled);
+                        let failure = crate::turn_failure::internal_failure();
+                        self.end_turn_with(StopReason::Cancelled, None, Some(failure));
                     }
                     followers.finish(StopReason::Cancelled);
                     return;
@@ -128,8 +131,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 SessionControl::ConnectionLost(error) => {
                     end_report.record(PromptEndCause::SessionCrashed);
                     self.fail_prompt(&events, error);
+                    // The Agent was lost before the rebuild resend of a recorded turn (D2).
                     if attempt.skip_record {
-                        self.end_turn(StopReason::Cancelled);
+                        let failure = crate::turn_failure::agent_unavailable_failure();
+                        self.end_turn_with(StopReason::Cancelled, None, Some(failure));
                     }
                     followers.finish(StopReason::Cancelled);
                     return;
@@ -159,8 +164,9 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 end_report.record(PromptEndCause::StreamDropped);
                 self.end_on_channel(channel, /*usable*/ true, /*told*/ false)
                     .await;
+                // The host stopped reading the recorded turn's events (D1).
                 if attempt.skip_record {
-                    self.end_turn(StopReason::Cancelled);
+                    self.end_turn_with(StopReason::Cancelled, Some(TurnEndedBy::SessionEnd), None);
                 }
                 followers.finish(StopReason::Cancelled);
                 return;
@@ -272,8 +278,10 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 // was carrying is still owed and stays owed — in memory and, since
                 // no delivery was recorded, across a restart as well.
                 end_report.record(PromptEndCause::Unknown);
-                self.end_turn(StopReason::Cancelled);
-                let _ = events.try_send(Err(map_acp_error(error)));
+                // A transport failure while sending is the Agent's absence (D2/D7).
+                let error = map_prompt_error(error);
+                self.end_turn_with(StopReason::Cancelled, None, error.turn_failure().cloned());
+                let _ = events.try_send(Err(error));
                 self.isolate_channel(channel).await;
                 followers.finish(StopReason::Cancelled);
                 return;
@@ -394,7 +402,12 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         // provider session.
                         end_report.record(PromptEndCause::UserStopped);
                         end_report.mark_cancel_applied();
-                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                        self.end_timed_turn_with(
+                            StopReason::Cancelled,
+                            &tool_timings,
+                            Some(TurnEndedBy::CallerCancel),
+                            None,
+                        );
                         followers.finish(StopReason::Cancelled);
                         if reusable {
                             self.record_cleanup(operation_id, Ok(()));
@@ -415,7 +428,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         // The inactivity schedule gave up: this is a system timeout, never the
                         // user's own stop, even though both end the turn as `Cancelled`.
                         end_report.record(PromptEndCause::InactivityTimeout);
-                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                        let turn_failure = error.turn_failure().cloned();
+                        self.end_timed_turn_with(
+                            StopReason::Cancelled,
+                            &tool_timings,
+                            None,
+                            turn_failure,
+                        );
                         followers.finish(StopReason::Cancelled);
                         let _ = events.try_send(Err(error));
                         self.isolate_channel(channel).await;
@@ -453,9 +472,15 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         }))
                         .is_err()
                     {
-                        // The turn's owner stopped reading, so nobody is left to answer it.
+                        // The turn's owner stopped reading, so nobody is left to answer it: the
+                        // host only does so when it ends the session or exits (D1).
                         end_report.record(PromptEndCause::StreamDropped);
-                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                        self.end_timed_turn_with(
+                            StopReason::Cancelled,
+                            &tool_timings,
+                            Some(TurnEndedBy::SessionEnd),
+                            None,
+                        );
                         followers.finish(StopReason::Cancelled);
                         self.accept_changes_on(&mut channel);
                         self.cancel(&client, &permissions.pending).await;
@@ -476,7 +501,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     {
                         ora_warn!(session_id = %self.session.id, error = %error, "failed to answer permission request");
                         end_report.record(PromptEndCause::Unknown);
-                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                        // An unanswerable permission request fails on Ora's side (D2).
+                        self.end_timed_turn_with(
+                            StopReason::Cancelled,
+                            &tool_timings,
+                            None,
+                            Some(crate::turn_failure::internal_failure()),
+                        );
                         followers.finish(StopReason::Cancelled);
                         self.cancel(&client, &permissions.pending).await;
                         self.isolate_channel(channel).await;
@@ -521,95 +552,29 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                             .await;
                         }
                         Err(error) => {
-                            let reusable = matches!(&error, ora_acp::AcpError::RequestFailed(_));
-                            let session_invalid = super::support::provider_session_invalid(&error);
-                            // A load can claim success while the provider session is gone; its
-                            // first prompt then fails before producing anything. Rebuild once and
-                            // resend the same prompt with the transcript this side still owns.
-                            let retry_blocks = retry_cutoff
-                                .and_then(|cutoff| rebuild_prompt(self, &original_prompt, cutoff));
-                            let retry_stale_load = stale_load_retry_allowed(
-                                reusable,
+                            self.handle_prompt_failure(
+                                operation_id,
+                                original_prompt,
+                                record_prompt,
+                                inactivity_policy,
+                                channel,
+                                error,
+                                events,
+                                end_report,
+                                followers,
+                                &tool_timings,
                                 saw_output,
-                                retry_blocks.is_some(),
-                                self.load_restoration,
-                            );
-                            if retry_stale_load && !self.session_mcp.preserve_provider_identity() {
-                                ora_debug!(
-                                    session_id = %self.session.id,
-                                    "first prompt after session/load failed without output; rebuilding and retrying",
-                                );
-                                match self.replace_stale_session(channel).await {
-                                    Ok(setup) => {
-                                        for update in &setup {
-                                            followers.send_update(update, None);
-                                        }
-                                        if !super::actor::publish_setup(&events, setup) {
-                                            self.record_cleanup(operation_id, Ok(()));
-                                            end_report.record(PromptEndCause::StreamDropped);
-                                            self.end_timed_turn(
-                                                StopReason::Cancelled,
-                                                &tool_timings,
-                                            );
-                                            followers.finish(StopReason::Cancelled);
-                                            return;
-                                        }
-                                        return Box::pin(self.run_prompt_attempt(
-                                            operation_id,
-                                            original_prompt,
-                                            record_prompt,
-                                            inactivity_policy,
-                                            end_report,
-                                            events,
-                                            PromptAttempt {
-                                                blocks: retry_blocks,
-                                                skip_record: true,
-                                                allow_retry: false,
-                                                followers: Some(followers),
-                                            },
-                                        ))
-                                        .await;
-                                    }
-                                    Err(rebuild_error) => {
-                                        ora_warn!(
-                                            session_id = %self.session.id,
-                                            error = %rebuild_error,
-                                            "failed to rebuild a stale restored session; returning the prompt failure",
-                                        );
-                                        self.record_cleanup(operation_id, Ok(()));
-                                        end_report.record(PromptEndCause::Unknown);
-                                        self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                                        followers.finish(StopReason::Cancelled);
-                                        self.load_restoration = LoadRestoration::NotRestored;
-                                        let _ = events.try_send(Err(map_prompt_error(error)));
-                                        return;
-                                    }
-                                }
-                            }
-                            if reusable {
-                                self.record_cleanup(operation_id, Ok(()));
-                            }
-                            ora_debug!(session_id = %self.session.id, code = "agent_turn_failed", reusable = reusable, "prompt failed");
-                            end_report.record(PromptEndCause::Unknown);
-                            self.end_timed_turn(StopReason::Cancelled, &tool_timings);
-                            followers.finish(StopReason::Cancelled);
-                            self.load_restoration = LoadRestoration::NotRestored;
-                            let failure = map_prompt_error(error);
-                            // A request error is the Agent's own answer; a transport failure is not.
-                            let failure = if reusable {
-                                failure.answered()
-                            } else {
-                                failure
-                            };
-                            let delivered = events.try_send(Err(failure)).is_ok();
-                            self.end_on_channel(channel, reusable && !session_invalid, delivered)
-                                .await;
+                                retry_cutoff,
+                            )
+                            .await;
+                            return;
                         }
                     }
                     return;
                 }
                 // A lost connection both reports itself and closes the queue, and either may be read
-                // first, so both end the turn the same way.
+                // first, so both end the turn the same way. The events and controls senders live in
+                // the same ACP route, so a closed controls queue is the same teardown, not the host.
                 lost @ (ActiveInput::Control(SessionControl::ConnectionLost(_))
                 | ActiveInput::EventsClosed
                 | ActiveInput::ControlsClosed) => {
@@ -618,14 +583,29 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         _ => runtime_unavailable(),
                     };
                     end_report.record(PromptEndCause::SessionCrashed);
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                    // The Agent died or the transport broke before any cancel was written: the
+                    // turn fails as `agent_unavailable` (D2/D7), on the record and the error alike.
+                    let error =
+                        error.with_turn_failure(crate::turn_failure::agent_unavailable_failure());
+                    self.end_timed_turn_with(
+                        StopReason::Cancelled,
+                        &tool_timings,
+                        None,
+                        error.turn_failure().cloned(),
+                    );
                     followers.finish(StopReason::Cancelled);
                     self.fail_prompt(&events, error);
                     return;
                 }
                 ActiveInput::Control(SessionControl::QueueOverflow) => {
                     end_report.record(PromptEndCause::Unknown);
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                    // An Ora-side queue overflow is an internal failure, not the Agent's (D2).
+                    self.end_timed_turn_with(
+                        StopReason::Cancelled,
+                        &tool_timings,
+                        None,
+                        Some(crate::turn_failure::internal_failure()),
+                    );
                     followers.finish(StopReason::Cancelled);
                     self.cancel(&client, &permissions.pending).await;
                     let _ = events.try_send(Err(session_event_overflow(
@@ -689,7 +669,14 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                     end_report.record(PromptEndCause::Unknown);
                     self.accept_changes_on(&mut channel);
                     self.cancel(&client, &permissions.pending).await;
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                    // The host is ending the session (an `EndSession` or a D3 end decision), so
+                    // this running turn is attributed to the session end (D1).
+                    self.end_timed_turn_with(
+                        StopReason::Cancelled,
+                        &tool_timings,
+                        Some(TurnEndedBy::SessionEnd),
+                        None,
+                    );
                     followers.finish(StopReason::Cancelled);
                     self.isolate_channel(channel).await;
                     let _ = response.send(Ok(StopSessionResponse {
@@ -761,7 +748,13 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                 ActiveInput::CommandsClosed => {
                     end_report.record(PromptEndCause::SessionCrashed);
                     self.cancel(&client, &permissions.pending).await;
-                    self.end_timed_turn(StopReason::Cancelled, &tool_timings);
+                    // The host dropped its command handle: it is ending the session or exiting (D1).
+                    self.end_timed_turn_with(
+                        StopReason::Cancelled,
+                        &tool_timings,
+                        Some(TurnEndedBy::SessionEnd),
+                        None,
+                    );
                     followers.finish(StopReason::Cancelled);
                     self.isolate_channel(channel).await;
                     return;
@@ -773,6 +766,8 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
 
 #[path = "actor_prompt/completion.rs"]
 mod completion;
+#[path = "actor_prompt/failure.rs"]
+mod failure;
 #[path = "actor_prompt/follow.rs"]
 mod follow;
 #[path = "actor_prompt/stale_load.rs"]

@@ -117,7 +117,11 @@ fn tool(title: &str, status: ToolCallStatus) -> HistoryRecord {
 }
 
 fn turn_ended(stop_reason: StopReason) -> HistoryRecord {
-    HistoryRecord::TurnEnded { stop_reason }
+    HistoryRecord::TurnEnded {
+        stop_reason,
+        ended_by: None,
+        failure: None,
+    }
 }
 
 #[test]

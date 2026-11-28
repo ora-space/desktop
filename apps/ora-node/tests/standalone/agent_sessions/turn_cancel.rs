@@ -26,12 +26,35 @@ pub(super) fn cancel(command: &str, turn: &str) -> ControllerToNodeMessage {
     })
 }
 
+/// What a Controller's `hello` declares beyond the base protocol.
+#[derive(Clone, Copy)]
+pub(super) enum Declared {
+    Nothing,
+    TurnCancel,
+    /// `turn_failure` together with the `turn_cancel` it requires.
+    TurnFailure,
+}
+
 /// Sends `hello`, optionally declaring `turn_cancel`, until the Node answers it or refuses it
-/// for the takeover boundary. A previous connection's slot is released asynchronously, so a
-/// connection turned away as busy is retried.
+/// for the takeover boundary.
 pub(super) async fn greet(
     fixture: &Fixture,
     turn_cancel: bool,
+) -> (tokio::net::UnixStream, Option<NodeToControllerMessage>) {
+    let declared = if turn_cancel {
+        Declared::TurnCancel
+    } else {
+        Declared::Nothing
+    };
+    greet_declaring(fixture, declared).await
+}
+
+/// Sends `hello` declaring `declared` until the Node answers it or refuses it for the takeover
+/// boundary. A previous connection's slot is released asynchronously, so a connection turned away
+/// as busy is retried.
+pub(super) async fn greet_declaring(
+    fixture: &Fixture,
+    declared: Declared,
 ) -> (tokio::net::UnixStream, Option<NodeToControllerMessage>) {
     let log = fixture.path().join("agent-service.log");
     let refusals = || {
@@ -52,7 +75,8 @@ pub(super) async fn greet(
                 controller_id: ControllerId::new("owner"),
                 supported_versions: vec![CURRENT_PROTOCOL_VERSION],
                 thread_previews: false,
-                turn_cancel,
+                turn_cancel: !matches!(declared, Declared::Nothing),
+                turn_failure: matches!(declared, Declared::TurnFailure),
             },
         });
         if write_controller_message(&mut stream, &hello).await.is_ok() {

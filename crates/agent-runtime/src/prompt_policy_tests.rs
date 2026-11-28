@@ -10,6 +10,8 @@ mod restore_replay;
 mod skill_catalog_runtime_tests;
 #[path = "turn_cancel_tests.rs"]
 mod turn_cancel_tests;
+#[path = "turn_failure_paths_tests.rs"]
+mod turn_failure_paths_tests;
 
 use super::*;
 use crate::host::SessionStore;
@@ -727,6 +729,24 @@ fn a_provider_crash_reports_session_crashed_rather_than_a_dropped_stream() {
             &PublicError::AgentRuntimeUnavailable(EmptyErrorParams {})
         );
         assert_eq!(stream.end_cause(), Some(PromptEndCause::SessionCrashed));
+        // The crash is recorded on the turn as `agent_unavailable`, not as a failure without a
+        // reason (case 7).
+        let history = ora_history::read_session_history(
+            &fixture._directory.path().join("sessions"),
+            "crashed",
+        )
+        .unwrap();
+        let failure = history
+            .lines
+            .into_iter()
+            .find_map(|line| match line.record {
+                ora_history::HistoryRecord::TurnEnded { failure, .. } => failure,
+                _ => None,
+            });
+        assert_eq!(
+            failure.map(|failure| failure.code),
+            Some(ora_history::TurnFailureCode::AgentUnavailable)
+        );
         fixture.shutdown().await;
     });
 }
@@ -1661,6 +1681,32 @@ fn default_policy_exhausts_three_retries() {
             &ora_contracts::PublicError::AgentTimedOut(ora_contracts::EmptyErrorParams {})
         );
         assert!(fixture.frames.try_recv().is_err());
+        // The schedule is exhausted, so the turn records `no_progress` with all four attempts and
+        // three retry markers, and the final unanswered cancel as the answer (case 5).
+        let history = ora_history::read_session_history(
+            &fixture._directory.path().join("sessions"),
+            "default",
+        )
+        .unwrap();
+        let (retries, failure) =
+            history
+                .lines
+                .into_iter()
+                .fold((0, None), |(retries, failure), line| match line.record {
+                    ora_history::HistoryRecord::PromptRetried => (retries + 1, failure),
+                    ora_history::HistoryRecord::TurnEnded { failure: f, .. } => {
+                        (retries, f.or(failure))
+                    }
+                    _ => (retries, failure),
+                });
+        assert_eq!(retries, 3);
+        let failure = failure.expect("the failed turn records its reason");
+        assert_eq!(failure.code, ora_history::TurnFailureCode::NoProgress);
+        assert_eq!(failure.attempts, Some(4));
+        assert_eq!(
+            failure.answer,
+            Some(ora_history::TurnFailureAnswer::Cancelled)
+        );
         fixture.shutdown().await;
     });
 }
@@ -2451,6 +2497,7 @@ mod restored_sessions {
     mod command_limit_tests;
     mod follower_retry_tests;
     mod follower_setup_tests;
+    mod send_failure_tests;
     mod set_config_tests;
     mod setup_options_tests;
     use super::*;
@@ -2934,6 +2981,8 @@ fn attempt_instruction_is_sent_but_not_recorded() {
             });
             expected_records.push(ora_history::HistoryRecord::TurnEnded {
                 stop_reason: StopReason::EndTurn,
+                ended_by: None,
+                failure: None,
             });
         }
         let records = ora_history::read_session_history(

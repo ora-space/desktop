@@ -73,7 +73,11 @@ fn live_preview_precedes_durable_message_and_clears_at_turn_end() {
         }
     );
     assert_eq!(recorder.durable_bytes(), 0);
-    recorder.record_turn_end(agent_client_protocol_schema::v1::StopReason::EndTurn);
+    recorder.record_turn_end_with(
+        agent_client_protocol_schema::v1::StopReason::EndTurn,
+        None,
+        None,
+    );
     assert!(events.0.lock().unwrap().last().unwrap().is_empty());
     assert!(recorder.durable_bytes() > 0);
 }
@@ -242,7 +246,11 @@ fn settled_lines_reach_the_host_exactly_as_the_file_holds_them() {
     writable.record_update(&SessionUpdate::AgentMessageChunk(ContentChunk::new(
         ContentBlock::Text(TextContent::new("hi")),
     )));
-    writable.record_turn_end(agent_client_protocol_schema::v1::StopReason::EndTurn);
+    writable.record_turn_end_with(
+        agent_client_protocol_schema::v1::StopReason::EndTurn,
+        None,
+        None,
+    );
     let mut stopped = recorder_reporting_to(
         root.path(),
         3,
