@@ -271,7 +271,7 @@ fn replace(
             {
                 Some(Reason::ExpectedSelector)
             }
-            Some("maxIterations") if !value.as_u64().is_some_and(|n| u32::try_from(n).is_ok()) => {
+            Some("maxIterations") if value.as_u64().is_none_or(|n| u32::try_from(n).is_err()) => {
                 Some(Reason::ExpectedInteger)
             }
             Some("until") if !value.is_object() => Some(Reason::ExpectedObject),
