@@ -294,12 +294,20 @@ fn pending_foreach_member_requires_owner_and_exact_bound_item() {
             .preview(&request(Some("it"), Some(1)), impact)
             .is_err()
     );
+    let selected = request(Some("it"), Some(2));
     let preview = store
-        .preview(&request(Some("it"), Some(2)), |input| {
+        .preview(&selected, |input| {
             assert_eq!(input.pool.values["iter.item"], "c");
             impact(input)
         })
         .unwrap();
+    let context = store
+        .edit_context(&GetWorkflowDebugContextRequest {
+            run_id: selected.run_id,
+            selection: selected.selection,
+        })
+        .unwrap();
+    assert_eq!(context.target, preview.target);
     assert_eq!(preview.target.index, Some(2));
     assert_eq!(preview.target.container_node_run_id.as_deref(), Some("it"));
     store
@@ -357,12 +365,20 @@ fn pending_loop_member_uses_its_live_round() {
         "pendingTarget":{"rootScopeId":"root:other","scopeId":scope,"nodeId":"writer"},"patch":[{"op":"replace","path":"/agentConfig/prompt","value":"{{#loop.draft#}}"}]})).unwrap()
     };
     assert!(store.preview(&request("round4"), impact).is_err());
+    let selected = request("round3");
     let preview = store
-        .preview(&request("round3"), |input| {
+        .preview(&selected, |input| {
             assert_eq!(input.pool.values["loop.draft"], "third");
             impact(input)
         })
         .unwrap();
+    let context = store
+        .edit_context(&GetWorkflowDebugContextRequest {
+            run_id: selected.run_id,
+            selection: selected.selection,
+        })
+        .unwrap();
+    assert_eq!(context.target, preview.target);
     assert_eq!(preview.target.round, Some(3));
     assert_eq!(preview.target.container_node_run_id.as_deref(), Some("lp"));
     store
