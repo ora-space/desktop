@@ -13,8 +13,14 @@ use ora_contracts::{
     GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, SkillAvailability,
     UpdateSkillRequest, UpdateSkillResponse,
 };
-use ora_domain::{AuditFields, Namespace, Skill, SkillId};
+use ora_domain::{AuditFields, Namespace, PluginOriginCatalog, PluginOriginSource, Skill, SkillId};
 use ora_skill_package::manifest::{render_manifest, rewrite_manifest, rewrite_manifest_body};
+
+/// Origin snapshot for handlers that only ever return user-owned Skills.
+///
+/// Create and update work in the local namespace, and update rejects read-only plugin Skills
+/// before writing, so their responses never carry a plugin origin that a snapshot would name.
+static LOCAL_ONLY: PluginOriginCatalog = PluginOriginCatalog::EMPTY;
 
 /// Handles atomic creation of a reusable skill definition (database plus formal directory).
 pub struct CreateSkillHandler<Repository, Storage, IdGenerator, ClockSource> {
@@ -79,7 +85,7 @@ where
                 now,
             )?;
             return Ok(CreateSkillResponse {
-                skill: map_skill(restored, SkillAvailability::Available),
+                skill: map_skill(restored, SkillAvailability::Available, &LOCAL_ONLY),
             });
         }
 
@@ -118,30 +124,33 @@ where
         .map_err(ApplicationError::from_skill_repository_error)?;
 
         Ok(CreateSkillResponse {
-            skill: map_skill(created, SkillAvailability::Available),
+            skill: map_skill(created, SkillAvailability::Available, &LOCAL_ONLY),
         })
     }
 }
 
 /// Handles lookup of one reusable skill definition.
-pub struct GetSkillHandler<Repository, Storage> {
+pub struct GetSkillHandler<Repository, Storage, Origins> {
     repository: Repository,
     storage: Storage,
+    origins: Origins,
 }
 
-impl<Repository, Storage> GetSkillHandler<Repository, Storage> {
-    pub fn new(repository: Repository, storage: Storage) -> Self {
+impl<Repository, Storage, Origins> GetSkillHandler<Repository, Storage, Origins> {
+    pub fn new(repository: Repository, storage: Storage, origins: Origins) -> Self {
         Self {
             repository,
             storage,
+            origins,
         }
     }
 }
 
-impl<Repository, Storage> GetSkillHandler<Repository, Storage>
+impl<Repository, Storage, Origins> GetSkillHandler<Repository, Storage, Origins>
 where
     Repository: SkillRepository,
     Storage: SkillStorage,
+    Origins: PluginOriginSource,
 {
     /// Loads one visible skill or reports a stable not-found error.
     pub fn handle(&self, request: GetSkillRequest) -> Result<GetSkillResponse, ApplicationError> {
@@ -154,14 +163,25 @@ where
                 skill_id: skill_id.to_string(),
             })?;
         let manifest = read_skill_manifest(&self.storage, &skill)?;
+        let origins = self.origins.plugin_origins();
         let Some(manifest) = manifest else {
             return Ok(GetSkillResponse {
-                skill: map_skill_details(skill, String::new(), SkillAvailability::Unavailable),
+                skill: map_skill_details(
+                    skill,
+                    String::new(),
+                    SkillAvailability::Unavailable,
+                    &origins,
+                ),
             });
         };
         if !manifest_is_usable(&manifest) {
             return Ok(GetSkillResponse {
-                skill: map_skill_details(skill, String::new(), SkillAvailability::Unavailable),
+                skill: map_skill_details(
+                    skill,
+                    String::new(),
+                    SkillAvailability::Unavailable,
+                    &origins,
+                ),
             });
         }
         let content = std::str::from_utf8(&manifest)
@@ -170,30 +190,33 @@ where
             .map(|parsed| parsed.content)
             .unwrap_or_default();
         Ok(GetSkillResponse {
-            skill: map_skill_details(skill, content, SkillAvailability::Available),
+            skill: map_skill_details(skill, content, SkillAvailability::Available, &origins),
         })
     }
 }
 
 /// Handles listing reusable skill definitions.
-pub struct ListSkillsHandler<Repository, Storage> {
+pub struct ListSkillsHandler<Repository, Storage, Origins> {
     repository: Repository,
     storage: Storage,
+    origins: Origins,
 }
 
-impl<Repository, Storage> ListSkillsHandler<Repository, Storage> {
-    pub fn new(repository: Repository, storage: Storage) -> Self {
+impl<Repository, Storage, Origins> ListSkillsHandler<Repository, Storage, Origins> {
+    pub fn new(repository: Repository, storage: Storage, origins: Origins) -> Self {
         Self {
             repository,
             storage,
+            origins,
         }
     }
 }
 
-impl<Repository, Storage> ListSkillsHandler<Repository, Storage>
+impl<Repository, Storage, Origins> ListSkillsHandler<Repository, Storage, Origins>
 where
     Repository: SkillRepository,
     Storage: SkillStorage,
+    Origins: PluginOriginSource,
 {
     /// Lists every visible skill and reports whether its formal package is still loadable.
     pub fn handle(
@@ -217,6 +240,7 @@ where
             .repository
             .list_skills()
             .map_err(ApplicationError::from_skill_repository_error)?;
+        let origins = self.origins.plugin_origins();
         let mut mapped = Vec::new();
         let mut available = Vec::new();
         for skill in skills {
@@ -224,7 +248,7 @@ where
             if availability == SkillAvailability::Available {
                 available.push(skill.clone());
             }
-            mapped.push(map_skill(skill, availability));
+            mapped.push(map_skill(skill, availability, &origins));
         }
         observe(&available);
         Ok(ListSkillsResponse {
@@ -289,7 +313,7 @@ where
                 self.clock.now_timestamp_millis(),
             )?;
             return Ok(UpdateSkillResponse {
-                skill: map_skill(restored, SkillAvailability::Available),
+                skill: map_skill(restored, SkillAvailability::Available, &LOCAL_ONLY),
             });
         }
 
@@ -351,7 +375,7 @@ where
         let updated = updated.map_err(ApplicationError::from_skill_repository_error)?;
 
         Ok(UpdateSkillResponse {
-            skill: map_skill(updated, SkillAvailability::Available),
+            skill: map_skill(updated, SkillAvailability::Available, &LOCAL_ONLY),
         })
     }
 }

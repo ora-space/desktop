@@ -53,6 +53,8 @@ import { usePluginImport } from "../../state/hooks/use-plugin-import";
 import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-sync";
 import { useMarketplaceSyncStore } from "../../state/stores/marketplace-sync-store";
 import { PluginLogo } from "./plugin-logo";
+import { pluginOriginDisplay } from "./origin-display";
+import { OriginTag } from "./origin-tag";
 import { PluginSourcesManager } from "./plugin-sources-manager";
 import type { InstalledPluginFilter } from "./filter-discovered-plugins";
 import { PluginManager } from "./plugin-manager";
@@ -731,7 +733,7 @@ function PackMemberStateBadge({
   );
 }
 
-/** One marketplace entry presented as a compact card with its brand, title, and summary. */
+/** One marketplace entry presented as a compact card with its brand, title, source, and summary. */
 function AvailablePluginCard({
   plugin,
   installed,
@@ -840,6 +842,7 @@ function AvailablePluginCard({
         aria-label={t("settings.plugins.viewReadme", {
           title: plugin.title || plugin.name,
         })}
+        aria-describedby={`marketplace-origin-${plugin.id}`}
         onClick={() => onSelect(plugin)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -851,8 +854,19 @@ function AvailablePluginCard({
       >
         <PluginLogo logo={plugin.logo} />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">
-            {plugin.title || plugin.name}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-sm font-medium">
+              {plugin.title || plugin.name}
+            </span>
+            {/* Two sources may publish look-alike cards; the origin tells them apart (ADR 20260831 D6). */}
+            <span id={`marketplace-origin-${plugin.id}`} className="shrink-0">
+              <OriginTag
+                origin={pluginOriginDisplay(
+                  plugin.origin,
+                  plugin.title || plugin.name,
+                )}
+              />
+            </span>
           </span>
           {plugin.description !== "" && (
             <span className="mt-0.5 block truncate text-xs text-muted-foreground">

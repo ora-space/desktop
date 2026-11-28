@@ -10,6 +10,7 @@ export * from "./dto/git.ts";
 export * from "./dto/marketplace-sync.ts";
 export * from "./dto/mcp-health.ts";
 export * from "./dto/plugin-log-level.ts";
+export * from "./dto/plugin-origin.ts";
 export * from "./dto/plugin.ts";
 export * from "./dto/project.ts";
 export * from "./dto/proxy.ts";

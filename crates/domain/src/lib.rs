@@ -7,6 +7,7 @@ mod ids;
 mod namespace;
 mod plugin_id;
 mod plugin_namespace;
+mod plugin_origin;
 mod project;
 mod prompt_inactivity_policy;
 mod scheduled_artifact;
@@ -40,6 +41,9 @@ pub use ids::{
 pub use namespace::Namespace;
 pub use plugin_id::{PluginId, PluginIdError, PluginIdSegment};
 pub use plugin_namespace::{MAX_PLUGIN_NAMESPACE_BYTES, PluginNamespace};
+pub use plugin_origin::{
+    MissingSourceBinding, PluginOrigin, PluginOriginCatalog, PluginOriginSource,
+};
 pub use project::Project;
 pub use prompt_inactivity_policy::PromptInactivityPolicy;
 pub use scheduled_artifact::{

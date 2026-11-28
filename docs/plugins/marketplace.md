@@ -20,6 +20,18 @@ artifact retrieval mode. Operations: `listMarketplaceSources`, `addMarketplaceSo
   its install path, data directory and Skill rows, so deleting and
   re-adding a repository reuses it. Two sources publishing the same identifier produce two distinct
   plugin ids and both stay listed.
+- **Origin labels.** Every plugin and plugin Skill carries an `origin` the host computes from its
+  namespace: `local` → local package, `official` → the default first-party marketplace, anything else
+  → a third-party marketplace. The marketplace label is display text, recomputed per query against
+  every recorded binding plus the default marketplace's canonical URL, never persisted: a unique
+  repository name is shown alone, namesakes are told apart by the first segment from the end that
+  differs (`segment/name`, or `segment/…/name`, host and port included when needed), and a group whose
+  labels would still collide falls back to full URLs. Adding a namesake source relabels the others on
+  the next query without moving any namespace or plugin id. A namespace whose binding cannot be read
+  degrades to its slug with a warning instead of failing the list. The chat `/` menu, the Skills page
+  and marketplace cards render this label; the plugin detail page shows the full canonical source URL
+  with a copy button (the official marketplace shows "Ora official marketplace"). See
+  [Origin presentation](https://github.com/ora-space/specs/blob/main/decisions/desktop/plugin/registry/20261127-plugin-origin-presentation.md).
 - **Enabled.** Disabling keeps the URL, branch, proxy policy, position and namespace binding but
   drops the source from sync, listing and installation.
 - **Proxy.** Sources with proxy routing enabled follow the [Desktop proxy mode](../desktop/settings.md#network-proxy).

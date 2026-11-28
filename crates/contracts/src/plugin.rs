@@ -2,6 +2,7 @@ mod configuration;
 mod hook_lifecycle;
 mod log_level;
 mod marketplace_sync;
+mod origin;
 mod pack_install;
 mod pack_status;
 mod workflow_import;
@@ -16,6 +17,7 @@ pub use configuration::{
 };
 pub use log_level::{GetPluginLogLevelRequest, PluginLogLevelResponse, SetPluginLogLevelRequest};
 pub use marketplace_sync::MarketplaceAutoSyncEvent;
+pub use origin::PluginOrigin;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -159,6 +161,8 @@ pub struct InstalledPlugin {
     pub description: String,
     pub homepage: Option<String>,
     pub license: Option<String>,
+    /// Where the plugin was first brought in from, computed by the host from its namespace.
+    pub origin: PluginOrigin,
     #[serde(flatten)]
     #[ts(flatten)]
     pub contribution: InstalledPluginContribution,
@@ -189,8 +193,13 @@ pub struct AvailablePlugin {
     /// Two sources may publish the same `identifier`, and both listings then appear side by side.
     /// Every other field on the card — title, description, icon — comes from a manifest either
     /// repository can copy verbatim, and `namespace` is a digest-suffixed slug that means nothing
-    /// to a reader, so this is the only field that lets the user tell the two cards apart.
+    /// to a reader. The UI displays `origin` to distinguish these cards and uses `source_url` for search.
     pub source_url: String,
+    /// Display origin of the listing: always `official` or `marketplace`, never `local_archive`.
+    ///
+    /// `source_url` stays beside it because search matches on the URL and an official listing's
+    /// origin carries none.
+    pub origin: PluginOrigin,
     pub version: String,
     pub description: String,
     /// Host-local asset URLs for the marketplace icon, absent when none is published.
@@ -702,6 +711,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     configuration::export(config)?;
     marketplace_sync::export(config)?;
     log_level::export(config)?;
+    origin::export(config)?;
     InstalledPluginContribution::export(config)?;
     PluginInstallationValidity::export(config)?;
     PluginRuntimeStatus::export(config)?;
@@ -785,6 +795,7 @@ mod tests {
             description: "Claude Code agent".to_string(),
             homepage: Some("https://example.com/claude-code".to_string()),
             license: Some("Apache-2.0".to_string()),
+            origin: super::PluginOrigin::Official,
             contribution: InstalledPluginContribution::Agent {
                 agent_display_name: "Claude Code".to_string(),
             },
@@ -816,6 +827,7 @@ mod tests {
                     "description": "Claude Code agent",
                     "homepage": "https://example.com/claude-code",
                     "license": "Apache-2.0",
+                    "origin": { "kind": "official" },
                     "kind": "agent",
                     "agentDisplayName": "Claude Code",
                     "logo": {
@@ -844,6 +856,7 @@ mod tests {
             description: "Surface plugin".to_string(),
             homepage: None,
             license: None,
+            origin: super::PluginOrigin::Official,
             contribution,
             logo: None,
             installation_validity: PluginInstallationValidity::Valid,
@@ -908,6 +921,7 @@ mod tests {
             description: "Skill plugin test".to_string(),
             homepage: None,
             license: None,
+            origin: super::PluginOrigin::Official,
             contribution: InstalledPluginContribution::Skill,
             logo: None,
             installation_validity: PluginInstallationValidity::Valid,
@@ -917,7 +931,7 @@ mod tests {
 
         let value = serde_json::to_value(&plugin).expect("Skill plugin serializes");
         assert_eq!(value.get("kind"), Some(&json!("skill")));
-        assert_eq!(value.as_object().map(serde_json::Map::len), Some(13));
+        assert_eq!(value.as_object().map(serde_json::Map::len), Some(14));
         assert_eq!(
             serde_json::from_value::<InstalledPlugin>(value).expect("Skill plugin round-trips"),
             plugin
@@ -936,6 +950,7 @@ mod tests {
             description: "MCP plugin test".to_string(),
             homepage: None,
             license: None,
+            origin: super::PluginOrigin::Official,
             contribution: InstalledPluginContribution::Mcp,
             logo: None,
             installation_validity: PluginInstallationValidity::Valid,
@@ -945,7 +960,7 @@ mod tests {
 
         let value = serde_json::to_value(&plugin).expect("MCP plugin serializes");
         assert_eq!(value.get("kind"), Some(&json!("mcp")));
-        assert_eq!(value.as_object().map(serde_json::Map::len), Some(13));
+        assert_eq!(value.as_object().map(serde_json::Map::len), Some(14));
         assert_eq!(
             serde_json::from_value::<InstalledPlugin>(value).expect("MCP plugin round-trips"),
             plugin
@@ -981,6 +996,7 @@ mod tests {
                     kind: "agent".to_string(),
                     namespace: "official".to_string(),
                     source_url: "https://github.com/ora-space/marketplace".to_string(),
+                    origin: super::PluginOrigin::Official,
                     version: "1.2.0".to_string(),
                     description: "Weather plugin".to_string(),
                     logo: None,
@@ -1002,6 +1018,7 @@ mod tests {
                     "kind": "agent",
                     "namespace": "official",
                     "sourceUrl": "https://github.com/ora-space/marketplace",
+                    "origin": { "kind": "official" },
                     "version": "1.2.0",
                     "description": "Weather plugin",
                     "logo": null,
@@ -1428,6 +1445,7 @@ mod tests {
             description: "Example agent".to_string(),
             homepage: None,
             license: None,
+            origin: super::PluginOrigin::Official,
             contribution: InstalledPluginContribution::Agent {
                 agent_display_name: "Example".to_string(),
             },
@@ -1448,6 +1466,7 @@ mod tests {
                 "description": "Example agent",
                 "homepage": null,
                 "license": null,
+                "origin": { "kind": "official" },
                 "kind": "agent",
                 "agentDisplayName": "Example",
                 "logo": null,
@@ -1470,6 +1489,7 @@ mod tests {
             description: "Example agent".to_string(),
             homepage: None,
             license: None,
+            origin: super::PluginOrigin::Official,
             contribution: InstalledPluginContribution::Agent {
                 agent_display_name: "Example".to_string(),
             },
@@ -1492,6 +1512,7 @@ mod tests {
                 "description": "Example agent",
                 "homepage": null,
                 "license": null,
+                "origin": { "kind": "official" },
                 "kind": "agent",
                 "agentDisplayName": "Example",
                 "logo": null,

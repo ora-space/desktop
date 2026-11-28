@@ -45,6 +45,7 @@ function webviewPlugin(
     description: `${displayName} plugin`,
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     version: "0.1.0",
     kind: "webview",
     title,

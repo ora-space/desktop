@@ -16,6 +16,7 @@ pub use handlers::{
     CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ListSkillsHandler, UpdateSkillHandler,
 };
 pub use id_generator::UuidSkillIdGenerator;
+pub use mapper::plugin_origin_contract;
 pub(crate) use package_health::{
     commit_existing_package, commit_restored_package, commit_unclaimed_package,
     persist_promoted_package,

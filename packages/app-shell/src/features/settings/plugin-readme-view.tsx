@@ -5,6 +5,7 @@ import type {
   InstalledPlugin,
   InstallPluginResponse,
   MarketplaceWorkflowOutcome,
+  PluginOrigin,
   UpdatePluginResponse,
 } from "@ora/contracts";
 import {
@@ -26,6 +27,7 @@ import {
 } from "@ora/ui";
 import {
   IconArrowBigUpLines,
+  IconCopy,
   IconDownload,
   IconLoader2,
   IconTrash,
@@ -123,6 +125,8 @@ export function PluginReadmeView({
         />
       </header>
 
+      <SourceMarketplaceRow origin={plugin.origin} />
+
       {readme.isLoading ? (
         <p className="py-10 text-center text-sm text-muted-foreground">
           {t("settings.plugins.readmeLoading")}
@@ -144,6 +148,66 @@ export function PluginReadmeView({
         </article>
       )}
     </div>
+  );
+}
+
+/**
+ * The detail info row naming the marketplace a plugin was first brought in from (origin ADR D4.4).
+ *
+ * The full canonical URL with its scheme lives only here, where there is room to read and copy
+ * it; the origin tag elsewhere stays short. A listing whose binding was lost carries no URL, and
+ * a local archive comes from no marketplace at all, so both hide the row rather than show a hole.
+ */
+function SourceMarketplaceRow({ origin }: { origin: PluginOrigin }) {
+  const { t } = useTranslation();
+
+  if (origin.kind === "local_archive") return null;
+
+  const label = (
+    <dt className="text-muted-foreground">
+      {t("settings.plugins.sourceMarketplace")}
+    </dt>
+  );
+
+  if (origin.kind === "official") {
+    return (
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+        {label}
+        <dd>{t("settings.plugins.sourceMarketplaceOfficial")}</dd>
+      </dl>
+    );
+  }
+
+  const sourceUrl = origin.sourceUrl;
+  if (sourceUrl === null) return null;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(sourceUrl);
+      toast.success(t("settings.plugins.sourceMarketplaceCopied"));
+    } catch {
+      toast.error(t("settings.plugins.sourceMarketplaceCopyFailed"));
+    }
+  };
+
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+      {label}
+      <dd className="flex min-w-0 items-center gap-1.5">
+        <span data-selectable className="break-all">
+          {sourceUrl}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6 shrink-0"
+          aria-label={t("settings.plugins.copySourceMarketplaceUrl")}
+          onClick={() => void copy()}
+        >
+          <IconCopy className="size-3.5" />
+        </Button>
+      </dd>
+    </dl>
   );
 }
 

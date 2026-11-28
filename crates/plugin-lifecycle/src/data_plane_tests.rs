@@ -14,7 +14,7 @@ use ora_contracts::{
     ActivatePluginRequest, PluginDataDisposition, PluginRuntimeStatus, StopPluginRequest,
     UninstallPluginRequest,
 };
-use ora_domain::PluginId;
+use ora_domain::{PluginId, PluginOriginCatalog};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -192,6 +192,7 @@ fn open_lifecycle<Sink: PluginNotificationSink>(
         launcher,
         publisher,
         sink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
     (lifecycle, events)

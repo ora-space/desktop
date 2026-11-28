@@ -61,6 +61,7 @@ function installedMcp(id: string): InstalledPlugin {
     description: "Weather tools",
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     logo: null,
     installationValidity: { validity: "valid" },
     configuration: { state: "available", completeness: "complete" },
@@ -396,7 +397,11 @@ it("counts unavailable and ambiguous enabled Skill references independently", ()
     ...local,
     id: "plugin:official/review:review",
     namespace: "official/review",
-    source: { kind: "plugin", pluginId: "official/review" },
+    source: {
+      kind: "plugin",
+      pluginId: "official/review",
+      origin: { kind: "official" },
+    },
     availability: "unavailable",
   };
   const report = buildWorkflowImportReport({

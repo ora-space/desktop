@@ -9,6 +9,7 @@ Marketplace 列出发布在 Git 仓库（"源"）中的插件，负责安装和�
 一个源由 HTTPS Git URL、分支（默认 `main`）、代理开关、`enabled` 标志和制品获取方式组成。操作：`listMarketplaceSources`、`addMarketplaceSource`、`updateMarketplaceSource`、`deleteMarketplaceSource`。
 
 - **命名空间**：每个源的规范 URL（规范化大小写、凭据、默认端口、末尾斜杠和 `.git`）在 `plugin_source_namespace` 中一次性绑定到一个命名空间。这个绑定比源配置活得更久：一旦从该源安装了插件，命名空间就冻结进它的安装路径、数据目录和 Skill 行，所以删除再重新添加同一个仓库会复用它。两个源发布相同的 identifier 会得到两个不同的插件 id，两者都会列出。
+- **来源标签**：每个插件和插件 Skill 都带有宿主按命名空间算出的 `origin`：`local` → 本地包，`official` → 默认的第一方市场，其余 → 第三方市场。市场标签是展示文本，每次查询对照全部已记录绑定加上默认市场的规范 URL 现算，从不持久化：仓库名唯一时单独显示，同名来源用从末尾数第一个不同的段区分（`段/名`，跳过中间段时写作 `段/…/名`，需要时带上主机和端口），标签仍会撞车的一组整体回落到完整 URL。新增一个同名来源会在下一次查询时重算其它来源的标签，但不移动任何命名空间或插件 id。绑定读不到的命名空间降级为它的 slug 并告警，而不是让列表失败。聊天 `/` 菜单、技能页和市场卡片渲染这个标签；插件详情页显示带协议的完整规范源 URL 和复制按钮（官方市场显示「Ora 官方市场」）。见[来源展示](https://github.com/ora-space/specs/blob/main/decisions/desktop/plugin/registry/20261127-plugin-origin-presentation.md)。
 - **启用**：禁用会保留 URL、分支、代理策略、位置和命名空间绑定，但把该源排除在同步、列表和安装之外。
 - **代理**：开启「使用代理」的源跟随 [Desktop 的代理模式](../desktop/settings.zh.md#网络代理)，关闭的源始终直连。Git 和制品下载都遵守此规则。Ora 向 Git 传入本次操作的路由。明确直连的源保留 Git 的跳转行为；需要按目的地址重新选路而 Git 无法处理跳转时，请配置最终的 Git 地址。
 - **制品获取**：`Direct HTTPS`（默认）获取绝对的 HTTPS 发布地址，不签名。`S3 SigV4` 接受对象 key，或在配置的 endpoint 和 bucket 上的 path-style HTTPS 地址，并用该源的 region 和静态凭据对签名；它拒绝外部的 HTTPS 地址，而不是退回到不签名的获取。endpoint、bucket、region 和两项凭据是一份完整的配置。凭据只写：源查询从不返回它们，debug 输出会脱敏。它们以明文配置的形式保存在本地 SQLite 数据库中；没有操作系统 keychain、临时凭据或 provider 凭据链。永远不要把更新凭据的请求序列化进日志或遥测。签名只认证请求，不保证完整性：每个制品仍必须匹配发布中的 SHA-256。

@@ -9,7 +9,7 @@ use ora_contracts::{
     CreateSkillRequest, DeleteSkillRequest, GetSkillRequest, ListSkillsRequest, SkillSource,
     UpdateSkillRequest,
 };
-use ora_domain::{AuditFields, Namespace, PluginId, Skill, SkillId};
+use ora_domain::{AuditFields, Namespace, PluginId, PluginOriginCatalog, Skill, SkillId};
 use ora_skill_package::manifest::{render_manifest, render_minimal_manifest};
 use ora_utils::path::StrictRelativePath;
 use pretty_assertions::assert_eq;
@@ -182,6 +182,7 @@ fn reports_blank_name_not_found_and_repository_errors() {
     let missing = GetSkillHandler::new(
         Rc::new(FakeSkillRepository::default()),
         Rc::new(FakeSkillStorage::default()),
+        PluginOriginCatalog::EMPTY,
     )
     .handle(GetSkillRequest {
         skill_id: "missing".to_string(),
@@ -189,11 +190,15 @@ fn reports_blank_name_not_found_and_repository_errors() {
     .unwrap_err();
     let failing = Rc::new(FakeSkillRepository::default());
     failing.fail_next(RepositoryError::new(std::io::Error::other("unavailable")));
-    let repository_error = GetSkillHandler::new(failing, Rc::new(FakeSkillStorage::default()))
-        .handle(GetSkillRequest {
-            skill_id: "skill-1".to_string(),
-        })
-        .unwrap_err();
+    let repository_error = GetSkillHandler::new(
+        failing,
+        Rc::new(FakeSkillStorage::default()),
+        PluginOriginCatalog::EMPTY,
+    )
+    .handle(GetSkillRequest {
+        skill_id: "skill-1".to_string(),
+    })
+    .unwrap_err();
 
     assert_eq!(blank, ApplicationError::SkillNameBlank);
     assert_eq!(
@@ -356,9 +361,11 @@ fn soft_delete_hides_a_skill_by_id() {
         .unwrap();
 
     assert_eq!(
-        GetSkillHandler::new(repository, storage.clone()).handle(GetSkillRequest {
-            skill_id: "skill-1".to_string()
-        }),
+        GetSkillHandler::new(repository, storage.clone(), PluginOriginCatalog::EMPTY).handle(
+            GetSkillRequest {
+                skill_id: "skill-1".to_string()
+            }
+        ),
         Err(ApplicationError::SkillNotFound {
             skill_id: "skill-1".to_string()
         })
@@ -399,6 +406,61 @@ fn recreates_a_deleted_unavailable_skill_under_the_same_name() {
     assert!(storage.formal_exists("review"));
 }
 
+/// Verifies a listed plugin Skill carries the origin its plugin's namespace resolves to.
+#[test]
+fn listed_plugin_skills_inherit_their_plugins_marketplace_origin() {
+    let package = TempDir::new().unwrap();
+    fs::write(
+        package.path().join("SKILL.md"),
+        "---\nname: review\ndescription: Reviews changes\n---\n",
+    )
+    .unwrap();
+    let plugin_id = PluginId::new("marketplace.22222222", "review-pack").unwrap();
+    let plugin_skill = Skill::new_plugin(
+        SkillId::new("plugin:marketplace.22222222/review-pack:review"),
+        Namespace::new(plugin_id.canonical()).unwrap(),
+        "review",
+        "Reviews changes",
+        plugin_id.clone(),
+        package.path().to_path_buf(),
+        AuditFields::new(10, 10, false),
+    )
+    .unwrap();
+    let origins = PluginOriginCatalog::from_bindings([
+        (
+            "marketplace.11111111".to_string(),
+            "https://github.com/acme/marketplace".to_string(),
+        ),
+        (
+            "marketplace.22222222".to_string(),
+            "https://github.com/obsismc/marketplace".to_string(),
+        ),
+    ]);
+
+    let listed = ListSkillsHandler::new(
+        Rc::new(FakeSkillRepository::with_skills(vec![plugin_skill])),
+        Rc::new(FakeSkillStorage::default()),
+        origins,
+    )
+    .handle(ListSkillsRequest {})
+    .unwrap();
+
+    assert_eq!(
+        listed
+            .skills
+            .into_iter()
+            .map(|skill| skill.source)
+            .collect::<Vec<_>>(),
+        vec![SkillSource::Plugin {
+            plugin_id: plugin_id.canonical(),
+            origin: ora_contracts::PluginOrigin::Marketplace {
+                source_url: Some("https://github.com/obsismc/marketplace".to_string()),
+                label: "obsismc/marketplace".to_string(),
+            },
+        }],
+    );
+}
+
 #[test]
 fn plugin_skills_load_from_their_package_and_reject_user_mutations() {
     let package = TempDir::new().unwrap();
@@ -421,17 +483,22 @@ fn plugin_skills_load_from_their_package_and_reject_user_mutations() {
     let repository = Rc::new(FakeSkillRepository::with_skills(vec![plugin_skill]));
     let storage = Rc::new(FakeSkillStorage::default());
 
-    let details = GetSkillHandler::new(repository.clone(), storage.clone())
-        .handle(GetSkillRequest {
-            skill_id: "plugin:official/review-pack:review".to_string(),
-        })
-        .unwrap()
-        .skill;
+    let details = GetSkillHandler::new(
+        repository.clone(),
+        storage.clone(),
+        PluginOriginCatalog::EMPTY,
+    )
+    .handle(GetSkillRequest {
+        skill_id: "plugin:official/review-pack:review".to_string(),
+    })
+    .unwrap()
+    .skill;
     assert_eq!(details.content, "# Plugin body");
     assert_eq!(
         details.source,
         SkillSource::Plugin {
             plugin_id: plugin_id.canonical(),
+            origin: ora_contracts::PluginOrigin::Official,
         }
     );
 
@@ -461,9 +528,13 @@ fn reports_unavailable_skills_and_restores_them_by_same_name() {
     ]));
     let storage = Rc::new(FakeSkillStorage::with_manifest("kept", "Kept"));
 
-    let listed = ListSkillsHandler::new(repository.clone(), storage.clone())
-        .handle(ListSkillsRequest {})
-        .unwrap();
+    let listed = ListSkillsHandler::new(
+        repository.clone(),
+        storage.clone(),
+        PluginOriginCatalog::EMPTY,
+    )
+    .handle(ListSkillsRequest {})
+    .unwrap();
     assert_eq!(
         listed
             .skills
@@ -476,11 +547,15 @@ fn reports_unavailable_skills_and_restores_them_by_same_name() {
         ]
     );
 
-    let details = GetSkillHandler::new(repository.clone(), storage.clone())
-        .handle(GetSkillRequest {
-            skill_id: "skill-1".to_string(),
-        })
-        .unwrap();
+    let details = GetSkillHandler::new(
+        repository.clone(),
+        storage.clone(),
+        PluginOriginCatalog::EMPTY,
+    )
+    .handle(GetSkillRequest {
+        skill_id: "skill-1".to_string(),
+    })
+    .unwrap();
     assert_eq!(
         details.skill.availability,
         ora_contracts::SkillAvailability::Unavailable
@@ -538,19 +613,27 @@ fn treats_unreadable_manifests_as_unavailable_and_restores_them() {
         .borrow_mut()
         .insert("review".to_string(), b"---\nname: [unclosed".to_vec());
 
-    let listed = ListSkillsHandler::new(repository.clone(), storage.clone())
-        .handle(ListSkillsRequest {})
-        .unwrap();
+    let listed = ListSkillsHandler::new(
+        repository.clone(),
+        storage.clone(),
+        PluginOriginCatalog::EMPTY,
+    )
+    .handle(ListSkillsRequest {})
+    .unwrap();
     assert_eq!(
         listed.skills[0].availability,
         ora_contracts::SkillAvailability::Unavailable
     );
 
-    let details = GetSkillHandler::new(repository.clone(), storage.clone())
-        .handle(GetSkillRequest {
-            skill_id: "skill-1".to_string(),
-        })
-        .unwrap();
+    let details = GetSkillHandler::new(
+        repository.clone(),
+        storage.clone(),
+        PluginOriginCatalog::EMPTY,
+    )
+    .handle(GetSkillRequest {
+        skill_id: "skill-1".to_string(),
+    })
+    .unwrap();
     assert_eq!(
         details.skill.availability,
         ora_contracts::SkillAvailability::Unavailable

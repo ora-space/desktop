@@ -19,6 +19,7 @@ use ora_contracts::{
     ListAvailablePluginsRequest, ListAvailablePluginsResponse, MarketplaceSourceSyncFailure,
     SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
 };
+use ora_domain::PluginOriginSource;
 use ora_logging::{ora_info, ora_warn};
 use ora_plugin_registry::{
     RegistryBuild, RegistryIndex, RegistrySource, RegistrySourceFailure, RegistrySync,
@@ -37,11 +38,20 @@ impl PluginApi {
         _request: ListAvailablePluginsRequest,
     ) -> Result<ListAvailablePluginsResponse, BackendError> {
         let mut response = match RegistryIndex::load(&self.registry_index_path) {
-            Ok(index) => ListAvailablePluginsResponse {
-                updated_at: index.updated_at(),
-                plugins: index.plugins().iter().map(available_plugin).collect(),
-                failed_sources: index.source_failures().iter().map(sync_failure).collect(),
-            },
+            Ok(index) => {
+                // Read the bindings after the index loads: a source bound and published between
+                // the two reads would otherwise be explained by a stale snapshot and degraded.
+                let origins = self.origins.plugin_origins();
+                ListAvailablePluginsResponse {
+                    updated_at: index.updated_at(),
+                    plugins: index
+                        .plugins()
+                        .iter()
+                        .map(|entry| available_plugin(entry, &origins))
+                        .collect(),
+                    failed_sources: index.source_failures().iter().map(sync_failure).collect(),
+                }
+            }
             // A cache this host cannot read is the same situation as one that was never written:
             // the endpoint never reaches the network, so the only remedy either way is the user
             // syncing once. Reporting an error instead would turn an index schema change into a
@@ -220,13 +230,14 @@ impl PluginApi {
             .map_err(|error| {
                 BackendError::internal("failed to write plugin registry index", error)
             })?;
+        let origins = self.origins.plugin_origins();
         Ok(SyncAvailablePluginsResponse {
             updated_at: build.index().updated_at(),
             plugins: build
                 .index()
                 .plugins()
                 .iter()
-                .map(available_plugin)
+                .map(|entry| available_plugin(entry, &origins))
                 .collect(),
             failed_sources: build
                 .index()

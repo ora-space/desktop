@@ -25,9 +25,11 @@ preparation; if that row changed in between, the result is `stale_conflict` and 
 ## Skills
 
 A Skill is a catalog row plus an on-disk package `<data root>/atoms/skills/<name>/` whose root holds
-`SKILL.md` with YAML front matter. `Skill.source` is `local` or `plugin { pluginId }`: plugins can
-ship Skills, which are imported into the catalog with their origin recorded. Names are single ASCII
-slug segments that never start with `.`, and descriptions are at most 4096 bytes.
+`SKILL.md` with YAML front matter. `Skill.source` is `local` or `plugin { pluginId, origin }`: plugins
+can ship Skills, which are imported into the catalog with their origin recorded. A plugin Skill
+inherits its plugin's `origin` (user / local package / official / marketplace); the marketplace label
+is display text computed per query to tell namesake sources apart, never an identity to match on.
+Names are single ASCII slug segments that never start with `.`, and descriptions are at most 4096 bytes.
 
 Installed Skill plugins can declare public and secret settings for scripts. See
 [Skill plugin configuration](skill-configuration.md) for declarations, startup environment snapshots,

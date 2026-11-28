@@ -42,7 +42,7 @@ pub use scheduled_run::SqliteScheduledRunRepository;
 pub use scheduled_task::SqliteScheduledTaskRepository;
 pub use session::SqliteSessionRepository;
 pub use skill::{PluginSkillProjection, SqliteSkillRepository};
-pub use source_namespace::SqlitePluginSourceNamespaceRepository;
+pub use source_namespace::{PluginSourceNamespaceBinding, SqlitePluginSourceNamespaceRepository};
 pub use task::SqliteTaskRepository;
 pub use task_workspace::SqliteTaskWorkspaceRepository;
 pub use user_config::SqliteUserConfigRepository;

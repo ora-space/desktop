@@ -392,6 +392,7 @@ function clientWithWeather(logo: PluginLogo | null = null) {
     kind: "agent",
     namespace: "official",
     sourceUrl: "https://github.com/ora-space/marketplace",
+    origin: { kind: "official" },
     version: "1.2.0",
     description: "Weather plugin",
     logo,
@@ -412,6 +413,7 @@ function weatherInstalled(): InstalledPlugin {
     description: "Weather plugin",
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     kind: "agent",
     agentDisplayName: "weather",
     logo: null,
@@ -434,6 +436,7 @@ function hookInstalled(version = "0.1.0"): InstalledPlugin {
     description: "RTK command rewrite hook",
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     kind: "hook",
     executable: "assets/rtk.exe",
     supportedAgents: ["claude-code", "codex"],
@@ -456,6 +459,7 @@ function clientWithHook(availableVersion = "0.1.0") {
     kind: "hook",
     namespace: "official",
     sourceUrl: "https://github.com/ora-space/marketplace",
+    origin: { kind: "official" },
     version: availableVersion,
     description: "RTK command rewrite hook",
     logo: null,
@@ -488,6 +492,7 @@ function packMember(id: string, version = "1.0.0"): InstalledPlugin {
     description: "Pack member",
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     kind: "skill",
     logo: null,
     installationValidity: { validity: "valid" },
@@ -507,6 +512,7 @@ function clientWithPack() {
     kind: "pack",
     namespace: "official",
     sourceUrl: "https://github.com/ora-space/marketplace",
+    origin: { kind: "official" },
     version: "1.0.0",
     description: "Python development tools",
     logo: null,
@@ -606,6 +612,67 @@ it("renders marketplace plugins from the registry index", async () => {
       name: /查看 Weather 的 README|View Weather README/,
     }),
   ).toHaveClass("items-center");
+});
+
+it("labels each marketplace card with its source and tells a fork apart", async () => {
+  const state = createFixtureState();
+  state.installedPlugins = [];
+  const listing = {
+    name: "weather",
+    title: "Weather",
+    kind: "agent",
+    version: "1.2.0",
+    description: "Weather plugin",
+    logo: null,
+    compatibility: "compatible",
+  } as const;
+  state.availablePlugins.push(
+    {
+      ...listing,
+      id: "official/weather",
+      namespace: "official",
+      sourceUrl: "https://github.com/ora-space/marketplace",
+      origin: { kind: "official" },
+    },
+    {
+      ...listing,
+      id: "marketplace.1a2b3c4d/weather",
+      namespace: "marketplace.1a2b3c4d",
+      sourceUrl: "https://github.com/obsismc/marketplace",
+      // The host computes the label against every recorded source.
+      origin: {
+        kind: "marketplace",
+        sourceUrl: "https://github.com/obsismc/marketplace",
+        label: "obsismc/marketplace",
+      },
+    },
+  );
+  renderSettings(createTestClient(createFixtureHandlers(state)));
+
+  const cards = await screen.findAllByRole("button", {
+    name: /查看 Weather 的 README|View Weather README/,
+  });
+  expect(
+    cards.map(
+      (card) => card.querySelector("[data-slot=origin-tag]")?.textContent,
+    ),
+  ).toEqual([
+    expect.stringMatching(/^(官方|Official)$/),
+    "obsismc/marketplace",
+  ]);
+  // The origin also describes the card button, so a screen reader tells the two
+  // same-named cards apart by source rather than hearing one identical name.
+  expect(
+    cards.map((card) => {
+      const id = card.getAttribute("aria-describedby");
+      return id === null ? null : document.getElementById(id)?.textContent;
+    }),
+  ).toEqual([
+    expect.stringMatching(/^(官方|Official)$/),
+    "obsismc/marketplace",
+  ]);
+  // The digest-suffixed namespace is identity only and never reaches the card.
+  expect(screen.queryByText(/1a2b3c4d/)).not.toBeInTheDocument();
 });
 
 /** Installing goes through the backend and refreshes the installed surface. */
@@ -2275,7 +2342,11 @@ it("names the workflows that depend on a plugin before uninstalling it", async (
     namespace: "local",
     name: "release-notes",
     description: "Writes release notes",
-    source: { kind: "plugin", pluginId: "official/weather" },
+    source: {
+      kind: "plugin",
+      pluginId: "official/weather",
+      origin: { kind: "official" },
+    },
     availability: "available",
   });
   seedImportedWorkflow(
@@ -2393,7 +2464,11 @@ it("names workflows whose published snapshot still binds a removed plugin", asyn
     namespace: "local",
     name: "release-notes",
     description: "Writes release notes",
-    source: { kind: "plugin", pluginId: "official/weather" },
+    source: {
+      kind: "plugin",
+      pluginId: "official/weather",
+      origin: { kind: "official" },
+    },
     availability: "available",
   });
   seedImportedWorkflow(
@@ -2431,7 +2506,11 @@ it("disables uninstall confirmation until the workflow impact check finishes", a
     namespace: "local",
     name: "release-notes",
     description: "Writes release notes",
-    source: { kind: "plugin", pluginId: "official/weather" },
+    source: {
+      kind: "plugin",
+      pluginId: "official/weather",
+      origin: { kind: "official" },
+    },
     availability: "available",
   });
   seedImportedWorkflow(
@@ -2490,7 +2569,11 @@ it("re-checks and disables uninstall confirmation while cached workflow data ref
     namespace: "local",
     name: "release-notes",
     description: "Writes release notes",
-    source: { kind: "plugin", pluginId: "official/weather" },
+    source: {
+      kind: "plugin",
+      pluginId: "official/weather",
+      origin: { kind: "official" },
+    },
     availability: "available",
   });
   seedImportedWorkflow(state, "workflow-1", "发布流程", agentGraph());
@@ -2567,7 +2650,11 @@ it("allows uninstall with an explicit warning when workflow catalogs fail to loa
     namespace: "local",
     name: "release-notes",
     description: "Writes release notes",
-    source: { kind: "plugin", pluginId: "official/weather" },
+    source: {
+      kind: "plugin",
+      pluginId: "official/weather",
+      origin: { kind: "official" },
+    },
     availability: "available",
   });
   vi.spyOn(handlers, "listWorkflows").mockRejectedValue(
@@ -2605,7 +2692,11 @@ it("keeps confirmed dependents visible when another workflow draft fails to load
     namespace: "local",
     name: "release-notes",
     description: "Writes release notes",
-    source: { kind: "plugin", pluginId: "official/weather" },
+    source: {
+      kind: "plugin",
+      pluginId: "official/weather",
+      origin: { kind: "official" },
+    },
     availability: "available",
   });
   seedImportedWorkflow(
@@ -2681,7 +2772,11 @@ it("does not reuse cached draft graphs when the refresh fails", async () => {
     namespace: "local",
     name: "release-notes",
     description: "Writes release notes",
-    source: { kind: "plugin", pluginId: "official/weather" },
+    source: {
+      kind: "plugin",
+      pluginId: "official/weather",
+      origin: { kind: "official" },
+    },
     availability: "available",
   });
   seedImportedWorkflow(
@@ -2794,7 +2889,11 @@ it("names the workflows a Pack uninstall would break", async () => {
     namespace: "local",
     name: "python-core-skill",
     description: "Pack-provided Skill",
-    source: { kind: "plugin", pluginId: CORE_MEMBER_ID },
+    source: {
+      kind: "plugin",
+      pluginId: CORE_MEMBER_ID,
+      origin: { kind: "official" },
+    },
     availability: "available",
   });
   seedImportedWorkflow(
@@ -3061,7 +3160,11 @@ it("lists removable workflow members' surviving copies alongside Pack dependency
     namespace: "local",
     name: "python-core-skill",
     description: "Pack-provided Skill",
-    source: { kind: "plugin", pluginId: CORE_MEMBER_ID },
+    source: {
+      kind: "plugin",
+      pluginId: CORE_MEMBER_ID,
+      origin: { kind: "official" },
+    },
     availability: "available",
   });
   seedImportedWorkflow(
@@ -3407,6 +3510,7 @@ it("disables install for a host-incompatible marketplace plugin", async () => {
     kind: "hook",
     namespace: "official",
     sourceUrl: "https://github.com/ora-space/marketplace",
+    origin: { kind: "official" },
     version: "0.1.0",
     description: "RTK command rewrite hook",
     logo: null,
@@ -3635,6 +3739,153 @@ it("opens the README page when a marketplace card is clicked", async () => {
   ).toBeInTheDocument();
 });
 
+/** One third-party Weather listing whose origin the host computed against its binding. */
+function thirdPartyWeather(origin: AvailablePlugin["origin"]): AvailablePlugin {
+  return {
+    id: "marketplace.1a2b3c4d/weather",
+    name: "weather",
+    title: "Weather",
+    kind: "agent",
+    namespace: "marketplace.1a2b3c4d",
+    sourceUrl: "https://github.com/obsismc/marketplace",
+    origin,
+    version: "1.2.0",
+    description: "Weather plugin",
+    logo: null,
+    compatibility: "compatible",
+  };
+}
+
+/** The detail info row names the official marketplace without offering a URL to copy. */
+it("shows the official marketplace on an official plugin's detail page", async () => {
+  const user = userEvent.setup();
+  const { client } = clientWithWeather();
+  renderSettings(client);
+
+  await user.click(await screen.findByText("Weather"));
+
+  expect(
+    await screen.findByText(/来源市场|Source marketplace/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/Ora 官方市场|Ora official marketplace/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", {
+      name: /复制来源市场地址|Copy source marketplace URL/,
+    }),
+  ).not.toBeInTheDocument();
+});
+
+/** A third-party detail shows the full canonical URL with its scheme and copies it verbatim. */
+it("shows and copies the full source URL on a third-party plugin's detail page", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  const copied = vi
+    .spyOn(toast, "success")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  const state = createFixtureState();
+  state.installedPlugins = [];
+  state.availablePlugins.push(
+    thirdPartyWeather({
+      kind: "marketplace",
+      sourceUrl: "https://github.com/obsismc/marketplace",
+      label: "obsismc/marketplace",
+    }),
+  );
+  renderSettings(createTestClient(createFixtureHandlers(state)));
+
+  await user.click(await screen.findByText("Weather"));
+
+  expect(
+    await screen.findByText("https://github.com/obsismc/marketplace"),
+  ).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", {
+      name: /复制来源市场地址|Copy source marketplace URL/,
+    }),
+  );
+  await waitFor(() =>
+    expect(writeText).toHaveBeenCalledWith(
+      "https://github.com/obsismc/marketplace",
+    ),
+  );
+  await waitFor(() =>
+    expect(copied).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /已复制来源市场地址|Copied the source marketplace URL/,
+      ),
+    ),
+  );
+});
+
+/** A clipboard denial surfaces as an error toast instead of an unhandled rejection. */
+it("reports a failed source URL copy on the detail page", async () => {
+  const user = userEvent.setup();
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+  });
+  const failed = vi
+    .spyOn(toast, "error")
+    .mockClear()
+    .mockImplementation(() => "toast");
+  const state = createFixtureState();
+  state.installedPlugins = [];
+  state.availablePlugins.push(
+    thirdPartyWeather({
+      kind: "marketplace",
+      sourceUrl: "https://github.com/obsismc/marketplace",
+      label: "obsismc/marketplace",
+    }),
+  );
+  renderSettings(createTestClient(createFixtureHandlers(state)));
+
+  await user.click(await screen.findByText("Weather"));
+  await user.click(
+    await screen.findByRole("button", {
+      name: /复制来源市场地址|Copy source marketplace URL/,
+    }),
+  );
+
+  await waitFor(() =>
+    expect(failed).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /复制来源市场地址失败|Failed to copy the source marketplace URL/,
+      ),
+    ),
+  );
+});
+
+/** A listing whose source binding was lost hides the row instead of showing an empty URL. */
+it("hides the source marketplace row when the origin carries no URL", async () => {
+  const user = userEvent.setup();
+  const state = createFixtureState();
+  state.installedPlugins = [];
+  state.availablePlugins.push(
+    thirdPartyWeather({
+      kind: "marketplace",
+      sourceUrl: null,
+      label: "marketplace",
+    }),
+  );
+  renderSettings(createTestClient(createFixtureHandlers(state)));
+
+  await user.click(await screen.findByText("Weather"));
+
+  expect(
+    await screen.findByText(/该插件没有提供 README|does not ship a README/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText(/来源市场|Source marketplace/),
+  ).not.toBeInTheDocument();
+});
+
 /** An uninstalled listing keeps the marketplace install command available on its detail page. */
 it("installs an uninstalled plugin from its detail header", async () => {
   const user = userEvent.setup();
@@ -3806,6 +4057,7 @@ function workflowListing(): AvailablePlugin {
     kind: "workflow",
     namespace: "official",
     sourceUrl: "https://github.com/ora-space/marketplace",
+    origin: { kind: "official" },
     version: "0.1.0",
     description: "Workflow package",
     logo: null,
@@ -3824,6 +4076,7 @@ function workflowInstalled(): InstalledPlugin {
     description: "Workflow package",
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     kind: "workflow",
     logo: null,
     installationValidity: { validity: "valid" },
@@ -4465,7 +4718,11 @@ it.each(["closed", "saved", "failed"] as const)(
         namespace: "official/review",
         name: "review",
         description: "",
-        source: { kind: "plugin", pluginId: "official/review" },
+        source: {
+          kind: "plugin",
+          pluginId: "official/review",
+          origin: { kind: "official" },
+        },
         availability: "unavailable",
       },
     ];

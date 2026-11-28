@@ -3,6 +3,13 @@ use rusqlite::params;
 use crate::DatabaseError;
 use crate::repository::RepositoryPool;
 
+/// One persisted pairing of a marketplace source's canonical URL with its namespace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginSourceNamespaceBinding {
+    pub canonical_url: String,
+    pub namespace: String,
+}
+
 /// Persists the immutable namespace bound to each marketplace source's canonical URL.
 ///
 /// There is deliberately no update and no delete. A namespace is frozen into the install path,
@@ -58,5 +65,79 @@ impl SqlitePluginSourceNamespaceRepository {
                 |row| row.get("namespace"),
             )?)
         })
+    }
+
+    /// Lists every binding ever recorded, including those whose source configuration was removed.
+    ///
+    /// Display labels are disambiguated against this whole set rather than the configured sources,
+    /// because a plugin installed from a removed source is still listed and must keep a label that
+    /// differs from its namesakes.
+    pub fn list_bindings(&self) -> Result<Vec<PluginSourceNamespaceBinding>, DatabaseError> {
+        self.pool.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT canonical_url, namespace FROM plugin_source_namespace
+                 ORDER BY canonical_url",
+            )?;
+            let bindings = statement
+                .query_map([], |row| {
+                    Ok(PluginSourceNamespaceBinding {
+                        canonical_url: row.get("canonical_url")?,
+                        namespace: row.get("namespace")?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(bindings)
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PluginSourceNamespaceBinding, SqlitePluginSourceNamespaceRepository};
+    use crate::{
+        DatabaseBootstrapper, DatabaseLocation, default_migration_catalog, test_clock::TestClock,
+    };
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    /// Opens a migrated repository in a temporary database.
+    fn repository() -> (TempDir, SqlitePluginSourceNamespaceRepository) {
+        let temp_dir = TempDir::new().expect("create temp directory");
+        let pool = DatabaseBootstrapper::new(TestClock::new(1))
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(temp_dir.path().join("namespaces.sqlite3")),
+                &default_migration_catalog().expect("build migration catalog"),
+            )
+            .expect("bootstrap database");
+        (temp_dir, SqlitePluginSourceNamespaceRepository::new(pool))
+    }
+
+    /// Every binding is listed in a stable order, and a repeated bind adds no second row.
+    #[test]
+    fn lists_every_binding_once_in_url_order() {
+        let (_temp_dir, repository) = repository();
+        repository
+            .bind("https://gitlab.com/acme/tools", "tools.22222222", 10)
+            .expect("bind");
+        repository
+            .bind("https://github.com/acme/tools", "tools.11111111", 11)
+            .expect("bind");
+        repository
+            .bind("https://gitlab.com/acme/tools", "tools.33333333", 12)
+            .expect("rebind");
+
+        assert_eq!(
+            repository.list_bindings().expect("list"),
+            vec![
+                PluginSourceNamespaceBinding {
+                    canonical_url: "https://github.com/acme/tools".to_string(),
+                    namespace: "tools.11111111".to_string(),
+                },
+                PluginSourceNamespaceBinding {
+                    canonical_url: "https://gitlab.com/acme/tools".to_string(),
+                    namespace: "tools.22222222".to_string(),
+                },
+            ],
+        );
     }
 }

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::PluginOrigin;
+
 /// Reports whether a catalog skill still has a loadable on-disk package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -11,6 +13,9 @@ pub enum SkillAvailability {
 }
 
 /// Identifies whether a Skill is user-owned or supplied by an immutable plugin package.
+///
+/// A plugin Skill carries its plugin's origin so every list can label namesakes without a second
+/// query; all Skills of one plugin share that origin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(
     tag = "kind",
@@ -20,7 +25,10 @@ pub enum SkillAvailability {
 #[ts(export_to = "skill.ts")]
 pub enum SkillSource {
     Local,
-    Plugin { plugin_id: String },
+    Plugin {
+        plugin_id: String,
+        origin: PluginOrigin,
+    },
 }
 /// Describes a public skill payload without persistence audit metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -194,6 +202,30 @@ mod tests {
                 "description": "Reviews implementation changes",
                 "source": { "kind": "local" },
                 "availability": "available",
+            })
+        );
+    }
+
+    /// Verifies a plugin Skill carries its plugin's origin beside the plugin id.
+    #[test]
+    fn serializes_plugin_skill_source_with_origin() {
+        assert_eq!(
+            serde_json::to_value(SkillSource::Plugin {
+                plugin_id: "tools.1a2b3c4d/acme.review".to_string(),
+                origin: crate::PluginOrigin::Marketplace {
+                    source_url: Some("https://github.com/acme/tools".to_string()),
+                    label: "tools".to_string(),
+                },
+            })
+            .unwrap(),
+            json!({
+                "kind": "plugin",
+                "pluginId": "tools.1a2b3c4d/acme.review",
+                "origin": {
+                    "kind": "marketplace",
+                    "sourceUrl": "https://github.com/acme/tools",
+                    "label": "tools",
+                },
             })
         );
     }

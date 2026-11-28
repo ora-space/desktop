@@ -2959,6 +2959,7 @@ describe("WorkflowEditor", () => {
         description: "",
         homepage: null,
         license: null,
+        origin: { kind: "official" },
         kind: "mcp",
         logo: null,
         installationValidity: {
@@ -3251,6 +3252,7 @@ describe("useDeleteWorkflow", () => {
       description: "Active workflow plugin",
       homepage: null,
       license: null,
+      origin: { kind: "official" as const },
       kind: "workflow" as const,
       logo: null,
       installationValidity: { validity: "valid" as const },
@@ -3479,6 +3481,7 @@ describe("useDeleteWorkflow", () => {
         description: "Workflow plugin",
         homepage: null,
         license: null,
+        origin: { kind: "official" as const },
         kind: "workflow",
         logo: null,
         installationValidity: { validity: "valid" },

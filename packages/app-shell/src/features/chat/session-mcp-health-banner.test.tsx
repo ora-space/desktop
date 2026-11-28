@@ -45,6 +45,7 @@ function mcpPlugin(id: string, displayName: string): InstalledPlugin {
     description: `${name} MCP server`,
     homepage: null,
     license: null,
+    origin: { kind: "official" },
     logo: null,
     installationValidity: { validity: "valid" },
     configuration: { state: "available", completeness: "complete" },

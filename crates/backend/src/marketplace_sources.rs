@@ -16,7 +16,7 @@ use ora_utils::url::canonical_repository_url;
 use std::path::{Path, PathBuf};
 
 /// The seed source used the first time a backend opens before any user configuration exists.
-const DEFAULT_MARKETPLACE_URL: &str = "https://github.com/ora-space/marketplace";
+const DEFAULT_MARKETPLACE_URL: &str = PluginNamespace::DEFAULT_MARKETPLACE_URL;
 const DEFAULT_MARKETPLACE_BRANCH: &str = "main";
 
 /// Owns SQLite-backed marketplace source configuration and binds each row to a namespace and a
@@ -181,8 +181,15 @@ impl MarketplaceSourceStore {
             enabled: request.enabled,
             artifact_retrieval: artifact_retrieval.public(),
         };
-        let namespace = self.namespace_for(&source.url, now_ms)?;
-        checked_source(&source, namespace, &self.sources_root)?;
+        // Validate before binding: a rejected edit must not leave a phantom binding behind. The
+        // binding table is append-only and feeds label disambiguation, so a URL that never became
+        // a source would otherwise relabel every namesake permanently (origin presentation D3).
+        checked_source(
+            &source,
+            Self::derived_namespace(&source.url),
+            &self.sources_root,
+        )?;
+        self.namespace_for(&source.url, now_ms)?;
         if !self.repository.update_source(
             &request.url,
             &PluginMarketplaceSourceRecord {
@@ -225,13 +232,26 @@ impl MarketplaceSourceStore {
         url: &str,
         now_ms: i64,
     ) -> Result<PluginNamespace, MarketplaceSourceStoreError> {
-        let canonical = canonical_repository_url(url);
-        if canonical == canonical_repository_url(DEFAULT_MARKETPLACE_URL) {
-            return Ok(PluginNamespace::official());
+        let derived = Self::derived_namespace(url);
+        // The default marketplace short-circuits to the reserved namespace and is never bound.
+        if derived.is_reserved() {
+            return Ok(derived);
         }
-        let derived = PluginNamespace::derive_from_canonical_url(&canonical);
+        let canonical = canonical_repository_url(url);
         let bound = self.namespaces.bind(&canonical, derived.as_str(), now_ms)?;
         Ok(PluginNamespace::parse(&bound)?)
+    }
+
+    /// Derives the namespace a source URL publishes under, without recording a binding.
+    ///
+    /// Split from [`Self::namespace_for`] so an edit can validate against the namespace it would
+    /// get before committing the append-only binding that a rejected save must not leave behind.
+    fn derived_namespace(url: &str) -> PluginNamespace {
+        let canonical = canonical_repository_url(url);
+        if canonical == canonical_repository_url(DEFAULT_MARKETPLACE_URL) {
+            return PluginNamespace::official();
+        }
+        PluginNamespace::derive_from_canonical_url(&canonical)
     }
 
     /// Inserts one already-validated source at the supplied precedence position.
@@ -737,6 +757,68 @@ mod tests {
             ),
             Err(MarketplaceSourceStoreError::Duplicate(_))
         ));
+    }
+
+    /// A rejected edit must not record the rejected URL: the binding table is append-only and
+    /// feeds label disambiguation, so a phantom binding would permanently relabel every namesake
+    /// even though the source list never changed (origin presentation D3).
+    #[test]
+    fn a_failed_edit_leaves_bindings_and_labels_unchanged() {
+        use ora_domain::{PluginOrigin, PluginOriginCatalog};
+
+        let temp = TempDir::new().expect("create temp directory");
+        let pool = open_pool(&temp);
+        let store = store_with_pool(&temp, pool.clone());
+        let fork = third_party("https://github.com/obsismc/marketplace");
+        store.add(fork.clone(), 2).expect("add fork");
+        let namespaces = SqlitePluginSourceNamespaceRepository::new(pool);
+        let fork_namespace = PluginNamespace::derive_from_canonical_url(&fork.url);
+        let bindings = || namespaces.list_bindings().expect("list bindings");
+        let fork_origin = || {
+            PluginOriginCatalog::from_bindings(
+                bindings()
+                    .into_iter()
+                    .map(|binding| (binding.namespace, binding.canonical_url)),
+            )
+            .origin_of(fork_namespace.as_str())
+            .expect("fork origin")
+        };
+        assert_eq!(
+            fork_origin(),
+            PluginOrigin::Marketplace {
+                source_url: Some("https://github.com/obsismc/marketplace".to_string()),
+                label: "obsismc/marketplace".to_string(),
+            },
+        );
+
+        // Renaming the fork to a same-named repository on another host with an invalid branch is
+        // rejected by validation; the new URL must never reach the binding table.
+        let rejected = store.update(
+            UpdateMarketplaceSourceRequest {
+                url: fork.url.clone(),
+                new_url: "https://gitlab.com/obsismc/marketplace".to_owned(),
+                branch: "bad branch".to_owned(),
+                use_proxy: false,
+                enabled: true,
+                artifact_retrieval: ora_contracts::MarketplaceArtifactRetrievalUpdate::DirectHttps,
+            },
+            3,
+        );
+        assert!(rejected.is_err(), "an invalid branch must be rejected");
+
+        assert_eq!(
+            (bindings(), fork_origin()),
+            (
+                vec![ora_db::PluginSourceNamespaceBinding {
+                    canonical_url: "https://github.com/obsismc/marketplace".to_string(),
+                    namespace: fork_namespace.as_str().to_owned(),
+                }],
+                PluginOrigin::Marketplace {
+                    source_url: Some("https://github.com/obsismc/marketplace".to_string()),
+                    label: "obsismc/marketplace".to_string(),
+                },
+            ),
+        );
     }
 
     #[test]

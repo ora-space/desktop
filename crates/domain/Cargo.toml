@@ -8,10 +8,13 @@ name = "ora_domain"
 path = "src/lib.rs"
 
 [dependencies]
+ora-logging = { workspace = true }
 ora-utils = { path = "../utils", default-features = false, features = ["hash", "url"] }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }

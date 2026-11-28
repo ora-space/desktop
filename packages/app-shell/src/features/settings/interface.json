@@ -9,6 +9,14 @@
       "exports": ["PLUGIN_CATALOG", "PluginEntry", "findPlugin"],
       "purpose": "Composer plugin chips consume the existing synthetic display catalog; this is not authoritative installed-plugin data."
     },
+    "./origin-tag": {
+      "exports": ["OriginTag"],
+      "purpose": "The composer's Skill rows label namesake Skills with the same origin tag the settings use."
+    },
+    "./origin-display": {
+      "exports": ["originCopy", "skillOriginDisplay"],
+      "purpose": "The composer projects a Skill's source onto the tag and names the origin in the row's accessible description."
+    },
     "./plugin-logo": {
       "exports": ["PluginLogoMark"],
       "purpose": "Agent pickers and surface launchers share plugin logo presentation."

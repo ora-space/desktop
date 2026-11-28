@@ -11,6 +11,7 @@ use crate::{
     PluginRuntimeLauncher,
 };
 use ora_contracts::{ActivatePluginRequest, PluginDataDisposition, UninstallPluginRequest};
+use ora_domain::PluginOriginCatalog;
 use ora_logging::LogLevel;
 use pretty_assertions::assert_eq;
 use std::future::Future;
@@ -171,6 +172,7 @@ fn open_capturing(
         LogCapturingLauncher { setups: setups_tx },
         NoopStatusPublisher,
         NoopNotificationSink,
+        PluginOriginCatalog::default(),
     )
     .expect("open plugin lifecycle");
     (lifecycle, setups)

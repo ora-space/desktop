@@ -215,6 +215,7 @@ describe("SettingsDialog developer options", () => {
       description: "Weather plugin",
       homepage: null,
       license: null,
+      origin: { kind: "official" },
       kind: "agent",
       agentDisplayName: "weather",
       logo: null,
@@ -308,6 +309,7 @@ describe("SettingsDialog developer options", () => {
       kind: "skill",
       namespace: "official",
       sourceUrl: "https://github.com/ora-space/marketplace",
+      origin: { kind: "official" },
       version: "1.2.0",
       description: "Weather skills",
       logo: null,
@@ -318,7 +320,11 @@ describe("SettingsDialog developer options", () => {
       namespace: "official/weather",
       name: "forecast",
       description: "Read the forecast",
-      source: { kind: "plugin", pluginId: "official/weather" },
+      source: {
+        kind: "plugin",
+        pluginId: "official/weather",
+        origin: { kind: "official" },
+      },
       availability: "available",
     });
     const user = userEvent.setup();
@@ -327,7 +333,7 @@ describe("SettingsDialog developer options", () => {
     await user.click(screen.getByRole("button", { name: "Skills" }));
     await user.click(
       await screen.findByRole("button", {
-        name: "View source plugin details",
+        name: "Official · View source plugin details",
       }),
     );
 
