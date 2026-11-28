@@ -67,7 +67,9 @@ Enter a hostname or paste a full proxy address into the Host field. For example,
 If a different port is already set, Ora keeps it and shows the port from the pasted address.
 Credentials in the address move to the Username and Password fields. HTTP is the default.
 The `https://`, `socks5://`, and `socks5h://` prefixes are kept, and `https://` uses TLS to
-connect to the proxy itself. Saving validates the address and stores the normalized fields.
+connect to the proxy itself. A trailing slash is allowed. Paths, query strings, fragments,
+and other schemes are rejected. Saving validates the address and stores the normalized host,
+port, and credentials in separate fields.
 Checking uses the current form and Desktop updates use
 saved settings. In manual mode, a final direct response cannot confirm the proxy.
 
