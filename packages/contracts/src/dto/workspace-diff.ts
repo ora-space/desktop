@@ -25,6 +25,7 @@ export type CommitWorkspaceChangesResponse = {
 export type GetWorkspaceDiffRequest = {
   workspaceId: string;
   scope: WorkspaceDiffScope;
+  selection?: WorkspaceDiffSelection;
 };
 
 /**
@@ -38,6 +39,7 @@ export type GetWorkspaceDiffResponse = {
   baseCommitId: string | null;
   headCommitId: string;
   patch: string;
+  files?: Array<WorkspaceDiffFile>;
 };
 
 /**
@@ -102,9 +104,30 @@ export type UnstageWorkspaceChangesRequest = {
 export type UnstageWorkspaceChangesResponse = { unstagedPaths: Array<string> };
 
 /**
+ * Describes a changed path without loading patch text.
+ */
+export type WorkspaceDiffFile = {
+  path: string;
+  oldPath: string | null;
+  /**
+   * Git name-status code. Untracked additions use A.
+   */
+  status: string;
+};
+
+/**
  * Selects which Git layer should be rendered in the workspace review surface.
  */
 export type WorkspaceDiffScope = "branch" | "unstaged" | "staged" | "committed";
+
+/**
+ * Selects a bounded alternative to the whole-workspace patch.
+ */
+export type WorkspaceDiffSelection = { "kind": "files" } | {
+  "kind": "file";
+  path: string;
+  oldPath: string | null;
+};
 
 /**
  * Represents one changed file's staging state.

@@ -12,6 +12,33 @@ pub enum WorkspaceDiffScope {
     Committed,
 }
 
+/// Selects a bounded alternative to the whole-workspace patch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "workspace-diff.ts")]
+pub enum WorkspaceDiffSelection {
+    Files,
+    File {
+        path: String,
+        old_path: Option<String>,
+    },
+}
+
+/// Describes a changed path without loading patch text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workspace-diff.ts")]
+pub struct WorkspaceDiffFile {
+    pub path: String,
+    pub old_path: Option<String>,
+    /// Git name-status code. Untracked additions use A.
+    pub status: String,
+}
+
 /// Identifies which workspace diff should be computed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +46,9 @@ pub enum WorkspaceDiffScope {
 pub struct GetWorkspaceDiffRequest {
     pub workspace_id: String,
     pub scope: WorkspaceDiffScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub selection: Option<WorkspaceDiffSelection>,
 }
 
 /// Returns one standard unified patch and the revisions needed to render it.
@@ -33,6 +63,9 @@ pub struct GetWorkspaceDiffResponse {
     pub base_commit_id: Option<String>,
     pub head_commit_id: String,
     pub patch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub files: Option<Vec<WorkspaceDiffFile>>,
 }
 
 /// Commits only the currently staged change set in one workspace's checkout.
@@ -142,6 +175,8 @@ pub struct UnstageWorkspaceChangesResponse {
 /// Exports every TypeScript binding owned by this module so the aggregate exporter can keep one call site per family.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkspaceDiffScope::export(config)?;
+    WorkspaceDiffSelection::export(config)?;
+    WorkspaceDiffFile::export(config)?;
     GetWorkspaceDiffRequest::export(config)?;
     GetWorkspaceDiffResponse::export(config)?;
     CommitWorkspaceChangesRequest::export(config)?;
@@ -171,6 +206,7 @@ mod tests {
             base_commit_id: Some("base".to_string()),
             head_commit_id: "head".to_string(),
             patch: "patch".to_string(),
+            files: None,
         };
 
         assert_eq!(
@@ -190,6 +226,7 @@ mod tests {
             base_commit_id: None,
             head_commit_id: "head".to_string(),
             patch: "patch".to_string(),
+            files: None,
         };
 
         assert_eq!(

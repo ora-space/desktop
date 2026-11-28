@@ -119,10 +119,11 @@ pub use workflow_run::{
 pub use workspace_diff::{
     CommitWorkspaceChangesHandler, CommitWorkspaceGitRequest, GitWorkspaceDiffReader,
     GitWorkspaceGitWriter, PushWorkspaceBranchHandler, PushWorkspaceGitRequest,
-    ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope, StageWorkspaceChangesHandler,
-    StageWorkspaceGitRequest, UnstageWorkspaceChangesHandler, UnstageWorkspaceGitRequest,
-    WorkspaceDiffReader, WorkspaceDiffReaderError, WorkspaceDiffSnapshot, WorkspaceGitCommit,
-    WorkspaceGitPush, WorkspaceGitStage, WorkspaceGitUnstage, WorkspaceGitWriter,
-    WorkspaceGitWriterError, WorkspaceStatusFile, WorkspaceStatusSnapshot,
+    ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope, ReadWorkspaceDiffSelection,
+    StageWorkspaceChangesHandler, StageWorkspaceGitRequest, UnstageWorkspaceChangesHandler,
+    UnstageWorkspaceGitRequest, WorkspaceDiffReader, WorkspaceDiffReaderError,
+    WorkspaceDiffSnapshot, WorkspaceGitCommit, WorkspaceGitPush, WorkspaceGitStage,
+    WorkspaceGitUnstage, WorkspaceGitWriter, WorkspaceGitWriterError, WorkspaceStatusFile,
+    WorkspaceStatusSnapshot,
 };
 pub use worktree::WorktreeRepository;

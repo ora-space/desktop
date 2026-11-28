@@ -41,6 +41,7 @@ fn plain_folder_reports_not_git_and_refuses_git_operations_until_initialized() {
             .get_diff(GetWorkspaceDiffRequest {
                 workspace_id: workspace_id.clone(),
                 scope: WorkspaceDiffScope::Unstaged,
+                selection: None,
             })
             .map(drop),
         // `Branch` would otherwise fail on the missing baseline; the folder must explain first.
@@ -48,6 +49,7 @@ fn plain_folder_reports_not_git_and_refuses_git_operations_until_initialized() {
             .get_diff(GetWorkspaceDiffRequest {
                 workspace_id: workspace_id.clone(),
                 scope: WorkspaceDiffScope::Branch,
+                selection: None,
             })
             .map(drop),
         workspaces
@@ -183,6 +185,7 @@ fn folder_nested_in_a_checkout_reports_git_like_the_operations_behave() {
         .get_diff(GetWorkspaceDiffRequest {
             workspace_id: workspace.id,
             scope: WorkspaceDiffScope::Unstaged,
+            selection: None,
         })
         .expect("a nested folder diffs its enclosing checkout");
     assert!(diff.patch.contains("docs/guide.md"));

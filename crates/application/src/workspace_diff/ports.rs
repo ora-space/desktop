@@ -28,6 +28,25 @@ pub enum ReadWorkspaceDiffScope {
     Committed,
 }
 
+/// Selects the payload needed by the review surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadWorkspaceDiffSelection {
+    Patch,
+    Files,
+    File {
+        path: String,
+        old_path: Option<String>,
+    },
+}
+
+/// Describes a changed path and its optional source before a rename.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceDiffFile {
+    pub path: String,
+    pub old_path: Option<String>,
+    pub status: String,
+}
+
 /// Carries the backend-owned worktree path and the comparison baseline, when one is recorded.
 ///
 /// `base_commit_id` is `None` for a workspace with no recorded baseline (a project's main
@@ -39,6 +58,7 @@ pub struct ReadWorkspaceDiffRequest {
     pub worktree_path: PathBuf,
     pub base_commit_id: Option<String>,
     pub scope: ReadWorkspaceDiffScope,
+    pub selection: ReadWorkspaceDiffSelection,
 }
 
 /// Returns the Git revisions and unified patch used by frontend review components.
@@ -46,6 +66,7 @@ pub struct ReadWorkspaceDiffRequest {
 pub struct WorkspaceDiffSnapshot {
     pub head_commit_id: String,
     pub patch: String,
+    pub files: Option<Vec<WorkspaceDiffFile>>,
 }
 
 /// Captures Git-backed diff failures converted into stable application errors by handlers.

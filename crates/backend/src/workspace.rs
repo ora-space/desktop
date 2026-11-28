@@ -4,15 +4,15 @@ use crate::task::resolve_workspace_cwd;
 use ora_application::{
     CommitWorkspaceChangesHandler, GitWorkspaceDiffReader, GitWorkspaceGitWriter,
     PushWorkspaceBranchHandler, ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope,
-    StageWorkspaceChangesHandler, UnstageWorkspaceChangesHandler, WorkspaceDiffReader,
-    WorkspaceDiffReaderError, WorktreeRepository,
+    ReadWorkspaceDiffSelection, StageWorkspaceChangesHandler, UnstageWorkspaceChangesHandler,
+    WorkspaceDiffReader, WorkspaceDiffReaderError, WorktreeRepository,
 };
 use ora_contracts::{
     CommitWorkspaceChangesRequest, CommitWorkspaceChangesResponse, GetWorkspaceDiffRequest,
     GetWorkspaceDiffResponse, GetWorkspaceStatusRequest, GetWorkspaceStatusResponse,
     PushWorkspaceBranchRequest, PushWorkspaceBranchResponse, StageWorkspaceChangesRequest,
     StageWorkspaceChangesResponse, UnstageWorkspaceChangesRequest, UnstageWorkspaceChangesResponse,
-    WorkspaceDiffScope, WorkspaceStatusEntry,
+    WorkspaceDiffFile, WorkspaceDiffScope, WorkspaceDiffSelection, WorkspaceStatusEntry,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_contracts::{
@@ -200,6 +200,13 @@ impl WorkspaceApi {
                 worktree_path: cwd,
                 base_commit_id: base_commit_id.clone(),
                 scope,
+                selection: match request.selection {
+                    None => ReadWorkspaceDiffSelection::Patch,
+                    Some(WorkspaceDiffSelection::Files) => ReadWorkspaceDiffSelection::Files,
+                    Some(WorkspaceDiffSelection::File { path, old_path }) => {
+                        ReadWorkspaceDiffSelection::File { path, old_path }
+                    }
+                },
             })
             .map_err(map_diff_reader_error)?;
 
@@ -207,6 +214,16 @@ impl WorkspaceApi {
             base_commit_id,
             head_commit_id: snapshot.head_commit_id,
             patch: snapshot.patch,
+            files: snapshot.files.map(|files| {
+                files
+                    .into_iter()
+                    .map(|file| WorkspaceDiffFile {
+                        path: file.path,
+                        old_path: file.old_path,
+                        status: file.status,
+                    })
+                    .collect()
+            }),
         })
     }
 
@@ -549,6 +566,7 @@ mod tests {
             .get_diff(GetWorkspaceDiffRequest {
                 workspace_id: task.workspace_id,
                 scope: WorkspaceDiffScope::Branch,
+                selection: None,
             })
             .expect("read worktree workspace diff");
 
@@ -604,10 +622,45 @@ mod tests {
             .get_diff(GetWorkspaceDiffRequest {
                 workspace_id: main_workspace_id.clone(),
                 scope: WorkspaceDiffScope::Unstaged,
+                selection: None,
             })
             .expect("read main checkout diff");
         assert_eq!(diff.base_commit_id, None);
         assert!(diff.patch.contains("project-change.txt"));
+
+        let list = backend
+            .workspaces()
+            .get_diff(GetWorkspaceDiffRequest {
+                workspace_id: main_workspace_id.clone(),
+                scope: WorkspaceDiffScope::Unstaged,
+                selection: Some(ora_contracts::WorkspaceDiffSelection::Files),
+            })
+            .expect("list changed paths in the main checkout");
+        assert_eq!(
+            list,
+            ora_contracts::GetWorkspaceDiffResponse {
+                base_commit_id: None,
+                head_commit_id: diff.head_commit_id.clone(),
+                patch: String::new(),
+                files: Some(vec![ora_contracts::WorkspaceDiffFile {
+                    path: "project-change.txt".into(),
+                    old_path: None,
+                    status: "A".into(),
+                }]),
+            }
+        );
+        let file = backend
+            .workspaces()
+            .get_diff(GetWorkspaceDiffRequest {
+                workspace_id: main_workspace_id.clone(),
+                scope: WorkspaceDiffScope::Unstaged,
+                selection: Some(ora_contracts::WorkspaceDiffSelection::File {
+                    path: "project-change.txt".into(),
+                    old_path: None,
+                }),
+            })
+            .expect("read one changed file in the main checkout");
+        assert_eq!(file, diff);
 
         backend
             .workspaces()
@@ -663,6 +716,7 @@ mod tests {
             .get_diff(GetWorkspaceDiffRequest {
                 workspace_id: main_workspace_id,
                 scope: WorkspaceDiffScope::Branch,
+                selection: None,
             })
             .expect_err("branch scope requires a baseline no main checkout has");
 
@@ -749,6 +803,7 @@ mod tests {
             .get_diff(GetWorkspaceDiffRequest {
                 workspace_id: main_workspace_id.clone(),
                 scope: WorkspaceDiffScope::Unstaged,
+                selection: None,
             })
             .expect("read unstaged diff");
         assert!(unstaged.patch.contains("b.txt"));

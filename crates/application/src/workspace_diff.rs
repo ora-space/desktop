@@ -11,8 +11,9 @@ pub use handlers::{
 };
 pub use ports::{
     CommitWorkspaceGitRequest, PushWorkspaceGitRequest, ReadWorkspaceDiffRequest,
-    ReadWorkspaceDiffScope, StageWorkspaceGitRequest, UnstageWorkspaceGitRequest,
-    WorkspaceDiffReader, WorkspaceDiffReaderError, WorkspaceDiffSnapshot, WorkspaceGitCommit,
-    WorkspaceGitPush, WorkspaceGitStage, WorkspaceGitUnstage, WorkspaceGitWriter,
-    WorkspaceGitWriterError, WorkspaceStatusFile, WorkspaceStatusSnapshot,
+    ReadWorkspaceDiffScope, ReadWorkspaceDiffSelection, StageWorkspaceGitRequest,
+    UnstageWorkspaceGitRequest, WorkspaceDiffReader, WorkspaceDiffReaderError,
+    WorkspaceDiffSnapshot, WorkspaceGitCommit, WorkspaceGitPush, WorkspaceGitStage,
+    WorkspaceGitUnstage, WorkspaceGitWriter, WorkspaceGitWriterError, WorkspaceStatusFile,
+    WorkspaceStatusSnapshot,
 };

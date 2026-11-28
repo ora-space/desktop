@@ -1,6 +1,7 @@
 use super::ports::{
-    ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope, WorkspaceDiffReader,
-    WorkspaceDiffReaderError, WorkspaceDiffSnapshot, WorkspaceStatusFile, WorkspaceStatusSnapshot,
+    ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope, ReadWorkspaceDiffSelection,
+    WorkspaceDiffFile, WorkspaceDiffReader, WorkspaceDiffReaderError, WorkspaceDiffSnapshot,
+    WorkspaceStatusFile, WorkspaceStatusSnapshot,
 };
 use gitlancer::git::diff::{DiffRequest, DiffResponse, DiffScope};
 use gitlancer::git::status::StatusEntriesRequest;
@@ -53,14 +54,38 @@ impl WorkspaceDiffReader for GitWorkspaceDiffReader {
             ));
         }
 
-        self.git
-            .diff(DiffRequest {
-                worktree: &worktree,
-                base_commit_id: base_commit_id.as_ref(),
-                scope,
-            })
-            .map(map_diff_response)
-            .map_err(workspace_diff_operation_error)
+        let diff = DiffRequest {
+            worktree: &worktree,
+            base_commit_id: base_commit_id.as_ref(),
+            scope,
+        };
+        match request.selection {
+            ReadWorkspaceDiffSelection::Patch => self.git.diff(diff).map(map_diff_response),
+            ReadWorkspaceDiffSelection::File { path, old_path } => self
+                .git
+                .diff_file(diff, &path, old_path.as_deref())
+                .map(map_diff_response),
+            ReadWorkspaceDiffSelection::Files => {
+                self.git
+                    .diff_files(diff)
+                    .map(|response| WorkspaceDiffSnapshot {
+                        head_commit_id: response.head_commit_id.as_str().to_string(),
+                        patch: String::new(),
+                        files: Some(
+                            response
+                                .files
+                                .into_iter()
+                                .map(|file| WorkspaceDiffFile {
+                                    path: file.path,
+                                    old_path: file.old_path,
+                                    status: file.status,
+                                })
+                                .collect(),
+                        ),
+                    })
+            }
+        }
+        .map_err(workspace_diff_operation_error)
     }
 
     /// Resolves the backend-owned worktree before reading its structured per-file status.
@@ -115,6 +140,7 @@ fn map_diff_response(response: DiffResponse) -> WorkspaceDiffSnapshot {
     WorkspaceDiffSnapshot {
         head_commit_id: response.head_commit_id.as_str().to_string(),
         patch: response.patch,
+        files: None,
     }
 }
 

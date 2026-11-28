@@ -9,14 +9,16 @@ use gitlancer::git::branch::{
     ResolveCurrentBranchRequest,
 };
 use gitlancer::git::commit::{AddRequest, CommitRequest};
-use gitlancer::git::diff::DiffRequest;
+use gitlancer::git::diff::{DiffFile, DiffRequest, DiffScope};
 use gitlancer::git::repository::ListWorktreesRequest;
 use gitlancer::git::status::StatusRequest;
 use gitlancer::git::worktree::{
     CreateWorktreeRequest, DeleteWorktreeRequest, FindWorktreeRequest,
     ResolveWorktreeByBranchRequest, ResolveWorktreeRequest, WorktreeDeletionMode,
 };
-use gitlancer::{BranchName, CliGitRunner, CommitId, Git, RepoRoot, WorktreeKind, WorktreeRoot};
+use gitlancer::{
+    BranchName, CliGitRunner, CommitId, Git, GitlancerError, RepoRoot, WorktreeKind, WorktreeRoot,
+};
 use ora_test_support::GitTestScaffold as TestScaffold;
 use ora_utils::path::canonicalize_longest_existing_prefix;
 use pretty_assertions::assert_eq;
@@ -222,6 +224,116 @@ fn runtime_builds_complete_task_diff() {
         .run_git(["diff", "--cached", "--binary"])
         .expect("read real index after diff");
     assert_eq!(real_index_after, real_index_before);
+}
+
+/// Verifies that a large workspace patch can be reviewed by path across the four Git scopes.
+#[test]
+fn runtime_reviews_a_large_patch_one_file_at_a_time() {
+    let scaffold = TestScaffold::new("runtime-diff-preview").expect("create scaffold");
+    let root = scaffold.repo_path();
+    let padding = "unchanged content\n".repeat(350_000);
+    for name in ["first.txt", "second.txt"] {
+        scaffold
+            .write_file(root, name, &format!("original\n{padding}"))
+            .expect("write a large tracked file");
+    }
+    scaffold
+        .write_file(root, "rename.txt", "same content\n")
+        .expect("write rename source");
+    scaffold
+        .stage_all_and_commit("chore: seed large files")
+        .expect("commit seed files");
+    let base = CommitId::new(scaffold.run_git(["rev-parse", "HEAD"]).unwrap().trim());
+    scaffold
+        .write_file(root, "first.txt", &format!("first changed\n{padding}"))
+        .expect("change first file");
+    scaffold.stage_all_and_commit("first change").unwrap();
+    scaffold
+        .write_file(root, "second.txt", &format!("second changed\n{padding}"))
+        .expect("change second file");
+    scaffold
+        .run_git(["mv", "rename.txt", "renamed [1].txt"])
+        .unwrap();
+
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = |scope| DiffRequest {
+        worktree: &worktree,
+        base_commit_id: Some(&base),
+        scope,
+    };
+
+    assert!(matches!(
+        git.diff(request(DiffScope::Branch)),
+        Err(GitlancerError::DiffTooLarge { .. })
+    ));
+    let branch = git.diff_files(request(DiffScope::Branch)).unwrap();
+    assert_eq!(
+        branch.files,
+        [
+            DiffFile {
+                path: "first.txt".into(),
+                old_path: None,
+                status: "M".into()
+            },
+            DiffFile {
+                path: "renamed [1].txt".into(),
+                old_path: Some("rename.txt".into()),
+                status: "R".into()
+            },
+            DiffFile {
+                path: "second.txt".into(),
+                old_path: None,
+                status: "M".into()
+            },
+        ]
+    );
+    for (scope, path) in [
+        (DiffScope::Committed, "first.txt"),
+        (DiffScope::Staged, "renamed [1].txt"),
+        (DiffScope::Unstaged, "second.txt"),
+    ] {
+        let entries = git.diff_files(request(scope)).unwrap().files;
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.path, path);
+        let preview = git
+            .diff_file(request(scope), path, entry.old_path.as_deref())
+            .unwrap();
+        assert_eq!(preview.head_commit_id, branch.head_commit_id);
+        assert!(preview.patch.len() < 1_024);
+        assert!(preview.patch.contains(path));
+        if scope == DiffScope::Staged {
+            assert!(preview.patch.contains("rename from rename.txt"));
+        }
+    }
+
+    scaffold
+        .write_file(root, "huge.txt", &"x".repeat(11 * 1024 * 1024))
+        .expect("write an oversized changed line");
+    scaffold
+        .write_file(root, "empty [1].txt", "")
+        .expect("write an empty untracked file");
+    let unstaged = request(DiffScope::Unstaged);
+    let entries = git.diff_files(unstaged.clone()).unwrap().files;
+    assert!(entries.iter().any(|entry| entry.path == "huge.txt"));
+    assert!(matches!(
+        git.diff_file(unstaged.clone(), "huge.txt", /*old_path*/ None),
+        Err(GitlancerError::DiffTooLarge { .. })
+    ));
+    let empty = git
+        .diff_file(unstaged.clone(), "empty [1].txt", /*old_path*/ None)
+        .unwrap();
+    assert!(empty.patch.contains("new file mode 100644"));
+    assert!(
+        git.diff_file(unstaged, "../outside.txt", /*old_path*/ None)
+            .is_err()
+    );
 }
 
 /// Verifies the runtime can discover repositories, list worktrees, resolve linked worktrees, and enumerate branches.

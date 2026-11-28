@@ -1,3 +1,7 @@
+mod preview;
+
+pub use preview::{DiffFile, DiffFilesResponse};
+
 use crate::domain::refs::CommitId;
 use crate::domain::worktree::WorktreeHandle;
 use crate::error::{GitExecError, GitlancerError};
@@ -55,11 +59,7 @@ impl<R: GitRunner> Git<R> {
         request: DiffRequest<'_>,
         excluded_paths: &[&str],
     ) -> Result<DiffResponse, GitlancerError> {
-        let head_output = self.runner().run(&build_head_command(request.worktree))?;
-        let head_commit_id = head_output.stdout.trim();
-        if head_commit_id.is_empty() {
-            return Err(crate::ParseError::MissingLine.into());
-        }
+        let head_commit_id = self.diff_head(request.worktree)?;
 
         let tracked = self
             .runner()
@@ -87,25 +87,53 @@ impl<R: GitRunner> Git<R> {
             .filter(|path| !path.is_empty())
             .filter(|_| matches!(request.scope, DiffScope::Branch | DiffScope::Unstaged))
         {
-            let separator_bytes = usize::from(!patch.is_empty() && !patch.ends_with('\n'));
-            let remaining = MAX_DIFF_BYTES.saturating_sub(patch.len() + separator_bytes);
-            let untracked_patch = run_untracked_diff(
-                self.runner(),
-                &build_untracked_diff_command(request.worktree, path, &isolated_git_dir),
-                remaining,
+            self.append_untracked(
+                request.worktree,
+                path,
+                &isolated_git_dir,
+                FULL_FILE_CONTEXT_ARG,
+                &mut patch,
             )?;
-            let untracked_patch = if untracked_patch.is_empty() {
-                run_empty_untracked_diff(self.runner(), request.worktree, path, remaining)?
-            } else {
-                untracked_patch
-            };
-            append_patch(&mut patch, &untracked_patch);
         }
 
         Ok(DiffResponse {
-            head_commit_id: CommitId::new(head_commit_id),
+            head_commit_id,
             patch,
         })
+    }
+    /// Resolves the HEAD label shared by every diff output.
+    fn diff_head(&self, worktree: &WorktreeHandle) -> Result<CommitId, GitlancerError> {
+        let output = self.runner().run(&build_head_command(worktree))?;
+        let head = output.stdout.trim();
+        if head.is_empty() {
+            return Err(crate::ParseError::MissingLine.into());
+        }
+        Ok(CommitId::new(head))
+    }
+
+    /// Adds a single untracked file within the response's remaining byte budget.
+    fn append_untracked(
+        &self,
+        worktree: &WorktreeHandle,
+        path: &str,
+        git_dir: &std::path::Path,
+        context: &str,
+        patch: &mut String,
+    ) -> Result<(), GitlancerError> {
+        let separator_bytes = usize::from(!patch.is_empty() && !patch.ends_with('\n'));
+        let remaining = MAX_DIFF_BYTES.saturating_sub(patch.len() + separator_bytes);
+        let addition = run_untracked_diff(
+            self.runner(),
+            &build_untracked_diff_command(worktree, path, git_dir, context),
+            remaining,
+        )?;
+        let addition = if addition.is_empty() {
+            run_empty_untracked_diff(self.runner(), worktree, path, remaining, context)?
+        } else {
+            addition
+        };
+        append_patch(patch, &addition);
+        Ok(())
     }
 }
 
@@ -186,6 +214,7 @@ fn run_empty_untracked_diff<R: GitRunner>(
     worktree: &WorktreeHandle,
     path: &str,
     max_stdout_bytes: usize,
+    context: &str,
 ) -> Result<String, GitlancerError> {
     let temporary_index = TemporaryIndex::new();
     runner.run(&build_initialize_temporary_index_command(
@@ -199,7 +228,7 @@ fn run_empty_untracked_diff<R: GitRunner>(
     ))?;
     runner
         .run_bounded(
-            &build_empty_untracked_diff_command(worktree, path, temporary_index.path()),
+            &build_empty_untracked_diff_command(worktree, path, temporary_index.path(), context),
             max_stdout_bytes,
             MAX_DIFF_STDERR_BYTES,
         )
@@ -251,6 +280,15 @@ pub fn build_diff_command_excluding(
     request: &DiffRequest<'_>,
     excluded_paths: &[&str],
 ) -> GitCommand {
+    build_tracked_diff_command(request, excluded_paths, FULL_FILE_CONTEXT_ARG)
+}
+
+/// Selects the tracked diff output before Git interprets revisions and pathspecs.
+fn build_tracked_diff_command(
+    request: &DiffRequest<'_>,
+    excluded_paths: &[&str],
+    output: &str,
+) -> GitCommand {
     // Render paths verbatim: with the default `core.quotepath`, Git octal-escapes
     // non-ASCII (e.g. Chinese) names in `diff --git` headers, which the frontend diff
     // parser does not decode back — jump-to-file would break for those paths.
@@ -262,8 +300,11 @@ pub fn build_diff_command_excluding(
         "--no-ext-diff".to_string(),
         "--no-textconv".to_string(),
         "--find-renames".to_string(),
-        FULL_FILE_CONTEXT_ARG.to_string(),
+        output.to_string(),
     ];
+    if output == "--name-status" {
+        args.push("-z".to_string());
+    }
     match request.scope {
         DiffScope::Branch => {
             args.push(expect_baseline(request.base_commit_id).as_str().to_string());
@@ -336,6 +377,7 @@ fn build_untracked_diff_command(
     worktree: &WorktreeHandle,
     path: &str,
     isolated_git_dir: &std::path::Path,
+    context: &str,
 ) -> GitCommand {
     GitCommand::new(
         worktree.worktree_root().as_path().to_path_buf(),
@@ -347,7 +389,7 @@ fn build_untracked_diff_command(
             "--no-color",
             "--no-ext-diff",
             "--no-textconv",
-            FULL_FILE_CONTEXT_ARG,
+            context,
             "--",
             "/dev/null",
             path,
@@ -384,7 +426,7 @@ fn build_intent_to_add_command(
 ) -> GitCommand {
     command_with_index(
         worktree,
-        vec!["add", "--intent-to-add", "--", path],
+        vec!["--literal-pathspecs", "add", "--intent-to-add", "--", path],
         temporary_index,
         GitIntent::Mutating,
     )
@@ -395,17 +437,19 @@ fn build_empty_untracked_diff_command(
     worktree: &WorktreeHandle,
     path: &str,
     temporary_index: &std::path::Path,
+    context: &str,
 ) -> GitCommand {
     command_with_index(
         worktree,
         vec![
             "-c",
             "core.quotepath=false",
+            "--literal-pathspecs",
             "diff",
             "--no-color",
             "--no-ext-diff",
             "--no-textconv",
-            FULL_FILE_CONTEXT_ARG,
+            context,
             "--",
             path,
         ],
@@ -445,9 +489,10 @@ fn command(worktree: &WorktreeHandle, args: Vec<&str>) -> GitCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiffRequest, DiffScope, build_diff_command, build_diff_command_excluding,
-        build_empty_untracked_diff_command, build_initialize_temporary_index_command,
-        build_intent_to_add_command, build_untracked_diff_command, is_missing_untracked_file_error,
+        DiffRequest, DiffScope, FULL_FILE_CONTEXT_ARG, build_diff_command,
+        build_diff_command_excluding, build_empty_untracked_diff_command,
+        build_initialize_temporary_index_command, build_intent_to_add_command,
+        build_untracked_diff_command, is_missing_untracked_file_error,
     };
     use crate::{CommitId, GitDir, RepoRoot, WorktreeHandle, WorktreeKind, WorktreeRoot};
     use pretty_assertions::assert_eq;
@@ -565,6 +610,7 @@ mod tests {
                 &worktree,
                 "space name.bin",
                 std::path::Path::new("/tmp/missing-git-dir"),
+                FULL_FILE_CONTEXT_ARG,
             )
             .args,
             vec![
@@ -592,7 +638,12 @@ mod tests {
         let commands = [
             build_initialize_temporary_index_command(&worktree, temporary_index),
             build_intent_to_add_command(&worktree, "empty.txt", temporary_index),
-            build_empty_untracked_diff_command(&worktree, "empty.txt", temporary_index),
+            build_empty_untracked_diff_command(
+                &worktree,
+                "empty.txt",
+                temporary_index,
+                FULL_FILE_CONTEXT_ARG,
+            ),
         ];
 
         assert_eq!(
@@ -608,6 +659,7 @@ mod tests {
                 ),
                 (
                     vec![
+                        "--literal-pathspecs".to_string(),
                         "add".to_string(),
                         "--intent-to-add".to_string(),
                         "--".to_string(),
@@ -623,6 +675,7 @@ mod tests {
                     vec![
                         "-c".to_string(),
                         "core.quotepath=false".to_string(),
+                        "--literal-pathspecs".to_string(),
                         "diff".to_string(),
                         "--no-color".to_string(),
                         "--no-ext-diff".to_string(),
