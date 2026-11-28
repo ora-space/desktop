@@ -54,7 +54,10 @@ const logical = {
   pendingTarget: { rootScopeId: "root", scopeId: "root", nodeId: "loop" },
 };
 
-function setup(selection: GetWorkflowDebugContextRequest) {
+function setup(
+  selection: GetWorkflowDebugContextRequest,
+  runStatus: "running" | "pending" = "running",
+) {
   const user = userEvent.setup();
   const target: WorkflowDebugTarget = {
     nodeId: "loop",
@@ -110,7 +113,7 @@ function setup(selection: GetWorkflowDebugContextRequest) {
   const inspector = (selection: GetWorkflowDebugContextRequest) => (
     <RunActInspector
       runId={selection.runId}
-      runStatus="running"
+      runStatus={runStatus}
       nodeId="loop"
       data={{ kind: "loop", title: "Loop", description: "" }}
       state={
@@ -152,6 +155,107 @@ function setup(selection: GetWorkflowDebugContextRequest) {
       view.rerender(inspector(next)),
   };
 }
+
+it("keeps a moved draft editable and can close it before any preview", async () => {
+  const { user, open, select, context, preview } = setup(physical);
+  await open();
+  fireEvent.change(await screen.findByRole("spinbutton"), {
+    target: { value: "9" },
+  });
+  select({ runId: "F", nodeRunId: "next" });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    /draft still edits the original execution/i,
+  );
+  expect(screen.getByRole("spinbutton")).toHaveValue(9);
+  expect(context).toHaveBeenCalledTimes(1);
+  select(physical);
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("spinbutton")).toHaveValue(9);
+  select({ runId: "F", nodeRunId: "next" });
+  await user.click(screen.getByRole("button", { name: "Close editor" }));
+  expect(
+    screen.getByRole("button", { name: "Edit and resume from here" }),
+  ).toBeVisible();
+  expect(preview).not.toHaveBeenCalled();
+});
+
+it("reloads context when the preview itself is stale", async () => {
+  const { user, open, preview, context, commit } = setup(physical);
+  await open();
+  fireEvent.change(await screen.findByRole("spinbutton"), {
+    target: { value: "9" },
+  });
+  const initial = await context.mock.results[0]!.value;
+  context.mockResolvedValue({
+    ...initial,
+    baseRevision: 6,
+    graph: graph.replace('"maxIterations":5', '"maxIterations":7'),
+  });
+  preview.mockRejectedValueOnce(
+    new RemoteContractError(
+      { code: "workflow_debug_stale_preview", params: {}, requestId: "stale" },
+      {},
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Preview changes" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /preview is stale/i,
+  );
+  await waitFor(() => expect(screen.getByRole("spinbutton")).toHaveValue(7));
+  expect(context.mock.calls.map(([request]) => request)).toEqual([
+    physical,
+    physical,
+  ]);
+  expect(commit).not.toHaveBeenCalled();
+});
+
+it("can close and reselect after the server rejects an in-flight confirmation for a moved selection", async () => {
+  const { user, previewEdit, select, commit } = setup(physical);
+  const confirm = await previewEdit();
+  let rejectCommit!: (reason: Error) => void;
+  commit.mockReset().mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectCommit = reject;
+      }),
+  );
+  await user.click(confirm);
+  select({ runId: "F", nodeRunId: "next" });
+  await act(async () =>
+    rejectCommit(
+      new RemoteContractError(
+        {
+          code: "workflow_debug_stale_preview",
+          params: {},
+          requestId: "rejected",
+        },
+        {},
+      ),
+    ),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /preview is stale/i,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    /close the editor, select a position/i,
+  );
+  expect(screen.queryByRole("spinbutton")).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Confirm and resume" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Close editor" }));
+  expect(
+    screen.getByRole("button", { name: "Edit and resume from here" }),
+  ).toBeVisible();
+});
+
+it("keeps the editor unavailable on a pending run even with a pending position", () => {
+  const { context } = setup(logical, "pending");
+  expect(
+    screen.queryByRole("button", { name: "Edit and resume from here" }),
+  ).toBeNull();
+  expect(context).not.toHaveBeenCalled();
+});
 
 it.each([physical, logical])(
   "keeps the retry and receipt across refreshed attempts for %j",

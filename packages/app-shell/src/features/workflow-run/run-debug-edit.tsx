@@ -98,10 +98,14 @@ export function RunDebugEdit({
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
-  const [needsReselection, setNeedsReselection] = useState(false);
-  if (selectionChanged && !needsReselection) setNeedsReselection(true);
+  const [selectionStage, setSelectionStage] = useState<
+    "draft" | "previewed" | "reselect"
+  >("draft");
+  if (selectionChanged && selectionStage === "previewed")
+    setSelectionStage("reselect");
   const [confirmationSent, setConfirmationSent] = useState(false);
-  const reselect = needsReselection && !confirmationSent;
+  const reselect = selectionStage === "reselect" && !confirmationSent;
+  const draftMoved = selectionChanged && selectionStage === "draft";
   const context = useQuery({
     queryKey: ["workflowRun", "debugEditContext", target],
     queryFn: ({ signal }) =>
@@ -126,6 +130,7 @@ export function RunDebugEdit({
     setError(undefined);
     try {
       const preview = await client.workflowRun.debugPreview(edit);
+      setSelectionStage("previewed");
       setTicket({ preview, requestId: crypto.randomUUID() });
     } catch (cause) {
       setError(localizeContractError(cause, t));
@@ -173,6 +178,7 @@ export function RunDebugEdit({
   }
   return (
     <div className="space-y-2">
+      {draftMoved && <p role="status">{t("workflowRun.debug.draftMoved")}</p>}
       {error && !operation && <p role="alert">{error}</p>}
       {operation ? (
         <DebugOperation operation={operation} />
@@ -220,7 +226,7 @@ export function RunDebugEdit({
       ) : (
         <p role="alert">{t("workflowRun.debug.unrecorded")}</p>
       )}
-      {(reselect || ticket || context.error || !input) && (
+      {(draftMoved || reselect || ticket || context.error || !input) && (
         <Button variant="outline" disabled={busy} onClick={onClose}>
           {t("workflowRun.debug.close")}
         </Button>

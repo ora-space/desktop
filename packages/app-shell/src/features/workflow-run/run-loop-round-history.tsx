@@ -24,12 +24,14 @@ export function RunLoopRoundHistory({
   const hasMultipleAttempts =
     new Set(safeRounds.map((round) => round.parentLoopNodeRunId)).size > 1;
   const [preferredRoundId, setPreferredRoundId] = useState<string | null>(null);
-  const effectiveRoundId = selectedRoundId ?? preferredRoundId;
   const selectedRound =
-    safeRounds.find((round) => round.id === effectiveRoundId) ??
-    [...safeRounds].sort((a, b) => a.roundIndex - b.roundIndex)[0];
+    selectedRoundId === undefined
+      ? (safeRounds.find((round) => round.id === preferredRoundId) ??
+        [...safeRounds].sort((a, b) => a.roundIndex - b.roundIndex)[0])
+      : safeRounds.find((round) => round.id === selectedRoundId);
 
-  if (selectedRound === undefined) {
+  const members = Object.entries(selectedRound?.nodeStates ?? {});
+  if (safeRounds.length === 0) {
     return (
       <p className="text-[11px] leading-5 text-muted-foreground">
         {t("workflowRun.loopRounds.empty")}
@@ -41,7 +43,7 @@ export function RunLoopRoundHistory({
     <div className="space-y-3">
       <div className="flex flex-wrap gap-1.5" role="tablist">
         {safeRounds.map((round) => {
-          const selected = round.id === selectedRound.id;
+          const selected = round.id === selectedRound?.id;
           return (
             <button
               key={round.id}
@@ -55,7 +57,8 @@ export function RunLoopRoundHistory({
                   : "border-border text-muted-foreground hover:bg-muted/60",
               )}
               onClick={() => {
-                setPreferredRoundId(round.id);
+                if (selectedRoundId === undefined)
+                  setPreferredRoundId(round.id);
                 onSelectedRoundChange?.(round.id);
               }}
             >
@@ -71,7 +74,7 @@ export function RunLoopRoundHistory({
         })}
       </div>
       <div className="space-y-1.5">
-        {Object.entries(selectedRound.nodeStates).map(([nodeId, state]) => (
+        {members.map(([nodeId, state]) => (
           <div
             key={nodeId}
             className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/20 px-2.5 py-2"

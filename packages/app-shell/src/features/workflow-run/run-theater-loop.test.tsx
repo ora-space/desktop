@@ -1,10 +1,13 @@
 import { useState } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createChatStore, type SessionConversation } from "@ora/chat";
 import type { GraphWorkflowRun } from "@ora/workflow-runtime";
-import { createTestClient } from "../../test/contracts-transport";
+import {
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
 import {
   createHookWrapper,
   createTestQueryClient,
@@ -193,11 +196,18 @@ function conversation(text: string): SessionConversation {
   };
 }
 
-function mount(run: GraphWorkflowRun) {
+function mount(
+  run: GraphWorkflowRun,
+  {
+    initialFocus = "out",
+    handlers = {},
+  }: { initialFocus?: string | null; handlers?: TestHandlers } = {},
+) {
   const state = { ...createPluginMemory(), ...createAgentMemory() };
   const client = createTestClient({
     ...pluginHandlers(state),
     ...agentHandlers(state),
+    ...handlers,
   });
   const chat = createChatStore(client.session);
   chat.setState({
@@ -207,7 +217,7 @@ function mount(run: GraphWorkflowRun) {
     },
   });
   function View({ value }: { value: GraphWorkflowRun }) {
-    const [focus, setFocus] = useState<string | null>("out");
+    const [focus, setFocus] = useState<string | null>(initialFocus);
     const [session, setSession] = useState<string | null>(null);
     return (
       <RunTheater
@@ -235,6 +245,92 @@ function mount(run: GraphWorkflowRun) {
     update: (value: GraphWorkflowRun) => view.rerender(<View value={value} />),
   };
 }
+
+it("keeps the debug receipt visible on the terminal result until the editor is closed", async () => {
+  const user = userEvent.setup();
+  const run = fixture();
+  run.nodeStates.loop.nodeRunId = "parent-run";
+  const target = {
+    nodeId: "loop",
+    scopeId: "root",
+    nodeRunId: "parent-run",
+    round: null,
+    index: null,
+    containerNodeRunId: null,
+  };
+  const view = mount(run, {
+    initialFocus: null,
+    handlers: {
+      getWorkflowDebugContext: async () => ({
+        target,
+        baseRevision: 0,
+        graph: JSON.stringify(run.definitionSnapshot),
+      }),
+      getWorkflowDebugHistory: async () => ({ entries: [] }),
+      previewWorkflowDebug: async () => ({
+        target,
+        baseRevision: 0,
+        previewId: "p",
+        keep: [],
+        stop: [],
+        invalidate: [],
+        schedule: [],
+        predictedBranch: null,
+        workspace: "keep",
+        externalActionsMayRepeat: true,
+      }),
+      commitWorkflowDebug: async ({ requestId }) => ({
+        requestId,
+        operationId: "op",
+        baseRevision: 0,
+        state: "applied",
+        revision: 1,
+      }),
+    },
+  });
+  await user.click(screen.getByRole("button", { name: "Open node details" }));
+  await user.click(
+    screen.getByRole("button", { name: "Edit and resume from here" }),
+  );
+  fireEvent.change(await screen.findByRole("spinbutton"), {
+    target: { value: "8" },
+  });
+  await user.click(screen.getByRole("button", { name: "Preview changes" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Confirm and resume" }),
+  );
+  expect(await screen.findByText(/revision 1 is in effect/i)).toBeVisible();
+  view.update({ ...run, status: "succeeded" });
+  const inspector = screen.getByRole("complementary", { name: "Act details" });
+  expect(within(inspector).getByText(/revision 1 is in effect/i)).toBeVisible();
+  await user.click(
+    within(inspector).getByRole("button", { name: "Close editor" }),
+  );
+  expect(
+    screen.queryByRole("complementary", { name: "Act details" }),
+  ).toBeNull();
+});
+
+it("leaves historical round tabs available without selecting a member of an older execution", async () => {
+  const user = userEvent.setup();
+  const run = fixture();
+  run.nodeStates.loop.nodeRunId = "new-container";
+  run.rounds![0].nodeStates.writer.nodeRunId = "old-writer";
+  mount(run, { initialFocus: "loop" });
+  await user.click(screen.getByRole("button", { name: "Open node details" }));
+  const inspector = within(
+    screen.getByRole("complementary", { name: "Act details" }),
+  );
+  const old = inspector.getByRole("tab", { name: "Round 1" });
+  expect(old).toHaveAttribute("aria-selected", "false");
+  expect(inspector.queryByText("old-writer")).toBeNull();
+  await user.click(old);
+  expect(old).toHaveAttribute("aria-selected", "true");
+  expect(inspector.getByText("old-writer")).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Round overview" }),
+  ).toHaveTextContent("first draft");
+});
 
 it("groups the outer path, defaults to round one and keeps scope selection through live updates", async () => {
   const user = userEvent.setup();
