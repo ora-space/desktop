@@ -154,7 +154,7 @@ proc-macro2 = "1.0.107"
 r2d2 = "0.8"
 rcgen = "0.14"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "stream", "socks"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7"
 # Safe fd-relative syscalls (openat/fstatat/fchownat) for walks that must never re-resolve a path.

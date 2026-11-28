@@ -13,6 +13,7 @@ pub enum ConfigKey {
     DeveloperMode,
     LogLevel,
     NetworkProxySettings,
+    NetworkProxyMode,
     NetworkProxyCheckUrl,
     WorktreeRoot,
 }
@@ -24,6 +25,7 @@ impl ConfigKey {
             Self::CloudServer => "cloud_server",
             Self::DeveloperMode => "developer_mode",
             Self::NetworkProxySettings => "network_proxy_settings",
+            Self::NetworkProxyMode => "network_proxy_mode",
             Self::NetworkProxyCheckUrl => "network_proxy_check_url",
             Self::LogLevel => "log_level",
             Self::WorktreeRoot => "worktree_root",
@@ -68,8 +70,17 @@ pub trait UserConfigRepository: Clone + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
     fn get_value(&self, key: &str) -> Result<Option<String>, Self::Error>;
+
+    /// Reads two related keys from one snapshot.
+    fn get_pair(&self, first: &str, second: &str) -> Result<[Option<String>; 2], Self::Error>;
+
+    /// Writes two related values atomically.
+    fn set_pair(&self, first: (&str, &str), second: (&str, &str)) -> Result<(), Self::Error>;
     fn set_value(&self, key: &str, value: &str) -> Result<(), Self::Error>;
     fn delete_value(&self, key: &str) -> Result<(), Self::Error>;
+
+    /// Deletes related preferences together.
+    fn delete_pair(&self, first: &str, second: &str) -> Result<(), Self::Error>;
 }
 
 /// Provides typed keys and reusable value conversions over a raw KV adapter.
@@ -92,6 +103,34 @@ where
             .map(|value| value.map(ConfigValue::new))
     }
 
+    /// Reads two related typed keys from one snapshot.
+    pub fn get_pair(
+        &self,
+        first: ConfigKey,
+        second: ConfigKey,
+    ) -> Result<[Option<ConfigValue>; 2], R::Error> {
+        self.repository
+            .get_pair(first.as_str(), second.as_str())
+            .map(|values| values.map(|value| value.map(ConfigValue::new)))
+    }
+
+    /// Writes a selector and a JSON payload atomically.
+    pub fn set_with_json<T: Serialize>(
+        &self,
+        key: ConfigKey,
+        value: impl Display,
+        payload_key: ConfigKey,
+        payload: &T,
+    ) -> Result<(), SetJsonError<R::Error>> {
+        let payload = serde_json::to_string(payload).map_err(SetJsonError::Serialize)?;
+        self.repository
+            .set_pair(
+                (key.as_str(), &value.to_string()),
+                (payload_key.as_str(), &payload),
+            )
+            .map_err(SetJsonError::Repository)
+    }
+
     pub fn set_display(&self, key: ConfigKey, value: impl Display) -> Result<(), R::Error> {
         self.repository.set_value(key.as_str(), &value.to_string())
     }
@@ -104,6 +143,11 @@ where
         self.repository
             .set_value(key.as_str(), &serialized)
             .map_err(SetJsonError::Repository)
+    }
+
+    /// Removes two related typed keys in one operation.
+    pub fn delete_pair(&self, first: ConfigKey, second: ConfigKey) -> Result<(), R::Error> {
+        self.repository.delete_pair(first.as_str(), second.as_str())
     }
 
     pub fn delete(&self, key: ConfigKey) -> Result<(), R::Error> {
@@ -140,6 +184,19 @@ mod tests {
     impl UserConfigRepository for MemoryRepository {
         type Error = Infallible;
 
+        fn get_pair(&self, first: &str, second: &str) -> Result<[Option<String>; 2], Self::Error> {
+            let values = self.0.lock().unwrap();
+            Ok([values.get(first).cloned(), values.get(second).cloned()])
+        }
+
+        fn set_pair(&self, first: (&str, &str), second: (&str, &str)) -> Result<(), Self::Error> {
+            let mut values = self.0.lock().unwrap();
+            for (key, value) in [first, second] {
+                values.insert(key.to_owned(), value.to_owned());
+            }
+            Ok(())
+        }
+
         fn get_value(&self, key: &str) -> Result<Option<String>, Self::Error> {
             Ok(self.0.lock().unwrap().get(key).cloned())
         }
@@ -149,6 +206,13 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(key.to_owned(), value.to_owned());
+            Ok(())
+        }
+
+        fn delete_pair(&self, first: &str, second: &str) -> Result<(), Self::Error> {
+            let mut values = self.0.lock().unwrap();
+            values.remove(first);
+            values.remove(second);
             Ok(())
         }
 

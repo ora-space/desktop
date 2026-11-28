@@ -1,6 +1,11 @@
 import { useCallback, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ProxySettings } from "@ora/contracts";
+import type {
+  GetProxySettingsResponse,
+  ProxyMode,
+  ProxySettings,
+  SetProxySettingsRequest,
+} from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
 import { settingsKeys } from "../data/settings";
 
@@ -24,30 +29,45 @@ export function useProxySettings() {
       queryClient.setQueryData(settingsKeys.proxyCheckUrl, response);
     },
   });
+  const adoptSettings = async (response: GetProxySettingsResponse) => {
+    // A pending read may have captured the settings before this write.
+    await queryClient.cancelQueries({ queryKey: settingsKeys.proxySettings });
+    queryClient.setQueryData(settingsKeys.proxySettings, response);
+  };
   const mutation = useMutation({
-    mutationFn: (settings: ProxySettings) => client.proxy.set({ settings }),
-    onSuccess: (response) => {
-      // The backend response is authoritative, including a null settings value.
-      queryClient.setQueryData(settingsKeys.proxySettings, response);
-    },
+    mutationFn: (request: SetProxySettingsRequest) => client.proxy.set(request),
+    onSuccess: adoptSettings,
   });
   const clearMutation = useMutation({
     mutationFn: () => client.proxy.clear({}),
-    onSuccess: (response) => {
-      queryClient.setQueryData(settingsKeys.proxySettings, response);
-    },
+    onSuccess: adoptSettings,
   });
   const checkMutation = useMutation({
-    mutationFn: ({ url, settings }: { url: string; settings: ProxySettings }) =>
-      client.proxy.check({ url, settings }),
+    mutationFn: ({
+      url,
+      settings,
+      mode,
+    }: {
+      url: string;
+      settings: ProxySettings | null;
+      mode: ProxyMode;
+    }) =>
+      client.proxy.check({
+        url,
+        settings,
+        ...(mode === "manual" ? {} : { mode }),
+      }),
   });
 
   const submit = useCallback(
-    async (settings: ProxySettings) => {
+    async (mode: ProxyMode, settings: ProxySettings | null) => {
       if (submissionPending.current) return;
       submissionPending.current = true;
       try {
-        await mutation.mutateAsync(settings);
+        await mutation.mutateAsync({
+          settings,
+          ...(mode === "manual" ? {} : { mode }),
+        });
       } finally {
         submissionPending.current = false;
       }
@@ -66,13 +86,14 @@ export function useProxySettings() {
   }, [clearMutation]);
 
   const check = useCallback(
-    (url: string, settings: ProxySettings) =>
-      checkMutation.mutateAsync({ url, settings }),
+    (url: string, mode: ProxyMode, settings: ProxySettings | null) =>
+      checkMutation.mutateAsync({ url, mode, settings }),
     [checkMutation],
   );
 
   return {
     settings: query.data?.settings ?? null,
+    mode: query.data?.mode ?? (query.data?.settings ? "manual" : "system"),
     checkUrl: urlQuery.data?.url ?? "",
     hasLoaded: query.data !== undefined,
     isLoading: query.isPending,
@@ -86,6 +107,8 @@ export function useProxySettings() {
     submit,
     clear,
     check,
+    loadManual: async () =>
+      (await client.proxy.get({ loadManual: true })).settings,
     retry: () => Promise.all([query.refetch(), urlQuery.refetch()]),
   };
 }

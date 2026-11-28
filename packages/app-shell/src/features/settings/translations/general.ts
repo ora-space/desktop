@@ -53,8 +53,7 @@ export const settingsTranslations = {
     "settings.cloud.failure.rejected": "服务器拒绝了这次登录，请重试。",
     "settings.cloud.failure.unreachable": "登录时连不上服务器，请稍后重试。",
     "settings.proxy.title": "网络代理",
-    "settings.proxy.description":
-      "可选 HTTP 代理设置。仅当市场源选择“使用代理”时生效。",
+    "settings.proxy.description": "用于桌面更新，以及开启“使用代理”的市场源。",
     "settings.proxy.host": "主机",
     "settings.proxy.hostPlaceholder": "127.0.0.1",
     "settings.proxy.port": "端口",
@@ -66,13 +65,26 @@ export const settingsTranslations = {
     "settings.proxy.saving": "保存中",
     "settings.proxy.saved": "代理配置已保存。",
     "settings.proxy.invalid": "请输入有效的主机和端口。",
+    "settings.proxy.mode": "代理模式",
+    "settings.proxy.modeSystem": "跟随系统代理（默认）",
+    "settings.proxy.systemHint":
+      "在 Windows 上使用系统的静态代理。仅开启自动检测时将直连，不运行 WPAD。",
+    "settings.proxy.manualLoadError":
+      "无法读取保留的手动代理配置。可以输入新地址并保存以替换它。",
+    "settings.proxy.replaceUnreadable": "替换已保存的代理配置",
+    "settings.proxy.modeManual": "手动代理",
+    "settings.proxy.modeDirect": "直连",
+    "settings.proxy.routeSystem": "系统代理",
+    "settings.proxy.routeEnvironment": "环境变量代理",
+    "settings.proxy.checkRouteDetail":
+      "最终请求使用{{route}} · HTTP 状态码 {{status}}。",
     "settings.proxy.clear": "清空",
     "settings.proxy.cleared": "已清空代理配置。",
     "settings.proxy.clearError": "无法清空代理配置。",
     "settings.proxy.check": "验证代理",
     "settings.proxy.checkTitle": "验证代理设置",
     "settings.proxy.checkDescription":
-      "点击验证会保存探测网址，并使用当前表单中的代理配置探测；不会自动保存代理配置。无法连接可能由目标网站或网络限制引起，不代表代理配置有误。",
+      "验证会保存探测网址，使用当前代理设置跟随跳转，最终收到 HTTP 2xx 时显示成功。代理配置需单独保存。",
     "settings.proxy.checkUrl": "探测网址",
     "settings.proxy.checkUrlRequired": "请输入要探测的网址。",
     "settings.proxy.checkUrlLoadError":
@@ -81,8 +93,13 @@ export const settingsTranslations = {
       "探测网址未保存，未执行探测。请检查网址并重试。",
     "settings.proxy.checkConfirm": "验证",
     "settings.proxy.checking": "验证中",
-    "settings.proxy.checkSuccess": "代理验证成功。",
+    "settings.proxy.checkSuccess": "目标网址连接成功。",
+    "settings.proxy.checkDraft":
+      "正在验证未保存的设置。检查更新使用已保存的配置。",
+    "settings.proxy.checkBypassedManual":
+      "最终请求走了直连，无法确认手动代理。可换一个需要通过代理访问的网址。",
     "settings.proxy.checkSuccessDetail": "HTTP 状态码 {{status}}。",
+    "settings.proxy.checkHttpError": "目标网址未返回成功状态。",
     "settings.proxy.checkFailed":
       "未能通过当前代理连接探测网址；这不代表代理配置有误。",
     "settings.proxy.loading": "加载中",
@@ -229,7 +246,7 @@ export const settingsTranslations = {
       "The server could not be reached while signing in. Try again later.",
     "settings.proxy.title": "Network proxy",
     "settings.proxy.description":
-      "Configure an optional HTTP proxy host and port. It is used only for marketplace sources that choose to use the proxy.",
+      "Used for Desktop updates and marketplace sources that enable proxy routing.",
     "settings.proxy.host": "Host",
     "settings.proxy.hostPlaceholder": "127.0.0.1",
     "settings.proxy.port": "Port",
@@ -241,13 +258,26 @@ export const settingsTranslations = {
     "settings.proxy.saving": "Saving",
     "settings.proxy.saved": "Proxy settings saved.",
     "settings.proxy.invalid": "Enter a valid host and port.",
+    "settings.proxy.mode": "Proxy mode",
+    "settings.proxy.modeSystem": "Follow system proxy (default)",
+    "settings.proxy.systemHint":
+      "On Windows, Ora uses the static system proxy. With only automatic detection enabled, it connects directly without running WPAD.",
+    "settings.proxy.manualLoadError":
+      "Could not read the saved manual proxy. Enter and save a new address to replace it.",
+    "settings.proxy.replaceUnreadable": "Replace saved proxy settings",
+    "settings.proxy.modeManual": "Manual proxy",
+    "settings.proxy.modeDirect": "Direct connection",
+    "settings.proxy.routeSystem": "System proxy",
+    "settings.proxy.routeEnvironment": "Environment proxy",
+    "settings.proxy.checkRouteDetail":
+      "Final request via {{route}} · HTTP status {{status}}.",
     "settings.proxy.clear": "Clear",
     "settings.proxy.cleared": "Proxy settings cleared.",
     "settings.proxy.clearError": "Could not clear proxy settings.",
     "settings.proxy.check": "Check connection",
     "settings.proxy.checkTitle": "Check proxy settings",
     "settings.proxy.checkDescription":
-      "Check saves this URL and fetches it through the proxy shown in this form. Proxy settings are not saved automatically. The site or network may prevent a connection; a failed check does not mean the proxy settings are invalid.",
+      "Check saves the test URL and follows redirects using the current proxy settings. A final HTTP 2xx response counts as success. Save proxy settings separately.",
     "settings.proxy.checkUrl": "URL to check",
     "settings.proxy.checkUrlRequired": "Enter a URL to check.",
     "settings.proxy.checkUrlLoadError":
@@ -256,8 +286,14 @@ export const settingsTranslations = {
       "The URL was not saved and no check was run. Check the URL and retry.",
     "settings.proxy.checkConfirm": "Check",
     "settings.proxy.checking": "Checking",
-    "settings.proxy.checkSuccess": "Proxy check succeeded.",
+    "settings.proxy.checkSuccess": "The test URL was reached successfully.",
+    "settings.proxy.checkDraft":
+      "This check uses unsaved settings. Updates use saved settings.",
+    "settings.proxy.checkBypassedManual":
+      "The final request connected directly. Try a URL that uses the manual proxy.",
     "settings.proxy.checkSuccessDetail": "HTTP status {{status}}.",
+    "settings.proxy.checkHttpError":
+      "The test URL did not return a successful status.",
     "settings.proxy.checkFailed":
       "Could not reach this URL through the proxy; the proxy settings may still be valid.",
     "settings.proxy.loading": "Loading",

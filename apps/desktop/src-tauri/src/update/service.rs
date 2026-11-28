@@ -9,6 +9,7 @@ use super::{DesktopUpdateStatus, UpdateError};
 use ora_backend::Settings;
 use ora_logging::ora_error;
 use ora_scheduler::{CronHandle, DelayHandle, Scheduler};
+use ora_utils::http::{HostProxy, HostProxyError, is_proxy_auth_failure};
 use semver::Version;
 use serde_json::Value;
 use std::path::Path;
@@ -123,7 +124,7 @@ struct TauriUpdateHost {
 }
 
 impl UpdateHost for TauriUpdateHost {
-    type Release = Update;
+    type Release = RoutedUpdate;
 
     fn running_version(&self) -> Version {
         self.app.package_info().version.clone()
@@ -133,18 +134,31 @@ impl UpdateHost for TauriUpdateHost {
         install_support()
     }
 
-    async fn check(&self) -> Result<Option<Update>, UpdateError> {
-        let mut updater_builder = self.app.updater_builder();
-        if let Some(settings) = self
+    async fn check(&self) -> Result<Option<RoutedUpdate>, UpdateError> {
+        let policy = self
             .settings
-            .network_proxy_settings()
+            .network_proxy_policy()
             .await
-            .map_err(|error| UpdateError::ProxySettings(error.to_string()))?
-        {
-            updater_builder = updater_builder.proxy(proxy_url(&settings)?);
+            .map_err(|error| UpdateError::ProxySettings(error.to_string()))?;
+        let config = updater_config(&self.app)?;
+        for url in &config.endpoints {
+            policy.route(url)?;
         }
-        let updater = updater_builder.build().map_err(UpdateError::Updater)?;
-        updater.check().await.map_err(UpdateError::Updater)
+        let route = policy.clone();
+        let updater = self
+            .app
+            .updater_builder()
+            .no_proxy()
+            .configure_client(move |builder| {
+                crate::network_proxy::configure_client(builder, &route)
+            })
+            .build()
+            .map_err(UpdateError::Updater)?;
+        updater
+            .check()
+            .await
+            .map_err(network_update_error)
+            .map(|update| update.map(|update| RoutedUpdate { update, policy }))
     }
 
     fn publish(&self, status: DesktopUpdateStatus) {
@@ -154,57 +168,224 @@ impl UpdateHost for TauriUpdateHost {
     }
 }
 
-impl OfferedPackage for Update {
+/// Reads the release transport configuration from its Tauri source of truth.
+fn updater_config(app: &AppHandle) -> Result<tauri_plugin_updater::Config, UpdateError> {
+    let config = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .ok_or(UpdateError::Updater(
+            tauri_plugin_updater::Error::EmptyEndpoints,
+        ))?;
+    serde_json::from_value(config.clone()).map_err(|error| UpdateError::Updater(error.into()))
+}
+
+/// Keeps the manifest's routing snapshot with the package that it offered.
+#[derive(Clone)]
+struct RoutedUpdate {
+    update: Update,
+    policy: HostProxy,
+}
+
+impl OfferedPackage for RoutedUpdate {
     fn version(&self) -> &str {
-        &self.version
+        &self.update.version
     }
 
     fn target(&self) -> &str {
-        &self.target
+        &self.update.target
     }
 
     fn download_url(&self) -> &Url {
-        &self.download_url
+        &self.update.download_url
     }
 
     fn signature(&self) -> &str {
-        &self.signature
+        &self.update.signature
     }
 
     fn raw_json(&self) -> &Value {
-        &self.raw_json
+        &self.update.raw_json
     }
 
     async fn download(
         &self,
         on_chunk: impl FnMut(usize, Option<u64>) + Send,
     ) -> Result<Vec<u8>, UpdateError> {
-        Update::download(self, on_chunk, || {})
+        self.policy.route(&self.update.download_url)?;
+        self.update
+            .download(on_chunk, || {})
             .await
-            .map_err(UpdateError::Updater)
+            .map_err(network_update_error)
     }
 
     fn install(&self, bytes: Vec<u8>) -> Result<(), UpdateError> {
-        Update::install(self, bytes).map_err(UpdateError::Updater)
+        self.update.install(bytes).map_err(UpdateError::Updater)
     }
 }
 
-/// Converts persisted host proxy settings into the URL accepted by Tauri updater.
-pub(super) fn proxy_url(
-    settings: &ora_application::NetworkProxySettings,
-) -> Result<Url, UpdateError> {
-    let mut url = Url::parse("http://proxy.invalid").map_err(UpdateError::Proxy)?;
-    url.set_host(Some(&settings.host))
-        .map_err(|_| UpdateError::ProxyCredentials)?;
-    url.set_port(Some(settings.port))
-        .map_err(|_| UpdateError::ProxyCredentials)?;
-    if let Some(username) = &settings.username {
-        url.set_username(username)
-            .map_err(|_| UpdateError::ProxyCredentials)?;
+/// Reports proxy authentication failures without using a credential-bearing error URL.
+fn network_update_error(error: tauri_plugin_updater::Error) -> UpdateError {
+    if is_proxy_auth_failure(&error)
+        || matches!(&error, tauri_plugin_updater::Error::Network(message)
+        if message.starts_with("Download request failed with status: 407"))
+    {
+        return UpdateError::Proxy(HostProxyError::Authentication);
     }
-    if let Some(password) = &settings.password {
-        url.set_password(Some(password))
-            .map_err(|_| UpdateError::ProxyCredentials)?;
+    UpdateError::Updater(error)
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+
+    /// Mirrors the updater's ring initialization before building a test transport.
+    fn client_for(policy: &HostProxy) -> updater_http::Client {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        crate::network_proxy::configure_client(updater_http::Client::builder(), policy)
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap()
     }
-    Ok(url)
+
+    /// Captures a request at the configured proxy and returns a controlled HTTP response.
+    async fn proxy_exchange(listener: TcpListener, response: String) -> String {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut reader = BufReader::new(&mut socket);
+        let mut request = String::new();
+        reader.read_line(&mut request).await.unwrap();
+        loop {
+            let mut header = String::new();
+            if reader.read_line(&mut header).await.unwrap() == 0 || header == "\r\n" {
+                break;
+            }
+        }
+        socket.write_all(response.as_bytes()).await.unwrap();
+        request
+    }
+
+    /// The manifest hop reaches the proxy, then HTTPS to loopback starts TLS directly.
+    #[tokio::test]
+    async fn updater_client_reroutes_redirect_to_loopback() {
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let direct = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let policy = HostProxy::manual(
+            format!("http://{}", proxy.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        );
+        let target = direct.local_addr().unwrap();
+        let response = format!(
+            "HTTP/1.1 302 Found\r\nLocation: https://{target}/package\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        let client = client_for(&policy);
+        let accept_direct = async {
+            let (mut socket, _) = direct.accept().await.unwrap();
+            assert_eq!(socket.read_u8().await.unwrap(), 0x16, "TLS handshake");
+        };
+        let (request, _, client_result) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                proxy_exchange(proxy, response),
+                accept_direct,
+                client
+                    .get("http://manifest.example.test/update.json")
+                    .send()
+            )
+        })
+        .await
+        .unwrap();
+        assert!(request.starts_with("GET http://manifest.example.test/update.json "));
+        assert!(
+            client_result.is_err(),
+            "fixture closes the socket during TLS"
+        );
+    }
+
+    /// A direct listener stays untouched when either a package URL or a redirect cannot be routed.
+    #[tokio::test]
+    async fn updater_client_blocks_download_and_redirect_when_system_read_fails() {
+        let direct = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let redirect = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = "package.example.test";
+        let direct_address = direct.local_addr().unwrap();
+        let package = format!("http://{host}:{}/package", direct_address.port());
+        let manifest = format!("http://{}/update.json", redirect.local_addr().unwrap());
+        let policy = HostProxy::unavailable_system(HostProxyError::SystemRead);
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client =
+            crate::network_proxy::configure_client(updater_http::Client::builder(), &policy)
+                .resolve(host, direct_address)
+                .timeout(Duration::from_secs(3))
+                .build()
+                .unwrap();
+
+        assert!(client.get(&package).send().await.unwrap_err().is_connect());
+        let (request, response) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                proxy_exchange(
+                    redirect,
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: {package}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    ),
+                ),
+                client.get(manifest).send(),
+            )
+        })
+        .await
+        .unwrap();
+        assert!(request.starts_with("GET /update.json "));
+        let error = response.unwrap_err();
+        assert!(error.is_redirect());
+        assert!(
+            ora_utils::error::error_chain(&error)
+                .contains("could not read the system proxy settings")
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), direct.accept())
+                .await
+                .is_err(),
+            "the package origin must not receive a direct connection",
+        );
+    }
+
+    /// The same updater transport reports an actual CONNECT 407 as a proxy auth failure.
+    #[tokio::test]
+    async fn updater_client_classifies_connect_407() {
+        for version in ["HTTP/1.0", "HTTP/1.1"] {
+            let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let policy = HostProxy::manual(
+                format!("http://{}", proxy.local_addr().unwrap())
+                    .parse()
+                    .unwrap(),
+            );
+            let response = format!(
+                "{version} 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\n\r\n"
+            );
+            let client = client_for(&policy);
+            let (request, result) = tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(
+                    proxy_exchange(proxy, response),
+                    client
+                        .get("https://manifest.example.test/update.json")
+                        .send()
+                )
+            })
+            .await
+            .unwrap();
+            assert!(request.starts_with("CONNECT manifest.example.test:443 "));
+            assert!(matches!(
+                network_update_error(result.unwrap_err().into()),
+                UpdateError::Proxy(HostProxyError::Authentication)
+            ));
+        }
+        assert!(matches!(
+            network_update_error(tauri_plugin_updater::Error::Network(
+                "Download request failed with status: 407 Proxy Authentication Required".to_owned()
+            )),
+            UpdateError::Proxy(HostProxyError::Authentication)
+        ));
+    }
 }

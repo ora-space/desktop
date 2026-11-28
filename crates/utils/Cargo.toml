@@ -12,6 +12,7 @@ archive = ["dep:zip", "dep:tar", "dep:flate2"]
 hash = ["dep:sha2"]
 url = []
 http = ["dep:url", "dep:sha2", "dep:hmac"]
+desktop-proxy = ["http", "dep:gio"]
 http-reqwest = [
     "http",
     "dep:reqwest",
@@ -63,9 +64,10 @@ libc = { workspace = true }
 # Already in every Linux build through tempfile; the fd-relative tree re-own needs its safe
 # `O_PATH` and `*at` calls.
 rustix = { workspace = true }
+gio = { version = "0.18", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Storage_FileSystem"] }
+windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_Networking_WinHttp"] }
 
 [dev-dependencies]
 flate2 = { workspace = true }

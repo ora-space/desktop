@@ -124,6 +124,49 @@ impl Settings {
         })
         .await
     }
+    /// Reads the effective preference, including the endpoint only in Manual mode.
+    pub async fn network_proxy_preferences(
+        &self,
+    ) -> Result<ora_application::NetworkProxyPreferences, BackendError> {
+        let service = self.service.clone();
+        spawn_repository_work(move || {
+            service
+                .network_proxy_preferences()
+                .map_err(BackendError::from)
+        })
+        .await
+    }
+
+    /// Saves the selected proxy mode and returns the authoritative preference.
+    pub async fn set_network_proxy_preferences(
+        &self,
+        preferences: ora_application::NetworkProxyPreferences,
+    ) -> Result<ora_application::NetworkProxyPreferences, BackendError> {
+        if preferences.mode == ora_application::NetworkProxyMode::Manual {
+            crate::proxy::host_proxy(&preferences)?;
+        }
+        let service = self.service.clone();
+        spawn_repository_work(move || {
+            service.set_network_proxy_preferences(preferences.mode, preferences.manual)?;
+            service
+                .network_proxy_preferences()
+                .map_err(BackendError::from)
+        })
+        .await
+    }
+
+    /// Resolves the policy for a new Desktop network operation.
+    pub async fn network_proxy_policy(&self) -> Result<ora_utils::http::HostProxy, BackendError> {
+        Self::network_proxy_policy_for(&self.network_proxy_preferences().await?)
+    }
+
+    /// Resolves an explicit set of settings, including form edits that have not been saved.
+    pub fn network_proxy_policy_for(
+        preferences: &ora_application::NetworkProxyPreferences,
+    ) -> Result<ora_utils::http::HostProxy, BackendError> {
+        crate::proxy::host_proxy(preferences)
+    }
+
     /// Loads the optional proxy without blocking an async worker on SQLite.
     pub async fn network_proxy_settings(
         &self,
@@ -156,15 +199,6 @@ impl Settings {
                 .map_err(BackendError::from)
         })
         .await
-    }
-
-    /// Probes `url` through the supplied proxy without persisting form edits.
-    pub async fn check_network_proxy_settings(
-        &self,
-        settings: NetworkProxySettings,
-        url: String,
-    ) -> Result<ora_contracts::CheckProxySettingsResponse, BackendError> {
-        crate::proxy::check_proxy(&settings, &url).await
     }
 
     /// Loads the Cloud server origin Desktop connects to, if one was saved.

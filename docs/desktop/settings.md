@@ -13,6 +13,7 @@ preference.
 |---|---|---|
 | `developer_mode` | Reveals developer-only controls | `getDeveloperMode`, `setDeveloperMode` |
 | `log_level` | Process-wide runtime log level | `getRuntimeLogLevel`, `setRuntimeLogLevel` |
+| `network_proxy_mode` | System, Manual or Direct | `getProxySettings`, `setProxySettings`, `clearProxySettings` |
 | `network_proxy_settings` | Optional host-level HTTP proxy | `getProxySettings`, `setProxySettings`, `clearProxySettings`, `checkProxySettings` |
 | `network_proxy_check_url` | Last explicitly confirmed HTTP(S) probe URL | `getProxyCheckUrl`, `setProxyCheckUrl` |
 | `worktree_root` | Creation root for new task worktrees | Native `get_worktree_root`, `set_worktree_root` |
@@ -42,12 +43,29 @@ variables have no effect. Update ordering and rollback are described in
 
 ## Network proxy
 
-The proxy is a host, port and optional HTTP Basic credentials, stored as one JSON value. It is used
-by marketplace traffic that opts in (Git sync and artifact downloads per source, see
-[Marketplace](../plugins/marketplace.md)) and by the Desktop updater. `checkProxySettings` probes an
-absolute HTTP(S) URL through the supplied settings, independent of what is saved: any HTTP response,
-including 4xx and 5xx, means the proxy reached a host, while timeouts, refused connections and
-invalid URLs report `unreachable` rather than failing the command.
+Desktop defaults to **Follow system proxy**. **Manual proxy** also accepts a host, port and optional
+HTTP Basic credentials. **Direct connection** ignores proxy settings and environment variables.
+An existing manual configuration remains selected on upgrade. Changing mode retains the manual
+endpoint, and an older Desktop version continues to use that endpoint after downgrade. Clear
+explicitly removes the saved endpoint and restores the default mode.
+
+On Windows, System reads the current user's static WinHTTP configuration. When automatic
+detection is the only setting, Ora connects directly and skips WPAD. An explicit PAC URL without
+a static proxy produces an unsupported-configuration error. On Linux, System reads GNOME static
+settings through GIO when a persistent backend is available and otherwise honors `HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`. Windows integrated proxy authentication is outside
+this version's support. Loopback and system bypass targets go directly.
+Connection or proxy resolution failures are reported without retrying the request directly.
+
+These rules apply to Desktop updates and marketplace sources that opt in
+([Marketplace](../plugins/marketplace.md)). The connection test follows redirects using the
+selected mode and resolves the route for each destination. A final HTTP 2xx response succeeds
+and shows the final route. Other HTTP responses show the status, and HTTP 407 reports a proxy
+authentication failure.
+Enter a bare hostname, `http://hostname`, or `https://hostname` for a manual proxy. The port
+field supplies the port, and `https://` uses TLS to the proxy itself.
+Checking uses the current form and Desktop updates use
+saved settings. In manual mode, a final direct response cannot confirm the proxy.
 
 ## Cloud connection
 

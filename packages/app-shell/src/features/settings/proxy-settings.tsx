@@ -12,7 +12,11 @@ import {
   toast,
 } from "@ora/ui";
 import { IconServer } from "@tabler/icons-react";
-import type { CheckProxySettingsResponse, ProxySettings } from "@ora/contracts";
+import type {
+  CheckProxySettingsResponse,
+  ProxyMode,
+  ProxySettings,
+} from "@ora/contracts";
 import { localizeContractError } from "../../i18n/contract-error";
 import {
   type ProxySettingsController,
@@ -23,12 +27,18 @@ import { SettingsHeading } from "./settings-heading";
 interface ProxySettingsEditorProps {
   initialSettings: ProxySettings | null;
   controller: ProxySettingsController;
+  replacingUnreadable: boolean;
+  onReplaceUnreadable: () => void;
 }
 
-/** Present a host-level proxy editor whose saved value only marketplace sources may opt into. */
+/** Edits the host proxy used by Desktop updates and opted-in marketplace sources. */
 export function ProxySettings() {
   const { t } = useTranslation();
   const controller = useProxySettings();
+  const [replacementError, setReplacementError] = useState<Error | null>(null);
+  const replacingUnreadable =
+    controller.loadError !== null && controller.loadError === replacementError;
+  const replaceUnreadable = () => setReplacementError(controller.loadError);
 
   const settingsKey = controller.settings
     ? [
@@ -50,7 +60,9 @@ export function ProxySettings() {
         <span role="status" className="text-xs text-muted-foreground">
           {t("settings.proxy.loading")}
         </span>
-      ) : !controller.hasLoaded && controller.loadError !== null ? (
+      ) : !controller.hasLoaded &&
+        controller.loadError !== null &&
+        !replacingUnreadable ? (
         <div className="space-y-3">
           <p role="alert" className="text-sm text-destructive">
             {t("settings.proxy.loadError")}
@@ -58,12 +70,17 @@ export function ProxySettings() {
           <Button variant="outline" onClick={() => void controller.retry()}>
             {t("common.retry")}
           </Button>
+          <Button variant="outline" onClick={replaceUnreadable}>
+            {t("settings.proxy.replaceUnreadable")}
+          </Button>
         </div>
       ) : (
         <ProxySettingsEditor
-          key={settingsKey}
+          key={controller.mode + settingsKey}
           initialSettings={controller.settings}
           controller={controller}
+          replacingUnreadable={replacingUnreadable}
+          onReplaceUnreadable={replaceUnreadable}
         />
       )}
     </div>
@@ -97,37 +114,71 @@ function parsedProxySettings(
 function ProxySettingsEditor({
   initialSettings,
   controller,
+  replacingUnreadable,
+  onReplaceUnreadable,
 }: ProxySettingsEditorProps) {
   const { t } = useTranslation();
+  const [mode, setMode] = useState<ProxyMode>(controller.mode);
   const [host, setHost] = useState(initialSettings?.host ?? "");
   const [port, setPort] = useState(
     initialSettings ? String(initialSettings.port) : "",
   );
   const [username, setUsername] = useState(initialSettings?.username ?? "");
   const [password, setPassword] = useState(initialSettings?.password ?? "");
+  const [manualLoaded, setManualLoaded] = useState(initialSettings !== null);
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualLoadError, setManualLoadError] = useState(false);
   const [checkOpen, setCheckOpen] = useState(false);
   const [checkUrl, setCheckUrl] = useState(controller.checkUrl);
 
-  const parsed = parsedProxySettings(host, port, username, password);
-  const hasFormValues =
-    host.trim() !== "" ||
-    port.trim() !== "" ||
-    username.trim() !== "" ||
-    password !== "";
+  const parsed =
+    mode === "manual"
+      ? parsedProxySettings(host, port, username, password)
+      : null;
+  const invalid = mode === "manual" && parsed === null;
+  const usingDraft =
+    mode !== controller.mode ||
+    (parsed !== null &&
+      (parsed.host !== initialSettings?.host ||
+        parsed.port !== initialSettings.port ||
+        parsed.username !== initialSettings.username ||
+        parsed.password !== initialSettings.password));
   const busy =
     controller.isLoading ||
     controller.isSaving ||
-    controller.loadError !== null;
+    manualLoading ||
+    (controller.loadError !== null && !replacingUnreadable);
   const checkBlocked =
-    busy || controller.isCheckUrlLoading || controller.checkUrlError !== null;
+    busy ||
+    replacingUnreadable ||
+    controller.isCheckUrlLoading ||
+    controller.checkUrlError !== null;
+
+  const selectMode = async (next: ProxyMode) => {
+    setMode(next);
+    if (next !== "manual" || manualLoaded) return;
+    setManualLoading(true);
+    try {
+      const saved = await controller.loadManual();
+      setHost(saved?.host ?? "");
+      setPort(saved ? String(saved.port) : "");
+      setUsername(saved?.username ?? "");
+      setPassword(saved?.password ?? "");
+    } catch {
+      setManualLoadError(true);
+    } finally {
+      setManualLoaded(true);
+      setManualLoading(false);
+    }
+  };
 
   const save = async () => {
-    if (parsed === null) {
+    if (invalid) {
       toast.error(t("settings.proxy.invalid"));
       return;
     }
     try {
-      await controller.submit(parsed);
+      await controller.submit(mode, parsed);
       toast.success(t("settings.proxy.saved"));
     } catch (cause) {
       toast.error(t("settings.proxy.updateError"), {
@@ -139,6 +190,12 @@ function ProxySettingsEditor({
   const clear = async () => {
     try {
       await controller.clear();
+      setMode("system");
+      setHost("");
+      setPort("");
+      setUsername("");
+      setPassword("");
+      setManualLoadError(false);
       toast.success(t("settings.proxy.cleared"));
     } catch (cause) {
       toast.error(t("settings.proxy.clearError"), {
@@ -152,63 +209,100 @@ function ProxySettingsEditor({
       <div className="flex items-start gap-3">
         <IconServer className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium">
-                {t("settings.proxy.host")}
-              </span>
-              <Input
-                value={host}
-                onChange={(event) => setHost(event.target.value)}
-                placeholder={t("settings.proxy.hostPlaceholder")}
-                aria-label={t("settings.proxy.host")}
-                autoComplete="off"
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium">
-                {t("settings.proxy.port")}
-              </span>
-              <Input
-                value={port}
-                onChange={(event) => setPort(event.target.value)}
-                placeholder={t("settings.proxy.portPlaceholder")}
-                aria-label={t("settings.proxy.port")}
-                inputMode="numeric"
-              />
-            </label>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium">
-                {t("settings.proxy.username")}
-              </span>
-              <Input
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                placeholder={t("settings.proxy.optional")}
-                aria-label={t("settings.proxy.username")}
-                autoComplete="off"
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium">
-                {t("settings.proxy.password")}
-              </span>
-              <Input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder={t("settings.proxy.optional")}
-                aria-label={t("settings.proxy.password")}
-                autoComplete="new-password"
-              />
-            </label>
-          </div>
+          <label className="block space-y-1.5">
+            <span className="text-sm font-medium">
+              {t("settings.proxy.mode")}
+            </span>
+            <select
+              className="block w-full rounded-md border bg-background px-3 py-2 text-sm"
+              value={mode}
+              disabled={busy}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                if (
+                  value === "system" ||
+                  value === "manual" ||
+                  value === "direct"
+                )
+                  void selectMode(value);
+              }}
+            >
+              <option value="system">{t("settings.proxy.modeSystem")}</option>
+              <option value="manual">{t("settings.proxy.modeManual")}</option>
+              <option value="direct">{t("settings.proxy.modeDirect")}</option>
+            </select>
+          </label>
+          {mode === "system" && (
+            <p className="text-xs text-muted-foreground">
+              {t("settings.proxy.systemHint")}
+            </p>
+          )}
+          {mode === "manual" && (
+            <fieldset disabled={busy} className="min-w-0 space-y-4">
+              {manualLoadError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {t("settings.proxy.manualLoadError")}
+                </p>
+              )}
+              <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings.proxy.host")}
+                  </span>
+                  <Input
+                    value={host}
+                    onChange={(event) => setHost(event.target.value)}
+                    placeholder={t("settings.proxy.hostPlaceholder")}
+                    aria-label={t("settings.proxy.host")}
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings.proxy.port")}
+                  </span>
+                  <Input
+                    value={port}
+                    onChange={(event) => setPort(event.target.value)}
+                    placeholder={t("settings.proxy.portPlaceholder")}
+                    aria-label={t("settings.proxy.port")}
+                    inputMode="numeric"
+                  />
+                </label>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings.proxy.username")}
+                  </span>
+                  <Input
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    placeholder={t("settings.proxy.optional")}
+                    aria-label={t("settings.proxy.username")}
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {t("settings.proxy.password")}
+                  </span>
+                  <Input
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder={t("settings.proxy.optional")}
+                    aria-label={t("settings.proxy.password")}
+                    autoComplete="new-password"
+                  />
+                </label>
+              </div>
+            </fieldset>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             <Button
               variant="outline"
-              disabled={busy || parsed === null}
+              disabled={busy || invalid}
               onClick={() => void save()}
             >
               {controller.isSaving
@@ -217,16 +311,14 @@ function ProxySettingsEditor({
             </Button>
             <Button
               variant="outline"
-              disabled={
-                busy || (!hasFormValues && controller.settings === null)
-              }
+              disabled={busy}
               onClick={() => void clear()}
             >
               {t("settings.proxy.clear")}
             </Button>
             <Button
               variant="outline"
-              disabled={checkBlocked || parsed === null}
+              disabled={checkBlocked || invalid}
               onClick={() => {
                 setCheckUrl(controller.checkUrl);
                 setCheckOpen(true);
@@ -258,6 +350,11 @@ function ProxySettingsEditor({
                 >
                   {t("common.retry")}
                 </Button>
+                {!replacingUnreadable && (
+                  <Button variant="outline" onClick={onReplaceUnreadable}>
+                    {t("settings.proxy.replaceUnreadable")}
+                  </Button>
+                )}
               </>
             )}
             {controller.updateError !== null && (
@@ -268,8 +365,10 @@ function ProxySettingsEditor({
           </div>
         </div>
       </div>
-      {checkOpen && parsed !== null && (
+      {checkOpen && !invalid && (
         <CheckProxyDialog
+          mode={mode}
+          usingDraft={usingDraft}
           checking={controller.isChecking}
           blocked={checkBlocked}
           readError={
@@ -287,7 +386,7 @@ function ProxySettingsEditor({
             if (!open) setCheckUrl(controller.checkUrl);
           }}
           onSaveUrl={controller.saveCheckUrl}
-          onCheck={(url) => controller.check(url, parsed)}
+          onCheck={(url) => controller.check(url, mode, parsed)}
         />
       )}
     </section>
@@ -295,6 +394,8 @@ function ProxySettingsEditor({
 }
 
 interface CheckProxyDialogProps {
+  mode: ProxyMode;
+  usingDraft: boolean;
   checking: boolean;
   blocked: boolean;
   readError: string | null;
@@ -308,6 +409,8 @@ interface CheckProxyDialogProps {
 
 /** Prompts for a URL and reports whether the current form proxy can reach it. */
 function CheckProxyDialog({
+  mode,
+  usingDraft,
   checking,
   blocked,
   readError,
@@ -338,12 +441,42 @@ function CheckProxyDialog({
     try {
       const result = await onCheck(nextUrl);
       if (result.outcome === "reachable") {
+        if (result.route === "direct" && mode === "manual") {
+          toast.warning(t("settings.proxy.checkBypassedManual"), {
+            description: t("settings.proxy.checkSuccessDetail", {
+              status: result.status,
+            }),
+          });
+          return;
+        }
+        const routeDetail =
+          result.route === undefined
+            ? t("settings.proxy.checkSuccessDetail", { status: result.status })
+            : t("settings.proxy.checkRouteDetail", {
+                status: result.status,
+                route: t(
+                  {
+                    direct: "settings.proxy.modeDirect",
+                    manual: "settings.proxy.modeManual",
+                    system: "settings.proxy.routeSystem",
+                    environment: "settings.proxy.routeEnvironment",
+                  }[result.route],
+                ),
+              });
         toast.success(t("settings.proxy.checkSuccess"), {
+          description: usingDraft
+            ? routeDetail + " " + t("settings.proxy.checkDraft")
+            : routeDetail,
+        });
+        onOpenChange(false);
+        return;
+      }
+      if (result.outcome === "http_error") {
+        toast.error(t("settings.proxy.checkHttpError"), {
           description: t("settings.proxy.checkSuccessDetail", {
             status: result.status,
           }),
         });
-        onOpenChange(false);
         return;
       }
       toast.error(t("settings.proxy.checkFailed"), {
@@ -371,6 +504,7 @@ function CheckProxyDialog({
           </span>
           <Input
             value={url}
+            disabled={checking}
             onChange={(event) => onUrlChange(event.target.value)}
             aria-label={t("settings.proxy.checkUrl")}
             autoComplete="off"
@@ -382,6 +516,11 @@ function CheckProxyDialog({
             }}
           />
         </label>
+        {usingDraft && (
+          <p className="text-sm text-muted-foreground">
+            {t("settings.proxy.checkDraft")}
+          </p>
+        )}
         {readError !== null && (
           <div className="space-y-2">
             <p role="alert">{readError}</p>

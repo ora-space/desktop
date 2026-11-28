@@ -8,6 +8,7 @@
 |---|---|---|
 | `developer_mode` | 显示仅供开发者使用的控件 | `getDeveloperMode`、`setDeveloperMode` |
 | `log_level` | 进程级运行时日志级别 | `getRuntimeLogLevel`、`setRuntimeLogLevel` |
+| `network_proxy_mode` | 跟随系统、手动或直连 | `getProxySettings`、`setProxySettings`、`clearProxySettings` |
 | `network_proxy_settings` | 可选的宿主级 HTTP 代理 | `getProxySettings`、`setProxySettings`、`clearProxySettings`、`checkProxySettings` |
 | `network_proxy_check_url` | 用户明确确认的 HTTP(S) 探测网址 | `getProxyCheckUrl`、`setProxyCheckUrl` |
 | `worktree_root` | 新任务 worktree 的创建根目录 | 原生命令 `get_worktree_root`、`set_worktree_root` |
@@ -26,7 +27,21 @@
 
 ## 网络代理
 
-代理由主机、端口和可选的 HTTP Basic 凭据组成，存为一个 JSON 值。选择使用它的 marketplace 流量（每个源的 Git 同步和制品下载，见 [Marketplace](../plugins/marketplace.zh.md)）和 Desktop 更新器会使用它。`checkProxySettings` 用请求中给出的设置（与已保存的无关）探测一个绝对的 HTTP(S) URL：任何 HTTP 响应，包括 4xx 和 5xx，都表示代理已经连到了主机；超时、拒绝连接和无效 URL 返回 `unreachable`，而不是让命令失败。
+Desktop 默认**跟随系统代理**。也可以选择**手动代理**（填写主机、端口及可选的 HTTP Basic
+凭据）或**直连**（忽略系统和环境变量代理）。已有手动配置升级后保持生效。切换模式保留已保存
+的手动地址，降级后旧版本仍使用它。主动清空会删除保存的手动配置，并恢复默认模式。
+
+Windows 读取当前用户的 WinHTTP 静态设置。仅开启自动检测时，Ora 直接连接并跳过 WPAD。
+仅配置 PAC 地址时，Ora 会提示不支持。Linux 在持久化 GIO 后端可用时读取 GNOME 静态设置，
+否则使用 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 和 `NO_PROXY`。首版不支持 Windows
+集成代理认证。本机回环和命中系统绕过规则的目标直连。代理解析或连接失败会显示原因，且不会重试直连。
+
+这些规则用于 Desktop 更新及开启「使用代理」的市场源（见 [Marketplace](../plugins/marketplace.zh.md)）。
+连接测试使用当前表单模式跟随跳转，每一跳按实际目标选路。最终返回 HTTP 2xx 时显示成功和最终路线，
+其他 HTTP 响应显示该状态码。HTTP 407 会提示代理认证失败。
+手动代理的主机可写成裸主机、`http://主机` 或 `https://主机`，端口以独立字段为准。`https://`
+表示 Ora 与代理服务器之间使用 TLS。
+验证使用表单当前值，检查更新使用已保存的代理。手动模式下最终直连的请求会提示无法确认手动代理。
 
 ## Cloud 连接
 

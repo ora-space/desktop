@@ -22,11 +22,10 @@ artifact retrieval mode. Operations: `listMarketplaceSources`, `addMarketplaceSo
   plugin ids and both stay listed.
 - **Enabled.** Disabling keeps the URL, branch, proxy policy, position and namespace binding but
   drops the source from sync, listing and installation.
-- **Proxy.** The source's switch alone decides how its Git work connects. Ora pins the route as
-  command-scoped Git config for the source's origin and full URL, which outranks the user's
-  `http.proxy`, URL-scoped `http.<url>.proxy` and `*_proxy` variables: an opted-in source always
-  uses Ora's proxy (see [Settings](../desktop/settings.md#network-proxy)) and an opted-out source
-  always connects directly. Downloads follow the same choice.
+- **Proxy.** Sources with proxy routing enabled follow the [Desktop proxy mode](../desktop/settings.md#network-proxy).
+  Other sources always connect directly. Git and artifact downloads honor the same policy. Ora passes
+  the selected route to Git for each operation. Explicitly direct sources keep Git's redirect behavior.
+  When a destination-dependent route cannot be reapplied after a redirect, configure the final Git URL.
 - **Artifact retrieval.** `Direct HTTPS` (the default) fetches absolute HTTPS release locators
   without signing. `S3 SigV4` accepts object keys, or path-style HTTPS locators on the configured
   endpoint and bucket, and signs requests with the source's region and static credential pair; it
@@ -66,7 +65,7 @@ reads the cached index; `readPluginReadme` reads a listing's README.
   without re-scanning its possibly half-written checkout, until a later sync succeeds. Only a removed
   or disabled source loses its listings, so "removed" and "unreachable" never look the same. A
   failure belongs to one source when its cause does (its Git work or a proxy it opts into); only
-  failing to read Ora's own state (proxy settings, sources, namespace bindings) fails the whole sync.
+  failing to read Ora's own state (sources and namespace bindings) fails the whole sync.
 - Failures are stored in the index and returned by both list and sync, so the shell names the stale
   sources. Each failure carries only Git's own `fatal:`/`error:` lines or the configuration problem,
   never the command line or local paths; the full error goes to the log.

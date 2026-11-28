@@ -181,6 +181,9 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("plugin_package_invalid"),
         "params": pluginPackageInvalidParamsSchema
     }), z.object({
+        "code": z.literal("proxy_authentication_failed"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("pack_member_duplicate"),
         "params": packMemberParamsSchema
     }), z.object({
@@ -604,6 +607,9 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("plugin_package_invalid"),
         "params": pluginPackageInvalidParamsSchema
+    }), z.object({
+        "code": z.literal("proxy_authentication_failed"),
+        "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("pack_member_duplicate"),
         "params": packMemberParamsSchema

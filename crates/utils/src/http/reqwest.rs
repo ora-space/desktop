@@ -21,6 +21,7 @@ use super::target::{io_error, remove_temporary, rename_over, temporary_sibling};
 use super::types::{
     DownloadOptions, DownloadOutcome, DownloadRequest, DownloadSource, HttpDownload,
 };
+use super::{HostProxy, HostProxyError};
 
 /// User-Agent sent unless the caller overrides it on the downloader.
 const DEFAULT_USER_AGENT: &str = "Ora-Desktop";
@@ -35,6 +36,7 @@ const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 #[derive(Clone, Debug)]
 pub struct ReqwestDownloader {
     proxy_config: ProxyConfig,
+    host_proxy: Option<HostProxy>,
     user_agent: String,
     tls_extra_roots: Vec<rustls::pki_types::CertificateDer<'static>>,
 }
@@ -44,8 +46,17 @@ impl ReqwestDownloader {
     pub fn new(proxy_config: ProxyConfig) -> Self {
         Self {
             proxy_config,
+            host_proxy: None,
             user_agent: DEFAULT_USER_AGENT.to_owned(),
             tls_extra_roots: Vec::new(),
+        }
+    }
+
+    /// Creates a host-routed downloader that reapplies policy to each allowed redirect.
+    pub fn for_host_proxy(policy: HostProxy) -> Self {
+        Self {
+            host_proxy: Some(policy),
+            ..Self::new(ProxyConfig::default())
         }
     }
 
@@ -151,21 +162,13 @@ impl ReqwestDownloader {
         url: &Url,
         extra_headers: &[(String, String)],
     ) -> Result<DownloadOutcome, DownloadError> {
-        let client = self.build_client(&request.options, url)?;
         let temporary = temporary_sibling(&request.destination);
         if let Some(parent) = request.destination.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| io_error(&request.destination, error))?;
         }
 
-        let mut builder = client.get(url.clone());
-        for (name, value) in extra_headers {
-            builder = builder.header(name.as_str(), value.as_str());
-        }
-        let mut response = builder.send().await.map_err(|error| {
-            remove_temporary(&temporary);
-            network_error(url, error)
-        })?;
+        let mut response = self.send(&request.options, url, extra_headers).await?;
         let status = response.status().as_u16();
         if !response.status().is_success() {
             remove_temporary(&temporary);
@@ -246,11 +249,13 @@ impl ReqwestDownloader {
         })
     }
 
-    /// Issues one GET against `url` and returns the HTTP status when a response arrives.
-    ///
-    /// The body is discarded: a connectivity probe only needs to know that the proxy path reached
-    /// a host. Any HTTP status, including 4xx and 5xx, is therefore a successful probe.
-    pub async fn probe(&self, url: Url, timeout: Duration) -> Result<u16, DownloadError> {
+    /// Follows redirects within one time budget and returns the final status and URL without reading the body.
+    #[cfg(test)]
+    pub(super) async fn probe(
+        &self,
+        url: Url,
+        timeout: Duration,
+    ) -> Result<(u16, Url), DownloadError> {
         let options = DownloadOptions {
             connect_timeout: Some(timeout),
             per_attempt_timeout: Some(timeout),
@@ -259,13 +264,8 @@ impl ReqwestDownloader {
             ..DownloadOptions::default()
         };
         let operation = async {
-            let client = self.build_client(&options, &url)?;
-            let response = client
-                .get(url.clone())
-                .send()
-                .await
-                .map_err(|error| network_error(&url, error))?;
-            Ok(response.status().as_u16())
+            let response = self.send(&options, &url, &[]).await?;
+            Ok((response.status().as_u16(), response.url().clone()))
         };
         match tokio::time::timeout(timeout, operation).await {
             Ok(result) => result,
@@ -273,6 +273,60 @@ impl ReqwestDownloader {
                 phase: TimeoutPhase::Total,
             }),
         }
+    }
+
+    /// Sends a GET and follows unsigned host-routed redirects with fresh route selection.
+    async fn send(
+        &self,
+        options: &DownloadOptions,
+        url: &Url,
+        headers: &[(String, String)],
+    ) -> Result<reqwest::Response, DownloadError> {
+        let mut current = url.clone();
+        for hop in 0..=10 {
+            let client = self.build_client(options, &current)?;
+            let mut request = client.get(current.clone());
+            for (name, value) in headers {
+                request = request.header(name.as_str(), value.as_str());
+            }
+            let response = request.send().await.map_err(|error| {
+                if self.host_proxy.is_some() && super::host_proxy::is_proxy_auth_failure(&error) {
+                    return proxy_error(HostProxyError::Authentication);
+                }
+                network_error(&current, error)
+            })?;
+            if self.host_proxy.is_some() && response.status().as_u16() == 407 {
+                return Err(proxy_error(HostProxyError::Authentication));
+            }
+            if self.host_proxy.is_none()
+                || !headers.is_empty()
+                || !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308)
+            {
+                return Ok(response);
+            }
+            let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
+                return Ok(response);
+            };
+            let next = location
+                .to_str()
+                .ok()
+                .and_then(|location| current.join(location).ok());
+            current = next
+                .filter(|url| {
+                    matches!(url.scheme(), "http" | "https")
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                })
+                .ok_or_else(|| {
+                    DownloadError::InvalidSource("invalid download redirect".to_owned())
+                })?;
+            if hop == 10 {
+                return Err(DownloadError::InvalidSource(
+                    "too many download redirects".to_owned(),
+                ));
+            }
+        }
+        unreachable!("redirect loop has a fixed limit")
     }
 
     /// Builds a per-request client with the resolved proxy and the requested timeouts.
@@ -297,11 +351,25 @@ impl ReqwestDownloader {
         if let Some(attempt) = options.per_attempt_timeout {
             builder = builder.timeout(attempt);
         }
-        if let Some(proxy) = resolve_proxy(url, &self.proxy_config) {
+        if let Some(policy) = &self.host_proxy {
+            builder = builder
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none());
+            if let Some(endpoint) = policy.route(url).map_err(proxy_error)?.endpoint {
+                let proxy = reqwest::Proxy::all(endpoint)
+                    .map_err(|_| proxy_error(HostProxyError::InvalidEndpoint))?;
+                builder = builder.proxy(proxy);
+            }
+        } else if let Some(proxy) = resolve_proxy(url, &self.proxy_config) {
             builder = builder.proxy(proxy_reqwest(proxy)?);
         }
         builder.build().map_err(|error| network_error(url, error))
     }
+}
+
+/// Keeps proxy credentials out of download errors.
+fn proxy_error(error: HostProxyError) -> DownloadError {
+    DownloadError::Proxy(error)
 }
 
 /// Builds a Rustls client with certificate verification adapted to the host platform.

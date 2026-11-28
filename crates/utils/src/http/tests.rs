@@ -311,6 +311,65 @@ mod reqwest_integration {
         Url::parse(&format!("http://127.0.0.1:{port}/pkg.orax")).unwrap()
     }
 
+    /// Runs a single HTTP proxy exchange and checks the request line seen on the wire.
+    async fn proxy_once(
+        request_prefix: &'static str,
+        response: String,
+    ) -> (crate::http::HostProxy, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = tokio::io::BufReader::new(&mut socket);
+            let mut request_line = String::new();
+            use tokio::io::AsyncBufReadExt;
+            bytes.read_line(&mut request_line).await.unwrap();
+            assert!(request_line.starts_with(request_prefix), "{request_line}");
+            loop {
+                let mut header = String::new();
+                if bytes.read_line(&mut header).await.unwrap() == 0 || header == "\r\n" {
+                    break;
+                }
+            }
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        let endpoint = Url::parse(&format!("http://{address}")).unwrap();
+        (crate::http::HostProxy::manual(endpoint), task)
+    }
+
+    /// Re-resolves a redirected download so the loopback destination never sees the proxy.
+    #[tokio::test]
+    async fn host_proxy_download_reroutes_each_redirect() {
+        let payload = b"routed package";
+        let destination_url = serve_once(payload).await;
+        let response = format!(
+            "HTTP/1.1 302 Found\r\nLocation: {destination_url}\r\nContent-Length: 0\r\n\r\n"
+        );
+        let (policy, proxy) = proxy_once("GET http://origin.example/package ", response).await;
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("pkg.orax");
+        ReqwestDownloader::for_host_proxy(policy)
+            .download(DownloadRequest {
+                source: DownloadSource::Url(Url::parse("http://origin.example/package").unwrap()),
+                destination: destination.clone(),
+                checksum: None,
+                options: DownloadOptions {
+                    max_retries: 0,
+                    total_timeout: Some(std::time::Duration::from_secs(10)),
+                    ..DownloadOptions::default()
+                },
+                progress: None,
+                cancel: None,
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), proxy)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(std::fs::read(destination).unwrap().as_slice(), payload);
+    }
+
     /// Serves one HTTPS response from a certificate signed by a private test CA.
     async fn serve_https_once(
         body: &'static [u8],
@@ -448,12 +507,12 @@ mod reqwest_integration {
     #[tokio::test]
     async fn probe_reports_http_status_from_local_server() {
         let url = serve_once(b"ok").await;
-        let status = ReqwestDownloader::new(Default::default())
-            .probe(url, std::time::Duration::from_secs(2))
+        let result = ReqwestDownloader::new(Default::default())
+            .probe(url.clone(), std::time::Duration::from_secs(2))
             .await
             .unwrap();
 
-        assert_eq!(status, 200);
+        assert_eq!(result, (200, url));
     }
 
     /// A refused loopback port is reported as a network error rather than a successful status.

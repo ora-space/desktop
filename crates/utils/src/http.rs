@@ -10,6 +10,7 @@
 
 mod cancel;
 mod error;
+mod host_proxy;
 mod local;
 mod progress;
 mod proxy;
@@ -35,6 +36,7 @@ pub use client::{CredentialClientError, credential_client};
 pub use error::{DownloadError, TimeoutPhase};
 #[cfg(feature = "http-reqwest")]
 pub use fetch::{FetchError, FetchOptions, FetchOutcome, FileFetch, ReqwestFetcher};
+pub use host_proxy::{HostProxy, HostProxyError, HostRoute, ProxyOrigin, is_proxy_auth_failure};
 pub use local::LocalFileDownloader;
 pub use progress::Progress;
 pub use proxy::{Proxy, ProxyAuth, ProxyBypass, ProxyConfig, resolve_proxy};

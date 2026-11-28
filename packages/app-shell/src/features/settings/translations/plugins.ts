@@ -9,6 +9,8 @@ export const pluginTranslations = {
     "settings.plugins.logLevelReadOnly":
       "日志设置只读。请修复 {{path}} 后重启应用；原配置已保留。",
     "errors.plugin_host_incompatible": "当前主机不支持此插件的发布制品。",
+    "errors.proxy_authentication_failed":
+      "代理认证失败（HTTP 407）。请检查代理凭据。",
     "errors.plugin_package_invalid":
       "插件包内容不合法（{{field}}）：{{message}}",
     "errors.pack_member_duplicate": "集合包重复声明了成员 {{pluginId}}。",
@@ -451,6 +453,8 @@ export const pluginTranslations = {
       "Log settings are read-only. Repair {{path}} and restart the app; saved settings have been preserved.",
     "errors.plugin_host_incompatible":
       "This plugin's release artifact is not supported on the current host.",
+    "errors.proxy_authentication_failed":
+      "The proxy rejected authentication (HTTP 407). Check your proxy credentials.",
     "errors.plugin_package_invalid":
       "The plugin package is invalid at {{field}}: {{message}}",
     "errors.pack_member_duplicate":

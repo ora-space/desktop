@@ -357,6 +357,7 @@ pub enum PublicError {
     PluginLogLevelsWriteFailed(PluginLogLevelsFileParams),
     PluginHostIncompatible(EmptyErrorParams),
     PluginPackageInvalid(PluginPackageInvalidParams),
+    ProxyAuthenticationFailed(EmptyErrorParams),
     PackMemberDuplicate(PackMemberParams),
     PackSelfReference(PackMemberParams),
     PackMemberNotFound(PackMemberParams),
@@ -506,6 +507,7 @@ impl PublicError {
             Self::PluginLogLevelsWriteFailed(_) => "plugin_log_levels_write_failed",
             Self::PluginHostIncompatible(_) => "plugin_host_incompatible",
             Self::PluginPackageInvalid(_) => "plugin_package_invalid",
+            Self::ProxyAuthenticationFailed(_) => "proxy_authentication_failed",
             Self::PackMemberDuplicate(_) => "pack_member_duplicate",
             Self::PackSelfReference(_) => "pack_self_reference",
             Self::PackMemberNotFound(_) => "pack_member_not_found",
@@ -960,6 +962,7 @@ mod tests {
                 | PublicError::PluginLogLevelsWriteFailed(_)
                 | PublicError::PluginHostIncompatible(_)
                 | PublicError::PluginPackageInvalid(_)
+                | PublicError::ProxyAuthenticationFailed(_)
                 | PublicError::PackMemberDuplicate(_)
                 | PublicError::PackSelfReference(_)
                 | PublicError::PackMemberNotFound(_)

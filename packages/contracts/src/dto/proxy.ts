@@ -4,6 +4,7 @@
  * Requests probing one URL through an explicit proxy configuration.
  */
 export type CheckProxySettingsRequest = {
+  mode?: ProxyMode;
   /**
    * Absolute HTTP(S) URL to fetch through the supplied proxy.
    */
@@ -11,19 +12,19 @@ export type CheckProxySettingsRequest = {
   /**
    * Proxy configuration to probe with, independent of whatever is currently persisted.
    */
-  settings: ProxySettings;
+  settings: ProxySettings | null;
 };
 
 /**
  * Reports whether the supplied proxy could reach the requested URL.
  *
- * Any HTTP response, including 4xx and 5xx, means the proxy path reached a host. Transport
- * failures such as timeouts, refused connections, and invalid URLs are `unreachable`.
+ * A final 2xx response is reachable. Other final statuses are HTTP errors, except for 407.
+ * Proxy authentication, transport and proxy-resolution failures are `unreachable`.
  */
-export type CheckProxySettingsResponse = {
-  "outcome": "reachable";
-  status: number;
-} | { "outcome": "unreachable"; message: string };
+export type CheckProxySettingsResponse =
+  | { "outcome": "reachable"; status: number; route?: ProxyRoute }
+  | { "outcome": "http_error"; status: number }
+  | { "outcome": "unreachable"; message: string };
 
 /**
  * Requests deleting the configured network proxy.
@@ -33,7 +34,10 @@ export type ClearProxySettingsRequest = Record<symbol, never>;
 /**
  * Confirms the network proxy has been cleared.
  */
-export type ClearProxySettingsResponse = { settings: ProxySettings | null };
+export type ClearProxySettingsResponse = {
+  mode?: ProxyMode;
+  settings: ProxySettings | null;
+};
 
 /**
  * Requests the user's saved proxy probe target.
@@ -41,14 +45,17 @@ export type ClearProxySettingsResponse = { settings: ProxySettings | null };
 export type GetProxyCheckUrlRequest = Record<symbol, never>;
 
 /**
- * Requests the configured network proxy without additional parameters.
+ * Requests the effective proxy or the retained endpoint for a manual draft.
  */
-export type GetProxySettingsRequest = Record<symbol, never>;
+export type GetProxySettingsRequest = { loadManual?: boolean };
 
 /**
  * Returns the configured network proxy.
  */
-export type GetProxySettingsResponse = { settings: ProxySettings | null };
+export type GetProxySettingsResponse = {
+  mode?: ProxyMode;
+  settings: ProxySettings | null;
+};
 
 /**
  * Returns the authoritative saved target, or the default only when no preference exists.
@@ -56,11 +63,21 @@ export type GetProxySettingsResponse = { settings: ProxySettings | null };
 export type ProxyCheckUrlResponse = { url: string };
 
 /**
- * Describes an optional host-level network proxy used by marketplace traffic.
+ * Selects how Desktop chooses a network proxy.
+ */
+export type ProxyMode = "system" | "manual" | "direct";
+
+/**
+ * Identifies the route a connectivity probe actually used.
+ */
+export type ProxyRoute = "system" | "manual" | "environment" | "direct";
+
+/**
+ * Describes a manual endpoint for the Desktop updater and opted-in marketplace traffic.
  */
 export type ProxySettings = {
   /**
-   * Proxy hostname or address without a scheme.
+   * Proxy hostname or address, optionally prefixed with its transport scheme.
    */
   host: string;
   /**
@@ -85,9 +102,15 @@ export type SetProxyCheckUrlRequest = { url: string };
 /**
  * Requests replacing the configured network proxy.
  */
-export type SetProxySettingsRequest = { settings: ProxySettings };
+export type SetProxySettingsRequest = {
+  mode?: ProxyMode;
+  settings: ProxySettings | null;
+};
 
 /**
  * Returns the authoritative network proxy after a save.
  */
-export type SetProxySettingsResponse = { settings: ProxySettings | null };
+export type SetProxySettingsResponse = {
+  mode?: ProxyMode;
+  settings: ProxySettings | null;
+};

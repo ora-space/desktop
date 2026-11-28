@@ -19,6 +19,34 @@ impl SqliteUserConfigRepository {
 impl UserConfigRepository for SqliteUserConfigRepository {
     type Error = RepositoryError;
 
+    fn get_pair(&self, first: &str, second: &str) -> Result<[Option<String>; 2], Self::Error> {
+        self.pool
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT (SELECT value FROM user_config WHERE key = ?1),
+                        (SELECT value FROM user_config WHERE key = ?2)",
+                        params![first, second],
+                        |row| Ok([row.get(0)?, row.get(1)?]),
+                    )
+                    .map_err(crate::DatabaseError::from)
+            })
+            .map_err(repository_error_from_database)
+    }
+
+    fn set_pair(&self, first: (&str, &str), second: (&str, &str)) -> Result<(), Self::Error> {
+        self.pool
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO user_config (key, value) VALUES (?1, ?2), (?3, ?4)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![first.0, first.1, second.0, second.1],
+                )?;
+                Ok(())
+            })
+            .map_err(repository_error_from_database)
+    }
+
     fn get_value(&self, key: &str) -> Result<Option<String>, Self::Error> {
         self.pool
             .with_connection(|connection| {
@@ -47,6 +75,18 @@ impl UserConfigRepository for SqliteUserConfigRepository {
             .map_err(repository_error_from_database)
     }
 
+    fn delete_pair(&self, first: &str, second: &str) -> Result<(), Self::Error> {
+        self.pool
+            .with_connection(|connection| {
+                connection.execute(
+                    "DELETE FROM user_config WHERE key IN (?1, ?2)",
+                    params![first, second],
+                )?;
+                Ok(())
+            })
+            .map_err(repository_error_from_database)
+    }
+
     fn delete_value(&self, key: &str) -> Result<(), Self::Error> {
         self.pool
             .with_connection(|connection| {
@@ -63,7 +103,9 @@ fn repository_error_from_database(error: crate::DatabaseError) -> RepositoryErro
 
 #[cfg(test)]
 mod tests {
-    use ora_application::{NetworkProxySettings, UserConfigService};
+    use ora_application::{
+        NetworkProxyMode, NetworkProxyPreferences, NetworkProxySettings, UserConfigService,
+    };
     use ora_user_config::UserConfigRepository;
     use pretty_assertions::assert_eq;
     use rusqlite::Connection;
@@ -127,6 +169,141 @@ mod tests {
         assert_eq!(
             repository.get_value("second").unwrap().as_deref(),
             Some("two")
+        );
+    }
+
+    /// Covers the persisted mode independently of the endpoint that an older build still reads.
+    #[test]
+    fn proxy_modes_preserve_the_legacy_endpoint() {
+        let (_temporary, repository) = repository();
+        let service = UserConfigService::new(repository.clone());
+        let manual = NetworkProxySettings {
+            host: "legacy.example.com".into(),
+            port: 8080,
+            username: None,
+            password: None,
+        };
+
+        assert_eq!(
+            service.network_proxy_preferences().unwrap(),
+            NetworkProxyPreferences {
+                mode: NetworkProxyMode::System,
+                manual: None,
+            }
+        );
+        assert_eq!(repository.get_value("network_proxy_mode").unwrap(), None);
+
+        service.set_network_proxy_settings(manual.clone()).unwrap();
+        assert_eq!(
+            service.network_proxy_preferences().unwrap(),
+            NetworkProxyPreferences {
+                mode: NetworkProxyMode::Manual,
+                manual: Some(manual.clone()),
+            }
+        );
+
+        for mode in [NetworkProxyMode::System, NetworkProxyMode::Direct] {
+            service.set_network_proxy_preferences(mode, None).unwrap();
+            let reopened = UserConfigService::new(repository.clone());
+            assert_eq!(
+                reopened.network_proxy_preferences().unwrap(),
+                NetworkProxyPreferences { mode, manual: None }
+            );
+            assert_eq!(
+                reopened.network_proxy_settings().unwrap(),
+                Some(manual.clone())
+            );
+        }
+    }
+
+    /// An old build can clear the endpoint without knowing the newer Manual mode key.
+    #[test]
+    fn clearing_manual_proxy_on_downgrade_restores_system_on_upgrade() {
+        let (_temporary, repository) = repository();
+        let service = UserConfigService::new(repository.clone());
+        let manual = NetworkProxySettings {
+            host: "legacy.example.com".into(),
+            port: 8080,
+            username: None,
+            password: None,
+        };
+        service
+            .set_network_proxy_preferences(NetworkProxyMode::Manual, Some(manual.clone()))
+            .unwrap();
+
+        repository.delete_value("network_proxy_settings").unwrap();
+        let reopened = UserConfigService::new(repository.clone());
+        assert_eq!(
+            reopened.network_proxy_preferences().unwrap(),
+            NetworkProxyPreferences {
+                mode: NetworkProxyMode::System,
+                manual: None,
+            }
+        );
+        assert_eq!(
+            repository
+                .get_value("network_proxy_mode")
+                .unwrap()
+                .as_deref(),
+            Some("manual")
+        );
+        reopened
+            .set_network_proxy_preferences(NetworkProxyMode::Manual, Some(manual.clone()))
+            .unwrap();
+        assert_eq!(reopened.network_proxy_settings().unwrap(), Some(manual));
+    }
+
+    /// Rejects partial writes if the endpoint row cannot be stored.
+    #[test]
+    fn proxy_mode_and_endpoint_are_committed_together() {
+        let (temporary, repository) = repository();
+        let service = UserConfigService::new(repository);
+        service
+            .set_network_proxy_preferences(NetworkProxyMode::Direct, None)
+            .unwrap();
+        let connection = Connection::open(temporary.path().join("ora.sqlite3")).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_manual_proxy BEFORE INSERT ON user_config
+             WHEN NEW.key = 'network_proxy_settings'
+             BEGIN SELECT RAISE(ABORT, 'reject manual proxy'); END;",
+            )
+            .unwrap();
+        let manual = NetworkProxySettings {
+            host: "proxy.example.com".into(),
+            port: 8080,
+            username: None,
+            password: None,
+        };
+        assert!(
+            service
+                .set_network_proxy_preferences(NetworkProxyMode::Manual, Some(manual))
+                .is_err()
+        );
+        assert_eq!(
+            service.network_proxy_preferences().unwrap(),
+            NetworkProxyPreferences {
+                mode: NetworkProxyMode::Direct,
+                manual: None,
+            }
+        );
+    }
+
+    /// Treats an unknown value as an error without replacing persisted preferences.
+    #[test]
+    fn unknown_proxy_mode_is_not_treated_as_missing() {
+        let (_temporary, repository) = repository();
+        repository
+            .set_value("network_proxy_mode", "future-mode")
+            .unwrap();
+        let service = UserConfigService::new(repository.clone());
+        assert!(service.network_proxy_preferences().is_err());
+        assert_eq!(
+            repository
+                .get_value("network_proxy_mode")
+                .unwrap()
+                .as_deref(),
+            Some("future-mode")
         );
     }
 

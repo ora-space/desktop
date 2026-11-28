@@ -170,13 +170,25 @@ pub async fn get_proxy_settings(
     state: State<'_, DesktopState>,
     request: GetProxySettingsRequest,
 ) -> Result<GetProxySettingsResponse, CommandError> {
-    let _ = request;
     let settings_handle = state.backend.settings().clone();
     run_async_backend(
         "get_proxy_settings",
         Box::pin(async move {
+            if request.load_manual == Some(true) {
+                let preferences = ora_application::NetworkProxyPreferences {
+                    mode: ora_application::NetworkProxyMode::Manual,
+                    manual: settings_handle.network_proxy_settings().await?,
+                };
+                if preferences.manual.is_some() {
+                    ora_backend::Settings::network_proxy_policy_for(&preferences)?;
+                }
+                return Ok(GetProxySettingsResponse {
+                    mode: None,
+                    settings: preferences.manual.map(proxy_settings_contract),
+                });
+            }
             settings_handle
-                .network_proxy_settings()
+                .network_proxy_preferences()
                 .await
                 .map(proxy_settings_response)
         }),
@@ -193,9 +205,9 @@ pub async fn set_proxy_settings(
     run_async_backend(
         "set_proxy_settings",
         Box::pin(async move {
-            let settings = internal_network_proxy_settings(request.settings);
+            let preferences = internal_network_proxy_preferences(request.mode, request.settings);
             settings_handle
-                .set_network_proxy_settings(settings)
+                .set_network_proxy_preferences(preferences)
                 .await
                 .map(set_proxy_settings_response)
         }),
@@ -215,7 +227,10 @@ pub async fn clear_proxy_settings(
         "clear_proxy_settings",
         Box::pin(async move {
             settings_handle.clear_network_proxy_settings().await?;
-            Ok(ClearProxySettingsResponse { settings: None })
+            Ok(ClearProxySettingsResponse {
+                settings: None,
+                mode: Some(ora_contracts::ProxyMode::System),
+            })
         }),
     )
     .await
@@ -224,39 +239,69 @@ pub async fn clear_proxy_settings(
 /// Probes one URL through the supplied proxy configuration without persisting it.
 #[tauri::command]
 pub async fn check_proxy_settings(
-    state: State<'_, DesktopState>,
     request: CheckProxySettingsRequest,
 ) -> Result<CheckProxySettingsResponse, CommandError> {
-    let settings_handle = state.backend.settings().clone();
     run_async_backend(
         "check_proxy_settings",
         Box::pin(async move {
-            settings_handle
-                .check_network_proxy_settings(
-                    internal_network_proxy_settings(request.settings),
-                    request.url,
-                )
-                .await
+            let preferences = internal_network_proxy_preferences(request.mode, request.settings);
+            Ok(
+                crate::network_proxy::check(updater_http::Client::builder(), &request.url, || {
+                    ora_backend::Settings::network_proxy_policy_for(&preferences)
+                })
+                .await,
+            )
         }),
     )
     .await
 }
 /// Converts optional persisted proxy settings into the Settings response shape.
 fn proxy_settings_response(
-    settings: Option<ora_application::NetworkProxySettings>,
+    preferences: ora_application::NetworkProxyPreferences,
 ) -> GetProxySettingsResponse {
     GetProxySettingsResponse {
-        settings: settings.map(proxy_settings_contract),
+        settings: preferences.manual.map(proxy_settings_contract),
+        mode: Some(proxy_mode_contract(preferences.mode)),
     }
 }
 /// Converts saved proxy settings into the authoritative Settings response shape.
 fn set_proxy_settings_response(
-    settings: ora_application::NetworkProxySettings,
+    preferences: ora_application::NetworkProxyPreferences,
 ) -> SetProxySettingsResponse {
     SetProxySettingsResponse {
-        settings: Some(proxy_settings_contract(settings)),
+        settings: preferences.manual.map(proxy_settings_contract),
+        mode: Some(proxy_mode_contract(preferences.mode)),
     }
 }
+/// Exposes the effective mode independently of the retained manual settings.
+fn proxy_mode_contract(mode: ora_application::NetworkProxyMode) -> ora_contracts::ProxyMode {
+    use ora_application::NetworkProxyMode as Internal;
+    use ora_contracts::ProxyMode;
+    match mode {
+        Internal::System => ProxyMode::System,
+        Internal::Manual => ProxyMode::Manual,
+        Internal::Direct => ProxyMode::Direct,
+    }
+}
+
+/// Converts a form's unsaved mode and optional manual input.
+fn internal_network_proxy_preferences(
+    mode: Option<ora_contracts::ProxyMode>,
+    settings: Option<ProxySettings>,
+) -> ora_application::NetworkProxyPreferences {
+    use ora_application::NetworkProxyMode as Internal;
+    use ora_contracts::ProxyMode;
+    let mode = match mode.unwrap_or(ProxyMode::Manual) {
+        ProxyMode::System => Internal::System,
+        ProxyMode::Manual => Internal::Manual,
+        ProxyMode::Direct => Internal::Direct,
+    };
+    ora_application::NetworkProxyPreferences {
+        mode,
+        manual: settings.map(internal_network_proxy_settings),
+    }
+}
+
 /// Converts persisted proxy settings into one transport-neutral wire value.
 fn proxy_settings_contract(settings: ora_application::NetworkProxySettings) -> ProxySettings {
     ProxySettings {

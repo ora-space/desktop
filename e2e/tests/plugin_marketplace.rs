@@ -750,17 +750,17 @@ fn listed_versions(plugins: &[ora_contracts::AvailablePlugin]) -> Vec<String> {
 /// third-party one. Each step breaks or restores one source the way a user's network or
 /// configuration does, and checks what the sync call, the cached listing, and the persisted index
 /// report afterwards.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
 -> Result<(), Box<dyn std::error::Error>> {
     use ora_contracts::{
-        AddMarketplaceSourceRequest, MarketplaceArtifactRetrievalUpdate,
+        AddMarketplaceSourceRequest, InstallPluginRequest, MarketplaceArtifactRetrievalUpdate,
         MarketplaceSourceSyncFailure, UpdateMarketplaceSourceRequest,
     };
+    use tokio::io::AsyncReadExt;
 
     const THIRD_PARTY_URL: &str = "https://github.com/acme/plugins";
     const THIRD_PARTY_CANONICAL: &str = "https://github.com/acme/plugins";
-    const NO_PROXY: &str = "a marketplace source uses the proxy but no proxy is configured";
 
     initialize_process_logging()?;
     let workspace = tempdir()?;
@@ -812,7 +812,7 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
     let unreachable_remote = root.join("gone").to_string_lossy().into_owned();
 
     let backend = Backend::open(BackendPaths {
-        app_data_directory: app_data,
+        app_data_directory: app_data.clone(),
         home_directory: home.clone(),
         deno_path: PathBuf::from(env!("CARGO_BIN_EXE_fake-agent")),
         relative_path_base: root,
@@ -929,10 +929,14 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
         partial.failed_sources,
     );
 
-    // ---- Step 3: the default source now also fails, through a proxy requirement nobody
-    // configured. That is a property of that one source, so the sync still answers instead of
-    // failing as a whole, and it claims no refresh because none happened.
+    // ---- Step 3: the default source opts into a corrupt host proxy preference and fails.
+    // The other source continues to report its own Git failure.
     eprintln!("== Isolation step 3: every source fails");
+    let db = rusqlite::Connection::open(app_data.join("ora.sqlite3"))?;
+    db.execute(
+        "INSERT INTO user_config (key, value) VALUES ('network_proxy_mode', 'unknown-mode')",
+        [],
+    )?;
     set_source(SOURCE_URL, true, true)?;
     let stalled = plugins.sync_available(SyncAvailablePluginsRequest {})?;
     assert_eq!(
@@ -952,9 +956,14 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
         ),
         "every listing is kept and the sync time does not move",
     );
-    assert_eq!(stalled.failed_sources[0].message, NO_PROXY);
+    assert!(
+        stalled.failed_sources[0]
+            .message
+            .contains("could not read marketplace proxy configuration")
+    );
 
     // ---- Step 4: both sources recover and the third party publishes 0.2.0.
+    // Leave the corrupt preference in place to prove direct sources do not read it.
     eprintln!("== Isolation step 4: every source recovers");
     set_source(SOURCE_URL, false, true)?;
     run_git(
@@ -1002,6 +1011,92 @@ async fn marketplace_sync_isolates_sources_that_fail_to_refresh()
             after_disable.failed_sources
         ),
         (vec!["ora-space.weather@0.2.0".to_owned()], Vec::new()),
+    );
+
+    // ---- Step 6: a direct source can also reach its package with the corrupt mode still stored.
+    let package = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = package.local_addr()?;
+    stage_listing(
+        &official_origin,
+        "ora-space.weather",
+        &format!(
+            "resolver = 1\nidentifier = \"ora-space.weather\"\nkind = \"skill\"\nversion = \"0.3.0\"\ndescription = \"Direct download fixture\"\nurl = \"https://{address}/weather.orax\"\nsha256 = \"{}\"\n",
+            "ab".repeat(32)
+        ),
+    )?;
+    publish(&official_origin, &git_config, "publish package fixture")?;
+    let published = plugins.sync_available(SyncAvailablePluginsRequest {})?;
+    let listing = published
+        .plugins
+        .iter()
+        .find(|entry| entry.name == "ora-space.weather" && entry.version == "0.3.0")
+        .ok_or("package fixture was not indexed")?;
+    let install = plugins.install(InstallPluginRequest {
+        plugin_id: listing.id.clone(),
+        hook_execution_acknowledged: false,
+    });
+    let observe = async {
+        let (mut socket, _) = package.accept().await?;
+        socket.read_u8().await
+    };
+    let first_byte = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        tokio::select! {
+            result = install => Err(Box::<dyn std::error::Error>::from(format!(
+                "install ended before reaching the package endpoint: {result:?}"
+            ))),
+            first_byte = observe => Ok(first_byte?),
+        }
+    })
+    .await??;
+    assert_eq!(first_byte, 0x16);
+
+    // Refresh the opted-in source through a real proxy challenge and check the published error.
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    db.execute(
+        "UPDATE user_config SET value = 'manual' WHERE key = 'network_proxy_mode'",
+        [],
+    )?;
+    db.execute(
+        "INSERT INTO user_config (key, value) VALUES ('network_proxy_settings', ?1)",
+        [serde_json::json!({
+            "host": "127.0.0.1",
+            "port": proxy.local_addr()?.port(),
+            "username": null,
+            "password": null,
+        })
+        .to_string()],
+    )?;
+    run_git(
+        &third_party_checkout,
+        &git_config,
+        &["remote", "set-url", "origin", THIRD_PARTY_URL],
+    )?;
+    set_source(THIRD_PARTY_URL, true, true)?;
+    let challenge = tokio::spawn(async move {
+        let (mut socket, _) = proxy.accept().await?;
+        let mut reader = BufReader::new(&mut socket);
+        let mut lines = String::new();
+        loop {
+            let offset = lines.len();
+            if reader.read_line(&mut lines).await? == 0 || &lines[offset..] == "\r\n" {
+                break;
+            }
+        }
+        socket.write_all(
+            b"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=ora\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ).await?;
+        Ok::<_, std::io::Error>(lines)
+    });
+    let refreshed = plugins.sync_available(SyncAvailablePluginsRequest {})?;
+    let request = tokio::time::timeout(std::time::Duration::from_secs(5), challenge).await???;
+    assert!(request.starts_with("CONNECT github.com:443 "));
+    assert_eq!(
+        refreshed.failed_sources,
+        vec![MarketplaceSourceSyncFailure {
+            url: THIRD_PARTY_CANONICAL.to_owned(),
+            message: "proxy authentication failed (HTTP 407)".to_owned(),
+        }],
     );
     Ok(())
 }

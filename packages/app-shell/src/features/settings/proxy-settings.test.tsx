@@ -57,6 +57,70 @@ function renderProxy(
   );
 }
 
+it("shows the Windows WPAD limitation only while System is selected", async () => {
+  const state = createFixtureState();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  const mode = await screen.findByLabelText(/代理模式|Proxy mode/);
+  expect(
+    screen.getByText(
+      /自动检测时将直连.*WPAD|automatic detection enabled.*directly.*WPAD/,
+    ),
+  ).toBeVisible();
+  await user.selectOptions(mode, "direct");
+  expect(screen.queryByText(/WPAD/)).not.toBeInTheDocument();
+});
+
+it("loads a retained manual endpoint only when selecting Manual and can replace a corrupt one", async () => {
+  const state = createFixtureState();
+  state.proxyMode = "system";
+  const handlers = createFixtureHandlers(state);
+  const get = vi.fn<NonNullable<typeof handlers.getProxySettings>>(
+    async ({ loadManual }) => {
+      if (loadManual) throw new Error("invalid stored endpoint");
+      return { mode: "system", settings: null };
+    },
+  );
+  renderProxy(createTestClient({ ...handlers, getProxySettings: get }));
+  const user = userEvent.setup();
+  const mode = await screen.findByLabelText(/代理模式|Proxy mode/);
+  expect(get.mock.calls.map(([request]) => request)).toEqual([{}]);
+  await user.selectOptions(mode, "manual");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /无法读取保留的手动代理配置|Could not read the saved manual proxy/,
+  );
+  expect(get.mock.calls.at(-1)?.[0]).toEqual({ loadManual: true });
+  await user.type(screen.getByLabelText(/主机|Host/), "proxy.example");
+  await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.click(screen.getByRole("button", { name: /^保存$|^Save$/ }));
+  await waitFor(() => expect(state.proxySettings?.host).toBe("proxy.example"));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("defaults to system and keeps the saved endpoint when switching modes", async () => {
+  const state = createFixtureState();
+  const client = createTestClient(createFixtureHandlers(state));
+  const user = userEvent.setup();
+  const first = renderProxy(client);
+  const modeLabel = /代理模式|Proxy mode/;
+  expect(await screen.findByLabelText(modeLabel)).toHaveValue("system");
+  await user.selectOptions(screen.getByLabelText(modeLabel), "manual");
+  await user.type(screen.getByLabelText(/主机|Host/), "proxy.example");
+  await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() => expect(state.proxySettings?.host).toBe("proxy.example"));
+
+  await user.selectOptions(screen.getByLabelText(modeLabel), "direct");
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() => expect(state.proxyMode).toBe("direct"));
+  first.unmount();
+
+  renderProxy(client);
+  expect(await screen.findByLabelText(modeLabel)).toHaveValue("direct");
+  await user.selectOptions(screen.getByLabelText(modeLabel), "manual");
+  expect(screen.getByLabelText(/主机|Host/)).toHaveValue("proxy.example");
+});
+
 it("saves proxy settings through the backend", async () => {
   const state = createFixtureState();
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -65,6 +129,10 @@ it("saves proxy settings through the backend", async () => {
 
   renderProxy(client);
 
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
   await user.type(await screen.findByLabelText(/主机|Host/), "127.0.0.1");
   await user.type(screen.getByLabelText(/端口|Port/), "7890");
   await user.click(screen.getByRole("button", { name: /保存|Save/ }));
@@ -121,7 +189,7 @@ it("blocks editing on read failure and restores saved values after retry", async
   await screen.findByRole("alert");
   expect(screen.queryByLabelText(/主机|Host/)).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: /保存|Save/ }),
+    screen.queryByRole("button", { name: /^保存$|^Save$/ }),
   ).not.toBeInTheDocument();
   expect(state.proxySettings?.host).toBe("saved.example");
   failing = false;
@@ -131,6 +199,37 @@ it("blocks editing on read failure and restores saved values after retry", async
   );
   expect(screen.getByLabelText(/密码|Password/)).toHaveValue("secret");
 });
+
+it.each(["save", "clear"])(
+  "can %s after explicitly replacing an unreadable preference",
+  async (action) => {
+    const state = createFixtureState();
+    const handlers = createFixtureHandlers(state);
+    handlers.getProxySettings = () =>
+      Promise.reject(new Error("unknown stored mode"));
+    const client = createTestClient(handlers);
+    const user = userEvent.setup();
+    renderProxy(client);
+    await screen.findByRole("alert");
+    const write = vi.spyOn(client.proxy, action === "save" ? "set" : "clear");
+    await user.click(
+      screen.getByRole("button", {
+        name: /替换已保存的代理配置|Replace saved proxy settings/,
+      }),
+    );
+    expect(write).not.toHaveBeenCalled();
+    const mode = screen.getByLabelText(/代理模式|Proxy mode/);
+    if (action === "save") await user.selectOptions(mode, "direct");
+    await user.click(
+      screen.getByRole("button", {
+        name: action === "save" ? /^保存$|^Save$/ : /^清空$|^Clear$/,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(state.proxyMode).toBe(action === "save" ? "direct" : "system");
+    expect(write).toHaveBeenCalledTimes(1);
+  },
+);
 
 it("clears saved proxy settings through the backend", async () => {
   const state = createFixtureState();
@@ -151,6 +250,89 @@ it("clears saved proxy settings through the backend", async () => {
   await waitFor(() => expect(state.proxySettings).toBeNull());
 });
 
+it("resets persisted direct mode even without a saved manual endpoint", async () => {
+  const state = createFixtureState();
+  state.proxyMode = "direct";
+  const client = createTestClient(createFixtureHandlers(state));
+  const user = userEvent.setup();
+  const first = renderProxy(client);
+
+  expect(await screen.findByLabelText(/代理模式|Proxy mode/)).toHaveValue(
+    "direct",
+  );
+  await user.click(screen.getByRole("button", { name: /清空|Clear/ }));
+  await waitFor(() =>
+    expect(screen.getByLabelText(/代理模式|Proxy mode/)).toHaveValue("system"),
+  );
+  first.unmount();
+  renderProxy(client);
+  expect(await screen.findByLabelText(/代理模式|Proxy mode/)).toHaveValue(
+    "system",
+  );
+});
+
+it("discards a manual draft when clearing an already-default configuration", async () => {
+  const state = createFixtureState();
+  const user = userEvent.setup();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+
+  const modeLabel = /代理模式|Proxy mode/;
+  await user.selectOptions(await screen.findByLabelText(modeLabel), "manual");
+  await user.type(screen.getByLabelText(/主机|Host/), "draft.example");
+  await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.click(screen.getByRole("button", { name: /清空|Clear/ }));
+
+  await waitFor(() =>
+    expect(screen.getByLabelText(modeLabel)).toHaveValue("system"),
+  );
+  await user.selectOptions(screen.getByLabelText(modeLabel), "manual");
+  expect(screen.getByLabelText(/主机|Host/)).toHaveValue("");
+  expect(screen.getByLabelText(/端口|Port/)).toHaveValue("");
+  expect(state.proxySettings).toBeNull();
+});
+
+it("keeps the saved mode when an older background read completes", async () => {
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  const getSettings = handlers.getProxySettings!;
+  let resolveRead: (() => void) | undefined;
+  let delayRead = false;
+  handlers.getProxySettings = async (request) => {
+    const result = await getSettings(request);
+    if (delayRead) {
+      await new Promise<void>((resolve) => {
+        resolveRead = resolve;
+      });
+    }
+    return result;
+  };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const user = userEvent.setup();
+  renderProxy(createTestClient(handlers), queryClient);
+  const modeLabel = /代理模式|Proxy mode/;
+  await user.selectOptions(await screen.findByLabelText(modeLabel), "direct");
+  delayRead = true;
+  act(() => {
+    void queryClient.refetchQueries({ queryKey: settingsKeys.proxySettings });
+  });
+  await waitFor(() => expect(resolveRead).toBeDefined());
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  await waitFor(() =>
+    expect(queryClient.getQueryData(settingsKeys.proxySettings)).toMatchObject({
+      mode: "direct",
+    }),
+  );
+  await act(async () => {
+    resolveRead!();
+  });
+  expect(queryClient.getQueryData(settingsKeys.proxySettings)).toMatchObject({
+    mode: "direct",
+  });
+  expect(screen.getByLabelText(modeLabel)).toHaveValue("direct");
+});
+
 it("checks the current form proxy against a URL", async () => {
   const state = createFixtureState();
   const clientHandlers: TestHandlers = createFixtureHandlers(state);
@@ -160,6 +342,10 @@ it("checks the current form proxy against a URL", async () => {
 
   renderProxy(client);
 
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
   await user.type(await screen.findByLabelText(/主机|Host/), "127.0.0.1");
   await user.type(screen.getByLabelText(/端口|Port/), "7890");
   await user.click(
@@ -222,7 +408,11 @@ it("retains the draft and blocks actions during a production reconnect read fail
   });
   await screen.findByRole("alert", {}, { timeout: 5000 });
   expect(screen.getByLabelText(/主机|Host/)).toHaveValue("draft.example");
-  for (const name of [/保存|Save/, /清空|Clear/, /验证代理|Check connection/]) {
+  for (const name of [
+    /^保存$|^Save$/,
+    /清空|Clear/,
+    /验证代理|Check connection/,
+  ]) {
     const button = screen.getByRole("button", { name });
     expect(button).toBeDisabled();
     await user.click(button);
@@ -344,6 +534,110 @@ it("reports an unreachable probe as connectivity without changing saved settings
   expect(state.proxySettings).toEqual(saved);
   expect(set).not.toHaveBeenCalled();
   expect(clear).not.toHaveBeenCalled();
+  expect(dialog).toBeInTheDocument();
+});
+
+it("tests an edited URL using an unsaved proxy draft", async () => {
+  const testUrl = "https://example.com/probe";
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  handlers.checkProxySettings = () =>
+    Promise.resolve({ outcome: "reachable", status: 200, route: "manual" });
+  const client = createTestClient(handlers);
+  const check = vi.spyOn(client.proxy, "check");
+  const save = vi.spyOn(client.proxy, "set");
+  const user = userEvent.setup();
+  renderProxy(client);
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
+  await user.type(screen.getByLabelText(/主机|Host/), "https://proxy.example");
+  await user.type(screen.getByLabelText(/端口|Port/), "7890");
+  await user.click(
+    screen.getByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    within(dialog).getByText(/未保存的设置|uses unsaved settings/),
+  ).toBeInTheDocument();
+  const urlInput = within(dialog).getByLabelText(/探测网址|URL to check/);
+  await user.clear(urlInput);
+  await user.type(urlInput, testUrl);
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(check).toHaveBeenCalledWith({
+    url: testUrl,
+    settings: {
+      host: "https://proxy.example",
+      port: 7890,
+      username: null,
+      password: null,
+    },
+  });
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("warns when an HTTP success bypasses the manual proxy", async () => {
+  const state = createFixtureState();
+  state.proxySettings = {
+    host: "proxy.example",
+    port: 3128,
+    username: null,
+    password: null,
+  };
+  const handlers = createFixtureHandlers(state);
+  handlers.checkProxySettings = () =>
+    Promise.resolve({ outcome: "reachable", status: 200, route: "direct" });
+  const warning = vi.spyOn(toast, "warning");
+  const success = vi.spyOn(toast, "success");
+  const user = userEvent.setup();
+  renderProxy(createTestClient(handlers));
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() =>
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringMatching(/最终请求走了直连|connected directly/),
+      { description: expect.stringMatching(/HTTP.*200/) },
+    ),
+  );
+  expect(success).not.toHaveBeenCalled();
+  expect(dialog).toBeInTheDocument();
+});
+
+it("shows the destination HTTP status without reporting a successful check", async () => {
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  handlers.checkProxySettings = () =>
+    Promise.resolve({ outcome: "http_error", status: 404 });
+  const report = vi.spyOn(toast, "error");
+  const success = vi.spyOn(toast, "success");
+  const user = userEvent.setup();
+  renderProxy(createTestClient(handlers));
+
+  await user.click(
+    await screen.findByRole("button", { name: /验证代理|Check connection/ }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    within(dialog).getByRole("button", { name: /^验证$|^Check$/ }),
+  );
+  await waitFor(() =>
+    expect(report).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /未返回成功状态|did not return a successful status/,
+      ),
+      { description: expect.stringMatching(/HTTP.*404/) },
+    ),
+  );
+  expect(success).not.toHaveBeenCalled();
   expect(dialog).toBeInTheDocument();
 });
 

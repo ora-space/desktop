@@ -26,6 +26,9 @@ pub enum DownloadError {
     /// A connection-level failure while talking to `url`.
     #[error("network error downloading {url}: {source}")]
     Network { url: Url, source: io::Error },
+    /// A proxy rejected the connection or its configuration could not be resolved.
+    #[error(transparent)]
+    Proxy(#[from] super::HostProxyError),
     /// The remote `url` answered with an unexpected HTTP status.
     #[error("download of {url} returned HTTP status {status}")]
     HttpStatus { url: Url, status: u16 },
