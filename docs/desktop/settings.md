@@ -64,12 +64,17 @@ and shows the final route. Other HTTP responses show the status, and HTTP 407 re
 authentication failure.
 Enter a hostname or paste a full proxy address into the Host field. For example,
 `http://127.0.0.1:7890/` fills in the host and fills in the port if the Port field is empty.
-If a different port is already set, Ora keeps it and shows the port from the pasted address.
-Credentials in the address move to the Username and Password fields. HTTP is the default.
+If a different port is already set, Ora keeps it and shows the port from the pasted address,
+along with any error for the current port. If the address has no port and the Port field is
+empty, enter a port before checking or saving. Credentials in the address move to the Username
+and Password fields.
+Pasting a URL preserves explicitly encoded username spaces and literal percent signs in credentials.
+HTTP is the default.
 The `https://`, `socks5://`, and `socks5h://` prefixes are kept, and `https://` uses TLS to
 connect to the proxy itself. A trailing slash is allowed. Paths, query strings, fragments,
-and other schemes are rejected. Saving validates the address and stores the normalized host,
-port, and credentials in separate fields.
+and other schemes are rejected. Internationalized SOCKS hostnames are converted to ASCII for
+DNS. Saving validates the address and stores the normalized host, port, and credentials in
+separate fields.
 Checking uses the current form and Desktop updates use
 saved settings. In manual mode, a final direct response cannot confirm the proxy.
 
