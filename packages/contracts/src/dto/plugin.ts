@@ -53,7 +53,7 @@ export type AvailablePlugin =
      * Two sources may publish the same `identifier`, and both listings then appear side by side.
      * Every other field on the card — title, description, icon — comes from a manifest either
      * repository can copy verbatim, and `namespace` is a digest-suffixed slug that means nothing
-     * to a reader, so this is the only field that lets the user tell the two cards apart.
+     * to a reader. The UI displays `origin` to distinguish these cards and uses `source_url` for search.
      */
     sourceUrl: string;
     /**
