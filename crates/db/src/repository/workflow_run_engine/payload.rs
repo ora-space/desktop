@@ -173,7 +173,10 @@ pub(super) fn reset_run_execution_state(
         return Ok(());
     };
     let mut payload: WorkflowRunPayload = serde_json::from_str(serialized_payload)?;
-    if payload.variable_pool.catalog.is_empty() && payload.condition_decisions.is_empty() {
+    if payload.variable_pool.catalog.is_empty()
+        && payload.condition_decisions.is_empty()
+        && payload.debug_parked_withdrawals.is_empty()
+    {
         return Ok(());
     }
     let start_writer = resolve_start_writer(&payload);
@@ -193,6 +196,9 @@ pub(super) fn reset_run_execution_state(
     // decisions reset with it (ADR "iteration composite runtime" D5).
     payload.iteration_ledger.clear();
     payload.iteration_condition_decisions.clear();
+    // Withdrawals parked by a debug edit on the old root are moot: every value they named is
+    // gone, and keeping them would retire the new root's results on a later recovery.
+    payload.debug_parked_withdrawals.clear();
     transaction.execute(
         "UPDATE workflow_runs SET payload = ?2 WHERE id = ?1 AND is_deleted = 0",
         params![run_id.as_ref(), serde_json::to_string(&payload)?],

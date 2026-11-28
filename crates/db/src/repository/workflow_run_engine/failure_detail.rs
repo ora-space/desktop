@@ -131,14 +131,15 @@ pub(super) fn fail_orphaned_run(
         return Ok(());
     }
     let nodes = {
-        // A Loop round reopened by an applied debug edit has nothing in flight: it waits for its
-        // first dispatch, which ordinary recovery performs after the run's interrupted work.
+        // A Loop round or foreach item reopened by an applied debug edit has nothing in flight:
+        // it waits for its first dispatch, which ordinary recovery performs after the run's
+        // interrupted work.
         let mut statement = transaction.prepare(&format!(
             "SELECT id, node_id, payload FROM workflow_node_runs
              WHERE run_id = ?1 AND status IN (?2, ?3) AND is_deleted = 0
                AND id NOT IN (SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1)
                AND id NOT IN ({reopened})",
-            reopened = crate::workflow_debug::REOPENED_LOOPS
+            reopened = crate::workflow_debug::REOPENED_CONTAINERS
         ))?;
         let rows = statement.query_map(
             params![
@@ -189,7 +190,7 @@ pub(super) fn fail_orphaned_run(
                AND parent_loop_node_run_id NOT IN (SELECT id FROM workflow_debug_boot_protected WHERE run_id=?1)
                AND parent_loop_node_run_id NOT IN ({reopened})
                AND status IN (0, 1)",
-            reopened = crate::workflow_debug::REOPENED_LOOPS
+            reopened = crate::workflow_debug::REOPENED_CONTAINERS
         ),
         params![
             run_id.as_ref(),

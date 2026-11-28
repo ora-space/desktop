@@ -231,12 +231,8 @@ pub(in crate::workflow::run) fn settle(
             [&preview.preview_id],
             |row| row.get::<_, bool>(0),
         )?;
-    if is_foreach {
-        foreach::restore(transaction, preview)
-            .map_err(|error| ora_db::DatabaseError::ForeachProjection(Box::new(error)))?;
-    } else if preview.target.round.is_some() {
-        ora_db::workflow_debug::restore_while_round(transaction, preview)?;
-    }
+    // The same writers leave the root pool whether the run is running now or later: their
+    // attempts, and for a round edit every position the replay reschedules.
     let mut retired = BTreeSet::new();
     let ids = serde_json::to_string(&preview.impact.invalidate)?;
     let mut writers = transaction.prepare("SELECT DISTINCT node_id FROM workflow_node_runs WHERE run_id=?1 AND id IN (SELECT value FROM json_each(?2))")?;
@@ -246,25 +242,38 @@ pub(in crate::workflow::run) fn settle(
     if preview.target.round.is_some() {
         retired.extend(preview.impact.schedule.iter().cloned());
     }
+    if is_foreach {
+        foreach::restore(transaction, preview)
+            .map_err(|error| ora_db::DatabaseError::ForeachProjection(Box::new(error)))?;
+    } else if preview.target.round.is_some() {
+        ora_db::workflow_debug::restore_while_round(transaction, preview, &retired)?;
+    }
     transaction.execute("UPDATE workflow_node_runs SET is_deleted=1,updated_at=?3 WHERE run_id=?1 AND is_deleted=0 AND id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now))?;
     transaction.execute("UPDATE workflow_execution_scopes SET status=?4,updated_at=?3 WHERE run_id=?1 AND status IN (?5,?6) AND parent_loop_node_run_id IN (SELECT value FROM json_each(?2))", (run_id,&ids,now,WorkflowScopeStatus::Cancelled.database_value(),WorkflowScopeStatus::Pending.database_value(),WorkflowScopeStatus::Running.database_value()))?;
     if is_foreach || retired.is_empty() {
         return Ok(());
     }
-    // A run that ended independently during quiescence keeps its terminal projection.
-    // Terminal-sourced edits have already reopened their run in this transaction.
-    let raw: Option<String> = transaction.query_row(
-        "SELECT CASE WHEN run_status=?2 THEN payload END FROM workflow_runs WHERE id=?1",
+    // Terminal-sourced edits have already reopened their run in this transaction. A run that
+    // ended independently during quiescence keeps its terminal projection; the withdrawal waits
+    // for the entry point that makes the run schedulable again (ordinary recovery or a debug
+    // edit reopening it). A round edit parked the withdrawal with its round reopen instead.
+    let (raw, running): (Option<String>, bool) = transaction.query_row(
+        "SELECT payload, run_status=?2 FROM workflow_runs WHERE id=?1",
         (run_id, WorkflowRunStatus::Running.database_value()),
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    if let Some(raw) = raw {
-        let mut payload: WorkflowRunPayload = serde_json::from_str(&raw)?;
+    let Some(raw) = raw.filter(|_| running || preview.target.round.is_none()) else {
+        return Ok(());
+    };
+    let mut payload: WorkflowRunPayload = serde_json::from_str(&raw)?;
+    if running {
         payload.withdraw_writers(&retired);
-        transaction.execute(
-            "UPDATE workflow_runs SET payload=?1 WHERE id=?2",
-            [serde_json::to_string(&payload)?.as_str(), run_id],
-        )?;
+    } else {
+        payload.debug_parked_withdrawals.extend(retired);
     }
+    transaction.execute(
+        "UPDATE workflow_runs SET payload=?1 WHERE id=?2",
+        [serde_json::to_string(&payload)?.as_str(), run_id],
+    )?;
     Ok(())
 }

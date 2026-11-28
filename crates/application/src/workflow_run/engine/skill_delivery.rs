@@ -68,6 +68,12 @@ pub struct WorkflowRunPayload {
     /// agent-behaviour failure. Older payloads without this key deserialize as on.
     #[serde(default = "default_inject_last_failure")]
     pub inject_last_failure: bool,
+    /// Writers whose committed projections a run-local debug edit retired while the run was
+    /// already terminal. The terminal projection stays as the run ended; the entry point that
+    /// next makes the run schedulable withdraws them before dispatching (see
+    /// [`Self::withdraw_parked`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub debug_parked_withdrawals: std::collections::BTreeSet<String>,
 }
 
 /// Older run payloads omitted this switch; treating them as on preserves the current default.
@@ -106,6 +112,18 @@ impl WorkflowRunPayload {
         });
     }
 
+    /// Performs the withdrawal a debug edit parked on a terminal run and forgets it, so a later
+    /// failure and recovery cannot withdraw a newer result of the same writers. Returns whether
+    /// anything was parked.
+    pub fn withdraw_parked(&mut self) -> bool {
+        let parked = std::mem::take(&mut self.debug_parked_withdrawals);
+        if parked.is_empty() {
+            return false;
+        }
+        self.withdraw_writers(&parked);
+        true
+    }
+
     /// Creates the immutable execution metadata captured while the run is initialized.
     pub fn new(locale: WorkflowRunLocale, skill_receipt: WorkflowSkillReceipt) -> Self {
         Self {
@@ -117,6 +135,7 @@ impl WorkflowRunPayload {
             iteration_ledger: BTreeMap::new(),
             iteration_condition_decisions: BTreeMap::new(),
             inject_last_failure: true,
+            debug_parked_withdrawals: Default::default(),
         }
     }
 
@@ -136,6 +155,7 @@ impl WorkflowRunPayload {
             iteration_ledger: BTreeMap::new(),
             iteration_condition_decisions: BTreeMap::new(),
             inject_last_failure: true,
+            debug_parked_withdrawals: Default::default(),
         }
     }
 

@@ -244,9 +244,28 @@ fn self_failed_stop_then_terminal_edit_uses_fresh_baseline() {
         assert_eq!(f.run_status(), WorkflowRunStatus::Failed);
         assert_eq!(dispatched(&f.executor, "x"), 1);
 
+        // The terminal projection is unchanged. The retired writer is only parked for the entry
+        // point that reopens the run; `recovery_races` covers its withdrawal there.
+        let mut parked: serde_json::Value = serde_json::from_str(
+            repository
+                .find_run(&f.run_id)
+                .unwrap()
+                .unwrap()
+                .payload
+                .as_deref()
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
-            repository.find_run(&f.run_id).unwrap().unwrap().payload,
-            failed.payload
+            parked
+                .as_object_mut()
+                .unwrap()
+                .remove("debugParkedWithdrawals"),
+            Some(json!(["x"]))
+        );
+        assert_eq!(
+            parked,
+            serde_json::from_str::<serde_json::Value>(failed.payload.as_deref().unwrap()).unwrap()
         );
 
         let second = f.preview(original_s.id.as_ref(), 1);

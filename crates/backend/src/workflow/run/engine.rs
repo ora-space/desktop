@@ -308,7 +308,7 @@ pub(crate) fn reconcile_running_workflow_runs(
             .and_then(|mut ids| {
                 ids.extend(
                     ora_db::workflow_debug::WorkflowDebugStore::new(pool.clone())
-                        .reopened_loops(run_id.as_ref())
+                        .reopened_containers(run_id.as_ref())
                         .map_err(ora_application::RepositoryError::new)?,
                 );
                 Ok(ids)

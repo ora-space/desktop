@@ -1,16 +1,48 @@
 use super::*;
 use ora_domain::WorkflowNodeRunId;
 
-/// Selects the reopened Loop owners of run `?1`; see [`WorkflowDebugStore::reopened_loops`]. The
-/// boot failure path embeds the same query, so the exemption cannot drift between the two.
-pub(crate) const REOPENED_LOOPS: &str = "SELECT owner.id FROM workflow_node_runs owner
-    JOIN workflow_execution_scopes s ON s.parent_loop_node_run_id = owner.id AND s.status = 1
-    WHERE owner.run_id = ?1 AND owner.node_type = 'loop' AND owner.status = 1 AND owner.is_deleted = 0
-      AND EXISTS (SELECT 1 FROM workflow_debug_round_history h
-                  JOIN workflow_debug_operations o ON o.id = h.operation_id
-                  WHERE h.scope_id = s.id AND o.state = 'applied')
-      AND NOT EXISTS (SELECT 1 FROM workflow_node_runs n
-                      WHERE n.scope_id = s.id AND n.is_deleted = 0 AND n.status IN (0, 1))";
+/// Selects run `?1`'s container owners (Loop or Iteration) that an applied debug edit reopened
+/// and that have not dispatched anything since; see [`WorkflowDebugStore::reopened_containers`].
+/// The boot failure path embeds the same query, so the exemption cannot drift between the two.
+///
+/// "Since" is anchored on revisions: every attempt is bound at admission to the run revision then
+/// in effect and to its container (`workflow_debug_attempts`). A child at or above the newest
+/// reopening edit's revision was dispatched after that reopen, and a pending or running child is
+/// work in flight; either one makes the container ordinary interrupted work again (while D6).
+pub(crate) const REOPENED_CONTAINERS: &str = "SELECT owner.id FROM workflow_node_runs owner
+    JOIN (SELECT json_extract(p.plan, '$.target.containerNodeRunId') AS owner_id,
+                 MAX(o.revision) AS revision
+          FROM workflow_debug_operations o JOIN workflow_debug_previews p ON p.id = o.preview_id
+          WHERE o.run_id = ?1 AND o.state = 'applied' GROUP BY 1) reopened
+      ON reopened.owner_id = owner.id
+    WHERE owner.run_id = ?1 AND owner.node_type IN ('loop', 'iteration') AND owner.status = 1
+      AND owner.is_deleted = 0
+      AND NOT EXISTS (SELECT 1 FROM workflow_debug_attempts a
+                      JOIN workflow_node_runs child ON child.id = a.node_run_id
+                      WHERE a.container_attempt = owner.id AND child.is_deleted = 0
+                        AND (child.status IN (0, 1) OR a.revision >= reopened.revision))";
+
+/// Performs the root-pool withdrawal earlier edits parked on a terminal run, before a debug
+/// edit reopens that run and its scheduler reads the pool.
+pub(crate) fn resume_parked_withdrawals(
+    tx: &Transaction<'_>,
+    run: &str,
+) -> Result<(), DatabaseError> {
+    let raw: Option<String> = tx.query_row(
+        "SELECT payload FROM workflow_runs WHERE id=?1",
+        [run],
+        |r| r.get(0),
+    )?;
+    let Some(raw) = raw else { return Ok(()) };
+    let mut payload: ora_application::WorkflowRunPayload = serde_json::from_str(&raw)?;
+    if payload.withdraw_parked() {
+        tx.execute(
+            "UPDATE workflow_runs SET payload=?2 WHERE id=?1",
+            params![run, serde_json::to_string(&payload)?],
+        )?;
+    }
+    Ok(())
+}
 
 impl WorkflowDebugStore {
     /// A parked independent node is not a reason to skip resuming committed debug work at boot.
@@ -56,21 +88,21 @@ impl WorkflowDebugStore {
         Ok(())
     }
 
-    /// Running Loop owners whose active round an applied edit reopened and whose new attempts
+    /// Container owners whose round or item an applied edit reopened and whose new attempts
     /// were never claimed (ADR "debug from a selected execution" D5.5).
     ///
     /// A Running Loop row normally means a round was executing, and a restart fails it (while
-    /// D6). A reopened round without any pending or running row has no work in flight: its
-    /// positions are still to be dispatched, so boot must neither fail it as interrupted nor
-    /// leave the run inert. The round may be parked behind a terminal run (the reverse race) or
-    /// awaiting dispatch in a running one.
-    pub fn reopened_loops(
+    /// D6); an Iteration fails with the run's interrupted outer work. A reopened container that
+    /// has not dispatched since has no work in flight: its positions are still to be dispatched,
+    /// so boot must neither fail it as interrupted nor leave the run inert. It may be parked
+    /// behind a terminal run (the reverse race) or awaiting dispatch in a running one.
+    pub fn reopened_containers(
         &self,
         run: &str,
     ) -> Result<std::collections::HashSet<WorkflowNodeRunId>, DatabaseError> {
         self.pool.with_connection(|db| {
             Ok(db
-                .prepare(REOPENED_LOOPS)?
+                .prepare(REOPENED_CONTAINERS)?
                 .query_map([run], |r| {
                     Ok(WorkflowNodeRunId::new(r.get::<_, String>(0)?))
                 })?

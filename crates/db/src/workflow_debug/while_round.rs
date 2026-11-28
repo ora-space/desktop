@@ -5,11 +5,14 @@
 //! round reopen is then parked on the Loop owner and performed by whichever entry point next makes
 //! the run schedulable: ordinary failure recovery, or a later debug edit reopening the run.
 //! Reopening there, instead of leaving the old slots active, keeps a later round from continuing
-//! with the carried value of a retired attempt (ADR D4, invariant 3).
+//! with the carried value of a retired attempt (ADR D4, invariant 3). The parked record also
+//! carries the root-pool withdrawal the running path performs at apply (the Loop's exports and
+//! its downstream), so nothing outside the Loop reads a retired result either.
 use super::{DebugRejection, Transaction, WorkflowDebugImpact};
 use crate::DatabaseError;
-use ora_application::LoopRoundExecutionState;
+use ora_application::{LoopRoundExecutionState, WorkflowRunPayload};
 use ora_contracts::WorkflowDebugPreview;
+use ora_logging::ora_warn;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
@@ -17,7 +20,8 @@ use std::collections::{BTreeSet, HashSet};
 /// Owner-row payload key holding round reopens parked by a terminal run.
 const PARKED: &str = "$.debugWhileReplays";
 
-/// One confirmed round reopen: the round to replay and the attempts whose results it withdraws.
+/// One confirmed round reopen: the round to replay, the attempts whose results it withdraws
+/// inside the round, and the writers whose root-pool projections it withdraws.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WhileReplay {
@@ -26,12 +30,18 @@ struct WhileReplay {
     round: u32,
     invalidate: Vec<String>,
     schedule: Vec<String>,
+    #[serde(default)]
+    withdraw: BTreeSet<String>,
 }
 
 /// Archive the affected slots even if a sibling terminated the run while its writers stopped.
+///
+/// `withdraw` names the writers whose root-pool projections this edit retires. A running run
+/// withdraws them in the caller's same transaction; a terminal run parks them with the round.
 pub fn restore_while_round(
     tx: &Transaction<'_>,
     preview: &WorkflowDebugPreview,
+    withdraw: &BTreeSet<String>,
 ) -> Result<(), DatabaseError> {
     let owner = preview
         .target
@@ -61,6 +71,7 @@ pub fn restore_while_round(
         round,
         invalidate: preview.impact.invalidate.clone(),
         schedule: preview.impact.schedule.clone(),
+        withdraw: withdraw.clone(),
     };
     let running: bool = tx.query_row(
         "SELECT r.run_status = 1 FROM workflow_runs r
@@ -93,7 +104,31 @@ pub(crate) fn resume_while_replays(
     let parked = parked_replays(tx, run, retiring)?;
     for (owner, replays) in parked {
         for replay in replays {
+            if !replay.is_current(tx, &owner)? {
+                // The Loop advanced without this reopen (for example under a build that did
+                // not know the record). Reopening now would rewind settled rounds whose slots
+                // carry no history for this operation.
+                ora_warn!(
+                    run_id = %run,
+                    loop_node_run_id = %owner,
+                    operation_id = replay.operation_id,
+                    round = replay.round,
+                    "dropping a parked while round reopen that no longer matches its Loop"
+                );
+                continue;
+            }
             replay.reopen(tx, &owner)?;
+            let raw: String = tx.query_row(
+                "SELECT payload FROM workflow_runs WHERE id = ?1",
+                [run],
+                |row| row.get(0),
+            )?;
+            let mut payload: WorkflowRunPayload = serde_json::from_str(&raw)?;
+            payload.withdraw_writers(&replay.withdraw);
+            tx.execute(
+                "UPDATE workflow_runs SET payload = ?2 WHERE id = ?1",
+                params![run, serde_json::to_string(&payload)?],
+            )?;
         }
         tx.execute(
             &format!(
@@ -147,6 +182,26 @@ fn parked_replays(
 }
 
 impl WhileReplay {
+    /// Whether the Loop still stands where this edit left it: the edited round is the active or
+    /// the last settled round, and every later slot is attributed to this operation.
+    fn is_current(&self, tx: &Transaction<'_>, owner: &str) -> Result<bool, DatabaseError> {
+        Ok(tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM workflow_execution_scopes s
+                 WHERE s.id = ?2 AND s.parent_loop_node_run_id = ?1 AND s.round_index = ?3
+                   AND ?3 IN (
+                       (SELECT MAX(round_index) FROM workflow_execution_scopes
+                        WHERE parent_loop_node_run_id = ?1 AND status = 1),
+                       (SELECT MAX(round_index) FROM workflow_execution_scopes
+                        WHERE parent_loop_node_run_id = ?1 AND status = 2))
+                   AND NOT EXISTS (SELECT 1 FROM workflow_execution_scopes later
+                       WHERE later.parent_loop_node_run_id = ?1 AND later.round_index > ?3
+                         AND NOT EXISTS (SELECT 1 FROM workflow_debug_round_history h
+                                         WHERE h.scope_id = later.id AND h.operation_id = ?4)))",
+            params![owner, self.scope_id, self.round, self.operation_id],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Archive the later slots, reopen the selected round without the retired results, and put
     /// the Loop owner back to running so the scheduler dispatches the round's new attempts.
     fn reopen(&self, tx: &Transaction<'_>, owner: &str) -> Result<(), DatabaseError> {

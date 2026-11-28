@@ -112,6 +112,9 @@ pub(super) fn resume_from_failure(
                 .collect::<BTreeSet<_>>();
             let mut payload: WorkflowRunPayload = serde_json::from_str(&serialized_payload)?;
             payload.withdraw_writers(&cleared_writers);
+            // A debug edit that applied while the run was terminal retired these writers'
+            // results; recovery is the point at which they leave the projection.
+            payload.withdraw_parked();
             transaction.execute(
                 "UPDATE workflow_runs SET payload = ?2 WHERE id = ?1 AND is_deleted = 0",
                 params![run_id.as_ref(), serde_json::to_string(&payload)?],

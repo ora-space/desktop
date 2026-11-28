@@ -35,7 +35,14 @@ use std::sync::Arc;
 /// sweep skips the attempts and containers that the confirmation fences, then the confirmation
 /// applies or records a failed stop (ADR "debug from a selected execution" D5.5). An applied
 /// confirmation reopens its round, item or terminal run without dispatching, so it must not be
-/// swept as interrupted work; reconcile then dispatches its unclaimed positions.
+/// swept as interrupted work; reconcile then dispatches its unclaimed positions. A container it
+/// reopened stays exempt from the sweep only until something is dispatched in it again.
+///
+/// If out-of-scope work was interrupted too, the sweep fails the run as before
+/// (`interrupted_by_restart`); the confirmation then applies to the failed run, keeps its edit
+/// parked, and ordinary recovery performs it. If sweeping one run fails, its confirmation is
+/// deliberately left `stopping`, so the fence keeps holding and the next boot sweeps first again;
+/// until then that run does nothing in this process and can only be cancelled.
 pub(crate) fn run_workflow_run_boot_sweep(
     pool: &RepositoryPool,
     engine: &Arc<ConcreteWorkflowRunEngine>,
@@ -58,12 +65,12 @@ pub(crate) fn run_workflow_run_boot_sweep(
         // finish it. Its apply reopens the selected round or item (and a terminal run) without
         // dispatching yet; sweeping afterwards would fail that reopened, never-dispatched work as
         // interrupted and rewrite the run's outcome to `interrupted_by_restart`.
-        // A round reopened by an edit applied before this boot has not been dispatched yet; it
-        // is not interrupted work either.
+        // A round or item reopened by an edit applied before this boot, and not dispatched
+        // since, is not interrupted work either.
         let protected = match store
             .protected_attempts(run_id.as_ref())
             .and_then(|mut ids| {
-                ids.extend(store.reopened_loops(run_id.as_ref())?);
+                ids.extend(store.reopened_containers(run_id.as_ref())?);
                 Ok(ids)
             }) {
             Ok(ids) => ids,

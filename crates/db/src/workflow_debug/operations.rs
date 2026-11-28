@@ -120,6 +120,7 @@ impl WorkflowDebugStore {
                 ],
             )?;
             if reopened == 1 {
+                resume_parked_withdrawals(&tx, run)?;
                 resume_foreach_replays(&tx, run, &entry.preview.impact.invalidate)?;
                 resume_while_replays(&tx, run, &entry.preview.impact.invalidate)?;
             }

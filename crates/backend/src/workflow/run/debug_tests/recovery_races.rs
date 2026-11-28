@@ -5,6 +5,9 @@ use super::super::test_fixture::DispatchRecord;
 use super::*;
 use pretty_assertions::assert_eq;
 
+mod boundaries;
+mod withdrawals;
+
 /// LOOP_GRAPH with five rounds and an independent root agent `outside`.
 fn five_rounds_with_outside() -> String {
     let mut graph: serde_json::Value =
@@ -554,9 +557,12 @@ fn an_ordinary_idle_loop_still_fails_at_restart() {
 #[test]
 fn crash_with_interrupted_independent_work_keeps_the_accepted_foreach_edit_for_recovery() {
     run_test(async {
-        let agent = json!({"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},
+        // The crash lands after acceptance, or after the apply commit reopened the Iteration
+        // but before its item was dispatched (M1 of review 1).
+        for applied_before_crash in [false, true] {
+            let agent = json!({"retry":{"enabled":false,"maxRetries":0,"initialDelaySeconds":0},
             "executor":{"agentCli":"c","modelId":"m"},"prompt":"old"});
-        let graph = json!({"nodes":[
+            let graph = json!({"nodes":[
             {"id":"start","data":{"kind":"start","inputVariables":[{"name":"items","valueType":"array[string]"}]}},
             {"id":"iter","data":{"kind":"iteration","iterationConfig":{
                 "iteratorSelector":["start","items"],"collectSelector":["member","output"],"errorStrategy":"fail"}}},
@@ -567,76 +573,90 @@ fn crash_with_interrupted_independent_work_keeps_the_accepted_foreach_edit_for_r
             {"source":"start","target":"outside"}
         ]})
         .to_string();
-        let f = Fixture::with_inputs(
-            Arc::new(NoSessions),
-            &graph,
-            [("items".to_string(), json!(["a", "b"]))].into(),
-        );
-        let mut second = None;
-        for value in ["A", "B"] {
-            let member = last_dispatch(&f.executor, "member");
-            f.store
-                .record_agent_dispatch(
-                    f.run_id.as_ref(),
-                    &member.node_run_id,
-                    &json!({"variablePool":member.variable_pool}),
-                )
+            let f = Fixture::with_inputs(
+                Arc::new(NoSessions),
+                &graph,
+                [("items".to_string(), json!(["a", "b"]))].into(),
+            );
+            let mut second = None;
+            for value in ["A", "B"] {
+                let member = last_dispatch(&f.executor, "member");
+                f.store
+                    .record_agent_dispatch(
+                        f.run_id.as_ref(),
+                        &member.node_run_id,
+                        &json!({"variablePool":member.variable_pool}),
+                    )
+                    .unwrap();
+                second = Some(member.node_run_id.clone());
+                f.engine
+                    .complete_node(
+                        &f.run_id,
+                        &WorkflowNodeRunId::new(member.node_run_id),
+                        Some(value.into()),
+                        None,
+                        None,
+                        vec![],
+                    )
+                    .unwrap();
+            }
+            assert_eq!(f.row("iter").status, WorkflowNodeStatus::Succeeded);
+            assert_eq!(f.run_status(), WorkflowRunStatus::Running);
+            let preview = f.prompt_preview(&second.unwrap(), 0, "new");
+            assert_eq!(
+                (preview.target.index, preview.impact.stop.clone()),
+                (Some(1), vec![])
+            );
+            f.store.claim(&f.commit_request(&preview, "crash")).unwrap();
+            if applied_before_crash {
+                f.store
+                    .apply_after_stop(f.run_id.as_ref(), "crash", 60, |tx, p| {
+                        super::super::debug::strategy::settle(tx, f.run_id.as_ref(), 60, p)
+                    })
+                    .unwrap();
+                assert_eq!(f.row("iter").status, WorkflowNodeStatus::Running);
+            }
+            super::super::recovery::run_workflow_run_boot_sweep(
+                &f.pool,
+                &f.engine,
+                &KeyedResourceLocks::new(),
+                SystemClock,
+            );
+            assert_eq!(
+                (f.run_status(), f.row("outside").status),
+                (WorkflowRunStatus::Failed, WorkflowNodeStatus::Failed)
+            );
+            assert_eq!(
+                f.engine.resume_from_failure(&f.run_id).unwrap(),
+                ora_application::ResumeWorkflowRunResult::Resumed
+            );
+            let replay = last_dispatch(&f.executor, "member");
+            // A foreach member resolves its configuration per attempt from the revised graph.
+            let revised = f
+                .store
+                .revised_graph(f.run_id.as_ref(), &replay.node_run_id)
+                .unwrap()
                 .unwrap();
-            second = Some(member.node_run_id.clone());
-            f.engine
-                .complete_node(
-                    &f.run_id,
-                    &WorkflowNodeRunId::new(member.node_run_id),
-                    Some(value.into()),
-                    None,
-                    None,
-                    vec![],
-                )
-                .unwrap();
-        }
-        assert_eq!(f.row("iter").status, WorkflowNodeStatus::Succeeded);
-        assert_eq!(f.run_status(), WorkflowRunStatus::Running);
-        let preview = f.prompt_preview(&second.unwrap(), 0, "new");
-        assert_eq!(
-            (preview.target.index, preview.impact.stop.clone()),
-            (Some(1), vec![])
-        );
-        f.store.claim(&f.commit_request(&preview, "crash")).unwrap();
-        super::super::recovery::run_workflow_run_boot_sweep(
-            &f.pool,
-            &f.engine,
-            &KeyedResourceLocks::new(),
-            SystemClock,
-        );
-        assert_eq!(
-            (f.run_status(), f.row("outside").status),
-            (WorkflowRunStatus::Failed, WorkflowNodeStatus::Failed)
-        );
-        assert_eq!(
-            f.engine.resume_from_failure(&f.run_id).unwrap(),
-            ora_application::ResumeWorkflowRunResult::Resumed
-        );
-        let replay = last_dispatch(&f.executor, "member");
-        // A foreach member resolves its configuration per attempt from the revised graph.
-        let revised = f
-            .store
-            .revised_graph(f.run_id.as_ref(), &replay.node_run_id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            (
-                revised
-                    .node("member")
-                    .unwrap()
-                    .agent_config
-                    .as_ref()
-                    .unwrap()
-                    .prompt
-                    .as_str(),
-                replay.variable_pool.values["iter.item"].as_str(),
+            assert_eq!(
+                (
+                    revised
+                        .node("member")
+                        .unwrap()
+                        .agent_config
+                        .as_ref()
+                        .unwrap()
+                        .prompt
+                        .as_str(),
+                    replay.variable_pool.values["iter.item"].as_str(),
+                    dispatched(&f.executor, "member"),
+                ),
+                ("new", Some("b"), 3)
+            );
+            assert_eq!(
                 dispatched(&f.executor, "member"),
-            ),
-            ("new", Some("b"), 3)
-        );
+                3,
+                "item a must not run again"
+            );
+        }
     });
 }

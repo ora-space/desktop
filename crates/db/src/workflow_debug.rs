@@ -28,7 +28,7 @@ pub(crate) use while_round::resume_while_replays;
 mod recovery;
 pub use operations::DebugClaim;
 pub(crate) use operations::attempt_fenced;
-pub(crate) use recovery::REOPENED_LOOPS;
+pub(crate) use recovery::{REOPENED_CONTAINERS, resume_parked_withdrawals};
 #[cfg(test)]
 mod tests;
 
