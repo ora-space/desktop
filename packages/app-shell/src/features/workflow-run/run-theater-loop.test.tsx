@@ -303,6 +303,10 @@ it("switches the conversation to the selected round and exposes committed loop r
   expect(
     screen.getByRole("region", { name: "Loop results" }),
   ).toHaveTextContent('"result": "approved"');
+  const result = within(screen.getByRole("region", { name: "Loop results" }));
+  const toggle = result.getByRole("button", { pressed: false });
+  await user.click(toggle);
+  expect(toggle).toHaveAttribute("aria-pressed", "true");
 });
 
 it("keeps unexecuted branch alternatives out of the round path while allowing inspection", async () => {

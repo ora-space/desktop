@@ -680,6 +680,8 @@ export function RunTheater({
                   loopId={primaryNode.id}
                   round={primaryLoopRound}
                   showResult={loopResultId === primaryNode.id}
+                  inspectorOpen={!inspectorCollapsed}
+                  onToggleInspector={toggleInspector}
                   onFocusNode={focusPathNode}
                 />
               ) : showParallelCarousel && !primaryConversationOpen ? (

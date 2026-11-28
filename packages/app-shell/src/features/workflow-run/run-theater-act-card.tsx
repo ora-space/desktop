@@ -1,10 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  IconLayoutSidebarRightCollapse,
-  IconLayoutSidebarRightExpand,
-} from "@tabler/icons-react";
-import { Badge, Button, cn } from "@ora/ui";
+import { Badge, cn } from "@ora/ui";
+import { RunInspectorToggle } from "./run-inspector-toggle";
 import { createMockWorkflowNodeType } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
 import { formatWorkflowNodeOutput } from "./format-node-output";
@@ -322,36 +319,10 @@ export function RunTheaterActCard({
       }
       headerEnd={
         onToggleInspector !== undefined ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className={cn(
-              "size-9 shrink-0 rounded-full border shadow-sm",
-              inspectorOpen
-                ? "border-primary/40 bg-primary/10 text-primary hover:bg-primary/15"
-                : "border-border/80 bg-background hover:border-primary/30 hover:bg-primary/5",
-            )}
-            aria-label={t(
-              inspectorOpen
-                ? "workflowRun.inspector.collapse"
-                : "workflowRun.theater.openInspector",
-            )}
-            title={t(
-              inspectorOpen
-                ? "workflowRun.inspector.collapse"
-                : "workflowRun.theater.openInspector",
-            )}
-            aria-pressed={inspectorOpen}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={onToggleInspector}
-          >
-            {inspectorOpen ? (
-              <IconLayoutSidebarRightCollapse className="size-4" />
-            ) : (
-              <IconLayoutSidebarRightExpand className="size-4" />
-            )}
-          </Button>
+          <RunInspectorToggle
+            open={inspectorOpen}
+            onToggle={onToggleInspector}
+          />
         ) : undefined
       }
       body={

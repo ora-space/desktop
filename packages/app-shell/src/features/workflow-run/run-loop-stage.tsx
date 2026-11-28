@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { RunInspectorToggle } from "./run-inspector-toggle";
 import type {
   GraphWorkflowRound,
   GraphWorkflowRun,
@@ -15,12 +16,16 @@ export function RunLoopStage({
   round,
   showResult,
   onFocusNode,
+  inspectorOpen,
+  onToggleInspector,
 }: {
   run: GraphWorkflowRun;
   loopId: string;
   round?: GraphWorkflowRound;
   showResult: boolean;
   onFocusNode: (nodeId: string) => void;
+  inspectorOpen: boolean;
+  onToggleInspector: () => void;
 }) {
   const { t } = useTranslation();
   const loop = run.definitionSnapshot.nodes.find((node) => node.id === loopId);
@@ -54,7 +59,7 @@ export function RunLoopStage({
       )}
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">
+        <h2 className="mr-auto text-base font-semibold">
           {loop?.data.title} ·{" "}
           {showResult
             ? t("workflowRun.loopView.result")
@@ -68,6 +73,7 @@ export function RunLoopStage({
           }
           quiet
         />
+        <RunInspectorToggle open={inspectorOpen} onToggle={onToggleInspector} />
       </div>
       {showResult ? (
         <>
