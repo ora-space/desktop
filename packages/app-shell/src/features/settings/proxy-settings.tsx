@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
@@ -87,27 +87,64 @@ export function ProxySettings() {
   );
 }
 
-/** Reads the current form into a validated proxy value, or `null` when host/port are unusable. */
+/** Splits pasted addresses into form fields, keeping schemes that affect routing. */
+function splitProxyAddress(input: string) {
+  const address = input.trim();
+  const parts = /^(?:(?:https?|socks5h?):\/\/)?([^/?#\\\s]+)\/?$/i.exec(
+    address,
+  );
+  if (parts === null) return null;
+  const [, authority] = parts;
+  try {
+    const url = new URL(
+      address.includes("://") ? address : "http://" + address,
+    );
+    const hostAndPort = authority.slice(authority.lastIndexOf("@") + 1);
+    // URL.port omits explicit defaults such as :80 and :443.
+    const port = /:(\d+)$/.exec(hostAndPort)?.[1] ?? "";
+    if (
+      url.hostname === "" ||
+      hostAndPort.endsWith(":") ||
+      (port !== "" && Number(port) === 0)
+    ) {
+      return null;
+    }
+    return {
+      host:
+        url.protocol === "http:"
+          ? url.hostname
+          : url.protocol + "//" + url.hostname,
+      port: port === "" ? "" : String(Number(port)),
+      credentials: authority.includes("@")
+        ? {
+            username: decodeURIComponent(url.username),
+            password: decodeURIComponent(url.password),
+          }
+        : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Reads the current form into a validated proxy value, or null when host/port are unusable. */
 function parsedProxySettings(
-  host: string,
+  address: ReturnType<typeof splitProxyAddress>,
   port: string,
   username: string,
   password: string,
 ): ProxySettings | null {
-  const parsedPort = Number(port);
-  if (
-    host.trim() === "" ||
-    !Number.isInteger(parsedPort) ||
-    parsedPort <= 0 ||
-    parsedPort > 65535
-  ) {
+  if (address === null) return null;
+  const parsedPort = Number(port.trim() || address.port);
+  if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
     return null;
   }
+  const credentials = address.credentials ?? { username, password };
   return {
-    host: host.trim(),
+    host: address.host,
     port: parsedPort,
-    username: username.trim() === "" ? null : username.trim(),
-    password: password === "" ? null : password,
+    username: credentials.username === "" ? null : credentials.username,
+    password: credentials.password === "" ? null : credentials.password,
   };
 }
 
@@ -130,16 +167,18 @@ function ProxySettingsEditor({
   const [manualLoadError, setManualLoadError] = useState(false);
   const [checkOpen, setCheckOpen] = useState(false);
   const [checkUrl, setCheckUrl] = useState(controller.checkUrl);
+  const addressHintId = useId();
 
-  const parsed =
-    mode === "manual"
-      ? parsedProxySettings(host, port, username, password)
-      : null;
+  const address = mode === "manual" ? splitProxyAddress(host) : null;
+  const parsed = parsedProxySettings(address, port, username, password);
+  const invalidAddress =
+    mode === "manual" && host.trim() !== "" && address === null;
   const invalid = mode === "manual" && parsed === null;
   const usingDraft =
     mode !== controller.mode ||
     (parsed !== null &&
-      (parsed.host !== initialSettings?.host ||
+      (initialSettings === null ||
+        parsed.host !== splitProxyAddress(initialSettings.host)?.host ||
         parsed.port !== initialSettings.port ||
         parsed.username !== initialSettings.username ||
         parsed.password !== initialSettings.password));
@@ -153,6 +192,15 @@ function ProxySettingsEditor({
     replacingUnreadable ||
     controller.isCheckUrlLoading ||
     controller.checkUrlError !== null;
+
+  const applyAddress = (value: NonNullable<typeof address>) => {
+    setHost(value.host);
+    setPort((current) => (current.trim() === "" ? value.port : current));
+    if (value.credentials !== null) {
+      setUsername(value.credentials.username);
+      setPassword(value.credentials.password);
+    }
+  };
 
   const selectMode = async (next: ProxyMode) => {
     setMode(next);
@@ -252,8 +300,27 @@ function ProxySettingsEditor({
                   <Input
                     value={host}
                     onChange={(event) => setHost(event.target.value)}
+                    onBlur={() => {
+                      if (address !== null) applyAddress(address);
+                    }}
+                    onPaste={(event) => {
+                      const input = event.currentTarget;
+                      const text = event.clipboardData.getData("text");
+                      const start = input.selectionStart ?? input.value.length;
+                      const end = input.selectionEnd ?? start;
+                      const pasted = splitProxyAddress(
+                        input.value.slice(0, start) +
+                          text +
+                          input.value.slice(end),
+                      );
+                      if (pasted === null) return;
+                      event.preventDefault();
+                      applyAddress(pasted);
+                    }}
                     placeholder={t("settings.proxy.hostPlaceholder")}
                     aria-label={t("settings.proxy.host")}
+                    aria-describedby={addressHintId}
+                    aria-invalid={invalidAddress}
                     autoComplete="off"
                   />
                 </label>
@@ -270,6 +337,20 @@ function ProxySettingsEditor({
                   />
                 </label>
               </div>
+              <p
+                id={addressHintId}
+                className={
+                  invalidAddress
+                    ? "text-xs text-destructive"
+                    : "text-xs text-muted-foreground"
+                }
+              >
+                {t(
+                  invalidAddress
+                    ? "settings.proxy.invalidAddress"
+                    : "settings.proxy.addressHint",
+                )}
+              </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="space-y-1.5">
                   <span className="text-sm font-medium">

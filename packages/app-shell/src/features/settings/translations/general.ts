@@ -56,6 +56,10 @@ export const settingsTranslations = {
     "settings.proxy.description": "用于桌面更新，以及开启“使用代理”的市场源。",
     "settings.proxy.host": "主机",
     "settings.proxy.hostPlaceholder": "127.0.0.1",
+    "settings.proxy.addressHint":
+      "可粘贴完整代理地址。默认使用 HTTP。HTTPS 表示与代理服务器建立 TLS 连接。",
+    "settings.proxy.invalidAddress":
+      "请输入主机名、IP 地址或 HTTP、HTTPS、SOCKS5、SOCKS5H 代理地址。地址不能包含路径、查询参数或片段。",
     "settings.proxy.port": "端口",
     "settings.proxy.portPlaceholder": "7890",
     "settings.proxy.username": "用户名",
@@ -249,6 +253,10 @@ export const settingsTranslations = {
       "Used for Desktop updates and marketplace sources that enable proxy routing.",
     "settings.proxy.host": "Host",
     "settings.proxy.hostPlaceholder": "127.0.0.1",
+    "settings.proxy.addressHint":
+      "You can paste a full proxy address. HTTP is the default. HTTPS uses TLS to connect to the proxy.",
+    "settings.proxy.invalidAddress":
+      "Enter a hostname, IP address, or HTTP, HTTPS, SOCKS5, or SOCKS5H proxy address without a path, query, or fragment.",
     "settings.proxy.port": "Port",
     "settings.proxy.portPlaceholder": "7890",
     "settings.proxy.username": "Username",

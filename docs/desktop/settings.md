@@ -62,8 +62,11 @@ These rules apply to Desktop updates and marketplace sources that opt in
 selected mode and resolves the route for each destination. A final HTTP 2xx response succeeds
 and shows the final route. Other HTTP responses show the status, and HTTP 407 reports a proxy
 authentication failure.
-Enter a bare hostname, `http://hostname`, or `https://hostname` for a manual proxy. The port
-field supplies the port, and `https://` uses TLS to the proxy itself.
+Enter a hostname or paste a full proxy address into the Host field. For example,
+`http://127.0.0.1:7890/` fills in the host and fills in the port if the Port field is empty.
+Credentials in the address move to the Username and Password fields. HTTP is the default.
+The `https://`, `socks5://`, and `socks5h://` prefixes are kept, and `https://` uses TLS to
+connect to the proxy itself. Saving validates the address and stores the normalized fields.
 Checking uses the current form and Desktop updates use
 saved settings. In manual mode, a final direct response cannot confirm the proxy.
 

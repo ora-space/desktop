@@ -147,6 +147,55 @@ it("saves proxy settings through the backend", async () => {
   );
 });
 
+it("fills in host and port when pasting a full HTTP proxy address", async () => {
+  const state = createFixtureState();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
+  const host = await screen.findByLabelText(/主机|Host/);
+  await user.click(host);
+  await user.paste(" http://127.0.0.1:7890/ ");
+  expect(host).toHaveValue("127.0.0.1");
+  expect(screen.getByLabelText(/端口|Port/)).toHaveValue("7890");
+  await user.click(screen.getByRole("button", { name: /^保存$|^Save$/ }));
+  await waitFor(() =>
+    expect(state.proxySettings).toEqual({
+      host: "127.0.0.1",
+      port: 7890,
+      username: null,
+      password: null,
+    }),
+  );
+});
+
+it("extracts credentials on blur and keeps the proxy scheme and separately entered port", async () => {
+  const state = createFixtureState();
+  renderProxy(createTestClient(createFixtureHandlers(state)));
+  const user = userEvent.setup();
+  await user.selectOptions(
+    await screen.findByLabelText(/代理模式|Proxy mode/),
+    "manual",
+  );
+  const port = await screen.findByLabelText(/端口|Port/);
+  const host = screen.getByLabelText(/主机|Host/);
+  await user.type(port, "3128");
+  await user.type(host, "https://alice:pass%40word@proxy.example:443/");
+  await user.tab();
+  expect(host).toHaveValue("https://proxy.example");
+  expect(port).toHaveValue("3128");
+  expect(screen.getByLabelText(/用户名|Username/)).toHaveValue("alice");
+  expect(screen.getByLabelText(/密码|Password/)).toHaveValue("pass@word");
+
+  await user.clear(host);
+  await user.paste("ftp://proxy.example:7890/path");
+  expect(host).toBeInvalid();
+  expect(screen.getByRole("button", { name: /^保存$|^Save$/ })).toBeDisabled();
+  expect(state.proxySettings).toBeNull();
+});
+
 it("restores every saved proxy field with a fresh query cache after remount", async () => {
   const state = createFixtureState();
   state.proxySettings = {
