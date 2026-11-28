@@ -1,8 +1,9 @@
 use super::ports::{
-    ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope, WorkspaceDiffReader,
-    WorkspaceDiffReaderError, WorkspaceDiffSnapshot, WorkspaceStatusFile, WorkspaceStatusSnapshot,
+    ReadWorkspaceDiffRequest, ReadWorkspaceDiffScope, ReadWorkspaceDiffSelection,
+    WorkspaceDiffContent, WorkspaceDiffFile, WorkspaceDiffReader, WorkspaceDiffReaderError,
+    WorkspaceDiffSnapshot, WorkspaceDiffStatus, WorkspaceStatusFile, WorkspaceStatusSnapshot,
 };
-use gitlancer::git::diff::{DiffRequest, DiffResponse, DiffScope};
+use gitlancer::git::diff::{DiffRequest, DiffScope};
 use gitlancer::git::status::StatusEntriesRequest;
 use gitlancer::git::worktree::FindWorktreeRequest;
 use gitlancer::{CliGitRunner, CommitId, Git, RepoRoot, Repository};
@@ -53,14 +54,69 @@ impl WorkspaceDiffReader for GitWorkspaceDiffReader {
             ));
         }
 
-        self.git
-            .diff(DiffRequest {
-                worktree: &worktree,
-                base_commit_id: base_commit_id.as_ref(),
-                scope,
-            })
-            .map(map_diff_response)
-            .map_err(workspace_diff_operation_error)
+        let diff = DiffRequest {
+            worktree: &worktree,
+            base_commit_id: base_commit_id.as_ref(),
+            scope,
+        };
+        match request.selection {
+            ReadWorkspaceDiffSelection::Patch => match self.git.diff(diff.clone()) {
+                Err(gitlancer::GitlancerError::DiffTooLarge { .. }) => self
+                    .git
+                    .diff_compact(diff)
+                    .map(|response| WorkspaceDiffSnapshot {
+                        head_commit_id: response.head_commit_id.as_str().to_string(),
+                        content: WorkspaceDiffContent::Patch {
+                            patch: response.patch,
+                            context_limited: true,
+                        },
+                    }),
+                result => result.map(|response| WorkspaceDiffSnapshot {
+                    head_commit_id: response.head_commit_id.as_str().to_string(),
+                    content: WorkspaceDiffContent::Patch {
+                        patch: response.patch,
+                        context_limited: false,
+                    },
+                }),
+            },
+            ReadWorkspaceDiffSelection::File { path, old_path } => self
+                .git
+                .diff_file(diff, &path, old_path.as_deref())
+                .map(|response| WorkspaceDiffSnapshot {
+                    head_commit_id: response.head_commit_id.as_str().to_string(),
+                    content: WorkspaceDiffContent::File {
+                        patch: response.patch,
+                    },
+                }),
+            ReadWorkspaceDiffSelection::Files => {
+                self.git
+                    .diff_files(diff)
+                    .map(|response| WorkspaceDiffSnapshot {
+                        head_commit_id: response.head_commit_id.as_str().to_string(),
+                        content: WorkspaceDiffContent::Files {
+                            files: response
+                                .files
+                                .into_iter()
+                                .map(|file| WorkspaceDiffFile {
+                                    path: file.path,
+                                    old_path: file.old_path,
+                                    status: match file.status.as_bytes().first() {
+                                        Some(b'A') => WorkspaceDiffStatus::Added,
+                                        Some(b'M') => WorkspaceDiffStatus::Modified,
+                                        Some(b'D') => WorkspaceDiffStatus::Deleted,
+                                        Some(b'R') => WorkspaceDiffStatus::Renamed,
+                                        Some(b'C') => WorkspaceDiffStatus::Copied,
+                                        Some(b'T') => WorkspaceDiffStatus::TypeChanged,
+                                        Some(b'U') => WorkspaceDiffStatus::Unmerged,
+                                        _ => WorkspaceDiffStatus::Unknown,
+                                    },
+                                })
+                                .collect(),
+                        },
+                    })
+            }
+        }
+        .map_err(workspace_diff_operation_error)
     }
 
     /// Resolves the backend-owned worktree before reading its structured per-file status.
@@ -107,14 +163,6 @@ fn map_diff_scope(scope: ReadWorkspaceDiffScope) -> DiffScope {
         ReadWorkspaceDiffScope::Unstaged => DiffScope::Unstaged,
         ReadWorkspaceDiffScope::Staged => DiffScope::Staged,
         ReadWorkspaceDiffScope::Committed => DiffScope::Committed,
-    }
-}
-
-/// Maps Gitlancer's internal response into the application-owned snapshot.
-fn map_diff_response(response: DiffResponse) -> WorkspaceDiffSnapshot {
-    WorkspaceDiffSnapshot {
-        head_commit_id: response.head_commit_id.as_str().to_string(),
-        patch: response.patch,
     }
 }
 

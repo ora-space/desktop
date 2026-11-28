@@ -31,6 +31,12 @@
 
 配置的 worktree 根目录只是创建目标。修改它只影响之后开始的创建；进行中的操作使用原来的快照，已有的 worktree 从不移动。已有路径从不根据根目录重新拼接：任务的 checkout 总是实时解析，路径为 Task → Workspace → 存储的分支名 → `git worktree list --porcelain`。Agent 会话、Workspace 评审、`resolve_task_cwd` 和 `resolve_workspace_cwd` 都使用这条解析路径。Main Workspace 的存储位置按 Desktop 的路径基准解析，见 [Desktop 宿主](../desktop/desktop-host.zh.md#持久化路径)。
 
+## 审阅大型变更
+
+Git 比较正在加载或失败时，仍然可以在「变更」和「文件」之间切换。完整上下文超过读取上限时，
+「变更」可以在原视图展示变更附近的上下文。精简后的 Diff 仍超限时，可点击「按文件查看」逐个加载文件。
+单文件超过预览上限时仍会保留在清单中。
+
 ## 删除与持久化的 Git 清理
 
 任务、项目和工作流运行的删除遵循同一条规则：**数据库级联即成功，物理 Git 清理是持久且异步的**。`SqliteCascadeRepository` 在一个事务里软删除整个聚合（会话和所属的 worktree 记录），只要还有下级会话处于 `Running`，就以 `resource_in_use` 拒绝。在同一个事务里，它读取每个有 worktree 的任务的仓库根、分支名和记录的 checkout 路径，并为每个任务插入一行 `git_cleanup_jobs`，所以提交之后的崩溃、断电或 SIGKILL 都不会丢失清理目标。

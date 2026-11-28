@@ -44,6 +44,8 @@ describe("TaskDiffView focus jump dismiss", () => {
     const clientHandlers: TestHandlers = {};
     const client = createTestClient(clientHandlers);
     clientHandlers.getWorkspaceDiff = async () => ({
+      kind: "patch" as const,
+      contextLimited: false,
       baseCommitId: "base",
       headCommitId: "head",
       patch,
@@ -52,6 +54,8 @@ describe("TaskDiffView focus jump dismiss", () => {
       defaultOptions: { queries: { retry: false, staleTime: 0 } },
     });
     queryClient.setQueryData(diffKeys.workspaceDiff("task-1", "branch"), {
+      kind: "patch" as const,
+      contextLimited: false,
       baseCommitId: "base",
       headCommitId: "head",
       patch,

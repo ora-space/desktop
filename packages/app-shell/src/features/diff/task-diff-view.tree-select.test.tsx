@@ -50,6 +50,8 @@ function renderTreeDiff() {
   const clientHandlers: TestHandlers = {};
   const client = createTestClient(clientHandlers);
   clientHandlers.getWorkspaceDiff = async () => ({
+    kind: "patch",
+    contextLimited: false,
     baseCommitId: "base",
     headCommitId: "head",
     patch: PATCH,

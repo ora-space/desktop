@@ -18,6 +18,8 @@ import {
 import { TaskDiffView, type TaskDiffFileRequest } from "./task-diff-view";
 
 const DIFF: GetWorkspaceDiffResponse = {
+  kind: "patch" as const,
+  contextLimited: false,
   baseCommitId: null,
   headCommitId: "head",
   patch:
@@ -145,6 +147,7 @@ describe("TaskDiffView for a folder that is not a Git repository", () => {
       expect(getWorkspaceDiff.mock.calls[0]?.[0]).toEqual({
         workspaceId: "A",
         scope: "unstaged",
+        selection: { kind: "patch" },
       });
       expect(getWorkspaceStatus).toHaveBeenCalled();
     },

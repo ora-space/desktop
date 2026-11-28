@@ -1,3 +1,7 @@
+mod preview;
+
+pub use preview::{DiffFile, DiffFilesResponse};
+
 use crate::domain::refs::CommitId;
 use crate::domain::worktree::WorktreeHandle;
 use crate::error::{GitExecError, GitlancerError};
@@ -11,7 +15,10 @@ static TEMPORARY_GIT_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const MAX_DIFF_BYTES: usize = 10 * 1024 * 1024;
 const MAX_DIFF_STDERR_BYTES: usize = 1024 * 1024;
-const FULL_FILE_CONTEXT_ARG: &str = "--unified=1000000";
+// Full, compact, and single-file reads use the same transport budget.
+const REVIEW_DIFF_BYTES: usize = 20 * 1024 * 1024;
+const COMPACT_CONTEXT_ARGS: &[&str] = &["--unified=3", "--inter-hunk-context=0"];
+const FULL_FILE_CONTEXT_ARGS: &[&str] = &["--unified=1000000"];
 
 /// Selects the Git layer represented by one task diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,9 +48,9 @@ pub struct DiffResponse {
 }
 
 impl<R: GitRunner> Git<R> {
-    /// Computes tracked and untracked changes without staging files or invoking clean filters.
+    /// Reads a full-context workspace review patch within the review budget.
     pub fn diff(&self, request: DiffRequest<'_>) -> Result<DiffResponse, GitlancerError> {
-        self.diff_excluding_paths(request, &[])
+        self.read_patch(request, &[], FULL_FILE_CONTEXT_ARGS, REVIEW_DIFF_BYTES)
     }
 
     /// Computes the same diff while ignoring every path under the excluded prefixes.
@@ -55,20 +62,37 @@ impl<R: GitRunner> Git<R> {
         request: DiffRequest<'_>,
         excluded_paths: &[&str],
     ) -> Result<DiffResponse, GitlancerError> {
-        let head_output = self.runner().run(&build_head_command(request.worktree))?;
-        let head_commit_id = head_output.stdout.trim();
-        if head_commit_id.is_empty() {
-            return Err(crate::ParseError::MissingLine.into());
-        }
+        self.read_patch(
+            request,
+            excluded_paths,
+            FULL_FILE_CONTEXT_ARGS,
+            MAX_DIFF_BYTES,
+        )
+    }
+
+    /// Reads the same comparison with ordinary unified context for the review view.
+    pub fn diff_compact(&self, request: DiffRequest<'_>) -> Result<DiffResponse, GitlancerError> {
+        self.read_patch(request, &[], COMPACT_CONTEXT_ARGS, REVIEW_DIFF_BYTES)
+    }
+
+    /// Keeps patch generation and byte accounting identical for both context modes.
+    fn read_patch(
+        &self,
+        request: DiffRequest<'_>,
+        excluded_paths: &[&str],
+        context: &[&str],
+        max_bytes: usize,
+    ) -> Result<DiffResponse, GitlancerError> {
+        let head_commit_id = self.diff_head(request.worktree)?;
 
         let tracked = self
             .runner()
             .run_bounded(
-                &build_diff_command_excluding(&request, excluded_paths),
-                MAX_DIFF_BYTES,
+                &build_tracked_diff_command(&request, excluded_paths, context, "HEAD"),
+                max_bytes,
                 MAX_DIFF_STDERR_BYTES,
             )
-            .map_err(map_bounded_diff_error)?
+            .map_err(|error| map_bounded_diff_error(error, max_bytes))?
             .stdout;
         let mut patch = tracked;
         let untracked_output = self
@@ -78,7 +102,7 @@ impl<R: GitRunner> Git<R> {
                 MAX_DIFF_BYTES,
                 MAX_DIFF_STDERR_BYTES,
             )
-            .map_err(map_bounded_diff_error)?;
+            .map_err(|error| map_bounded_diff_error(error, max_bytes))?;
         let isolated_git_dir = isolated_git_dir();
 
         for path in untracked_output
@@ -87,25 +111,57 @@ impl<R: GitRunner> Git<R> {
             .filter(|path| !path.is_empty())
             .filter(|_| matches!(request.scope, DiffScope::Branch | DiffScope::Unstaged))
         {
-            let separator_bytes = usize::from(!patch.is_empty() && !patch.ends_with('\n'));
-            let remaining = MAX_DIFF_BYTES.saturating_sub(patch.len() + separator_bytes);
-            let untracked_patch = run_untracked_diff(
-                self.runner(),
-                &build_untracked_diff_command(request.worktree, path, &isolated_git_dir),
-                remaining,
+            self.append_untracked(
+                request.worktree,
+                path,
+                &isolated_git_dir,
+                context,
+                max_bytes,
+                &mut patch,
             )?;
-            let untracked_patch = if untracked_patch.is_empty() {
-                run_empty_untracked_diff(self.runner(), request.worktree, path, remaining)?
-            } else {
-                untracked_patch
-            };
-            append_patch(&mut patch, &untracked_patch);
         }
 
         Ok(DiffResponse {
-            head_commit_id: CommitId::new(head_commit_id),
+            head_commit_id,
             patch,
         })
+    }
+    /// Resolves the HEAD label shared by every diff output.
+    fn diff_head(&self, worktree: &WorktreeHandle) -> Result<CommitId, GitlancerError> {
+        let output = self.runner().run(&build_head_command(worktree))?;
+        let head = output.stdout.trim();
+        if head.is_empty() {
+            return Err(crate::ParseError::MissingLine.into());
+        }
+        Ok(CommitId::new(head))
+    }
+
+    /// Adds a single untracked file within the response's remaining byte budget.
+    fn append_untracked(
+        &self,
+        worktree: &WorktreeHandle,
+        path: &str,
+        git_dir: &std::path::Path,
+        context: &[&str],
+        max_bytes: usize,
+        patch: &mut String,
+    ) -> Result<(), GitlancerError> {
+        let separator_bytes = usize::from(!patch.is_empty() && !patch.ends_with('\n'));
+        let remaining = max_bytes.saturating_sub(patch.len() + separator_bytes);
+        let addition = run_untracked_diff(
+            self.runner(),
+            &build_untracked_diff_command(worktree, path, git_dir, context),
+            remaining,
+        )
+        .map_err(|error| map_bounded_diff_error(error, max_bytes))?;
+        let addition = if addition.is_empty() {
+            run_empty_untracked_diff(self.runner(), worktree, path, remaining, context)
+                .map_err(|error| map_bounded_diff_error(error, max_bytes))?
+        } else {
+            addition
+        };
+        append_patch(patch, &addition);
+        Ok(())
     }
 }
 
@@ -154,7 +210,7 @@ fn run_untracked_diff<R: GitRunner>(
     runner: &R,
     command: &GitCommand,
     max_stdout_bytes: usize,
-) -> Result<String, GitlancerError> {
+) -> Result<String, GitExecError> {
     match runner.run_bounded(command, max_stdout_bytes, MAX_DIFF_STDERR_BYTES) {
         Ok(output) => Ok(output.stdout),
         Err(GitExecError::NonZeroExit {
@@ -168,7 +224,7 @@ fn run_untracked_diff<R: GitRunner>(
             stderr,
             ..
         }) if is_missing_untracked_file_error(&stderr) => Ok(stdout),
-        Err(error) => Err(map_bounded_diff_error(error)),
+        Err(error) => Err(error),
     }
 }
 
@@ -186,7 +242,8 @@ fn run_empty_untracked_diff<R: GitRunner>(
     worktree: &WorktreeHandle,
     path: &str,
     max_stdout_bytes: usize,
-) -> Result<String, GitlancerError> {
+    context: &[&str],
+) -> Result<String, GitExecError> {
     let temporary_index = TemporaryIndex::new();
     runner.run(&build_initialize_temporary_index_command(
         worktree,
@@ -199,29 +256,23 @@ fn run_empty_untracked_diff<R: GitRunner>(
     ))?;
     runner
         .run_bounded(
-            &build_empty_untracked_diff_command(worktree, path, temporary_index.path()),
+            &build_empty_untracked_diff_command(worktree, path, temporary_index.path(), context),
             max_stdout_bytes,
             MAX_DIFF_STDERR_BYTES,
         )
         .map(|output| output.stdout)
-        .map_err(map_bounded_diff_error)
 }
 
 /// Converts bounded runner failures into the public diff-size error when appropriate.
-fn map_bounded_diff_error(error: GitExecError) -> GitlancerError {
+fn map_bounded_diff_error(error: GitExecError, max_bytes: usize) -> GitlancerError {
     match error {
         GitExecError::OutputTooLarge {
             stream: "stdout", ..
-        } => diff_too_large(),
+        } => GitlancerError::DiffTooLarge {
+            byte_count: max_bytes + 1,
+            max_byte_count: max_bytes,
+        },
         error => GitlancerError::Exec(error),
-    }
-}
-
-/// Builds the stable size error without pretending the discarded byte count is known exactly.
-fn diff_too_large() -> GitlancerError {
-    GitlancerError::DiffTooLarge {
-        byte_count: MAX_DIFF_BYTES + 1,
-        max_byte_count: MAX_DIFF_BYTES,
     }
 }
 
@@ -251,6 +302,16 @@ pub fn build_diff_command_excluding(
     request: &DiffRequest<'_>,
     excluded_paths: &[&str],
 ) -> GitCommand {
+    build_tracked_diff_command(request, excluded_paths, FULL_FILE_CONTEXT_ARGS, "HEAD")
+}
+
+/// Selects the tracked diff output before Git interprets revisions and pathspecs.
+fn build_tracked_diff_command(
+    request: &DiffRequest<'_>,
+    excluded_paths: &[&str],
+    output: &[&str],
+    head_revision: &str,
+) -> GitCommand {
     // Render paths verbatim: with the default `core.quotepath`, Git octal-escapes
     // non-ASCII (e.g. Chinese) names in `diff --git` headers, which the frontend diff
     // parser does not decode back — jump-to-file would break for those paths.
@@ -262,8 +323,8 @@ pub fn build_diff_command_excluding(
         "--no-ext-diff".to_string(),
         "--no-textconv".to_string(),
         "--find-renames".to_string(),
-        FULL_FILE_CONTEXT_ARG.to_string(),
     ];
+    args.extend(output.iter().map(|arg| (*arg).to_string()));
     match request.scope {
         DiffScope::Branch => {
             args.push(expect_baseline(request.base_commit_id).as_str().to_string());
@@ -271,11 +332,11 @@ pub fn build_diff_command_excluding(
         DiffScope::Unstaged => {}
         DiffScope::Staged => {
             args.push("--cached".to_string());
-            args.push("HEAD".to_string());
+            args.push(head_revision.to_string());
         }
         DiffScope::Committed => {
             args.push(expect_baseline(request.base_commit_id).as_str().to_string());
-            args.push("HEAD".to_string());
+            args.push(head_revision.to_string());
         }
     }
     args.push("--".to_string());
@@ -336,6 +397,7 @@ fn build_untracked_diff_command(
     worktree: &WorktreeHandle,
     path: &str,
     isolated_git_dir: &std::path::Path,
+    context: &[&str],
 ) -> GitCommand {
     GitCommand::new(
         worktree.worktree_root().as_path().to_path_buf(),
@@ -347,12 +409,10 @@ fn build_untracked_diff_command(
             "--no-color",
             "--no-ext-diff",
             "--no-textconv",
-            FULL_FILE_CONTEXT_ARG,
-            "--",
-            "/dev/null",
-            path,
         ]
         .into_iter()
+        .chain(context.iter().copied())
+        .chain(["--", "/dev/null", path])
         .map(str::to_string)
         .collect(),
         // `run_untracked_diff` recognizes a vanished file by Git's English stderr.
@@ -384,7 +444,7 @@ fn build_intent_to_add_command(
 ) -> GitCommand {
     command_with_index(
         worktree,
-        vec!["add", "--intent-to-add", "--", path],
+        vec!["--literal-pathspecs", "add", "--intent-to-add", "--", path],
         temporary_index,
         GitIntent::Mutating,
     )
@@ -395,20 +455,23 @@ fn build_empty_untracked_diff_command(
     worktree: &WorktreeHandle,
     path: &str,
     temporary_index: &std::path::Path,
+    context: &[&str],
 ) -> GitCommand {
     command_with_index(
         worktree,
         vec![
             "-c",
             "core.quotepath=false",
+            "--literal-pathspecs",
             "diff",
             "--no-color",
             "--no-ext-diff",
             "--no-textconv",
-            FULL_FILE_CONTEXT_ARG,
-            "--",
-            path,
-        ],
+        ]
+        .into_iter()
+        .chain(context.iter().copied())
+        .chain(["--", path])
+        .collect(),
         temporary_index,
         GitIntent::ReadOnly,
     )
@@ -445,9 +508,10 @@ fn command(worktree: &WorktreeHandle, args: Vec<&str>) -> GitCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiffRequest, DiffScope, build_diff_command, build_diff_command_excluding,
-        build_empty_untracked_diff_command, build_initialize_temporary_index_command,
-        build_intent_to_add_command, build_untracked_diff_command, is_missing_untracked_file_error,
+        DiffRequest, DiffScope, FULL_FILE_CONTEXT_ARGS, build_diff_command,
+        build_diff_command_excluding, build_empty_untracked_diff_command,
+        build_initialize_temporary_index_command, build_intent_to_add_command,
+        build_untracked_diff_command, is_missing_untracked_file_error,
     };
     use crate::{CommitId, GitDir, RepoRoot, WorktreeHandle, WorktreeKind, WorktreeRoot};
     use pretty_assertions::assert_eq;
@@ -565,6 +629,7 @@ mod tests {
                 &worktree,
                 "space name.bin",
                 std::path::Path::new("/tmp/missing-git-dir"),
+                FULL_FILE_CONTEXT_ARGS,
             )
             .args,
             vec![
@@ -592,7 +657,12 @@ mod tests {
         let commands = [
             build_initialize_temporary_index_command(&worktree, temporary_index),
             build_intent_to_add_command(&worktree, "empty.txt", temporary_index),
-            build_empty_untracked_diff_command(&worktree, "empty.txt", temporary_index),
+            build_empty_untracked_diff_command(
+                &worktree,
+                "empty.txt",
+                temporary_index,
+                FULL_FILE_CONTEXT_ARGS,
+            ),
         ];
 
         assert_eq!(
@@ -608,6 +678,7 @@ mod tests {
                 ),
                 (
                     vec![
+                        "--literal-pathspecs".to_string(),
                         "add".to_string(),
                         "--intent-to-add".to_string(),
                         "--".to_string(),
@@ -623,6 +694,7 @@ mod tests {
                     vec![
                         "-c".to_string(),
                         "core.quotepath=false".to_string(),
+                        "--literal-pathspecs".to_string(),
                         "diff".to_string(),
                         "--no-color".to_string(),
                         "--no-ext-diff".to_string(),

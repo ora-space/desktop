@@ -9,14 +9,17 @@ use gitlancer::git::branch::{
     ResolveCurrentBranchRequest,
 };
 use gitlancer::git::commit::{AddRequest, CommitRequest};
-use gitlancer::git::diff::DiffRequest;
+use gitlancer::git::diff::{DiffFile, DiffRequest, DiffScope};
 use gitlancer::git::repository::ListWorktreesRequest;
 use gitlancer::git::status::StatusRequest;
 use gitlancer::git::worktree::{
     CreateWorktreeRequest, DeleteWorktreeRequest, FindWorktreeRequest,
     ResolveWorktreeByBranchRequest, ResolveWorktreeRequest, WorktreeDeletionMode,
 };
-use gitlancer::{BranchName, CliGitRunner, CommitId, Git, RepoRoot, WorktreeKind, WorktreeRoot};
+use gitlancer::{
+    BranchName, CliGitRunner, CommitId, Git, GitCommand, GitExecError, GitOutput, GitRunner,
+    GitlancerError, RepoRoot, WorktreeKind, WorktreeRoot,
+};
 use ora_test_support::GitTestScaffold as TestScaffold;
 use ora_utils::path::canonicalize_longest_existing_prefix;
 use pretty_assertions::assert_eq;
@@ -222,6 +225,371 @@ fn runtime_builds_complete_task_diff() {
         .run_git(["diff", "--cached", "--binary"])
         .expect("read real index after diff");
     assert_eq!(real_index_after, real_index_before);
+}
+
+/// Verifies that a large workspace patch can be reviewed by path across the four Git scopes.
+#[test]
+fn runtime_reviews_a_large_patch_one_file_at_a_time() {
+    let scaffold = TestScaffold::new("runtime-diff-preview").expect("create scaffold");
+    let root = scaffold.repo_path();
+    let padding = "unchanged content\n".repeat(650_000);
+    for name in ["first.txt", "second.txt"] {
+        scaffold
+            .write_file(root, name, &format!("original\n{padding}"))
+            .expect("write a large tracked file");
+    }
+    scaffold
+        .write_file(root, "rename.txt", "same content\n")
+        .expect("write rename source");
+    scaffold
+        .stage_all_and_commit("chore: seed large files")
+        .expect("commit seed files");
+    let base = CommitId::new(scaffold.run_git(["rev-parse", "HEAD"]).unwrap().trim());
+    scaffold
+        .write_file(root, "first.txt", &format!("first changed\n{padding}"))
+        .expect("change first file");
+    scaffold.stage_all_and_commit("first change").unwrap();
+    scaffold
+        .write_file(root, "second.txt", &format!("second changed\n{padding}"))
+        .expect("change second file");
+    scaffold
+        .run_git(["mv", "rename.txt", "renamed [1].txt"])
+        .unwrap();
+
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = |scope| DiffRequest {
+        worktree: &worktree,
+        base_commit_id: Some(&base),
+        scope,
+    };
+
+    assert!(matches!(
+        git.diff(request(DiffScope::Branch)),
+        Err(GitlancerError::DiffTooLarge { .. })
+    ));
+    let compact = git.diff_compact(request(DiffScope::Branch)).unwrap();
+    assert!(compact.patch.len() < 1_024);
+    assert!(compact.patch.contains("+first changed"));
+    assert!(compact.patch.contains("+second changed"));
+    let branch = git.diff_files(request(DiffScope::Branch)).unwrap();
+    assert_eq!(
+        branch.files,
+        [
+            DiffFile {
+                path: "first.txt".into(),
+                old_path: None,
+                status: "M".into()
+            },
+            DiffFile {
+                path: "renamed [1].txt".into(),
+                old_path: Some("rename.txt".into()),
+                status: "R".into()
+            },
+            DiffFile {
+                path: "second.txt".into(),
+                old_path: None,
+                status: "M".into()
+            },
+        ]
+    );
+    for (scope, path) in [
+        (DiffScope::Committed, "first.txt"),
+        (DiffScope::Staged, "renamed [1].txt"),
+        (DiffScope::Unstaged, "second.txt"),
+    ] {
+        let entries = git.diff_files(request(scope)).unwrap().files;
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.path, path);
+        let preview = git
+            .diff_file(request(scope), path, entry.old_path.as_deref())
+            .unwrap();
+        assert_eq!(preview.head_commit_id, branch.head_commit_id);
+        assert!(preview.patch.len() < 1_024);
+        assert!(preview.patch.contains(path));
+        if scope == DiffScope::Staged {
+            assert!(preview.patch.contains("rename from rename.txt"));
+        }
+    }
+
+    scaffold
+        .write_file(root, "huge.txt", &"x".repeat(11 * 1024 * 1024))
+        .expect("write an oversized changed line");
+    scaffold
+        .write_file(root, "empty [1].txt", "")
+        .expect("write an empty untracked file");
+    let unstaged = request(DiffScope::Unstaged);
+    // A patch with more than 10 MiB of actual changes fits the review budget.
+    let compact = git.diff_compact(unstaged.clone()).unwrap();
+    assert!(compact.patch.len() > 10 * 1024 * 1024);
+    let large_preview = git
+        .diff_file(unstaged.clone(), "huge.txt", /*old_path*/ None)
+        .unwrap();
+    assert!(large_preview.patch.len() > 10 * 1024 * 1024);
+    scaffold
+        .write_file(root, "huge.txt", &"x".repeat(21 * 1024 * 1024))
+        .expect("write beyond the compact preview budget");
+    assert!(matches!(
+        git.diff_compact(unstaged.clone()),
+        Err(GitlancerError::DiffTooLarge { .. })
+    ));
+    let entries = git.diff_files(unstaged.clone()).unwrap().files;
+    assert!(entries.iter().any(|entry| entry.path == "huge.txt"));
+    assert!(matches!(
+        git.diff_file(unstaged.clone(), "huge.txt", /*old_path*/ None),
+        Err(GitlancerError::DiffTooLarge { .. })
+    ));
+    let empty = git
+        .diff_file(unstaged.clone(), "empty [1].txt", /*old_path*/ None)
+        .unwrap();
+    assert!(empty.patch.contains("new file mode 100644"));
+    assert!(
+        git.diff_file(unstaged, "../outside.txt", /*old_path*/ None)
+            .is_err()
+    );
+}
+
+/// Moves HEAD immediately before running a real diff command.
+struct SwitchHeadBeforeDiff<'a> {
+    scaffold: &'a TestScaffold,
+    target: &'a str,
+}
+
+impl GitRunner for SwitchHeadBeforeDiff<'_> {
+    /// Simulates an external checkout after the reader has already resolved HEAD.
+    fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
+        if command.args.iter().any(|arg| arg == "diff") {
+            self.scaffold
+                .run_git(["checkout", "--detach", self.target])
+                .unwrap();
+        }
+        CliGitRunner.run(command)
+    }
+}
+
+/// Verifies committed review reads use the same revision for the Git comparison and response.
+#[test]
+fn committed_review_pins_the_head_used_in_the_response() {
+    let scaffold = TestScaffold::new("review-head-race").unwrap();
+    let root = scaffold.repo_path();
+    scaffold.write_file(root, "file.txt", "baseline\n").unwrap();
+    scaffold.stage_all_and_commit("base").unwrap();
+    let base = CommitId::new(scaffold.run_git(["rev-parse", "HEAD"]).unwrap().trim());
+    scaffold
+        .write_file(root, "file.txt", "old revision\n")
+        .unwrap();
+    scaffold.stage_all_and_commit("old").unwrap();
+    let old = scaffold.run_git(["rev-parse", "HEAD"]).unwrap();
+    scaffold
+        .write_file(root, "file.txt", "new revision\n")
+        .unwrap();
+    scaffold
+        .write_file(root, "new-file.txt", "added only in the new revision\n")
+        .unwrap();
+    scaffold.stage_all_and_commit("new").unwrap();
+    let new = scaffold.run_git(["rev-parse", "HEAD"]).unwrap();
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = DiffRequest {
+        worktree: &worktree,
+        base_commit_id: Some(&base),
+        scope: DiffScope::Committed,
+    };
+
+    scaffold
+        .run_git(["checkout", "--detach", old.trim()])
+        .unwrap();
+    let expected_overview = git.diff_files(request.clone()).unwrap();
+    let expected_preview = git
+        .diff_file(request.clone(), "file.txt", /*old_path*/ None)
+        .unwrap();
+    let switching_git = Git::new(SwitchHeadBeforeDiff {
+        scaffold: &scaffold,
+        target: new.trim(),
+    });
+    assert_eq!(
+        switching_git.diff_files(request.clone()).unwrap(),
+        expected_overview
+    );
+    assert_eq!(scaffold.run_git(["rev-parse", "HEAD"]).unwrap(), new);
+
+    scaffold
+        .run_git(["checkout", "--detach", old.trim()])
+        .unwrap();
+    assert_eq!(
+        switching_git
+            .diff_file(request, "file.txt", /*old_path*/ None)
+            .unwrap(),
+        expected_preview
+    );
+    assert_eq!(scaffold.run_git(["rev-parse", "HEAD"]).unwrap(), new);
+}
+
+/// Verifies compact reads keep distant hunks separate despite the repository configuration.
+#[test]
+fn compact_reviews_override_inter_hunk_context() {
+    let scaffold = TestScaffold::new("runtime-compact-context").unwrap();
+    let root = scaffold.repo_path();
+    let padding = "unchanged context\n".repeat(1000);
+    scaffold
+        .write_file(root, "two-hunks.txt", &format!("start\n{padding}end\n"))
+        .unwrap();
+    scaffold.stage_all_and_commit("base").unwrap();
+    scaffold
+        .run_git(["config", "diff.interHunkContext", "1000000"])
+        .unwrap();
+    scaffold
+        .write_file(
+            root,
+            "two-hunks.txt",
+            &format!("first change\n{padding}last change\n"),
+        )
+        .unwrap();
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = DiffRequest {
+        worktree: &worktree,
+        base_commit_id: None,
+        scope: DiffScope::Unstaged,
+    };
+    let compact = git.diff_compact(request.clone()).unwrap();
+    let preview = git
+        .diff_file(request, "two-hunks.txt", /*old_path*/ None)
+        .unwrap();
+    assert_eq!(compact, preview);
+    assert!(compact.patch.contains("+first change"));
+    assert!(compact.patch.contains("+last change"));
+    assert!(compact.patch.len() < 1024);
+}
+
+/// Verifies exact path selection preserves a changed gitlink at the selected path.
+#[test]
+fn staged_submodule_has_a_file_preview() {
+    let scaffold = TestScaffold::new("runtime-submodule-preview").unwrap();
+    let root = scaffold.repo_path();
+    scaffold.write_file(root, "seed.txt", "seed\n").unwrap();
+    scaffold.stage_all_and_commit("base").unwrap();
+    let old = scaffold.run_git(["rev-parse", "HEAD"]).unwrap();
+    scaffold
+        .run_git([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{},module [1]", old.trim()),
+        ])
+        .unwrap();
+    scaffold.run_git(["commit", "-m", "add gitlink"]).unwrap();
+    let new = scaffold.run_git(["rev-parse", "HEAD"]).unwrap();
+    scaffold
+        .run_git([
+            "update-index",
+            "--cacheinfo",
+            &format!("160000,{},module [1]", new.trim()),
+        ])
+        .unwrap();
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = DiffRequest {
+        worktree: &worktree,
+        base_commit_id: None,
+        scope: DiffScope::Staged,
+    };
+    let preview = git
+        .diff_file(request, "module [1]", /*old_path*/ None)
+        .unwrap();
+    assert!(
+        preview
+            .patch
+            .contains(&format!("-Subproject commit {}", old.trim()))
+    );
+    assert!(
+        preview
+            .patch
+            .contains(&format!("+Subproject commit {}", new.trim()))
+    );
+}
+
+/// Verifies that selecting a replaced file cannot pull in its new directory's patches.
+#[test]
+fn preview_keeps_replaced_files_and_nested_renames_exact() {
+    let scaffold = TestScaffold::new("runtime-exact-diff-preview").unwrap();
+    let root = scaffold.repo_path();
+    scaffold
+        .write_file(root, "replaced [1]", "deleted content\n")
+        .unwrap();
+    scaffold
+        .write_file(root, "moved", "renamed content\n")
+        .unwrap();
+    scaffold.stage_all_and_commit("initial").unwrap();
+
+    for path in ["replaced [1]", "moved"] {
+        std::fs::remove_file(root.join(path)).unwrap();
+        std::fs::create_dir(root.join(path)).unwrap();
+    }
+    scaffold
+        .write_file(root, "replaced [1]/child.txt", "replacement child\n")
+        .unwrap();
+    scaffold
+        .write_file(root, "moved/renamed.txt", "renamed content\n")
+        .unwrap();
+    scaffold
+        .write_file(root, "moved/unrelated.txt", "unrelated child\n")
+        .unwrap();
+    scaffold.run_git(["add", "-A"]).unwrap();
+
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = DiffRequest {
+        worktree: &worktree,
+        base_commit_id: None,
+        scope: DiffScope::Staged,
+    };
+
+    let deleted = git
+        .diff_file(request.clone(), "replaced [1]", /*old_path*/ None)
+        .unwrap();
+    assert!(deleted.patch.contains("-deleted content"));
+    assert!(!deleted.patch.contains("replacement child"));
+
+    let listing = git.diff_files(request.clone()).unwrap();
+    let moved = listing
+        .files
+        .iter()
+        .find(|file| file.path == "moved/renamed.txt")
+        .unwrap();
+    assert_eq!(moved.old_path.as_deref(), Some("moved"));
+    let renamed = git
+        .diff_file(request, &moved.path, moved.old_path.as_deref())
+        .unwrap();
+    assert!(renamed.patch.contains("-renamed content"));
+    assert!(renamed.patch.contains("+renamed content"));
+    assert!(!renamed.patch.contains("unrelated child"));
 }
 
 /// Verifies the runtime can discover repositories, list worktrees, resolve linked worktrees, and enumerate branches.

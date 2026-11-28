@@ -25,20 +25,22 @@ export type CommitWorkspaceChangesResponse = {
 export type GetWorkspaceDiffRequest = {
   workspaceId: string;
   scope: WorkspaceDiffScope;
+  selection: WorkspaceDiffSelection;
 };
 
 /**
- * Returns one standard unified patch and the revisions needed to render it.
+ * Returns the selected content and the revisions needed to render it.
  *
  * `base_commit_id` is absent when the workspace has no recorded baseline (a
  * project's main checkout, or a historical worktree whose creation commit was
  * never recorded) - only meaningful for the `Branch`/`Committed` scopes.
  */
-export type GetWorkspaceDiffResponse = {
-  baseCommitId: string | null;
-  headCommitId: string;
-  patch: string;
-};
+export type GetWorkspaceDiffResponse =
+  & { baseCommitId: string | null; headCommitId: string }
+  & ({ "kind": "patch"; patch: string; contextLimited: boolean } | {
+    "kind": "files";
+    files: Array<WorkspaceDiffFile>;
+  } | { "kind": "file"; patch: string });
 
 /**
  * Identifies which workspace staging status should be read.
@@ -102,9 +104,47 @@ export type UnstageWorkspaceChangesRequest = {
 export type UnstageWorkspaceChangesResponse = { unstagedPaths: Array<string> };
 
 /**
+ * Carries only the fields associated with the requested diff selection.
+ */
+export type WorkspaceDiffContent =
+  | { "kind": "patch"; patch: string; contextLimited: boolean }
+  | { "kind": "files"; files: Array<WorkspaceDiffFile> }
+  | { "kind": "file"; patch: string };
+
+/**
+ * Describes a changed path without loading patch text.
+ */
+export type WorkspaceDiffFile = {
+  path: string;
+  oldPath: string | null;
+  status: WorkspaceDiffStatus;
+};
+
+/**
  * Selects which Git layer should be rendered in the workspace review surface.
  */
 export type WorkspaceDiffScope = "branch" | "unstaged" | "staged" | "committed";
+
+/**
+ * Selects the whole patch, a file list, or a single file patch.
+ */
+export type WorkspaceDiffSelection =
+  | { "kind": "patch" }
+  | { "kind": "files" }
+  | { "kind": "file"; path: string; oldPath: string | null };
+
+/**
+ * Classifies the Git change displayed for a file.
+ */
+export type WorkspaceDiffStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "typeChanged"
+  | "unmerged"
+  | "unknown";
 
 /**
  * Represents one changed file's staging state.
