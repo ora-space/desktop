@@ -55,6 +55,7 @@ is the only source of truth for the schema; there is no checked-in `schema.sql`.
 | `0026` | Run-local debug evidence, configuration revisions, preview receipts and operation fences |
 | `0027` | `workflow_debug_boot_protected` identifies attempts to preserve at startup. `workflow_debug_dispatch` points to the operation governing re-dispatch. `workflow_debug_end_dispatch` clears the pointer when the run leaves Running. |
 | `0028` | While round retirement and slots awaiting replay |
+| `0029` | Intern each debug value once per capture and reuse its run-local reference |
 
 When rolling back `0028`, SQLite keeps the operation ID for each pending replay in the existing round state. On a `0027` build, a Loop with a pending replay cannot advance because inserting the same round index violates its unique constraint. Upgrading restores those slots so the scheduler can reuse the original round indices. Completed retirement records in this table are dropped on downgrade.
 

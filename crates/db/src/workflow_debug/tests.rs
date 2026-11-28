@@ -183,10 +183,17 @@ fn waiting_retry_uses_its_predecessor_until_the_timer_starts_it() {
 
 /// Seeds a real migrated database with two runs of the same published definition.
 fn fixture() -> (tempfile::TempDir, DatabaseLocation, WorkflowDebugStore) {
+    fixture_with_catalog(&default_migration_catalog().unwrap())
+}
+
+/// Seeds the same two runs on a selected schema for timing and upgrade comparisons.
+fn fixture_with_catalog(
+    catalog: &crate::MigrationCatalog,
+) -> (tempfile::TempDir, DatabaseLocation, WorkflowDebugStore) {
     let temp = tempfile::tempdir().unwrap();
     let location = DatabaseLocation::path(temp.path().join("debug.sqlite"));
     let pool = DatabaseBootstrapper::system()
-        .bootstrap_repository_pool(&location, &default_migration_catalog().unwrap())
+        .bootstrap_repository_pool(&location, catalog)
         .unwrap();
     pool.with_connection(|db| {
         db.execute_batch("INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','p',1,1);
