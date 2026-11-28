@@ -7,6 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { ContractsClientContext } from "../../contracts-client-context";
@@ -47,16 +48,21 @@ function renderRequestedDiff(fileRequest?: {
   path?: string;
   requestId?: number;
   line?: number;
+  beforeDiff?: () => void;
+  onFileNotFound?: (path: string) => void;
 }) {
   const clientHandlers: TestHandlers = {};
   const client = createTestClient(clientHandlers);
-  clientHandlers.getWorkspaceDiff = async () => ({
-    kind: "patch",
-    contextLimited: false,
-    baseCommitId: "base",
-    headCommitId: "head",
-    patch: MULTI_FILE_PATCH,
-  });
+  clientHandlers.getWorkspaceDiff = async () => {
+    fileRequest?.beforeDiff?.();
+    return {
+      kind: "patch",
+      contextLimited: false,
+      baseCommitId: "base",
+      headCommitId: "head",
+      patch: MULTI_FILE_PATCH,
+    };
+  };
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   });
@@ -81,6 +87,7 @@ function renderRequestedDiff(fileRequest?: {
         requestId: fileRequest?.requestId ?? 1,
         line: fileRequest?.line,
       }}
+      onFileNotFound={fileRequest?.onFileNotFound}
       onFileTreeOpenChange={() => undefined}
     />,
     { wrapper },
@@ -125,6 +132,27 @@ function boxRect(top: number, width: number, height: number): DOMRect {
 }
 
 describe("TaskDiffView file requests", () => {
+  it("keeps a chat file request pending through a failed diff read and applies it on retry", async () => {
+    let fail = true;
+    const onFileNotFound = vi.fn();
+    renderRequestedDiff({
+      beforeDiff: () => {
+        if (fail) throw new Error("patch unavailable");
+      },
+      onFileNotFound,
+    });
+    const retry = await screen.findByRole("button", { name: "重试" });
+    expect(onFileNotFound).not.toHaveBeenCalled();
+    fail = false;
+    await userEvent.setup().click(retry);
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "demo-spec.md" }),
+      ).toHaveAttribute("aria-current", "page");
+    });
+    expect(onFileNotFound).not.toHaveBeenCalled();
+  });
+
   const nativeGetBoundingClientRect =
     HTMLElement.prototype.getBoundingClientRect;
 

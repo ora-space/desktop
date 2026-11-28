@@ -185,13 +185,17 @@ export function TaskDiffView({
   // Diff and status are Git reads; a plain folder (or a list still loading) must not issue them.
   const gitAvailability = useWorkspaceGitAvailability({ workspaceId });
   const gitReadsEnabled = gitAvailability === "available";
-  const diffQuery = useWorkspaceDiff(workspaceId, scope, gitReadsEnabled);
+  const [fileMode, setFileMode] = useState(false);
+  const diffQuery = useWorkspaceDiff(
+    workspaceId,
+    scope,
+    gitReadsEnabled && !fileMode,
+  );
   const statusQuery = useWorkspaceStatus(workspaceId, gitReadsEnabled);
   // A disabled diff query never reports loading, so a list still being checked must count too,
   // or a chat jump would resolve against an empty patch and bounce to Files.
   const diffPending = diffQuery.isLoading || gitAvailability === "checking";
   const sizeError = isWorkspaceDiffTooLarge(diffQuery.error);
-  const [fileMode, setFileMode] = useState(false);
   const viewFilesButtonRef = useRef<HTMLButtonElement>(null);
   const returnToChangesRef = useRef<HTMLButtonElement>(null);
   const refreshButtonRef = useRef<HTMLButtonElement>(null);
@@ -364,12 +368,16 @@ export function TaskDiffView({
   // Deferring the parse leaves `filePaths` empty for one render. Do not mark
   // the request applied yet, or `onFileNotFound` (a chat jump that could not
   // resolve a path) fires while the patch is still parsing and yanks the
-  // layout into the Files panel. Once the parse lands the block re-runs.
-  if (
-    fileRequest !== undefined &&
+  // layout into the Files panel. A failed read likewise leaves the request
+  // pending so a successful retry can still resolve it.
+  const canApplyFileRequest =
     !diffPending &&
     !fileMode &&
     !parseDeferred &&
+    (diffQuery.error === null || gitAvailability === "notRepository");
+  if (
+    fileRequest !== undefined &&
+    canApplyFileRequest &&
     fileRequest.requestId !== appliedFileRequestId
   ) {
     setAppliedFileRequestId(fileRequest.requestId);
@@ -466,13 +474,7 @@ export function TaskDiffView({
 
   // A plain folder has no diff, so every chat jump resolves here to the Files panel.
   useEffect(() => {
-    if (
-      fileRequest === undefined ||
-      diffPending ||
-      fileMode ||
-      parseDeferred ||
-      (diffQuery.error !== null && gitAvailability !== "notRepository")
-    ) {
+    if (fileRequest === undefined || !canApplyFileRequest) {
       return;
     }
     if (fileRequest.requestId !== appliedFileRequestId) return;
@@ -493,12 +495,8 @@ export function TaskDiffView({
     fileRequest,
     appliedFileRequestId,
     filePaths,
-    diffPending,
+    canApplyFileRequest,
     onFileNotFound,
-    parseDeferred,
-    fileMode,
-    diffQuery.error,
-    gitAvailability,
   ]);
 
   useEffect(() => {
