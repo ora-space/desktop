@@ -75,10 +75,8 @@ fn check_exit_rewind(outcome: ExitOutcome) {
         .unwrap();
     let rows = node_runs(&pool, &run);
     let check = rows.iter().find(|r| r.node_id == "check").unwrap();
-    assert!(
-        rows.iter()
-            .any(|r| r.node_id == "slow" && r.status == WorkflowNodeStatus::Cancelled)
-    );
+    let slow = rows.iter().find(|row| row.node_id == "slow").unwrap();
+    assert_eq!(slow.status, WorkflowNodeStatus::Cancelled);
     let requests = [
         (&check.id, "/cases/0/conditions/0/value", json!("continue")),
         (&owner.id, "/loopConfig/maxIterations", json!(3)),
@@ -144,8 +142,11 @@ fn check_exit_rewind(outcome: ExitOutcome) {
         assert!(settled.error.unwrap().contains("slow.output"));
     }
     let assert_allowed = || {
+        let cancelled_attempt = slow.id.to_string();
         for request in &requests {
-            store.preview(request, strategy::plan).unwrap();
+            let preview = store.preview(request, strategy::plan).unwrap();
+            assert!(preview.impact.invalidate.contains(&cancelled_attempt));
+            assert!(preview.impact.schedule.iter().any(|node| node == "slow"));
         }
     };
     if matches!(outcome, ExitOutcome::Succeeded | ExitOutcome::MissingExport) {
