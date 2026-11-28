@@ -78,6 +78,13 @@ pub(crate) async fn complete_launch<RuntimeLauncher, StatusPublisher, Notificati
         level: inner.log_levels.subscribe(&plugin_id),
         redactions: inner.redactions.begin_generation(&plugin_id),
     };
+    // Register host-injected environment secrets before the process is handed them, so the plugin
+    // cannot leak them back through its own logs (ADR D4). Only Agent plugins receive a process
+    // environment, so only their launches register the provider's secrets.
+    if matches!(plugin.contributes, PluginContribution::Agent(_)) {
+        let environment_secrets = inner.launcher.environment_secrets(&plugin_id.to_string());
+        inner.redactions.register(&plugin_id, environment_secrets);
+    }
     let launch = inner
         .launcher
         .launch(

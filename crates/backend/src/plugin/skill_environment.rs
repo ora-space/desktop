@@ -1,7 +1,8 @@
 //! Freezes Skill configuration at backend startup for both Agent process launch paths.
 
 use ora_plugin_config::{
-    ConfigurationService, SkillEnvironmentError, resolve_skill_environment, skill_environment_key,
+    ConfigurationService, SettingValue, SkillEnvironmentError, resolve_skill_environment,
+    skill_environment_key,
 };
 use ora_plugin_lifecycle::ChildProcessEnvironmentProvider;
 use ora_plugin_manager::{PluginContribution, PluginManager};
@@ -11,7 +12,12 @@ use std::sync::Arc;
 
 /// Shares one immutable startup snapshot; deliberately has no Debug implementation for secrets.
 #[derive(Clone, Default)]
-pub(crate) struct SkillEnvironment(Arc<BTreeMap<String, String>>);
+pub(crate) struct SkillEnvironment {
+    values: Arc<BTreeMap<String, String>>,
+    /// The `secret`-flagged `String` setting values delivered to Agent processes, kept as a
+    /// separate subset for log redaction (ADR D4).
+    secrets: Arc<BTreeSet<String>>,
+}
 
 impl SkillEnvironment {
     /// Reads only valid installed Skill packages and never exposes rejected configuration values.
@@ -48,7 +54,18 @@ impl SkillEnvironment {
                 }
             };
             if let Some(values) = values {
-                candidates.insert(id, values);
+                // The secret subset follows the same atomic resolution: a package that was not
+                // injected does not register its secrets either (ADR D4).
+                let secrets: BTreeSet<String> = details
+                    .settings
+                    .iter()
+                    .filter(|setting| setting.declaration.secret)
+                    .filter_map(|setting| match &setting.effective_value {
+                        Some(SettingValue::String(value)) => Some(value.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                candidates.insert(id, (values, secrets));
             }
         }
         let mut rejected = BTreeSet::new();
@@ -58,13 +75,19 @@ impl SkillEnvironment {
                 ora_logging::ora_warn!(plugin_id = %plugin_id, field_id = %field_id, "Skill environment omitted: environment name collision");
             }
         }
-        Self(Arc::new(
-            candidates
-                .into_iter()
-                .filter(|(id, _)| !rejected.contains(id))
-                .flat_map(|(_, values)| values)
-                .collect(),
-        ))
+        let mut values = BTreeMap::new();
+        let mut secrets = BTreeSet::new();
+        for (id, (package_values, package_secrets)) in candidates {
+            if rejected.contains(&id) {
+                continue;
+            }
+            values.extend(package_values);
+            secrets.extend(package_secrets);
+        }
+        Self {
+            values: Arc::new(values),
+            secrets: Arc::new(secrets),
+        }
     }
 }
 
@@ -75,12 +98,18 @@ impl ChildProcessEnvironmentProvider for SkillEnvironment {
         _plugin_id: &str,
         _workspace_root: &Path,
     ) -> Result<BTreeMap<String, String>, String> {
-        Ok((*self.0).clone())
+        Ok((*self.values).clone())
     }
 
     /// Gives every Agent plugin the desktop-wide snapshot, independent of workspace selection.
     fn plugin_environment(&self, _plugin_id: &str) -> BTreeMap<String, String> {
-        (*self.0).clone()
+        (*self.values).clone()
+    }
+
+    /// Returns the desktop-wide Skill secret snapshot for redaction; the receiving Agent plugin
+    /// does not change the set (ADR D4).
+    fn secret_values(&self, _plugin_id: &str) -> Vec<String> {
+        self.secrets.iter().cloned().collect()
     }
 }
 
@@ -305,7 +334,7 @@ mod tests {
             let configuration = ConfigurationService::new(root.path());
             assert!(
                 SkillEnvironment::capture(root.path(), &configuration)
-                    .0
+                    .values
                     .is_empty()
             );
             let details = configuration
@@ -337,6 +366,11 @@ mod tests {
                     .unwrap(),
                 expected
             );
+            assert_eq!(
+                captured.secret_values("agent"),
+                vec!["test-only-secret".to_string()],
+                "only the secret-flagged String value is registered for redaction",
+            );
             let current = configuration
                 .get("official/demo", &package)
                 .unwrap()
@@ -352,14 +386,14 @@ mod tests {
             assert_eq!(captured.plugin_environment("agent"), expected);
             assert!(
                 SkillEnvironment::capture(root.path(), &configuration)
-                    .0
+                    .values
                     .is_empty()
             );
             std::fs::remove_dir_all(&package).unwrap();
             assert_eq!(captured.plugin_environment("agent"), expected);
             assert!(
                 SkillEnvironment::capture(root.path(), &configuration)
-                    .0
+                    .values
                     .is_empty()
             );
         });

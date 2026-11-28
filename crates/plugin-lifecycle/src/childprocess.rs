@@ -93,6 +93,12 @@ pub trait ChildProcessEnvironmentProvider: Clone + Send + Sync + 'static {
     fn plugin_environment(&self, _plugin_id: &str) -> BTreeMap<String, String> {
         BTreeMap::new()
     }
+
+    /// Returns the sensitive string values this provider injects into an Agent plugin's process
+    /// environment, for redaction before delivery (ADR D4). Defaults to none.
+    fn secret_values(&self, _plugin_id: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Leaves child-process environments unchanged when no host policy is configured.

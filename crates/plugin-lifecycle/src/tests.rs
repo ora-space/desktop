@@ -1290,6 +1290,72 @@ target = "x86_64-pc-windows-msvc"
     .expect("write Hook plugin manifest");
 }
 
+/// Returns one ready runtime while reporting whether its launch-time log redactions were populated.
+#[derive(Clone)]
+struct RedactionObservingLauncher {
+    observed: mpsc::UnboundedSender<bool>,
+    secrets: Vec<String>,
+}
+
+impl PluginRuntimeLauncher for RedactionObservingLauncher {
+    type Runtime = FakeRuntime;
+
+    /// Host environment secrets are reported before launch so the lifecycle can register them.
+    fn environment_secrets(&self, _plugin_id: &str) -> Vec<String> {
+        self.secrets.clone()
+    }
+
+    /// Captures whether the just-registered secret reached this launch's redactions receiver.
+    fn launch(
+        &self,
+        _request: PluginLaunchRequest,
+        log: PluginLogSetup,
+    ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
+    {
+        let observed = self.observed.clone();
+        async move {
+            let _ = observed.send(!log.redactions.borrow().is_empty());
+            Ok(launched_runtime(FakeRuntime))
+        }
+    }
+}
+
+/// Verifies an Agent launch registers its environment provider's secrets before the runtime is
+/// handed them, so the plugin cannot leak them back through its own logs (ADR D4).
+#[tokio::test]
+async fn agent_launch_registers_environment_secrets_in_log_redactions() {
+    let _logging = trace_logging_guard();
+    let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
+    write_plugin_package(temp_dir.path(), "ora.example");
+    let (observed_tx, mut observed_rx) = mpsc::unbounded_channel();
+    let launcher = RedactionObservingLauncher {
+        observed: observed_tx,
+        secrets: vec!["skill-secret-token".to_string()],
+    };
+    let (publisher, _events) = RecordingStatusPublisher::new();
+    let lifecycle = PluginLifecycle::open(
+        PluginLifecycleConfig {
+            data_directory: temp_dir.path().to_path_buf(),
+            deno_path: PathBuf::from("deno"),
+        },
+        launcher,
+        publisher,
+        NoopNotificationSink,
+    )
+    .expect("open plugin lifecycle");
+    lifecycle
+        .activate_plugin(ActivatePluginRequest {
+            plugin_id: "official/ora.example".to_string(),
+        })
+        .await
+        .expect("activate plugin");
+    assert_eq!(
+        observed_rx.recv().await,
+        Some(true),
+        "the agent's launch-time redactions include the host-injected environment secret",
+    );
+}
+
 /// Writes one complete agent package into the versioned installed layout.
 pub(super) fn write_plugin_package(data_dir: &std::path::Path, name: &str) {
     let package_root = package_version_root(data_dir, name);

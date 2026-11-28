@@ -123,6 +123,14 @@ pub trait PluginRuntimeLauncher: Clone + Send + Sync + 'static {
         request: PluginLaunchRequest,
         log: PluginLogSetup,
     ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send;
+
+    /// Returns the sensitive string values this launcher injects into `plugin_id`'s process
+    /// environment, so the host can register them for log redaction before launch (ADR D4).
+    ///
+    /// Defaults to none; host launchers that inject secrets override this.
+    fn environment_secrets(&self, _plugin_id: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Publishes cache invalidations after observable plugin lifecycle transitions.
