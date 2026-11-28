@@ -99,8 +99,14 @@ async fn manual_address_formats_work_for_the_probe_and_updater_transport() {
         ora_backend::Backend::open(crate::tests::test_backend_paths(data.path())).unwrap();
     let settings = backend.settings();
     let manifest: Url = "https://manifest.example.test/latest.json".parse().unwrap();
-    for host in ["localhost", "http://localhost", "https://localhost"] {
-        let credentials = (host != "localhost").then_some(("fixture%2B", "password%40@"));
+    for (host, credentials) in [
+        ("localhost", None),
+        ("http://localhost", Some(("fixture%2B", "password%40@"))),
+        (
+            "https://localhost",
+            Some((" fixture ", "password%ff todayé 🌍")),
+        ),
+    ] {
         let expected_auth = credentials.map(|(user, password)| {
             let encoded =
                 base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));

@@ -63,6 +63,7 @@ export const settingsTranslations = {
     "settings.proxy.port": "端口",
     "settings.proxy.portPlaceholder": "7890",
     "settings.proxy.invalidPort": "请输入 1 至 65535 之间的整数端口。",
+    "settings.proxy.missingPort": "请输入端口。",
     "settings.proxy.keptPort": "已保留当前端口。地址中的端口是 {{port}}。",
     "settings.proxy.username": "用户名",
     "settings.proxy.password": "密码",
@@ -262,6 +263,7 @@ export const settingsTranslations = {
     "settings.proxy.port": "Port",
     "settings.proxy.portPlaceholder": "7890",
     "settings.proxy.invalidPort": "Enter a whole-number port from 1 to 65535.",
+    "settings.proxy.missingPort": "Enter a port.",
     "settings.proxy.keptPort":
       "Kept the current port. The address included port {{port}}.",
     "settings.proxy.username": "Username",
