@@ -2,7 +2,6 @@ use ora_contracts::{
     PluginOrigin, Skill as ContractSkill, SkillAvailability, SkillDetails, SkillSource,
 };
 use ora_domain::{PluginOriginCatalog, Skill as DomainSkill, SkillOrigin};
-use ora_logging::ora_warn;
 
 /// Projects a domain skill into its audit-free public contract form.
 pub(crate) fn map_skill(
@@ -51,17 +50,10 @@ fn map_source(origin: &SkillOrigin, origins: &PluginOriginCatalog) -> SkillSourc
 
 /// Classifies one plugin namespace for a contract, degrading instead of failing on a lost binding.
 ///
-/// One damaged binding must not fail a whole list, so the entry is shown with the degraded origin
-/// and the damage is left in the log for diagnosis.
+/// The degrade-and-warn policy lives in [`PluginOriginCatalog::resolve_or_degrade`]; this only
+/// projects the domain origin onto the wire enum.
 pub fn plugin_origin_contract(origins: &PluginOriginCatalog, namespace: &str) -> PluginOrigin {
-    let origin = origins.origin_of(namespace).unwrap_or_else(|missing| {
-        ora_warn!(
-            namespace = missing.namespace(),
-            "plugin namespace has no recorded marketplace source"
-        );
-        missing.into_degraded_origin()
-    });
-    match origin {
+    match origins.resolve_or_degrade(namespace) {
         ora_domain::PluginOrigin::LocalArchive => PluginOrigin::LocalArchive,
         ora_domain::PluginOrigin::Official => PluginOrigin::Official,
         ora_domain::PluginOrigin::Marketplace { source_url, label } => {

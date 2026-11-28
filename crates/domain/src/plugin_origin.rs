@@ -125,6 +125,28 @@ impl PluginOriginCatalog {
                 }),
         }
     }
+
+    /// Classifies one namespace for display, degrading instead of failing on a lost binding.
+    ///
+    /// One damaged binding must not hide a whole list, so the entry is shown with the degraded
+    /// origin and the damage is left in the log for diagnosis. This is the single projection every
+    /// origin-bearing response uses, so the degrade-and-warn policy cannot drift between surfaces.
+    ///
+    /// The warning fires only when the snapshot carries bindings: a populated catalog missing one
+    /// namespace is the damaged-state signal. An empty catalog means the host tracks no bindings
+    /// at all — a Node session that never displays origins, or a binding read that already failed
+    /// and was reported separately — so degrading there is expected, not damage, and stays quiet.
+    pub fn resolve_or_degrade(&self, namespace: &str) -> PluginOrigin {
+        self.origin_of(namespace).unwrap_or_else(|missing| {
+            if !self.marketplaces.is_empty() {
+                ora_logging::ora_warn!(
+                    namespace = missing.namespace(),
+                    "plugin namespace has no recorded marketplace source"
+                );
+            }
+            missing.into_degraded_origin()
+        })
+    }
 }
 
 /// Supplies a fresh [`PluginOriginCatalog`] to every query that shows plugins or plugin Skills.
@@ -226,6 +248,78 @@ mod tests {
                     source_url: None,
                     label: "tools".to_string(),
                 },
+            ),
+        );
+    }
+
+    /// Collects the message of every recorded event so a test can assert what was warned.
+    #[derive(Clone, Default)]
+    struct Recorded(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Recorded {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            use tracing::field::{Field, Visit};
+            struct Message(Option<String>);
+            impl Visit for Message {
+                fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                    if field.name() == "message" {
+                        self.0 = Some(format!("{value:?}"));
+                    }
+                }
+            }
+            let mut message = Message(None);
+            event.record(&mut message);
+            if let Some(message) = message.0 {
+                self.0.lock().unwrap().push(message);
+            }
+        }
+    }
+
+    /// A populated catalog missing one namespace warns about the damage and still degrades.
+    #[test]
+    fn resolve_or_degrade_warns_when_a_bound_catalog_misses_a_namespace() {
+        let catalog = PluginOriginCatalog::from_bindings([(
+            "marketplace.11111111".to_string(),
+            "https://github.com/acme/marketplace".to_string(),
+        )]);
+        let recorded = Recorded::default();
+        let origin = ora_logging::with_recorded_trace_logging(recorded.clone(), || {
+            catalog.resolve_or_degrade("tools.33333333")
+        });
+
+        assert_eq!(
+            (origin, recorded.0.lock().unwrap().clone()),
+            (
+                PluginOrigin::Marketplace {
+                    source_url: None,
+                    label: "tools".to_string(),
+                },
+                vec!["plugin namespace has no recorded marketplace source".to_string()],
+            ),
+        );
+    }
+
+    /// An empty catalog tracks no bindings, so degrading is expected and stays quiet: this is the
+    /// Node session that never displays origins, and a binding read that already failed separately.
+    #[test]
+    fn resolve_or_degrade_is_quiet_for_an_empty_catalog() {
+        let recorded = Recorded::default();
+        let origin = ora_logging::with_recorded_trace_logging(recorded.clone(), || {
+            PluginOriginCatalog::EMPTY.resolve_or_degrade("tools.33333333")
+        });
+
+        assert_eq!(
+            (origin, recorded.0.lock().unwrap().clone()),
+            (
+                PluginOrigin::Marketplace {
+                    source_url: None,
+                    label: "tools".to_string(),
+                },
+                Vec::<String>::new(),
             ),
         );
     }
