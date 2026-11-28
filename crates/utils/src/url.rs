@@ -5,6 +5,10 @@
 //! written with a different case, a `.git` suffix, a default port, or embedded credentials to
 //! collapse onto one value, on every platform and in every version.
 
+mod repository_label;
+
+pub use repository_label::distinguishing_repository_labels;
+
 /// Ports that carry no information because they are the scheme's default.
 const DEFAULT_PORTS: &[(&str, &str)] = &[
     ("https", "443"),
