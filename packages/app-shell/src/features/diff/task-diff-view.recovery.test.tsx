@@ -24,6 +24,7 @@ vi.mock("../files/workspace-review-files-panel", () => ({
 function mountReview(
   workspaceId: string,
   getWorkspaceDiff: NonNullable<TestHandlers["getWorkspaceDiff"]>,
+  retry = false as false | number,
 ) {
   const projectId = `project-${workspaceId}`;
   const client = createTestClient({
@@ -42,7 +43,7 @@ function mountReview(
     }),
   });
   const queries = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry } },
   });
   const host = createSurfaceTestPlatform({ embedded: false });
   render(
@@ -136,7 +137,7 @@ describe("Git diff recovery in the workspace review panel", () => {
       if (selection.path === "huge.txt") throw tooLarge();
       return patch;
     });
-    mountReview("large", getWorkspaceDiff);
+    mountReview("large", getWorkspaceDiff, 1);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "变更" }));
     const viewByFile = await screen.findByRole("button", {
@@ -147,6 +148,7 @@ describe("Git diff recovery in the workspace review panel", () => {
     ).toEqual([undefined]);
     expect(screen.queryByRole("group", { name: "变更文件导航" })).toBeNull();
     await user.click(viewByFile);
+    expect(screen.getByRole("button", { name: "返回变更视图" })).toHaveFocus();
     expect(await screen.findByText("该文件的 Diff 过大")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "文件" })).toBeInTheDocument();
     expect(

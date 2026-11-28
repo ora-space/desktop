@@ -81,15 +81,35 @@ const FILE_TREE_WIDTH = 240;
 const FILE_TREE_MIN_WIDTH = 180;
 const FILE_TREE_COLLAPSE_THRESHOLD = FILE_TREE_MIN_WIDTH / 2;
 
-/**
- * Parsed `FileData` keyed by the per-file patch slice, so a live-sync
- * invalidation that rewrites only a few files returns the same `FileData`
- * reference for unchanged slices and the sibling `memo` comparison skips them
- * on re-render. Module-level (not a ref) because it is read during render; the
- * patch slices it keys are already retained by the react-query cache, so its
- * growth is bounded by the patches the session has loaded.
- */
+// Share unchanged file objects across refreshes while bounding retained patch text
+// independently of the query cache. A patch can outlive the query that delivered it.
+const MAX_SEGMENT_CACHE_CHARS = 4 * 1024 * 1024;
+const MAX_CACHED_SEGMENTS = 256;
 const segmentFileCache = new Map<string, FileData>();
+let cachedSegmentChars = 0;
+
+function cachedDiffFile(segment: string) {
+  const cached = segmentFileCache.get(segment);
+  if (cached !== undefined) {
+    segmentFileCache.delete(segment);
+    segmentFileCache.set(segment, cached);
+    return cached;
+  }
+  const file = parseTaskDiffSegment(segment);
+  if (file === undefined || segment.length > MAX_SEGMENT_CACHE_CHARS)
+    return file;
+  while (
+    cachedSegmentChars + segment.length > MAX_SEGMENT_CACHE_CHARS ||
+    segmentFileCache.size >= MAX_CACHED_SEGMENTS
+  ) {
+    const oldest = segmentFileCache.keys().next().value!;
+    segmentFileCache.delete(oldest);
+    cachedSegmentChars -= oldest.length;
+  }
+  segmentFileCache.set(segment, file);
+  cachedSegmentChars += segment.length;
+  return file;
+}
 
 interface TaskDiffViewProps {
   workspaceId: string;
@@ -172,6 +192,22 @@ export function TaskDiffView({
   const diffPending = diffQuery.isLoading || gitAvailability === "checking";
   const sizeError = isWorkspaceDiffTooLarge(diffQuery.error);
   const [fileMode, setFileMode] = useState(false);
+  const viewFilesButtonRef = useRef<HTMLButtonElement>(null);
+  const returnToChangesRef = useRef<HTMLButtonElement>(null);
+  const refreshButtonRef = useRef<HTMLButtonElement>(null);
+  const moveModeFocus = useRef(false);
+  const changeFileMode = (nextMode: boolean) => {
+    moveModeFocus.current = true;
+    setFileMode(nextMode);
+  };
+  useLayoutEffect(() => {
+    if (!moveModeFocus.current) return;
+    moveModeFocus.current = false;
+    const next = fileMode
+      ? returnToChangesRef.current
+      : (viewFilesButtonRef.current ?? refreshButtonRef.current);
+    next?.focus();
+  }, [fileMode]);
   const stagedByPath = useMemo(() => {
     const staged = new Set<string>();
     for (const entry of statusQuery.data?.entries ?? []) {
@@ -262,37 +298,23 @@ export function TaskDiffView({
     onPreviewPathChangeRef.current?.(path);
   }, []);
 
-  /**
-   * Two-step parse (A1): a patch above `DEFER_PARSE_PATCH_CHARS` returns an
-   * empty list on the first render and lets the session page paint, then a
-   * post-paint macro-task parses. Mount-only — a refetch never re-defers.
-   */
+  // Let the toolbar paint before the first expensive parse, including when the
+  // patch arrives asynchronously instead of being available at mount.
   const patch = fileMode ? "" : (diffQuery.data?.patch ?? "");
-  const [parseDeferred, setParseDeferred] = useState(
-    () => patch.length > DEFER_PARSE_PATCH_CHARS,
-  );
+  const [largeParseReady, setLargeParseReady] = useState(false);
+  const parseDeferred =
+    patch.length > DEFER_PARSE_PATCH_CHARS && !largeParseReady;
   useEffect(() => {
     if (!parseDeferred) return;
-    const timer = setTimeout(() => setParseDeferred(false), 0);
+    const timer = setTimeout(() => setLargeParseReady(true), 0);
     return () => clearTimeout(timer);
   }, [parseDeferred]);
 
   const files = useMemo(() => {
     if (patch.length === 0 || parseDeferred) return [];
-    const parsed: FileData[] = [];
-    for (const segment of splitPatchSegments(patch)) {
-      const cached = segmentFileCache.get(segment);
-      if (cached !== undefined) {
-        parsed.push(cached);
-        continue;
-      }
-      const file = parseTaskDiffSegment(segment);
-      if (file !== undefined) {
-        segmentFileCache.set(segment, file);
-        parsed.push(file);
-      }
-    }
-    return parsed;
+    return splitPatchSegments(patch).flatMap(
+      (segment) => cachedDiffFile(segment) ?? [],
+    );
   }, [patch, parseDeferred]);
   const filePaths = useMemo(() => files.map(diffFilePath), [files]);
   const stats = useMemo(() => countChanges(files), [files]);
@@ -692,7 +714,12 @@ export function TaskDiffView({
     diffQuery.error !== null && diff === undefined && !fileMode;
   const refreshError = !fileMode && diff !== undefined ? diffQuery.error : null;
   const viewFilesAction = (
-    <Button size="sm" variant="outline" onClick={() => setFileMode(true)}>
+    <Button
+      size="sm"
+      variant="outline"
+      ref={viewFilesButtonRef}
+      onClick={() => changeFileMode(true)}
+    >
       {t("diff.viewByFile")}
     </Button>
   );
@@ -766,6 +793,7 @@ export function TaskDiffView({
             variant="ghost"
             className="ora-diff-toolbar__refresh size-7"
             aria-label={t("diff.refresh")}
+            ref={refreshButtonRef}
             onClick={() => void refresh()}
           >
             <IconRefresh
@@ -789,7 +817,12 @@ export function TaskDiffView({
       )}
       {fileMode && (
         <div className="flex justify-end border-b px-3 py-1">
-          <Button size="sm" variant="ghost" onClick={() => setFileMode(false)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            ref={returnToChangesRef}
+            onClick={() => changeFileMode(false)}
+          >
             {t("diff.returnToChanges")}
           </Button>
         </div>

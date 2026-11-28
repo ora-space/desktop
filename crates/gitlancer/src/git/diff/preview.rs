@@ -1,7 +1,7 @@
 use super::{
     COMPACT_CONTEXT_ARG, DiffRequest, DiffResponse, DiffScope, MAX_DIFF_BYTES,
-    MAX_DIFF_STDERR_BYTES, REVIEW_DIFF_BYTES, build_tracked_diff_command, build_untracked_command,
-    isolated_git_dir, map_bounded_diff_error,
+    MAX_DIFF_STDERR_BYTES, REVIEW_DIFF_BYTES, append_patch, build_tracked_diff_command,
+    build_untracked_command, isolated_git_dir, map_bounded_diff_error,
 };
 use crate::domain::refs::CommitId;
 use crate::error::{DomainError, GitlancerError};
@@ -83,14 +83,32 @@ impl<R: GitRunner> Git<R> {
         path: &str,
         old_path: Option<&str>,
     ) -> Result<DiffResponse, GitlancerError> {
-        let mut command = build_tracked_diff_command(&request, &[], COMPACT_CONTEXT_ARG);
         let pathspec = review_pathspec(&request, path)?;
-        command.args.push(pathspec.clone());
-        if let Some(old_path) = old_path {
-            command.args.push(review_pathspec(&request, old_path)?);
-        }
+        let old_pathspec = old_path
+            .map(|path| review_pathspec(&request, path))
+            .transpose()?;
         let head_commit_id = self.diff_head(request.worktree)?;
-        let mut patch = self.review_output(&command, REVIEW_DIFF_BYTES)?;
+        let mut patch = if let (Some(old_path), Some(old_pathspec)) =
+            (old_path, old_pathspec.as_ref())
+            && (is_below(path, old_path) || is_below(old_path, path))
+        {
+            // A file may be renamed into a directory with its old name. Read
+            // the two sides separately so either exclusion can stay exact.
+            let old = self.exact_patch(&request, old_path, old_pathspec, REVIEW_DIFF_BYTES)?;
+            let separator = usize::from(!old.is_empty() && !old.ends_with('\n'));
+            let remaining = REVIEW_DIFF_BYTES.saturating_sub(old.len() + separator);
+            let new = self.exact_patch(&request, path, &pathspec, remaining)?;
+            let mut patch = old;
+            append_patch(&mut patch, &new);
+            patch
+        } else {
+            let mut command = build_tracked_diff_command(&request, &[], COMPACT_CONTEXT_ARG);
+            select_exact_path(&mut command, path, &pathspec);
+            if let (Some(old_path), Some(old_pathspec)) = (old_path, old_pathspec.as_ref()) {
+                select_exact_path(&mut command, old_path, old_pathspec);
+            }
+            self.review_output(&command, REVIEW_DIFF_BYTES)?
+        };
         if includes_untracked(request.scope) {
             let mut command = build_untracked_command(request.worktree, &[]);
             command.args.extend(["--".to_string(), pathspec]);
@@ -115,6 +133,26 @@ impl<R: GitRunner> Git<R> {
             head_commit_id,
             patch,
         })
+    }
+
+    /// Reads one tracked path without including children of a replaced file.
+    fn exact_patch(
+        &self,
+        request: &DiffRequest<'_>,
+        path: &str,
+        pathspec: &str,
+        max_bytes: usize,
+    ) -> Result<String, GitlancerError> {
+        let mut command = build_tracked_diff_command(request, &[], COMPACT_CONTEXT_ARG);
+        select_exact_path(&mut command, path, pathspec);
+        self.review_output(&command, max_bytes)
+            .map_err(|error| match error {
+                GitlancerError::DiffTooLarge { .. } => GitlancerError::DiffTooLarge {
+                    byte_count: REVIEW_DIFF_BYTES + 1,
+                    max_byte_count: REVIEW_DIFF_BYTES,
+                },
+                error => error,
+            })
     }
 
     /// Applies the patch budget and size-error mapping to every review read.
@@ -146,6 +184,18 @@ fn review_pathspec(request: &DiffRequest<'_>, path: &str) -> Result<String, Gitl
         .into());
     }
     Ok(format!(":(top,literal){path}"))
+}
+
+/// Git's literal inclusion also matches descendant paths, so exclude those explicitly.
+fn select_exact_path(command: &mut GitCommand, path: &str, pathspec: &str) {
+    command.args.push(pathspec.to_owned());
+    command.args.push(format!(":(top,exclude,literal){path}/"));
+}
+
+/// Checks whether one repository path is below another path in the Git tree.
+fn is_below(path: &str, ancestor: &str) -> bool {
+    path.strip_prefix(ancestor)
+        .is_some_and(|tail| tail.starts_with('/'))
 }
 
 /// Only comparisons against the live worktree include untracked files.

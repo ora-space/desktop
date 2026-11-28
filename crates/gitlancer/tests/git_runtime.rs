@@ -354,6 +354,68 @@ fn runtime_reviews_a_large_patch_one_file_at_a_time() {
     );
 }
 
+/// Verifies that selecting a replaced file cannot pull in its new directory's patches.
+#[test]
+fn preview_keeps_replaced_files_and_nested_renames_exact() {
+    let scaffold = TestScaffold::new("runtime-exact-diff-preview").unwrap();
+    let root = scaffold.repo_path();
+    scaffold
+        .write_file(root, "replaced", "deleted content\n")
+        .unwrap();
+    scaffold
+        .write_file(root, "moved", "renamed content\n")
+        .unwrap();
+    scaffold.stage_all_and_commit("initial").unwrap();
+
+    for path in ["replaced", "moved"] {
+        std::fs::remove_file(root.join(path)).unwrap();
+        std::fs::create_dir(root.join(path)).unwrap();
+    }
+    scaffold
+        .write_file(root, "replaced/child.txt", "replacement child\n")
+        .unwrap();
+    scaffold
+        .write_file(root, "moved/renamed.txt", "renamed content\n")
+        .unwrap();
+    scaffold
+        .write_file(root, "moved/unrelated.txt", "unrelated child\n")
+        .unwrap();
+    scaffold.run_git(["add", "-A"]).unwrap();
+
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = DiffRequest {
+        worktree: &worktree,
+        base_commit_id: None,
+        scope: DiffScope::Staged,
+    };
+
+    let deleted = git
+        .diff_file(request.clone(), "replaced", /*old_path*/ None)
+        .unwrap();
+    assert!(deleted.patch.contains("-deleted content"));
+    assert!(!deleted.patch.contains("replacement child"));
+
+    let listing = git.diff_files(request.clone()).unwrap();
+    let moved = listing
+        .files
+        .iter()
+        .find(|file| file.path == "moved/renamed.txt")
+        .unwrap();
+    assert_eq!(moved.old_path.as_deref(), Some("moved"));
+    let renamed = git
+        .diff_file(request, &moved.path, moved.old_path.as_deref())
+        .unwrap();
+    assert!(renamed.patch.contains("-renamed content"));
+    assert!(renamed.patch.contains("+renamed content"));
+    assert!(!renamed.patch.contains("unrelated child"));
+}
+
 /// Verifies the runtime can discover repositories, list worktrees, resolve linked worktrees, and enumerate branches.
 #[test]
 fn runtime_discovers_worktrees_and_branches() {

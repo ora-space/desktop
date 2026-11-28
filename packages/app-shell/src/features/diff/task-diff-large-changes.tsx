@@ -187,6 +187,7 @@ export function TaskDiffLargeChanges({
         <div
           ref={scrollRef}
           role="group"
+          tabIndex={0}
           aria-label={t("diff.changedFilesNavigation")}
           className="w-[min(36%,15rem)] shrink-0 overflow-auto border-r"
         >

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type WorkspaceDiffScope,
   type WorkspaceDiffSelection,
@@ -17,16 +17,27 @@ export function useWorkspaceDiff(
   headCommitId?: string,
 ) {
   const client = useContractsClient();
+  const queryClient = useQueryClient();
+  const queryKey =
+    selection === undefined
+      ? diffKeys.workspaceDiff(workspaceId, scope)
+      : diffKeys.workspaceDiffSelection(
+          workspaceId,
+          scope,
+          selection,
+          headCommitId,
+        );
+  const retry =
+    queryClient.getQueryDefaults(queryKey).retry ??
+    queryClient.getDefaultOptions().queries?.retry ??
+    3;
   return useQuery({
-    queryKey:
-      selection === undefined
-        ? diffKeys.workspaceDiff(workspaceId, scope)
-        : diffKeys.workspaceDiffSelection(
-            workspaceId,
-            scope,
-            selection,
-            headCommitId,
-          ),
+    queryKey,
+    retry: (failureCount, error) => {
+      if (isWorkspaceDiffTooLarge(error)) return false;
+      if (typeof retry === "function") return retry(failureCount, error);
+      return typeof retry === "number" ? failureCount < retry : retry;
+    },
     queryFn: () =>
       client.workspace.getDiff({
         workspaceId,
