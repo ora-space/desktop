@@ -354,25 +354,119 @@ fn runtime_reviews_a_large_patch_one_file_at_a_time() {
     );
 }
 
+/// Verifies compact reads keep distant hunks separate despite the repository configuration.
+#[test]
+fn compact_reviews_override_inter_hunk_context() {
+    let scaffold = TestScaffold::new("runtime-compact-context").unwrap();
+    let root = scaffold.repo_path();
+    let padding = "unchanged context\n".repeat(1000);
+    scaffold
+        .write_file(root, "two-hunks.txt", &format!("start\n{padding}end\n"))
+        .unwrap();
+    scaffold.stage_all_and_commit("base").unwrap();
+    scaffold
+        .run_git(["config", "diff.interHunkContext", "1000000"])
+        .unwrap();
+    scaffold
+        .write_file(
+            root,
+            "two-hunks.txt",
+            &format!("first change\n{padding}last change\n"),
+        )
+        .unwrap();
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = DiffRequest {
+        worktree: &worktree,
+        base_commit_id: None,
+        scope: DiffScope::Unstaged,
+    };
+    let compact = git.diff_compact(request.clone()).unwrap();
+    let preview = git
+        .diff_file(request, "two-hunks.txt", /*old_path*/ None)
+        .unwrap();
+    assert_eq!(compact, preview);
+    assert!(compact.patch.contains("+first change"));
+    assert!(compact.patch.contains("+last change"));
+    assert!(compact.patch.len() < 1024);
+}
+
+/// Verifies exact path selection preserves a changed gitlink at the selected path.
+#[test]
+fn staged_submodule_has_a_file_preview() {
+    let scaffold = TestScaffold::new("runtime-submodule-preview").unwrap();
+    let root = scaffold.repo_path();
+    scaffold.write_file(root, "seed.txt", "seed\n").unwrap();
+    scaffold.stage_all_and_commit("base").unwrap();
+    let old = scaffold.run_git(["rev-parse", "HEAD"]).unwrap();
+    scaffold
+        .run_git([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{},module [1]", old.trim()),
+        ])
+        .unwrap();
+    scaffold.run_git(["commit", "-m", "add gitlink"]).unwrap();
+    let new = scaffold.run_git(["rev-parse", "HEAD"]).unwrap();
+    scaffold
+        .run_git([
+            "update-index",
+            "--cacheinfo",
+            &format!("160000,{},module [1]", new.trim()),
+        ])
+        .unwrap();
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = DiffRequest {
+        worktree: &worktree,
+        base_commit_id: None,
+        scope: DiffScope::Staged,
+    };
+    let preview = git
+        .diff_file(request, "module [1]", /*old_path*/ None)
+        .unwrap();
+    assert!(
+        preview
+            .patch
+            .contains(&format!("-Subproject commit {}", old.trim()))
+    );
+    assert!(
+        preview
+            .patch
+            .contains(&format!("+Subproject commit {}", new.trim()))
+    );
+}
+
 /// Verifies that selecting a replaced file cannot pull in its new directory's patches.
 #[test]
 fn preview_keeps_replaced_files_and_nested_renames_exact() {
     let scaffold = TestScaffold::new("runtime-exact-diff-preview").unwrap();
     let root = scaffold.repo_path();
     scaffold
-        .write_file(root, "replaced", "deleted content\n")
+        .write_file(root, "replaced [1]", "deleted content\n")
         .unwrap();
     scaffold
         .write_file(root, "moved", "renamed content\n")
         .unwrap();
     scaffold.stage_all_and_commit("initial").unwrap();
 
-    for path in ["replaced", "moved"] {
+    for path in ["replaced [1]", "moved"] {
         std::fs::remove_file(root.join(path)).unwrap();
         std::fs::create_dir(root.join(path)).unwrap();
     }
     scaffold
-        .write_file(root, "replaced/child.txt", "replacement child\n")
+        .write_file(root, "replaced [1]/child.txt", "replacement child\n")
         .unwrap();
     scaffold
         .write_file(root, "moved/renamed.txt", "renamed content\n")
@@ -396,7 +490,7 @@ fn preview_keeps_replaced_files_and_nested_renames_exact() {
     };
 
     let deleted = git
-        .diff_file(request.clone(), "replaced", /*old_path*/ None)
+        .diff_file(request.clone(), "replaced [1]", /*old_path*/ None)
         .unwrap();
     assert!(deleted.patch.contains("-deleted content"));
     assert!(!deleted.patch.contains("replacement child"));

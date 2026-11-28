@@ -17,8 +17,8 @@ const MAX_DIFF_BYTES: usize = 10 * 1024 * 1024;
 const MAX_DIFF_STDERR_BYTES: usize = 1024 * 1024;
 // Full, compact, and single-file reads use the same transport budget.
 const REVIEW_DIFF_BYTES: usize = 20 * 1024 * 1024;
-const COMPACT_CONTEXT_ARG: &str = "--unified=3";
-const FULL_FILE_CONTEXT_ARG: &str = "--unified=1000000";
+const COMPACT_CONTEXT_ARGS: &[&str] = &["--unified=3", "--inter-hunk-context=0"];
+const FULL_FILE_CONTEXT_ARGS: &[&str] = &["--unified=1000000"];
 
 /// Selects the Git layer represented by one task diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +50,7 @@ pub struct DiffResponse {
 impl<R: GitRunner> Git<R> {
     /// Reads a full-context workspace review patch within the review budget.
     pub fn diff(&self, request: DiffRequest<'_>) -> Result<DiffResponse, GitlancerError> {
-        self.read_patch(request, &[], FULL_FILE_CONTEXT_ARG, REVIEW_DIFF_BYTES)
+        self.read_patch(request, &[], FULL_FILE_CONTEXT_ARGS, REVIEW_DIFF_BYTES)
     }
 
     /// Computes the same diff while ignoring every path under the excluded prefixes.
@@ -65,14 +65,14 @@ impl<R: GitRunner> Git<R> {
         self.read_patch(
             request,
             excluded_paths,
-            FULL_FILE_CONTEXT_ARG,
+            FULL_FILE_CONTEXT_ARGS,
             MAX_DIFF_BYTES,
         )
     }
 
     /// Reads the same comparison with ordinary unified context for the review view.
     pub fn diff_compact(&self, request: DiffRequest<'_>) -> Result<DiffResponse, GitlancerError> {
-        self.read_patch(request, &[], COMPACT_CONTEXT_ARG, REVIEW_DIFF_BYTES)
+        self.read_patch(request, &[], COMPACT_CONTEXT_ARGS, REVIEW_DIFF_BYTES)
     }
 
     /// Keeps patch generation and byte accounting identical for both context modes.
@@ -80,7 +80,7 @@ impl<R: GitRunner> Git<R> {
         &self,
         request: DiffRequest<'_>,
         excluded_paths: &[&str],
-        context: &str,
+        context: &[&str],
         max_bytes: usize,
     ) -> Result<DiffResponse, GitlancerError> {
         let head_commit_id = self.diff_head(request.worktree)?;
@@ -142,7 +142,7 @@ impl<R: GitRunner> Git<R> {
         worktree: &WorktreeHandle,
         path: &str,
         git_dir: &std::path::Path,
-        context: &str,
+        context: &[&str],
         max_bytes: usize,
         patch: &mut String,
     ) -> Result<(), GitlancerError> {
@@ -242,7 +242,7 @@ fn run_empty_untracked_diff<R: GitRunner>(
     worktree: &WorktreeHandle,
     path: &str,
     max_stdout_bytes: usize,
-    context: &str,
+    context: &[&str],
 ) -> Result<String, GitExecError> {
     let temporary_index = TemporaryIndex::new();
     runner.run(&build_initialize_temporary_index_command(
@@ -302,14 +302,14 @@ pub fn build_diff_command_excluding(
     request: &DiffRequest<'_>,
     excluded_paths: &[&str],
 ) -> GitCommand {
-    build_tracked_diff_command(request, excluded_paths, FULL_FILE_CONTEXT_ARG)
+    build_tracked_diff_command(request, excluded_paths, FULL_FILE_CONTEXT_ARGS)
 }
 
 /// Selects the tracked diff output before Git interprets revisions and pathspecs.
 fn build_tracked_diff_command(
     request: &DiffRequest<'_>,
     excluded_paths: &[&str],
-    output: &str,
+    output: &[&str],
 ) -> GitCommand {
     // Render paths verbatim: with the default `core.quotepath`, Git octal-escapes
     // non-ASCII (e.g. Chinese) names in `diff --git` headers, which the frontend diff
@@ -322,11 +322,8 @@ fn build_tracked_diff_command(
         "--no-ext-diff".to_string(),
         "--no-textconv".to_string(),
         "--find-renames".to_string(),
-        output.to_string(),
     ];
-    if output == "--name-status" {
-        args.push("-z".to_string());
-    }
+    args.extend(output.iter().map(|arg| (*arg).to_string()));
     match request.scope {
         DiffScope::Branch => {
             args.push(expect_baseline(request.base_commit_id).as_str().to_string());
@@ -399,7 +396,7 @@ fn build_untracked_diff_command(
     worktree: &WorktreeHandle,
     path: &str,
     isolated_git_dir: &std::path::Path,
-    context: &str,
+    context: &[&str],
 ) -> GitCommand {
     GitCommand::new(
         worktree.worktree_root().as_path().to_path_buf(),
@@ -411,12 +408,10 @@ fn build_untracked_diff_command(
             "--no-color",
             "--no-ext-diff",
             "--no-textconv",
-            context,
-            "--",
-            "/dev/null",
-            path,
         ]
         .into_iter()
+        .chain(context.iter().copied())
+        .chain(["--", "/dev/null", path])
         .map(str::to_string)
         .collect(),
         // `run_untracked_diff` recognizes a vanished file by Git's English stderr.
@@ -459,7 +454,7 @@ fn build_empty_untracked_diff_command(
     worktree: &WorktreeHandle,
     path: &str,
     temporary_index: &std::path::Path,
-    context: &str,
+    context: &[&str],
 ) -> GitCommand {
     command_with_index(
         worktree,
@@ -471,10 +466,11 @@ fn build_empty_untracked_diff_command(
             "--no-color",
             "--no-ext-diff",
             "--no-textconv",
-            context,
-            "--",
-            path,
-        ],
+        ]
+        .into_iter()
+        .chain(context.iter().copied())
+        .chain(["--", path])
+        .collect(),
         temporary_index,
         GitIntent::ReadOnly,
     )
@@ -511,7 +507,7 @@ fn command(worktree: &WorktreeHandle, args: Vec<&str>) -> GitCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiffRequest, DiffScope, FULL_FILE_CONTEXT_ARG, build_diff_command,
+        DiffRequest, DiffScope, FULL_FILE_CONTEXT_ARGS, build_diff_command,
         build_diff_command_excluding, build_empty_untracked_diff_command,
         build_initialize_temporary_index_command, build_intent_to_add_command,
         build_untracked_diff_command, is_missing_untracked_file_error,
@@ -632,7 +628,7 @@ mod tests {
                 &worktree,
                 "space name.bin",
                 std::path::Path::new("/tmp/missing-git-dir"),
-                FULL_FILE_CONTEXT_ARG,
+                FULL_FILE_CONTEXT_ARGS,
             )
             .args,
             vec![
@@ -664,7 +660,7 @@ mod tests {
                 &worktree,
                 "empty.txt",
                 temporary_index,
-                FULL_FILE_CONTEXT_ARG,
+                FULL_FILE_CONTEXT_ARGS,
             ),
         ];
 

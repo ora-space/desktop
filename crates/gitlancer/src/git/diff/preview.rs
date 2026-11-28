@@ -1,5 +1,5 @@
 use super::{
-    COMPACT_CONTEXT_ARG, DiffRequest, DiffResponse, DiffScope, MAX_DIFF_BYTES,
+    COMPACT_CONTEXT_ARGS, DiffRequest, DiffResponse, DiffScope, MAX_DIFF_BYTES,
     MAX_DIFF_STDERR_BYTES, REVIEW_DIFF_BYTES, append_patch, build_tracked_diff_command,
     build_untracked_command, isolated_git_dir, map_bounded_diff_error,
 };
@@ -36,7 +36,7 @@ impl<R: GitRunner> Git<R> {
     ) -> Result<DiffFilesResponse, GitlancerError> {
         let head_commit_id = self.diff_head(request.worktree)?;
         let tracked = self.review_output(
-            &build_tracked_diff_command(&request, &[], "--name-status"),
+            &build_tracked_diff_command(&request, &[], &["--name-status", "-z"]),
             MAX_DIFF_BYTES,
         )?;
         let mut files = BTreeMap::new();
@@ -102,7 +102,7 @@ impl<R: GitRunner> Git<R> {
             append_patch(&mut patch, &new);
             patch
         } else {
-            let mut command = build_tracked_diff_command(&request, &[], COMPACT_CONTEXT_ARG);
+            let mut command = build_tracked_diff_command(&request, &[], COMPACT_CONTEXT_ARGS);
             select_exact_path(&mut command, path, &pathspec);
             if let (Some(old_path), Some(old_pathspec)) = (old_path, old_pathspec.as_ref()) {
                 select_exact_path(&mut command, old_path, old_pathspec);
@@ -123,7 +123,7 @@ impl<R: GitRunner> Git<R> {
                     request.worktree,
                     path,
                     &isolated_git_dir(),
-                    COMPACT_CONTEXT_ARG,
+                    COMPACT_CONTEXT_ARGS,
                     REVIEW_DIFF_BYTES,
                     &mut patch,
                 )?;
@@ -143,7 +143,7 @@ impl<R: GitRunner> Git<R> {
         pathspec: &str,
         max_bytes: usize,
     ) -> Result<String, GitlancerError> {
-        let mut command = build_tracked_diff_command(request, &[], COMPACT_CONTEXT_ARG);
+        let mut command = build_tracked_diff_command(request, &[], COMPACT_CONTEXT_ARGS);
         select_exact_path(&mut command, path, pathspec);
         self.review_output(&command, max_bytes)
             .map_err(|error| match error {
@@ -189,7 +189,15 @@ fn review_pathspec(request: &DiffRequest<'_>, path: &str) -> Result<String, Gitl
 /// Git's literal inclusion also matches descendant paths, so exclude those explicitly.
 fn select_exact_path(command: &mut GitCommand, path: &str, pathspec: &str) {
     command.args.push(pathspec.to_owned());
-    command.args.push(format!(":(top,exclude,literal){path}/"));
+    // A trailing slash also matches a gitlink. A glob with /** targets only descendants.
+    let escaped = path
+        .replace('\\', "\\\\")
+        .replace('*', "\\*")
+        .replace('?', "\\?")
+        .replace('[', "\\[");
+    command
+        .args
+        .push(format!(":(top,exclude,glob){escaped}/**"));
 }
 
 /// Checks whether one repository path is below another path in the Git tree.
