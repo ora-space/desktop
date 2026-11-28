@@ -351,7 +351,11 @@ function ActionOption({
         ? {}
         : {
             "aria-label": action.label,
-            "aria-description": originCopy(origin, t).text,
+            // Keep the Skill's purpose audible too: aria-description replaces title, so merging
+            // the origin with the description preserves what title alone used to convey.
+            "aria-description": [originCopy(origin, t).text, action.description]
+              .filter(Boolean)
+              .join(" · "),
           })}
       title={action.description || undefined}
       className="group flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none transition-colors duration-150 hover:bg-accent aria-selected:bg-accent aria-selected:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"

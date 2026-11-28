@@ -576,9 +576,13 @@ describe("Composer", () => {
     await user.type(screen.getByRole("textbox"), "/");
 
     const options = await screen.findAllByRole("option", { name: "archify" });
+    // The accessible description keeps the Skill's purpose audible beside its origin.
     expect(
       options.map((option) => option.getAttribute("aria-description")),
-    ).toEqual(["用户", "obsismc/marketplace"]);
+    ).toEqual([
+      "用户 · Draws architecture",
+      "obsismc/marketplace · Draws architecture",
+    ]);
     expect(
       options.map(
         (option) => option.querySelector("[data-slot=origin-tag]")?.textContent,

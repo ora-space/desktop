@@ -660,6 +660,17 @@ it("labels each marketplace card with its source and tells a fork apart", async 
     expect.stringMatching(/^(官方|Official)$/),
     "obsismc/marketplace",
   ]);
+  // The origin also describes the card button, so a screen reader tells the two
+  // same-named cards apart by source rather than hearing one identical name.
+  expect(
+    cards.map((card) => {
+      const id = card.getAttribute("aria-describedby");
+      return id === null ? null : document.getElementById(id)?.textContent;
+    }),
+  ).toEqual([
+    expect.stringMatching(/^(官方|Official)$/),
+    "obsismc/marketplace",
+  ]);
   // The digest-suffixed namespace is identity only and never reaches the card.
   expect(screen.queryByText(/1a2b3c4d/)).not.toBeInTheDocument();
 });

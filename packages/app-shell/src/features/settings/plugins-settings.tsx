@@ -842,6 +842,7 @@ function AvailablePluginCard({
         aria-label={t("settings.plugins.viewReadme", {
           title: plugin.title || plugin.name,
         })}
+        aria-describedby={`marketplace-origin-${plugin.id}`}
         onClick={() => onSelect(plugin)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -858,13 +859,17 @@ function AvailablePluginCard({
               {plugin.title || plugin.name}
             </span>
             {/* Two sources may publish look-alike cards; the origin tells them apart (ADR 20260831 D6). */}
-            <OriginTag
-              origin={pluginOriginDisplay(
-                plugin.origin,
-                plugin.title || plugin.name,
-              )}
+            <span
+              id={`marketplace-origin-${plugin.id}`}
               className="shrink-0"
-            />
+            >
+              <OriginTag
+                origin={pluginOriginDisplay(
+                  plugin.origin,
+                  plugin.title || plugin.name,
+                )}
+              />
+            </span>
           </span>
           {plugin.description !== "" && (
             <span className="mt-0.5 block truncate text-xs text-muted-foreground">

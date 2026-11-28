@@ -194,7 +194,7 @@ function SourceMarketplaceRow({ origin }: { origin: PluginOrigin }) {
     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
       {label}
       <dd className="flex min-w-0 items-center gap-1.5">
-        <span className="break-all">{sourceUrl}</span>
+        <span data-selectable className="break-all">{sourceUrl}</span>
         <Button
           variant="ghost"
           size="icon"
