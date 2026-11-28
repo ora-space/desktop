@@ -3817,7 +3817,9 @@ it("shows and copies the full source URL on a third-party plugin's detail page",
   );
   await waitFor(() =>
     expect(copied).toHaveBeenCalledWith(
-      expect.stringMatching(/已复制来源市场地址|Copied the source marketplace URL/),
+      expect.stringMatching(
+        /已复制来源市场地址|Copied the source marketplace URL/,
+      ),
     ),
   );
 });
@@ -3853,7 +3855,9 @@ it("reports a failed source URL copy on the detail page", async () => {
 
   await waitFor(() =>
     expect(failed).toHaveBeenCalledWith(
-      expect.stringMatching(/复制来源市场地址失败|Failed to copy the source marketplace URL/),
+      expect.stringMatching(
+        /复制来源市场地址失败|Failed to copy the source marketplace URL/,
+      ),
     ),
   );
 });

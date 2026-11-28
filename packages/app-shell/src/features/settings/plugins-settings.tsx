@@ -859,10 +859,7 @@ function AvailablePluginCard({
               {plugin.title || plugin.name}
             </span>
             {/* Two sources may publish look-alike cards; the origin tells them apart (ADR 20260831 D6). */}
-            <span
-              id={`marketplace-origin-${plugin.id}`}
-              className="shrink-0"
-            >
+            <span id={`marketplace-origin-${plugin.id}`} className="shrink-0">
               <OriginTag
                 origin={pluginOriginDisplay(
                   plugin.origin,

@@ -45,12 +45,12 @@ function seedOriginCaches(queryClient: QueryClient): void {
 /** Reports whether each origin-bearing cache was invalidated. */
 function invalidated(queryClient: QueryClient) {
   return {
-    sources:
-      queryClient.getQueryState(pluginKeys.marketplaceSources)?.isInvalidated,
-    installed:
-      queryClient.getQueryState(pluginKeys.installedPlugins)?.isInvalidated,
-    available:
-      queryClient.getQueryState(pluginKeys.availablePlugins)?.isInvalidated,
+    sources: queryClient.getQueryState(pluginKeys.marketplaceSources)
+      ?.isInvalidated,
+    installed: queryClient.getQueryState(pluginKeys.installedPlugins)
+      ?.isInvalidated,
+    available: queryClient.getQueryState(pluginKeys.availablePlugins)
+      ?.isInvalidated,
     skills: queryClient.getQueryState(skillKeys.skills)?.isInvalidated,
   };
 }
