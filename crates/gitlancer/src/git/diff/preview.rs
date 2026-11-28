@@ -35,8 +35,14 @@ impl<R: GitRunner> Git<R> {
         request: DiffRequest<'_>,
     ) -> Result<DiffFilesResponse, GitlancerError> {
         let head_commit_id = self.diff_head(request.worktree)?;
+        // Resolve the comparison and its response label from the same revision.
         let tracked = self.review_output(
-            &build_tracked_diff_command(&request, &[], &["--name-status", "-z"]),
+            &build_tracked_diff_command(
+                &request,
+                &[],
+                &["--name-status", "-z"],
+                head_commit_id.as_str(),
+            ),
             MAX_DIFF_BYTES,
         )?;
         let mut files = BTreeMap::new();
@@ -94,15 +100,26 @@ impl<R: GitRunner> Git<R> {
         {
             // A file may be renamed into a directory with its old name. Read
             // the two sides separately so either exclusion can stay exact.
-            let old = self.exact_patch(&request, old_path, old_pathspec, REVIEW_DIFF_BYTES)?;
+            let old = self.exact_patch(
+                &request,
+                old_path,
+                old_pathspec,
+                &head_commit_id,
+                REVIEW_DIFF_BYTES,
+            )?;
             let separator = usize::from(!old.is_empty() && !old.ends_with('\n'));
             let remaining = REVIEW_DIFF_BYTES.saturating_sub(old.len() + separator);
-            let new = self.exact_patch(&request, path, &pathspec, remaining)?;
+            let new = self.exact_patch(&request, path, &pathspec, &head_commit_id, remaining)?;
             let mut patch = old;
             append_patch(&mut patch, &new);
             patch
         } else {
-            let mut command = build_tracked_diff_command(&request, &[], COMPACT_CONTEXT_ARGS);
+            let mut command = build_tracked_diff_command(
+                &request,
+                &[],
+                COMPACT_CONTEXT_ARGS,
+                head_commit_id.as_str(),
+            );
             select_exact_path(&mut command, path, &pathspec);
             if let (Some(old_path), Some(old_pathspec)) = (old_path, old_pathspec.as_ref()) {
                 select_exact_path(&mut command, old_path, old_pathspec);
@@ -141,9 +158,11 @@ impl<R: GitRunner> Git<R> {
         request: &DiffRequest<'_>,
         path: &str,
         pathspec: &str,
+        head_commit_id: &CommitId,
         max_bytes: usize,
     ) -> Result<String, GitlancerError> {
-        let mut command = build_tracked_diff_command(request, &[], COMPACT_CONTEXT_ARGS);
+        let mut command =
+            build_tracked_diff_command(request, &[], COMPACT_CONTEXT_ARGS, head_commit_id.as_str());
         select_exact_path(&mut command, path, pathspec);
         self.review_output(&command, max_bytes)
             .map_err(|error| match error {

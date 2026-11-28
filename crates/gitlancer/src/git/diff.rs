@@ -88,7 +88,7 @@ impl<R: GitRunner> Git<R> {
         let tracked = self
             .runner()
             .run_bounded(
-                &build_tracked_diff_command(&request, excluded_paths, context),
+                &build_tracked_diff_command(&request, excluded_paths, context, "HEAD"),
                 max_bytes,
                 MAX_DIFF_STDERR_BYTES,
             )
@@ -302,7 +302,7 @@ pub fn build_diff_command_excluding(
     request: &DiffRequest<'_>,
     excluded_paths: &[&str],
 ) -> GitCommand {
-    build_tracked_diff_command(request, excluded_paths, FULL_FILE_CONTEXT_ARGS)
+    build_tracked_diff_command(request, excluded_paths, FULL_FILE_CONTEXT_ARGS, "HEAD")
 }
 
 /// Selects the tracked diff output before Git interprets revisions and pathspecs.
@@ -310,6 +310,7 @@ fn build_tracked_diff_command(
     request: &DiffRequest<'_>,
     excluded_paths: &[&str],
     output: &[&str],
+    head_revision: &str,
 ) -> GitCommand {
     // Render paths verbatim: with the default `core.quotepath`, Git octal-escapes
     // non-ASCII (e.g. Chinese) names in `diff --git` headers, which the frontend diff
@@ -331,11 +332,11 @@ fn build_tracked_diff_command(
         DiffScope::Unstaged => {}
         DiffScope::Staged => {
             args.push("--cached".to_string());
-            args.push("HEAD".to_string());
+            args.push(head_revision.to_string());
         }
         DiffScope::Committed => {
             args.push(expect_baseline(request.base_commit_id).as_str().to_string());
-            args.push("HEAD".to_string());
+            args.push(head_revision.to_string());
         }
     }
     args.push("--".to_string());

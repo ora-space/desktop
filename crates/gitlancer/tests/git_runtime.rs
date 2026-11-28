@@ -17,7 +17,8 @@ use gitlancer::git::worktree::{
     ResolveWorktreeByBranchRequest, ResolveWorktreeRequest, WorktreeDeletionMode,
 };
 use gitlancer::{
-    BranchName, CliGitRunner, CommitId, Git, GitlancerError, RepoRoot, WorktreeKind, WorktreeRoot,
+    BranchName, CliGitRunner, CommitId, Git, GitCommand, GitExecError, GitOutput, GitRunner,
+    GitlancerError, RepoRoot, WorktreeKind, WorktreeRoot,
 };
 use ora_test_support::GitTestScaffold as TestScaffold;
 use ora_utils::path::canonicalize_longest_existing_prefix;
@@ -352,6 +353,87 @@ fn runtime_reviews_a_large_patch_one_file_at_a_time() {
         git.diff_file(unstaged, "../outside.txt", /*old_path*/ None)
             .is_err()
     );
+}
+
+/// Moves HEAD immediately before running a real diff command.
+struct SwitchHeadBeforeDiff<'a> {
+    scaffold: &'a TestScaffold,
+    target: &'a str,
+}
+
+impl GitRunner for SwitchHeadBeforeDiff<'_> {
+    /// Simulates an external checkout after the reader has already resolved HEAD.
+    fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
+        if command.args.iter().any(|arg| arg == "diff") {
+            self.scaffold
+                .run_git(["checkout", "--detach", self.target])
+                .unwrap();
+        }
+        CliGitRunner.run(command)
+    }
+}
+
+/// Verifies committed review reads use the same revision for the Git comparison and response.
+#[test]
+fn committed_review_pins_the_head_used_in_the_response() {
+    let scaffold = TestScaffold::new("review-head-race").unwrap();
+    let root = scaffold.repo_path();
+    scaffold.write_file(root, "file.txt", "baseline\n").unwrap();
+    scaffold.stage_all_and_commit("base").unwrap();
+    let base = CommitId::new(scaffold.run_git(["rev-parse", "HEAD"]).unwrap().trim());
+    scaffold
+        .write_file(root, "file.txt", "old revision\n")
+        .unwrap();
+    scaffold.stage_all_and_commit("old").unwrap();
+    let old = scaffold.run_git(["rev-parse", "HEAD"]).unwrap();
+    scaffold
+        .write_file(root, "file.txt", "new revision\n")
+        .unwrap();
+    scaffold
+        .write_file(root, "new-file.txt", "added only in the new revision\n")
+        .unwrap();
+    scaffold.stage_all_and_commit("new").unwrap();
+    let new = scaffold.run_git(["rev-parse", "HEAD"]).unwrap();
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree = git
+        .find_worktree(FindWorktreeRequest {
+            repository: &repository,
+            candidate_path: root,
+        })
+        .unwrap();
+    let request = DiffRequest {
+        worktree: &worktree,
+        base_commit_id: Some(&base),
+        scope: DiffScope::Committed,
+    };
+
+    scaffold
+        .run_git(["checkout", "--detach", old.trim()])
+        .unwrap();
+    let expected_overview = git.diff_files(request.clone()).unwrap();
+    let expected_preview = git
+        .diff_file(request.clone(), "file.txt", /*old_path*/ None)
+        .unwrap();
+    let switching_git = Git::new(SwitchHeadBeforeDiff {
+        scaffold: &scaffold,
+        target: new.trim(),
+    });
+    assert_eq!(
+        switching_git.diff_files(request.clone()).unwrap(),
+        expected_overview
+    );
+    assert_eq!(scaffold.run_git(["rev-parse", "HEAD"]).unwrap(), new);
+
+    scaffold
+        .run_git(["checkout", "--detach", old.trim()])
+        .unwrap();
+    assert_eq!(
+        switching_git
+            .diff_file(request, "file.txt", /*old_path*/ None)
+            .unwrap(),
+        expected_preview
+    );
+    assert_eq!(scaffold.run_git(["rev-parse", "HEAD"]).unwrap(), new);
 }
 
 /// Verifies compact reads keep distant hunks separate despite the repository configuration.
