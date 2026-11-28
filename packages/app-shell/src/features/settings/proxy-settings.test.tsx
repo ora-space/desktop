@@ -249,7 +249,21 @@ it("shows both the invalid port error and the port from the pasted address", asy
   expect(port).toBeInvalid();
   expect(port).toHaveAccessibleDescription(/1 至 65535|1 to 65535/);
   expect(port).toHaveAccessibleDescription(/端口是 443|included port 443/);
-  expect(screen.getByRole("button", { name: /^保存$|^Save$/ })).toBeDisabled();
+  const save = screen.getByRole("button", { name: /^保存$|^Save$/ });
+  expect(save).toBeDisabled();
+  await user.clear(port);
+  await user.type(port, "443");
+  expect(port).toBeValid();
+  expect(port).not.toHaveAccessibleDescription();
+  await user.click(save);
+  await waitFor(() =>
+    expect(state.proxySettings).toEqual({
+      host: "https://proxy.example",
+      port: 443,
+      username: null,
+      password: null,
+    }),
+  );
 });
 
 it("prompts for an explicit port when the pasted HTTPS address has none", async () => {
@@ -585,6 +599,12 @@ it.each([
     address: "http://a%40b:50%off%20today@proxy.example:7890",
     username: "a@b",
     password: "50%off today",
+  },
+  {
+    case: "malformed UTF-8 alongside valid credential escapes",
+    address: "http://u:50%ff%20today%C3%A9%20%F0%9F%8C%8D@proxy.example:7890",
+    username: "u",
+    password: "50%ff todayé 🌍",
   },
 ])(
   "checks and saves $case from a pasted proxy address",

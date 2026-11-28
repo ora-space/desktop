@@ -87,13 +87,18 @@ export function ProxySettings() {
   );
 }
 
-/** Decodes URL credentials while preserving a literal percent sign or malformed escape. */
+/** Decodes each URL-encoded UTF-8 code point, leaving malformed escapes and bare percent signs intact. */
 function decodeProxyCredential(value: string): string {
-  try {
-    return decodeURIComponent(value.replace(/%(?![\da-f]{2})/gi, "%25"));
-  } catch {
-    return value;
-  }
+  return value.replace(
+    /%(?:[0-7][\da-f]|[cd][\da-f]%[89ab][\da-f]|e[\da-f](?:%[89ab][\da-f]){2}|f[0-4](?:%[89ab][\da-f]){3})/gi,
+    (encoded) => {
+      try {
+        return decodeURIComponent(encoded);
+      } catch {
+        return encoded;
+      }
+    },
+  );
 }
 
 /** Splits pasted addresses into form fields, keeping schemes that affect routing. */
